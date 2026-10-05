@@ -53,8 +53,7 @@ Rigsmith serves its tools to MCP clients while it's open, on `http://127.0.0.1:8
 by default (only your own machine can reach it). To connect an agent:
 
 1. Open **File › Settings**. The MCP section shows the server's address.
-2. Click **Copy client config** and paste it into your agent's MCP settings. For Claude Code you can run
-   `claude mcp add --transport http rigsmith http://127.0.0.1:8808/mcp` instead.
+2. Click **Copy client config** and paste it into your agent's MCP settings.
 
 You can change the port there, and the change applies straight away. Setting it to `0` turns the server off.
 
