@@ -507,7 +507,10 @@ fn ConstraintRig read_rig_constraints(
 	ForeignConstraint[] foreign = alloc::new_array(allocator, ForeignConstraint,
 		(sz)candidate_count);
 	usz foreign_count = 0;
-	String provenance = stream.gltf.extras.get(PACK_KEY_CONSTRAINT_FRAMES) ?? "";
+	// Parsed once for the whole rig rather than once per joint: it holds every
+	// joint's entry, and re-reading it per joint made a rig's load quadratic.
+	Object* provenance = parse_constraint_provenance(stream.gltf.extras.get(PACK_KEY_CONSTRAINT_FRAMES) ?? "");
+	defer if (provenance) provenance.free();
 
 	foreach (&candidate : candidates[:candidate_count])
 	{
@@ -693,8 +696,25 @@ fn bool parse_constraint_intent(String name, ConstraintFrameIntent* out) @local
 	return true;
 }
 
+<*
+ The constraint-frame provenance array, or null when there is none or it is not
+ an array. The caller frees it.
+*>
+fn Object* parse_constraint_provenance(String source) @local
+{
+	if (source.len == 0) return null;
+	Object*? parsed = json::parse(mem, source);
+	if (catch parsed) return null;
+	if (!parsed.is_array())
+	{
+		parsed.free();
+		return null;
+	}
+	return parsed;
+}
+
 fn bool read_constraint_provenance(
-	String source,
+	Object* root,
 	uint source_node,
 	usz joint,
 	int[] joint_of,
@@ -703,12 +723,7 @@ fn bool read_constraint_provenance(
 	JointAxisLimit[3] khr_axes,
 	JointConstraint* out) @local
 {
-	if (source.len == 0) return false;
-	Object*? parsed = json::parse(mem, source);
-	if (catch parsed) return false;
-	Object* root = parsed;
-	defer root.free();
-	if (!root.is_array()) return false;
+	if (!root) return false;
 
 	for (sz i = 0; i < root.get_len(); i++)
 	{

@@ -11130,6 +11130,49 @@ fn void the_generate_pane_names_an_unnamed_clip_generated_n() @test
 }
 
 <*
+ The MCP port in Settings applies at once: a number is saved and asks main to
+ rebind, 0 turns the server off, and anything else changes nothing. The line
+ under the field says what the server is doing.
+*>
+fn void settings_port_rebinds_the_mcp_server() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	crig::open_settings_dialog(f.ui);
+	f.ui.flush();
+
+	crig::settings_port_submitted(f.ui, " 9123 ");
+	test::@check(f.app.config.mcp_port == 9123, "the port reads %d", f.app.config.mcp_port);
+	test::@check(f.app.mcp_restart_wanted, "a new port did not ask for a rebind");
+
+	f.app.mcp_restart_wanted = false;
+	crig::settings_port_submitted(f.ui, "eighty");
+	crig::settings_port_submitted(f.ui, "70000");
+	test::@check(f.app.config.mcp_port == 9123 && !f.app.mcp_restart_wanted, "a bad port was taken");
+
+	crig::settings_port_submitted(f.ui, "0");
+	test::@check(f.app.config.mcp_port == 0 && f.app.mcp_restart_wanted, "0 did not turn the server off");
+
+	Element* field = f.ui.find_id(crig::SETTINGS_PORT_ID)!!;
+	String said = crig::mcp_status_text(field);
+	test::@check(said == "Off", "a closed server says '%s'", said);
+	said.free(mem);
+
+	f.app.mcp_serving_port = 9123;
+	said = crig::mcp_status_text(field);
+	test::@check(said == "Serving at http://127.0.0.1:9123/mcp", "a serving server says '%s'", said);
+	said.free(mem);
+
+	f.app.mcp_serving_port = 0;
+	f.app.mcp_port_busy = true;
+	f.app.config.mcp_port = 9123;
+	said = crig::mcp_status_text(field);
+	test::@check(said.starts_with("Port 9123 is in use"), "a refused bind says '%s'", said);
+	said.free(mem);
+}
+
+<*
  Settings has an AI page for the Kimodo weights: a field and a Browse per .gguf,
  saved as typed, and a line saying what is still missing or not there. The
  pipeline is built in, so there is no runner to point at.

@@ -112,7 +112,7 @@ fn void tutorial_start(Ui* ui)
 	app.tutorial_step = 0;
 	// The tool column and most of what the tour points at only exist with a
 	// model open, so a tour begun on an empty view loads the shipped humanoid.
-	if (!app.has_mesh() && file::is_file(TUTORIAL_MODEL)) app.request_open(TUTORIAL_MODEL);
+	if (!app.has_mesh() && file::is_file(bundled(TUTORIAL_MODEL))) app.request_open(bundled(TUTORIAL_MODEL));
 	// Raised like the overlay, so that it paints after it: both are raised, and
 	// raised elements keep tree order among themselves (the overlay comes first).
 	// Left unraised, the dim lands on top of the card and greys its text.

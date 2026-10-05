@@ -965,13 +965,18 @@ fn usz[] pair_leaves(
 				if (!same_side(plan_arm, source_arm)) continue;
 				if (agreement(plan_arm, source_arm) < MATCH_MIN_AGREEMENT) continue;
 
-				usz[] joints = path_between(allocator, source, source_anchor, source_leaf);
-				defer alloc::free(allocator, joints);
-
-				float cost = alignment_cost(
-					allocator, source_at, plan_at,
-					plan_at[plan_anchor], source_at[source_anchor], dots, joints, {},
-					source.moved, hub, true, midline);
+				// Every pair of leaves is priced, each with a path and a table of its
+				// own, so the scratch goes to the temp arena and is dropped per pair
+				// rather than heap-allocated and freed a few hundred times a match.
+				float cost;
+				@pool()
+				{
+					usz[] joints = path_between(tmem, source, source_anchor, source_leaf);
+					cost = alignment_cost(
+						tmem, source_at, plan_at,
+						plan_at[plan_anchor], source_at[source_anchor], dots, joints, {},
+						source.moved, hub, true, midline);
+				};
 				if (cost >= MATCH_UNREACHED) continue;
 
 				float source_out = source_reach > MATCH_FLAT ? source_run[s] / source_reach : 0.0f;

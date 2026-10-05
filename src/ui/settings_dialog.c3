@@ -322,17 +322,24 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 				);
 
 				@node((Label) {
-					.text = "MCP port — 0 serves nothing. Takes effect next run.",
+					.text = "MCP server — lets AI agents drive Rigsmith. Port, or 0 to turn it off.",
 					.size = FILE_HEADING_SIZE,
 					.color = TEXT_DIM,
 				});
 
-				@node((TextField) {
-					.placeholder = "port",
-					.style = TEXT_FIELD_STYLE,
-					.on_submit = &settings_port_submitted,
-					.width = SETTINGS_PORT_W,
-				}).with_id(SETTINGS_PORT_ID);
+				@tree((Row) { .gap = SETTINGS_GAP })
+				{
+					@node((TextField) {
+						.placeholder = "port",
+						.style = TEXT_FIELD_STYLE,
+						.on_submit = &settings_port_submitted,
+						.width = SETTINGS_PORT_W,
+					}).with_id(SETTINGS_PORT_ID);
+					@node(panel_button("Copy client config", &settings_copy_mcp_config));
+				};
+
+				@node((LiveLabel) { .text_of = &mcp_status_text, .size = { 0, TREE_STYLE.row_height },
+					.text_size = 12, .color = TEXT_DIM });
 			}
 		};
 	};
@@ -430,11 +437,8 @@ fn void settings_remove_library(Ui* ui)
 }
 
 <*
- Take the typed port.
-
- Saved, so it is remembered, but not applied — the server binds at startup and
- moving a live one would drop whatever is connected to it mid-request. The label
- above the field says so.
+ Take the typed port: saved, and applied at once — `main` rebinds the listener
+ between frames, so nothing is mid-answer when the old port closes.
 *>
 fn void settings_port_submitted(Ui* ui, String text)
 {
@@ -454,7 +458,44 @@ fn void settings_port_submitted(Ui* ui, String text)
 
 	app.config.mcp_port = given;
 	app.config.save();
-	app.@notice(given == 0 ? "the MCP server is off from the next run" : "MCP port %d from the next run", given);
+	app.mcp_restart_wanted = true;
+	app.@notice(given == 0 ? "MCP server off" : "MCP server on port %d", given);
+}
+
+<*
+ What the MCP server is doing, under the port field. Owned, as LiveLabel wants.
+*>
+fn String mcp_status_text(Element* elem)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	if (app.mcp_serving_port > 0)
+	{
+		return string::format(mem, "Serving at %s", mcp_url(app.mcp_serving_port));
+	}
+	if (app.mcp_port_busy)
+	{
+		return string::format(mem, "Port %d is in use — another Rigsmith? Pick another port.", app.config.mcp_port);
+	}
+	return "Off".copy(mem);
+}
+
+fn String mcp_url(int port) @private => string::tformat("http://127.0.0.1:%d/mcp", port);
+
+<*
+ The server's entry for an MCP client's config file, onto the clipboard — the
+ shape Claude Code's `.mcp.json` and most other clients read.
+*>
+fn void settings_copy_mcp_config(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.mcp_serving_port == 0)
+	{
+		app.@notice("the MCP server is off — set a port first");
+		return;
+	}
+	ui.clipboard_write(string::tformat(`{"mcpServers": {"rigsmith": {"type": "http", "url": "%s"}}}`,
+		mcp_url(app.mcp_serving_port)));
+	app.@notice("copied — paste it into your agent's MCP config");
 }
 
 fn void settings_self_collision_toggled(Ui* ui, bool checked)

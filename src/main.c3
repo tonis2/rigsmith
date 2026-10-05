@@ -4,7 +4,8 @@
  crig [model.glb] [options]
 
  --preset <name>       fit a body plan once the mesh is up: quadruped, biped, bird
- --mcp [port]          serve Rigsmith's tools on 127.0.0.1 (default 8808)
+ --mcp [port]          serve Rigsmith's tools on this port for this run (always on otherwise,
+                       on the port in File > Settings — 8808 unless changed)
  --mcp-stdio [port]    relay stdin/stdout to a Rigsmith that is already serving
  --width <n>           the window's size in points
  --height <n>          the same, vertically
@@ -182,6 +183,11 @@ fn int main(String[] args)
 		return 0;
 	}
 
+	// Before the config, the font or the library is read: a packaged build is
+	// started from anywhere, and its assets are beside the executable — under
+	// Contents/Resources in a macOS .app, usr/share/rigsmith in an AppImage.
+	locate_bundle();
+
 	// Before anything compiles a shader. crig has no `shaders/` of its own — the
 	// mesh pass and its shaders went to three with the executable — so the working
 	// directory's override is turned off rather than left to find whatever a
@@ -273,7 +279,6 @@ fn int main(String[] args)
 	// `sync_views` pushes the result. Two writers of one camera is jitter.
 	runtime.controls.enabled = false;
 
-	bool serving = port > 0;
 	// Addressed by pointer from every tool, so it must not move while the server
 	// lives — hence a local of the function that owns the loop.
 	three::ToolHost tool_host = { .runtime = &runtime, .renderer = renderer };
@@ -300,19 +305,14 @@ fn int main(String[] args)
 	// arriving by any path gets the same surface.
 	install_crig_script(&runtime, &app);
 
+	// On by default, from the config's port, because most runs are a double-click
+	// and never see a command line; `--mcp <port>` overrides it for this run
+	// without touching the config. Settings rebinds it live (`run_loop`).
 	mcp::Listener listener;
-	if (serving)
-	{
-		if (catch err = listener.start(port, wake: &three::wake_window, wake_ctx: window))
-		{
-			io::eprintfn("rigsmith: could not listen on %d: %s", port, err);
-			return 1;
-		}
-		io::printfn("mcp: http://127.0.0.1:%d/mcp", port);
-	}
-	defer if (serving) listener.stop();
+	serve_mcp(&listener, window, port > 0 ? port : app.config.mcp_port);
+	defer listener.stop();
 
-	int code = run_loop(renderer, window, &runtime, &server, &listener, serving);
+	int code = run_loop(renderer, window, &runtime, &server, &listener);
 
 	// The tree first: its elements belong to three's Ui, which outlives this call,
 	// and every widget in it borrows something from `app`.
@@ -363,12 +363,26 @@ fn void usage() @local
 	io::printn("  rigsmith [model.glb] [options]");
 	io::printn();
 	io::printn("  --preset <name>       fit a body plan: quadruped, biped or bird");
-	io::printn("  --mcp [port]          serve Rigsmith's tools on 127.0.0.1 (default 8808)");
+	io::printn("  --mcp [port]          serve MCP on this port for this run (default: Settings' port, 8808)");
 	io::printn("  --mcp-stdio [port]    relay stdin/stdout to a Rigsmith that is already serving");
 	io::printn("  --width <n>           the window's size in points");
 	io::printn("  --height <n>          the same, vertically");
 	io::printn("  --ui-scale <n>        how big the interface is drawn, 0.5 to 3 — remembered");
 	io::printn("  --debug               validation layers and three's own log");
+}
+
+<*
+ Points `bundle_root` at the packaged assets when the working directory has none.
+*>
+fn void locate_bundle() @local => @pool()
+{
+	String? beside = three::executable_dir(tmem);
+	if (catch beside) return;
+	choose_bundle_root({
+		beside,
+		string::tformat("%s/../Resources", beside),
+		string::tformat("%s/../share/rigsmith", beside),
+	});
 }
 
 <*
@@ -388,9 +402,9 @@ fn bool mount_ui(three::Renderer* renderer) @local
 		return false;
 	}
 
-	if (catch ui.load_font(FONT_PATH))
+	if (catch ui.load_font(bundled(FONT_PATH)))
 	{
-		io::eprintfn("rigsmith: could not open %s — falling back to the engine's font", FONT_PATH);
+		io::eprintfn("rigsmith: could not open %s — falling back to the engine's font", bundled(FONT_PATH));
 	}
 
 	// Before the tree rather than after it: `set_scale` re-lays out whatever is
@@ -421,8 +435,7 @@ fn int run_loop(
 	c3w::Window* window,
 	three::JsRuntime* runtime,
 	mcp::Server* server,
-	mcp::Listener* listener,
-	bool serving
+	mcp::Listener* listener
 ) @local
 {
 	three::InputTracker keyboard;
@@ -456,8 +469,16 @@ fn int run_loop(
 		// the old one. This is the first moment it is not.
 		runtime.flush_ui();
 
-		// Nothing to pump when there is no listener.
-		usz handled = serving ? listener.pump(server) : 0;
+		// Settings changed the port. Between frames, like an open, so no request is
+		// mid-answer when the old socket goes.
+		if (app.mcp_restart_wanted)
+		{
+			app.mcp_restart_wanted = false;
+			serve_mcp(listener, window, app.config.mcp_port);
+		}
+
+		// Answers nothing, cheaply, when nothing is listening.
+		usz handled = listener.pump(server);
 		if (runtime.quit_wanted) break;
 		if (app.quit_requested) break;
 		runtime.take_render_resize();
@@ -488,6 +509,31 @@ fn int run_loop(
 			&& !poll.camera_moved && handled == 0 && ui_idle;
 	}
 	return 0;
+}
+
+<*
+ (Re)bind the MCP listener to `port`, or leave it closed for 0.
+
+ A port that is taken is a notice rather than an exit: a second Rigsmith opened
+ by double-click should still open, just without a server of its own. What came
+ of it is left on the app for Settings to show.
+*>
+fn void serve_mcp(mcp::Listener* listener, c3w::Window* window, int port) @local
+{
+	listener.stop();
+	app.mcp_serving_port = 0;
+	app.mcp_port_busy = false;
+	if (port <= 0) return;
+
+	if (catch err = listener.start(port, wake: &three::wake_window, wake_ctx: window))
+	{
+		io::eprintfn("rigsmith: could not listen on %d: %s", port, err);
+		app.mcp_port_busy = true;
+		app.@notice("MCP: port %d is in use — another Rigsmith? Pick another in File › Settings", port);
+		return;
+	}
+	app.mcp_serving_port = port;
+	io::printfn("mcp: http://127.0.0.1:%d/mcp", port);
 }
 
 <*

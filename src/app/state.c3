@@ -1346,6 +1346,17 @@ struct AppState
 	bool quit_requested;
 
 	<*
+	 The MCP server, as Settings sees it. The listener belongs to `main`, so the
+	 port field only raises `mcp_restart_wanted`, and the loop rebinds to
+	 `config.mcp_port` between frames and writes back what came of it:
+	 `mcp_serving_port` is the port answering (0 when none), and `mcp_port_busy`
+	 says the last bind was refused — most often another Rigsmith on that port.
+	*>
+	bool mcp_restart_wanted;
+	int mcp_serving_port;
+	bool mcp_port_busy;
+
+	<*
 	 A mesh the interface has asked for, for `main` to load between frames.
 
 	 The same bargain `quit_requested` strikes, and for a harder reason: loading a

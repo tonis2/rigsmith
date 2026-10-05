@@ -17,6 +17,7 @@ build
 *.gch
 *.pch
 .claude
+demo.*
 
 # Libraries
 *.lib
@@ -55,3 +56,4 @@ dkms.conf
 
 # debug information files
 *.dwo
+dist

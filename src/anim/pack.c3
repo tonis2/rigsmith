@@ -856,11 +856,14 @@ fn bool AnimPack.has_tag(&self, String tag)
  The feet arrays and their names come from `allocator` and are released by
  `AnimTemplate.free`, so a clip that is not `owned` must not be given one.
 *>
-fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String source)
+fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String source) => @pool()
 {
-	Object*? parsed = json::parse(mem, source);
+	// Parsed into the temp arena: a clip's sparse keys are thousands of small
+	// JSON objects, and one pool released at the end is far cheaper than a heap
+	// allocation and free for each. Everything kept is copied with `allocator`,
+	// which must therefore not be `tmem`.
+	Object*? parsed = json::parse(tmem, source);
 	if (catch parsed) return;
-	defer parsed.free();
 	if (!parsed.is_keyable()) return;
 
 	foreach (&clip : clips)

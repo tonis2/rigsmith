@@ -6,6 +6,7 @@
 	"dependency-search-paths": ["libs-dev", "libs/three/lib", "libs"],
 	"dependencies": ["vk", "c3w", "gltf", "image", "collision", "quickjs", "mcp", "ktx", "font", "cui", "shady", "llm"],
 	"features": [],
+	"wincrt": "dynamic",
 	"script-dir": "./",
 	"test-sources": ["test/**", "tools/body_plans.c3", "tools/humanoid_plan.c3", "tools/humanoid_clips.c3"],
 	"targets": {

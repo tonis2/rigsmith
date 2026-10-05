@@ -378,7 +378,7 @@ fn CrigConfig load_config()
 fn void CrigConfig.default_libraries(&self)
 {
 	if (self.libraries.len() > 0) return;
-	self.libraries.push({ DEFAULT_LIBRARY_NAME.copy(mem), DEFAULT_LIBRARY_PATH.copy(mem) });
+	self.libraries.push({ DEFAULT_LIBRARY_NAME.copy(mem), default_library_path() });
 }
 
 <*
@@ -490,7 +490,7 @@ fn void CrigConfig.adopt_libraries(&self, Object* parsed)
 	Object*? listed = parsed.get("asset_libraries");
 	if (catch listed)
 	{
-		self.libraries.push({ DEFAULT_LIBRARY_NAME.copy(mem), DEFAULT_LIBRARY_PATH.copy(mem) });
+		self.libraries.push({ DEFAULT_LIBRARY_NAME.copy(mem), default_library_path() });
 		return;
 	}
 
@@ -515,7 +515,8 @@ fn void CrigConfig.adopt_libraries(&self, Object* parsed)
 		if (catch library_path) continue;
 		if (library_path.len == 0) continue;
 
-		self.libraries.push({ name.copy(mem), library_path.copy(mem) });
+		String held = library_path == DEFAULT_LIBRARY_PATH ? default_library_path() : library_path.copy(mem);
+		self.libraries.push({ name.copy(mem), held });
 	}
 }
 
@@ -767,11 +768,17 @@ fn void CrigConfig.save(&self)
 	// hold anything: a list emptied on purpose comes out as a present key
 	// holding nothing rather than an absent one — which is what
 	// `adopt_libraries` reads as "no libraries" instead of "never configured".
+	// The built-in library goes out in its relative spelling — see `stored_library_path`.
+	AssetLibrary[] libraries = self.libraries.array_view();
+	AssetLibrary[] stored = libraries.len > 0 ? alloc::new_array(mem, AssetLibrary, libraries.len) : {};
+	defer if (stored.len > 0) alloc::free(mem, stored);
+	foreach (usz i, library : libraries) stored[i] = { library.name, stored_library_path(library.path) };
+
 	ConfigFile written = {
 		.version = CONFIG_VERSION,
 		.recent = self.recent.array_view(),
 		.browse_directory = self.browse_directory,
-		.asset_libraries = self.libraries.array_view(),
+		.asset_libraries = stored,
 		.mcp_port = self.mcp_port,
 		.ui_scale = self.ui_scale,
 		.rig_overlay_strength = self.rig_overlay_strength,
