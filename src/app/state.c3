@@ -814,6 +814,9 @@ struct AppState
 	*>
 	PosedJoint[LOCK_SNAPSHOT] locked_before;
 	usz locked_before_count;
+	// The other selected joints a G is carrying, and where each began.
+	PoseMate[POSE_MATES] pose_mates;
+	usz pose_mate_count;
 	<*
 	 Every joint as the draft held it when a pose gesture began — what the whole-
 	 body solve (`body_pose`) may move is any joint on the paths between the grab

@@ -215,6 +215,9 @@ fn void AppState.drop_aim_draft(&self)
 
 // How far in front of the joint a new target is put, as a share of rig height.
 const float AIM_FRONT_REACH = 0.6f;
+// How steeply the selected bones may point up or down (the sine of it) and still
+// have a new target placed along them rather than out of their front.
+const float AIM_UPRIGHT = 0.7f;
 
 <*
  Where `joint` stands in `pose` and which way it faces there: its world position
@@ -399,16 +402,73 @@ fn uint[] AppState.selected_aim_dots(&self, Allocator allocator, RigView* view)
 }
 
 <*
+ What a fresh lock of `dots[i]` turns, among `dots` locked together.
+
+ A joint locked alone spreads over three. Locked with others, each turns up its
+ own limb as far as the next joint locked with it, at most three: a finger locked
+ knuckle by knuckle gives each only its own turn, two heads each their necks.
+ A leaf (a fingertip, a head-top) is the end of a bone, and turning it alone
+ shows next to nothing: it is aimed with a weight of nothing while its parent and
+ up to two above it — never the root — share the turn, so four fingertips locked
+ together bend four whole fingers.
+*>
+fn void fresh_aim_spread(RigView* view, uint[] dots, usz i, AnimAim* lock) @private
+{
+	sz joint = view.joint_of(dots[i]);
+	if (joint < 0) return;
+	int[] parents = view.skeleton.parents;
+	bool leaf = true;
+	foreach (parent : parents) if (parent == (int)joint) { leaf = false; break; }
+	int first = parents[(usz)joint];
+	if (leaf && (first < 0 || locked_with(view, dots, i, first))) leaf = false;
+
+	if (!leaf)
+	{
+		if (dots.len == 1) { lock.spread = 3; return; }
+		// Steps up to the nearest joint locked with this one, three at most.
+		usz steps = 0;
+		for (int at = parents[(usz)joint]; at >= 0 && steps < 3; at = parents[(usz)at])
+		{
+			steps++;
+			if (locked_with(view, dots, i, at)) break;
+		}
+		lock.spread = math::max(steps, (usz)1);
+		return;
+	}
+
+	// The joints above the leaf that turn: its parent, then up to two more, short
+	// of the root and of any joint locked with it.
+	usz own = 1;
+	for (int at = parents[(usz)first]; at >= 0 && own < 3; at = parents[(usz)at])
+	{
+		if (parents[(usz)at] < 0 || locked_with(view, dots, i, at)) break;
+		own++;
+	}
+	lock.spread = own + 1;
+	lock.weights[0] = 0.0f;
+	for (usz k = 0; k < own; k++) lock.weights[k + 1] = AIM_DEFAULT_WEIGHTS[k];
+	for (usz k = own + 1; k < AIM_MAX_SPREAD; k++) lock.weights[k] = 0.0f;
+}
+
+// Whether joint `at` is one of `dots` other than `dots[i]`.
+fn bool locked_with(RigView* view, uint[] dots, usz i, int at) @private
+{
+	foreach (usz k, other : dots) if (k != i && view.joint_of(other) == (sz)at) return true;
+	return false;
+}
+
+<*
  The shared body of the lock ops: lock each of `dots` to a target and land the
  clip as one undo step. The aim axis of each fresh or re-pointed lock is read
  off the pose on screen (grounded, other aims on), so locking turns nothing.
 
  With `existing` empty a new target is made, keyed at the edit time: in front of
- the mean position of the joints along the first one's +Z, or, with no joints, in
- front of the rig at about chest height. Otherwise the joints lock to the
- target `existing`. A fresh lock spreads over 3 joints when it is the only one
- locked, over 1 when several are; a joint already locked elsewhere is re-pointed
- and keeps its settings. The new target is selected.
+ the mean position of the joints — along their bones where those lie closer to
+ level than to upright, otherwise along the first one's +Z — or, with no joints,
+ in front of the rig at about chest height. Otherwise the joints lock to the
+ target `existing`. A fresh lock's spread is `fresh_aim_spread`'s; a joint
+ already locked elsewhere is re-pointed and keeps its settings. The new target is
+ selected.
 *>
 fn bool AppState.land_locks(&self, uint[] dots, String existing)
 {
@@ -464,6 +524,25 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 			front = worlds[0].rotate_vec3({ 0, 0, 1 });
 			if (front.length_sq() < 1.0e-12f) front = { 0, 0, 1 };
 			front = front.normalize();
+			// A limb held out — fingers, a hand, a foot — is aimed along where it
+			// points, so moving the target bends it; one standing up, a head on its
+			// neck, looks out its front.
+			Vec3 along;
+			foreach (dot : kept[:count])
+			{
+				sz joint = view.joint_of(dot);
+				int parent = joint >= 0 ? view.skeleton.parents[(usz)joint] : -1;
+				Vec3 from;
+				Quaternionf ignored;
+				if (parent < 0 || !aim_frame(&view, pose, (usz)parent, &from, &ignored)) continue;
+				Vec3 to;
+				if (!aim_frame(&view, pose, (usz)joint, &to, &ignored)) continue;
+				if ((to - from).length_sq() > 1.0e-12f) along += (to - from).normalize();
+			}
+			if (along.length_sq() > 1.0e-6f && math::abs(along.normalize().y) < AIM_UPRIGHT)
+			{
+				front = along.normalize();
+			}
 		}
 		else
 		{
@@ -499,7 +578,7 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 		else
 		{
 			*lock = aim_defaults(mem, vocabulary[i], made, forward);
-			lock.spread = count == 1 ? 3 : 1;
+			fresh_aim_spread(&view, kept[:count], (usz)i, lock);
 		}
 	}
 

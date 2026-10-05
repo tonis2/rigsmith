@@ -1908,6 +1908,7 @@ fn bool AppState.cancel_drag(&self)
 	self.turn_aimed_dot = 0;
 	self.pose_before_count = 0;
 	self.locked_before_count = 0;
+	self.pose_mate_count = 0;
 	self.drag = {};
 	// The palette, not the binder: a pose moves no rest position, so the weights
 	// underneath are the ones they always were.
@@ -1979,6 +1980,7 @@ fn void AppState.end_drag(&self)
 	uint moved = self.drag.dot;
 	self.pose_before_count = 0;
 	self.locked_before_count = 0;
+	self.pose_mate_count = 0;
 	self.drag = {};
 	if (banked && self.is_anchored(moved)) self.refresh_lock_target(moved);
 	if (banked)

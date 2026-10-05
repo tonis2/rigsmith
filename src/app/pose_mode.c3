@@ -44,6 +44,14 @@ import std::math::quaternion;
 *>
 const usz IK_MAX_CHAIN = 16;
 const usz POSE_SNAPSHOT = IK_MAX_CHAIN + 1;
+// How many other selected joints one G carries along; see `gather_pose_mates`.
+const usz POSE_MATES = 16;
+
+struct PoseMate
+{
+	uint dot;
+	Vec3 from; // where it stood when the grab began
+}
 
 <*
  One joint in the transient animation draft, keyed by the document dot id so a
@@ -677,6 +685,7 @@ fn bool AppState.begin_pose(&self, bool held = false)
 		self.pose_before[self.pose_before_count++] = self.working_pose(view.dot_ids[chain.root]);
 	}
 	self.snapshot_locks(&view, self.selected);
+	self.gather_pose_mates(&view, chain, palette);
 	self.snapshot_gesture();
 	// The whole surface refitted once, and a start already in contact learned
 	// now: what a pull moves is the anchor's subtree, the run and everything
@@ -830,6 +839,56 @@ fn void AppState.push_locked_before(&self, uint id)
 		if (self.locked_before[s].dot_id == id) return;
 	}
 	self.locked_before[self.locked_before_count++] = self.working_pose(id);
+}
+
+<*
+ The other selected joints a G carries along with the grabbed one: each keeps
+ its own limb and is pulled by the same move, so a hand's fingertips selected
+ together curl together. A joint whose run shares a joint with the grab's or an
+ earlier mate's is left to ride — two solves fighting over one knuckle would
+ shake it — as is one nothing above can bend. Their runs are snapshotted with
+ the pins', which escape restores and the release banks.
+*>
+fn void AppState.gather_pose_mates(&self, RigView* view, PoseChain grabbed, Matrix4f[] palette)
+{
+	self.pose_mate_count = 0;
+	if (grabbed.count == 0) return;
+	uint[LOCK_SNAPSHOT] claimed;
+	usz claimed_count = claim_joint(claimed[..], 0, (uint)grabbed.effector);
+	for (usz t = 0; t < grabbed.count; t++) claimed_count = claim_joint(claimed[..], claimed_count, (uint)grabbed.joints[t]);
+	foreach (id : self.also_selected.array_view())
+	{
+		if (self.pose_mate_count >= POSE_MATES) break;
+		if (id == self.selected) continue;
+		PoseChain chain = self.pose_chain(view, id);
+		if (chain.count == 0) continue;
+		if (run_wants_claimed(chain, claimed[:claimed_count])
+			|| array::contains(claimed[:claimed_count], (uint)chain.effector)) continue;
+		claimed_count = claim_joint(claimed[..], claimed_count, (uint)chain.effector);
+		for (usz t = 0; t < chain.count; t++)
+		{
+			claimed_count = claim_joint(claimed[..], claimed_count, (uint)chain.joints[t]);
+			self.push_locked_before(view.dot_ids[chain.joints[t]]);
+		}
+		self.pose_mates[self.pose_mate_count++] = {
+			.dot = id,
+			.from = view.skeleton.joints[chain.effector].transform(palette[chain.effector]),
+		};
+	}
+}
+
+// Each mate's run solved toward where it was grabbed, moved as far as the grab.
+fn void AppState.carry_pose_mates(&self, RigView* view, rig::Pose* pose, Vec3 moved, float tolerance)
+{
+	foreach (mate : self.pose_mates[:self.pose_mate_count])
+	{
+		PoseChain chain = self.pose_chain(view, mate.dot);
+		if (chain.count == 0) continue;
+		Vec3[IK_MAX_CHAIN + 1] points;
+		self.chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
+		(void)self.solve_limited_pose_chain(view, chain, pose,
+			points[:chain.count + 1], mate.from + moved, tolerance, {}, false);
+	}
 }
 
 <*
@@ -1669,6 +1728,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 		float tolerance = height > 0.0f ? height * IK_TOLERANCE : 0.0f;
 		gap = self.solve_limited_pose_chain(&view, chain, &pose,
 			points[:chain.count + 1], target, tolerance, ground_shift);
+		self.carry_pose_mates(&view, &pose, target - self.drag.from, tolerance);
 		// What the target asked for and did not get, whatever stood in the way:
 		// the limits, the reach of the limb, or the mesh the report names.
 		self.last_block.residual = gap;
