@@ -298,6 +298,7 @@ struct AnimPackReport
 
  @param report : `Filled in with what was found and what was left behind, if given.`
  @param plans : `Body plans this file's rig may be matched onto by shape; empty keeps its own joint names.`
+ @param bytes : `The file's bytes, read instead of the file at path, which then only names it. Borrowed, and must outlive the pack when defer_clips is set.`
  @return? PACK_EMPTY : `The file carries neither a convertible clip nor a named joint.`
 *>
 fn AnimPack? read_pack(
@@ -305,9 +306,12 @@ fn AnimPack? read_pack(
 	String path,
 	AnimPackReport* report = null,
 	Preset[] plans = {},
-	bool defer_clips = false)
+	bool defer_clips = false,
+	char[] bytes = {})
 {
-	gltf::GltfStream stream = gltf::open(path, allocator)!;
+	gltf::GltfStream stream = bytes.len > 0
+		? gltf::open_bytes(bytes, path, allocator)!
+		: gltf::open(path, allocator)!;
 	// Kept open and handed to the pack when the clips were deferred, so retargeting
 	// one later reuses the parse; closed here on every other path.
 	bool keep_stream = false;

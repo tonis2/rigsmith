@@ -7,7 +7,7 @@
  the `llm` library (`lib/llm.c3l`) and runs on its own GPU through
  `llm::pipeline::Job`. What the user supplies is only the weights — in File ›
  Settings › AI: the text encoder's .gguf files and the motion model, either
- kimodo.cpp's .gguf or NVIDIA's release folder as downloaded. The pipeline writes a .glb — a skeleton, one
+ kimodo.cpp's .gguf or NVIDIA's release folder as downloaded. The pipeline hands back a .glb — a skeleton, one
  animation, no mesh — and the clip comes in by the door every downloaded clip
  does: `pack_for_file` matches the source skeleton onto the character's body
  plan by shape, and a bind puts it on the character. A generated walk is
@@ -20,10 +20,13 @@
  progress can be shown. Loading the weights is the one long stretch that does
  not breathe. One job at a time: the library keeps one set of open models.
 
- **Where the clips go.** `MotionGenerator.output`, `generated` in crig's config
- directory by default, is added to the libraries as "Generated" the first time
- a clip lands there, so every generated clip is in the browser for every other
- character too — the clip is written against Kimodo's skeleton, not this rig.
+ **Where the clips go.** Into the character, and never through a file. The
+ pipeline hands its .glb over in memory (`glb_output`, read back with
+ `Job.output("glb")`); the clip is read out of those bytes, sampled onto this
+ rig and stored in the authored pack under the rig's own joint names — the same
+ place a hand-keyed clip lives. Save then writes it into the model's .glb with
+ the rest of the character's animations, and an unsaved one goes the way of
+ every unsaved edit.
 
  **What a generated clip is.** In place, like every imported clip — the importer
  takes the travel off the hips (`strip_root_travel`) — at the runner's 30 fps,
@@ -86,7 +89,6 @@ const float MOTION_MAX_SECONDS = 10.0f;
 const float MOTION_DEFAULT_SECONDS = 5.0f;
 const uint MOTION_DEFAULT_STEPS = 100;
 const uint MOTION_MAX_STEPS = 1000;
-const String GENERATED_LIBRARY_NAME = "Generated";
 // The rest skeleton guide poses are matched against, under the plugins folder.
 // The SOMA models are the human ones; their joint names are what the pipeline
 // reads a guide pose's names as.
@@ -122,7 +124,9 @@ struct MotionJob
 	llm::pipeline::Job* engine;
 	String name;
 	String prompt;
-	String glb;
+	// The .glb the pipeline handed over in memory, taken from the engine before
+	// it closes. Owned.
+	char[] glb;
 	// The guide clip's keyed instants the job was given, and the ones past the
 	// generated length that were left out.
 	usz guide_keys;
@@ -172,11 +176,13 @@ fn String MotionJob.last(&self) => (String)self.last_line[:self.last_length];
 fn void MotionJob.clear(&self)
 {
 	self.close_engine();
-	foreach (held : (String[]){ self.name, self.prompt, self.glb })
+	foreach (held : (String[]){ self.name, self.prompt })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.name = self.prompt = self.glb = "";
+	self.name = self.prompt = "";
+	if (self.glb.len > 0) alloc::free(mem, self.glb);
+	self.glb = {};
 	self.running = false;
 	self.failed = false;
 	self.landed = NO_ANIM;
@@ -283,36 +289,6 @@ fn bool AppState.has_bound_clip_named(&self, String name)
 }
 
 <*
- A file name for a clip: letters and digits kept, lower-cased, everything else
- one dash. Never empty.
-*>
-fn String motion_file_stem(Allocator allocator, String name)
-{
-	DString out;
-	out.init(allocator);
-	bool dash = false;
-	foreach (c : name)
-	{
-		bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z');
-		if (keep)
-		{
-			if (dash && out.len() > 0) out.append_char('-');
-			out.append_char(c >= 'A' && c <= 'Z' ? c + 32 : c);
-			dash = false;
-			if (out.len() >= 48) break;
-		}
-		else
-		{
-			dash = true;
-		}
-	}
-	if (out.len() == 0) out.append_string("motion");
-	String stem = out.copy_str(allocator);
-	out.free();
-	return stem;
-}
-
-<*
  The step a line of the pipeline's output reports, as "step 40/100": true and the
  two numbers when it is one, false for every other line.
 *>
@@ -337,17 +313,6 @@ fn bool parse_motion_step(String line, uint* step, uint* steps)
 }
 
 <*
- The folder generated clips are written to. Owned.
-*>
-fn String AppState.motion_output_directory(&self)
-{
-	MotionGenerator* g = &self.config.motion_generator;
-	if (g.output.len > 0) return g.output.copy(mem);
-	if (self.config.directory.len > 0) return string::format(mem, "%s/generated", self.config.directory);
-	return "generated".copy(mem);
-}
-
-<*
  Where the library's plugin files are written out for the pipeline to run
  from: `llm` in crig's config directory. Owned.
 *>
@@ -361,7 +326,7 @@ fn String AppState.motion_plugins_directory(&self)
  The pipeline's settings for one request, as JSON. `poses` is the guide, as
  `motion_guide_json` writes it; "" for none. Owned.
 *>
-fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String name, String glb, uint frames,
+fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String name, uint frames,
 	String poses = "")
 {
 	DString out;
@@ -379,8 +344,8 @@ fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String nam
 	gltf_edit::escape_json_string(&out, request.prompt);
 	out.append_string(",\n  \"name\": ");
 	gltf_edit::escape_json_string(&out, name);
-	out.append_string(",\n  \"glb\": ");
-	gltf_edit::escape_json_string(&out, glb);
+	// The .glb is handed back in memory (Job.output("glb")): nothing on disk.
+	out.append_string(",\n  \"glb_output\": true");
 	if (poses.len > 0)
 	{
 		out.append_string(",\n  \"poses\": ");
@@ -706,13 +671,6 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 	uint frames = (uint)(seconds * MOTION_FPS + 0.5f);
 	if (request.steps > MOTION_MAX_STEPS) request.steps = MOTION_MAX_STEPS;
 
-	String directory = self.motion_output_directory();
-	defer alloc::free(mem, directory.ptr);
-	if (catch path::mkdir((Path)directory, recursive: true))
-	{
-		// Already there, or it cannot be made; the pipeline's write says which.
-	}
-
 	// First, so the guide's rest skeleton is on disk to be matched against.
 	String plugins = self.motion_plugins_directory();
 	defer alloc::free(mem, plugins.ptr);
@@ -735,21 +693,12 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 	defer if (poses.len > 0) alloc::free(mem, poses.ptr);
 
 	String name = request.name.trim().len > 0 ? request.name.trim().copy(mem) : motion_clip_name(mem, prompt);
-	String stem = motion_file_stem(mem, name);
-	defer alloc::free(mem, stem.ptr);
-	String glb = string::format(mem, "%s/%s.glb", directory, stem);
-	for (int n = 2; file::exists(glb); n++)
-	{
-		alloc::free(mem, glb.ptr);
-		glb = string::format(mem, "%s/%s-%d.glb", directory, stem, n);
-	}
-	String json = motion_job_json(g, &request, name, glb, frames, poses);
+	String json = motion_job_json(g, &request, name, frames, poses);
 	defer alloc::free(mem, json.ptr);
 
 	self.motion_job.clear();
 	self.motion_job.name = name;
 	self.motion_job.prompt = prompt.copy(mem);
-	self.motion_job.glb = glb;
 	self.motion_job.steps = request.steps == 0 ? MOTION_DEFAULT_STEPS : request.steps;
 	self.motion_job.guide_keys = keyed;
 	self.motion_job.guide_dropped = dropped;
@@ -799,20 +748,35 @@ fn void AppState.tick_motion_job(&self)
 	}
 	bool ok = job.engine.state == DONE;
 	if (!ok) job.set_last(job.engine.error().len > 0 ? job.engine.error() : "the pipeline stopped");
+	// The engine owns what it was handed; closing it frees that.
+	char[] handed = job.engine.output("glb");
+	if (ok && handed.len > 0)
+	{
+		job.glb = alloc::new_array(mem, char, handed.len);
+		job.glb[..] = handed[..];
+	}
 	job.close_engine();
 	self.finish_motion_job(ok);
 }
 
 <*
- The end of a job: its clip landed on the character when `ok` and the .glb is
- there, a failure saying why otherwise (`last()` holds the reason).
+ The end of a job: its clip landed on the character when `ok` and the .glb was
+ handed back, a failure saying why otherwise (`last()` holds the reason).
 *>
 fn void AppState.finish_motion_job(&self, bool ok)
 {
 	MotionJob* job = &self.motion_job;
 	job.running = false;
-	if (!ok || !file::exists(job.glb))
+	// The bytes are only the pipeline's way of handing the motion over: once
+	// read, they are not kept.
+	defer
 	{
+		if (job.glb.len > 0) alloc::free(mem, job.glb);
+		job.glb = {};
+	}
+	if (!ok || job.glb.len == 0)
+	{
+		if (ok) job.set_last("the pipeline handed back no clip");
 		job.failed = true;
 		self.@notice("Generating \"%s\" failed: %s", job.name, job.last());
 		return;
@@ -821,12 +785,21 @@ fn void AppState.finish_motion_job(&self, bool ok)
 	if (!landed.valid())
 	{
 		job.failed = true;
-		self.@notice("Generated %s, but it did not read as a clip for this character", base_name(job.glb));
+		self.@notice("Generated \"%s\", but it did not read as a clip for this character", job.name);
 		return;
+	}
+	// The landed name, which differs when the authored pack already had this one.
+	if (AnimTemplate* clip = self.clip(landed))
+	{
+		if (clip.name != job.name)
+		{
+			alloc::free(mem, job.name.ptr);
+			job.name = clip.name.copy(mem);
+		}
 	}
 	job.landed = landed;
 	job.landed_pending = true;
-	self.@notice("Generated \"%s\" and added it to the character", job.name);
+	self.@notice("Generated \"%s\" and added it to the character · save to keep it in the model", job.name);
 }
 
 <*
@@ -839,7 +812,6 @@ fn bool AppState.stop_motion_generation(&self)
 	MotionJob* job = &self.motion_job;
 	if (!job.running) return false;
 	job.close_engine();
-	(void)file::delete(job.glb);
 	job.running = false;
 	job.failed = true;
 	job.set_last("stopped");
@@ -848,36 +820,99 @@ fn bool AppState.stop_motion_generation(&self)
 }
 
 <*
- Take a generated .glb onto the character: its folder made a library if it is not
- one, the file indexed, its clip read and bound as one undo step.
+ Take a generated .glb, as bytes, onto the character: its clip read, sampled
+ onto the rig and authored into the character as one undo step, bound and
+ editable like a hand-keyed clip. Nothing refers to the bytes afterwards.
 
  @return `The clip, or NO_ANIM when the file holds none this rig can take.`
 *>
-fn AnimRef AppState.land_generated_motion(&self, String glb, String name)
+fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name)
 {
-	String directory = self.motion_output_directory();
-	defer alloc::free(mem, directory.ptr);
-	bool listed = false;
-	foreach (library : self.config.libraries.array_view())
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name);
+	if (catch sampled) return NO_ANIM;
+	AnimRef landed = self.author_clip(sampled);
+	if (!landed.valid()) return NO_ANIM;
+	self.refresh_ui();
+	return landed;
+}
+
+<*
+ The first clip of a generated .glb, written against this rig rather than
+ Kimodo's skeleton: sampled at each of its own keys through the same name match
+ playback uses (`measure_reach`, the document's joint maps) and keyed under the
+ rig's own joint names, so the authored pack — which has no skeleton of its own
+ to translate from — plays it as it is.
+
+ Sampled raw: the rig's joint limits and the ground solve are applied when it
+ plays, as for every clip, so they are carried rather than baked in.
+
+ @param name : `The clip's name, made unique against the authored pack.`
+ @return? RIG_EMPTY : `There is no rig to put it on.`
+ @return? MOTION_NOT_STARTED : `The file holds no clip, or one for a skeleton this rig does not relate to.`
+*>
+fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name)
+{
+	RigView view = self.open_rig(mem)!;
+	defer view.free(mem);
+
+	AnimPack pack = read_pack(mem, "kimodo.glb", plans: self.reference_plans, bytes: glb)!;
+	defer pack.free(mem);
+	if (pack.clips.len == 0) return MOTION_NOT_STARTED~;
+	AnimTemplate source = pack.clips[0];
+	foreach (clip : pack.clips)
 	{
-		if (library.path == directory) listed = true;
+		if (clip.name == name) { source = clip; break; }
 	}
-	if (!listed && self.config.add_library(directory, GENERATED_LIBRARY_NAME))
+	if (source.keyframes.len == 0) return MOTION_NOT_STARTED~;
+
+	PackReach reach = measure_reach(mem, &pack, &view.skeleton, view.names);
+	defer reach.free(mem);
+	apply_joint_maps(mem, &reach, &pack, view.names, self.doc.joint_maps);
+	if (!reach.usable || reach.names.len != view.names.len) return MOTION_NOT_STARTED~;
+
+	Vec3[] bones = view.skeleton.bone_directions(mem);
+	defer if (bones.len > 0) alloc::free(mem, bones);
+	float height = view.skeleton.height();
+
+	AnimKeyframe[] frames = alloc::new_array(mem, AnimKeyframe, (sz)source.keyframes.len);
+	foreach (usz i, key : source.keyframes)
 	{
-		self.rescan_assets();
-	}
-	else
-	{
-		self.reindex_saved_model(glb);
+		rig::Pose pose = source.pose(mem, &view.skeleton, reach.names, key.time, false);
+		defer pose.free(mem);
+		frames[i] = keyframe_of_pose(mem, pose, view.names, bones, height, key.time);
 	}
 
-	int pack = self.pack_for_file(glb);
-	if (pack < 0) return NO_ANIM;
-	AnimRef ref = self.clip_named_in(pack, name);
-	if (!ref.valid()) ref = { pack, 0 };
-	if (!self.clip(ref)) return NO_ANIM;
-	self.bind_ref_recorded(ref);
-	return ref;
+	// The feet a ground solve plants, renamed into the rig's words; a foot the
+	// rig has no joint for is dropped rather than kept naming nothing.
+	AnimFootList feet;
+	feet.init(mem);
+	defer feet.free();
+	foreach (foot : source.ground.feet)
+	{
+		foreach (usz j, spoken : reach.names)
+		{
+			if (spoken != foot.joint || view.names[j].len == 0) continue;
+			AnimFoot renamed = foot;
+			renamed.joint = view.names[j].copy(mem);
+			feet.push(renamed);
+			break;
+		}
+	}
+
+	String unique = self.unused_clip_name(mem, name.len > 0 ? name : source.name);
+	return {
+		.name = unique,
+		.duration = source.duration,
+		.keyframes = frames,
+		.loop = source.loop,
+		.blend = source.blend,
+		.ground = {
+			.feet = feet.len() > 0 ? feet.to_array(mem) : (AnimFoot[]){},
+			.floor = source.ground.floor,
+			.floor_set = source.ground.floor_set,
+		},
+		.owned = true,
+	};
 }
 
 <*

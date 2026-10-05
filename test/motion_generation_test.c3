@@ -43,16 +43,6 @@ fn void a_clip_name_is_the_prompts_first_words() @test
 	test::@check(worded == "A person walks forward and then turns", "cut at a word: '%s'", worded);
 }
 
-fn void a_file_stem_is_letters_and_dashes() @test
-{
-	String stem = crig::motion_file_stem(mem, "Walk / Wave!  Twice");
-	defer stem.free(mem);
-	test::@check(stem == "walk-wave-twice", "stem '%s'", stem);
-	String empty = crig::motion_file_stem(mem, "!!!");
-	defer empty.free(mem);
-	test::@check(empty == "motion", "a name with no letters still names a file: '%s'", empty);
-}
-
 fn void the_runners_step_lines_are_read_and_nothing_else() @test
 {
 	uint step;
@@ -67,8 +57,10 @@ fn void the_job_file_carries_the_request_escaped() @test
 {
 	crig::MotionGenerator g = { .text_model = "/m/text.gguf", .model = "/m/motion.gguf" };
 	crig::MotionRequest request = { .prompt = `a "quoted" wave`, .seed = 7 };
-	String json = crig::motion_job_json(&g, &request, "Wave", "/out/wave.glb", 150);
+	String json = crig::motion_job_json(&g, &request, "Wave", 150);
 	defer json.free(mem);
+	test::@check(json.contains(`"glb_output": true`) && !json.contains(`"glb":`),
+		"the clip is not asked for in memory: %s", json);
 	test::@check(json.contains(`"prompt": "a \"quoted\" wave"`), "the prompt is not escaped: %s", json);
 	test::@check(json.contains(`"frames": 150`) && json.contains(`"seed": 7`) && json.contains(`"steps": 100`),
 		"frames, seed and default steps: %s", json);
@@ -115,14 +107,15 @@ fn void the_generator_survives_a_restart() @test
 		test::@check(g.text_model == "/m/t.gguf" && g.model == "/m/k.gguf",
 			"the paths were not read: %s %s", g.text_model, g.model);
 		test::@check(g.tokenizer.len == 0, "a number was taken as a tokenizer path");
-		test::@check(config.set_motion_path("output", " /o/clips "), "output is not a generator path");
+		test::@check(config.set_motion_path("tokenizer", " /m/tok.gguf "), "tokenizer is not a generator path");
+		test::@check(!config.set_motion_path("output", "/o/clips"), "generated clips go into the character, not a folder");
 		test::@check(config.set_motion_path("text_model", ""), "text_model is not a generator path");
 		test::@check(!config.set_motion_path("runner", "/x"), "the runner is built in, not a setting");
 	}
 	crig::CrigConfig back = crig::load_config();
 	defer back.free();
 	test::@check(back.motion_generator.model == "/m/k.gguf", "the generator did not survive a save");
-	test::@check(back.motion_generator.output == "/o/clips", "a set path was not saved: '%s'", back.motion_generator.output);
+	test::@check(back.motion_generator.tokenizer == "/m/tok.gguf", "a set path was not saved: '%s'", back.motion_generator.tokenizer);
 	test::@check(back.motion_generator.text_model.len == 0, "an emptied path came back: '%s'", back.motion_generator.text_model);
 }
 
@@ -146,7 +139,7 @@ fn crig::AppState generating_app(String name)
 	crig::MotionGenerator* g = &app.config.motion_generator;
 	g.text_model = "/m/text.gguf".copy(mem);
 	g.model = "/m/motion.gguf".copy(mem);
-	g.output = string::format(mem, "%s/out", directory);
+	app.config.directory = string::format(mem, "%s/config", directory);
 	return app;
 }
 
@@ -167,15 +160,20 @@ fn void generating_with_no_gpu_is_refused() @test
 
 <*
  A job as `start_motion_generation` leaves it, without the pipeline: what it
- asked for and where the .glb goes. The pipeline's own part - its lines and
- its end - is then fed to the job the way `tick_motion_job` feeds it.
+ asked for, and the .glb bytes the pipeline hands back (empty for none). The
+ pipeline's own part - its lines and its end - is then fed to the job the way
+ `tick_motion_job` feeds it.
 *>
-fn void pretend_job(crig::AppState* app, String prompt, String glb)
+fn void pretend_job(crig::AppState* app, String prompt, char[] glb = {})
 {
 	app.motion_job.clear();
 	app.motion_job.name = crig::motion_clip_name(mem, prompt);
 	app.motion_job.prompt = prompt.copy(mem);
-	app.motion_job.glb = glb.copy(mem);
+	if (glb.len > 0)
+	{
+		app.motion_job.glb = alloc::new_array(mem, char, glb.len);
+		app.motion_job.glb[..] = glb[..];
+	}
 	app.motion_job.steps = 100;
 	app.motion_job.running = true;
 }
@@ -191,22 +189,34 @@ fn void the_pipelines_lines_move_the_progress() @test
 	test::@check(job.last() == "step 40/100, 5.21s", "the last line is '%s'", job.last());
 }
 
-fn void a_generated_clip_lands_bound_in_a_generated_library() @test
+<*
+ A generated clip goes into the character straight from the bytes the pipeline
+ hands back: authored under the rig's own joint names and bound like a
+ hand-keyed clip, with nothing written to disk and no library added for it.
+*>
+fn void a_generated_clip_lands_in_the_character_from_memory() @test
 {
-	crig::AppState app = generating_app("lands");
-	defer app.free();
-	sz bound = app.doc.animations.len();
-
-	String directory = app.motion_output_directory();
-	defer directory.free(mem);
+	const String DIRECTORY = GENERATION_DIR +++ "/lands";
+	String directory = DIRECTORY;
+	(void)path::rmtree((Path)directory);
 	(void)path::mkdir((Path)directory, recursive: true);
-	String glb = string::format(mem, "%s/a-dog-sits.glb", directory);
-	defer glb.free(mem);
-	char[] bytes = file::load(mem, "assets/animations/quadruped.glb")!!;
-	defer alloc::free(mem, bytes);
-	(void)file::save(glb, bytes);
+	String model = DIRECTORY +++ "/humanoid.glb";
+	trust_fixes::copy_humanoid(model);
+	defer trust_fixes::remove_with_sidecar(model);
+	rig::TriMesh mesh = rig::load_gltf(mem, model)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, model);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.config.directory = string::format(mem, "%s/config", directory);
+	sz bound = app.doc.animations.len();
+	sz libraries = app.config.libraries.len();
 
-	pretend_job(&app, "a dog sits", glb);
+	// What the pipeline hands back, in memory.
+	char[] bytes = file::load(mem, "assets/animations/humanoid.glb")!!;
+	defer alloc::free(mem, bytes);
+
+	pretend_job(&app, "a person walks", bytes);
 	test::@check(app.ticking(), "a running job does not keep frames coming");
 	crig::motion_line(&app.motion_job, "  step 100/100, 3.0s");
 	app.finish_motion_job(true);
@@ -218,12 +228,47 @@ fn void a_generated_clip_lands_bound_in_a_generated_library() @test
 	test::@check(app.take_generated_clip(&landed) && landed.valid(), "no clip handed to the interface");
 	test::@check(!app.take_generated_clip(&landed), "the clip was handed over twice");
 
-	bool listed = false;
-	foreach (library : app.config.libraries.array_view())
+	test::@check(landed.pack == app.authored_pack, "the clip is not the character's own");
+	test::@check(app.doc.animations[bound].file.len == 0, "the binding names a file: %s", app.doc.animations[bound].file);
+	test::@check(app.motion_job.glb.len == 0, "the handed-over bytes were kept");
+	test::@check(!file::exists(DIRECTORY +++ "/config/generating"), "a folder was made for generated clips");
+	test::@check(app.config.libraries.len() == libraries, "a library was added for generated clips");
+
+	// Keyed in the rig's words, so the authored pack plays it as it is.
+	crig::AnimTemplate* clip = app.clip(landed);
+	test::@check(clip != null && clip.keyframes.len > 0, "the clip has no keys");
+	if (clip)
 	{
-		if (library.name == crig::GENERATED_LIBRARY_NAME && library.path.ends_with("lands/out")) listed = true;
+		crig::RigView view = app.open_rig(mem)!!;
+		defer view.free(mem);
+		usz named;
+		foreach (dot : clip.keyframes[0].dots)
+		{
+			foreach (joint : view.names) if (joint == dot.joint_name) { named++; break; }
+		}
+		test::@check(named == clip.keyframes[0].dots.len, "%d of %d keys name a joint of the rig",
+			named, clip.keyframes[0].dots.len);
+
+		// And it poses the rig the way the file's clip did, read through the file.
+		int pack = app.pack_for_file("assets/animations/humanoid.glb");
+		test::@check(pack >= 0, "the source file did not read");
+		crig::AnimRef original = { pack, 0 };
+		app.ensure_clip_imported(original);
+		clip = app.clip(landed);
+		crig::AnimTemplate* from = app.clip(original);
+		float time = clip.keyframes[clip.keyframes.len / 2].time;
+		rig::Pose want = app.evaluated_clip_pose(mem, &view, *from, original, time, false);
+		defer want.free(mem);
+		rig::Pose got = app.evaluated_clip_pose(mem, &view, *clip, landed, time, false);
+		defer got.free(mem);
+		foreach (usz j, turn : want.rotations)
+		{
+			test::@check(1.0f - math::abs(turn.v.dot(got.rotations[j].v)) < 1.0e-4f,
+				"joint %s turns differently at %.2f s", view.names[j], time);
+			test::@check((want.offsets[j] - got.offsets[j]).length() < 1.0e-3f,
+				"joint %s moves differently at %.2f s", view.names[j], time);
+		}
 	}
-	test::@check(listed, "the output folder was not made a library");
 
 	String status = crig::generation_status_json(&app);
 	defer status.free(mem);
@@ -236,7 +281,7 @@ fn void a_failed_generation_says_why_and_binds_nothing() @test
 	defer app.free();
 	sz bound = app.doc.animations.len();
 
-	pretend_job(&app, "a person waves", GENERATION_DIR +++ "/fails/out/never.glb");
+	pretend_job(&app, "a person waves");
 	if (catch err = app.start_motion_generation({ .prompt = "a second one" }))
 	{
 		test::@check(err == crig::MOTION_BUSY, "a second job was refused with %s", err);
@@ -365,7 +410,7 @@ fn void a_guide_clips_keys_become_the_pipelines_poses() @test
 	test::@check((raised - at_rest).length() > 0.2f, "the swung arm did not move the hand: %s", raised - at_rest);
 
 	String json = crig::motion_job_json(&app.config.motion_generator, &&(crig::MotionRequest){ .prompt = "a wave" },
-		"Wave", "/out/wave.glb", 150, poses);
+		"Wave", 150, poses);
 	defer json.free(mem);
 	test::@check(json.contains(`"poses": {`), "the job was not given the poses: %s", json);
 }

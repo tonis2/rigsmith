@@ -162,16 +162,15 @@ alias AssetLibraries = List{AssetLibrary};
  (File › Settings › AI). See `app/generate.c3`, which is the only reader.
 
  Every path is taken as written and none is checked here — a missing file is a
- setting that says so when it is used, not a config that fails to load.
- `output` defaults to `generated` in crig's config directory and has no field
- in Settings. Owned; empty means unset.
+ setting that says so when it is used, not a config that fails to load. There
+ is no output folder: a generated clip goes into the character (see
+ `app/generate.c3`). Owned; empty means unset.
 *>
 struct MotionGenerator
 {
 	String text_model; // Llama-3-Kimodo-*.gguf
 	String tokenizer;  // Kimodo's tokenizer.gguf, when it is not beside the text model
 	String model;      // the motion checkpoint: kimodo-*.gguf, or NVIDIA's release folder (or its model.safetensors)
-	String output;     // the folder generated clips are written to
 }
 alias RecentPaths = List{String};
 
@@ -529,7 +528,7 @@ fn void CrigConfig.adopt_motion_generator(&self, Object* parsed)
 	if (catch found) return;
 	if (!found.is_keyable()) return;
 
-	foreach (key : (String[]){ "text_model", "tokenizer", "model", "output" })
+	foreach (key : (String[]){ "text_model", "tokenizer", "model" })
 	{
 		String? value = found.get_string(key);
 		if (catch value) continue;
@@ -548,7 +547,6 @@ fn String* MotionGenerator.path_of(&self, String key)
 		case "text_model": return &self.text_model;
 		case "tokenizer": return &self.tokenizer;
 		case "model": return &self.model;
-		case "output": return &self.output;
 		default: return null;
 	}
 }
@@ -825,7 +823,7 @@ fn void CrigConfig.free(&self)
 	self.libraries.free();
 	if (self.browse_directory.len > 0) alloc::free(mem, self.browse_directory.ptr);
 	MotionGenerator* g = &self.motion_generator;
-	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model, g.output })
+	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}

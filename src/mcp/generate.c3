@@ -131,9 +131,7 @@ fn String generation_status_json(AppState* app)
 			out.append_string(`,"clip":`);
 			gltf_edit::escape_json_string(&out, clip ? clip.name : job.name);
 			if (clip) out.appendf(`,"duration":%.4g,"keyframes":%d`, clip.duration, clip.keyframes.len);
-			out.append_string(`,"file":`);
-			gltf_edit::escape_json_string(&out, job.glb);
-			out.append_string(`,"note":"Bound to the character, in place (the importer takes travel off the hips). play, measure_clip and plant_feet take it by name."`);
+			out.append_string(`,"note":"Added to the character as its own clip, in place (the importer takes travel off the hips), and written into the model on save. play, measure_clip and plant_feet take it by name."`);
 		}
 		out.append_char('}');
 	}
