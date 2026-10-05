@@ -1779,8 +1779,12 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 {
 	if (self.drag.dot == 0) return false;
 
-	Dot* dot = self.doc.find(self.drag.dot);
-	if (!dot) return false;
+	// A target drag has no joint: it takes the world axes and planes, but has no
+	// bone frame to offer.
+	bool aiming = self.drag.verb == DragVerb.AIM;
+	if (aiming && axis == DragAxis.BONE) return true;
+	Dot* dot = aiming ? null : self.doc.find(self.drag.dot);
+	if (!dot && !aiming) return false;
 
 	DragAxis next = self.drag.axis == axis ? DragAxis.FREE : axis;
 	// A rotation owns one axis, never a plane. Shift+X/Y/Z deliberately keeps
@@ -1821,7 +1825,7 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 	// The retroactive part still holds: the joint is left where it is until then,
 	// and the solve that follows aims at a point on the constraint line through
 	// the grab, so the two free coordinates come back on their own.
-	if (self.drag.verb == DragVerb.POSE) return true;
+	if (self.drag.verb == DragVerb.POSE || self.drag.verb == DragVerb.AIM) return true;
 
 	if (next.is_direction())
 	{
@@ -1860,6 +1864,12 @@ fn bool AppState.cancel_drag(&self)
 {
 	if (self.drag.dot == 0) return false;
 
+	if (self.drag.verb == DragVerb.AIM)
+	{
+		self.cancel_aim_drag();
+		return true;
+	}
+
 	if (self.drag.verb == DragVerb.PLACE)
 	{
 		self.doc.move_dot(self.drag.dot, self.drag.from);
@@ -1894,6 +1904,8 @@ fn bool AppState.cancel_drag(&self)
 	// And everything a whole-body solve moved — the spine, the root's slide.
 	foreach (was : self.gesture_before) self.set_working_pose(was.dot_id, was.rotation, was.offset);
 	self.drop_gesture_before();
+	self.drop_gesture_aim();
+	self.turn_aimed_dot = 0;
 	self.pose_before_count = 0;
 	self.locked_before_count = 0;
 	self.drag = {};
@@ -1914,6 +1926,12 @@ fn bool AppState.cancel_drag(&self)
 fn void AppState.end_drag(&self)
 {
 	if (self.drag.dot == 0) return;
+
+	if (self.drag.verb == DragVerb.AIM)
+	{
+		self.end_aim_drag();
+		return;
+	}
 
 	if (self.drag.verb == DragVerb.PLACE)
 	{
@@ -1953,6 +1971,8 @@ fn void AppState.end_drag(&self)
 		if (now.rotation.v != was.rotation.v || now.offset != was.offset) banked = true;
 	}
 	self.drop_gesture_before();
+	self.drop_gesture_aim();
+	self.turn_aimed_dot = 0;
 
 	// The grabbed joint's own anchor follows it to where it was placed, so the next
 	// unrelated gesture holds it here rather than snapping it back to the old spot.
@@ -1985,6 +2005,10 @@ fn void AppState.end_drag(&self)
 fn Vec3 AppState.drag_delta(&self)
 {
 	if (self.drag.dot == 0) return {};
+	if (self.drag.verb == DragVerb.AIM)
+	{
+		return self.drag.aim < self.posed_aims.len ? self.posed_aims[self.drag.aim].at - self.drag.from : (Vec3){};
+	}
 	Dot* dot = self.doc.find(self.drag.dot);
 	if (!dot) return {};
 	return dot.position - self.drag.from;

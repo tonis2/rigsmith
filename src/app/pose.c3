@@ -35,6 +35,11 @@ fn void AppState.drop_palette(&self)
 
 	if (self.posed_dots.len > 0) alloc::free(mem, self.posed_dots);
 	self.posed_dots = {};
+
+	free_aim_handles(self.posed_aims);
+	self.posed_aims = {};
+	if (self.posed_aim_links.len > 0) alloc::free(mem, self.posed_aim_links);
+	self.posed_aim_links = {};
 }
 
 <*

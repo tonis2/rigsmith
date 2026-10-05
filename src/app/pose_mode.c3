@@ -257,6 +257,104 @@ fn rig::Pose AppState.draft_pose(&self, Allocator allocator, RigView* view)
 }
 
 <*
+ The pose a gesture solves in: `draft_pose` with the editing clip's look-at
+ targets laid over it, as they are on screen, so the IK and the turn work in the
+ frame the user sees rather than the unaimed one (with the chest and neck carrying
+ part of a head turn, the two differ).
+
+ **Grounding.** `refresh_posed` aims after `ground_pose`. The gestures solve on
+ the pose before the floor shift (each one adds the shift back as `ground_shift`),
+ so the aim is computed here on the *grounded* frame, the one on screen, and the
+ floor's translation is then taken out of the offsets again. The rotations are
+ the aimed ones, the offsets the draft's own, which is what the solvers expect.
+ The shift is read once per call; it can differ a little by the end of a move
+ that lifts a planted foot, and the aim is then recomputed from the keyed draft
+ like any other refresh.
+
+ Records the joints the aims turned, their authored rotations and their aimed
+ ones in `gesture_aim`/`gesture_aimed`, replacing the last call's. The write
+ that ends the same call (`write_pose`/`write_body`) hands them to `unaim_pose`.
+ A clip with no aims, or no active draft, costs nothing and records nothing.
+
+ The caller owns the returned arrays.
+*>
+fn rig::Pose AppState.gesture_pose(&self, Allocator allocator, RigView* view)
+{
+	self.drop_gesture_aim();
+	rig::Pose pose = self.draft_pose(allocator, view);
+	if (!self.pose_edit_active) return pose;
+	AnimTemplate* clip = self.clip(self.editing);
+	if (!clip || clip.aims.len == 0) return pose;
+
+	Vec3[] offsets = alloc::new_array(mem, Vec3, pose.offsets.len);
+	defer alloc::free(mem, offsets);
+	foreach (i, o : pose.offsets) offsets[i] = o;
+
+	String[] names = self.names_for(view, self.editing);
+	ground_pose(mem, &view.skeleton, names, clip.ground, &pose, clip.phase_at(self.edit_time));
+	self.apply_clip_aims(view, *clip, self.editing, self.edit_time, &pose, &self.gesture_aim);
+	foreach (i, o : offsets) pose.offsets[i] = o;
+
+	if (self.gesture_aim.joints.len > 0)
+	{
+		self.gesture_aimed = alloc::new_array(mem, Quaternionf, self.gesture_aim.joints.len);
+		foreach (i, joint : self.gesture_aim.joints) self.gesture_aimed[i] = pose.rotations[joint];
+	}
+	return pose;
+}
+
+<*
+ Takes the look-at targets back out of a pose a gesture solved in
+ `gesture_pose`'s aimed frame, before it is written to the draft (which holds
+ authored rotations only).
+
+ An aim turned a joint's authored local rotation `a` into `m = P * a`, where
+ `P = m * a^-1` is the turn it added, expressed in the parent's frame. With `s`
+ the rotation the gesture left the joint with:
+
+   `s == m`   the gesture did not touch it: back to `a`, bit for bit
+   else       `a * m^-1 * s` = `P^-1 * s`: the authored rotation that the same
+              turn `P` carries to exactly `s`
+
+ so laying the aim over what was written reproduces what the user was shown (and
+ where the aim is recomputed, the target still wins the swing). Joints the aims
+ did not touch are left as solved. The record is spent: a second call, as when
+ `write_body` hands over to `write_pose`, does nothing.
+*>
+fn void AppState.unaim_pose(&self, rig::Pose* pose)
+{
+	foreach (i, joint : self.gesture_aim.joints)
+	{
+		if (joint >= pose.rotations.len) continue;
+		Quaternionf was = self.gesture_aim.before[i];
+		Quaternionf aimed = self.gesture_aimed[i];
+		Quaternionf solved = pose.rotations[joint];
+		pose.rotations[joint] = solved.v == aimed.v
+			? was
+			: was.mul(aimed.invert()).mul(solved).normalize();
+	}
+	self.drop_gesture_aim();
+}
+
+fn void AppState.drop_gesture_aim(&self)
+{
+	self.gesture_aim.free(mem);
+	if (self.gesture_aimed.len > 0) alloc::free(mem, self.gesture_aimed);
+	self.gesture_aimed = {};
+}
+
+<*
+ The rotation a turn on the grabbed joint is measured from: the aimed one it
+ began with when the look-at targets steer it, the snapshot's otherwise.
+*>
+fn Quaternionf AppState.turn_was(&self)
+{
+	if (self.pose_before_count == 0) return quaternion::IDENTITY;
+	if (self.turn_aimed_dot != 0 && self.turn_aimed_dot == self.pose_before[0].dot_id) return self.turn_aimed_was;
+	return self.pose_before[0].rotation;
+}
+
+<*
  Rebuilds the palette and posed overlay from the transient animation draft.
 
  **It fills `posed_dots` as well as the palette**, and that carries the whole
@@ -293,6 +391,8 @@ fn void AppState.refresh_posed(&self)
 			String[] names = self.names_for(&view, self.editing);
 			ground_pose(mem, &view.skeleton, names, clip.ground, &pose,
 				clip.phase_at(self.edit_time));
+			// After the floor, as everywhere: the targets never feed back into it.
+			self.apply_clip_aims(&view, *clip, self.editing, self.edit_time, &pose);
 		}
 	}
 
@@ -303,6 +403,10 @@ fn void AppState.refresh_posed(&self)
 	// The overlay before the skin, and unconditionally: a rig with no mesh binds
 	// nothing and still has joints to draw while its timeline draft is edited.
 	self.posed_dots = posed_overlay(mem, &view.skeleton, view.dot_ids, palette);
+	if (AnimTemplate* shown = self.clip(self.editing))
+	{
+		self.posed_aims = self.aim_handles(&view, *shown, self.editing, self.edit_time, palette, &self.posed_aim_links);
+	}
 
 	// A failed bind is not fatal here. The overlay still makes the draft legible
 	// and the draft remains available to save or discard.
@@ -539,8 +643,10 @@ fn bool AppState.begin_pose(&self, bool held = false)
 		return false;
 	}
 
-	rig::Pose pose = self.draft_pose(mem, &view);
+	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
+	// Nothing is written here: the moves bring their own record.
+	defer self.drop_gesture_aim();
 	Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
 	if (catch palette) return false;
 	defer alloc::free(mem, palette);
@@ -607,11 +713,27 @@ fn bool AppState.begin_turn(&self, bool held = false, DragAxis axis = FREE)
 	sz joint = view.joint_of(self.selected);
 	if (joint < 0) return false;
 
-	rig::Pose pose = self.draft_pose(mem, &view);
+	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
+	// Nothing is written here: the moves bring their own record.
+	defer self.drop_gesture_aim();
 	Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
 	if (catch palette) return false;
 	defer alloc::free(mem, palette);
+
+	// A turn on a joint the targets steer: the sweep starts from the aimed
+	// rotation on screen, and the user is told what R can still do there.
+	self.turn_aimed_dot = 0;
+	if (self.gesture_aim.has((usz)joint))
+	{
+		foreach (i, j : self.gesture_aim.joints)
+		{
+			if (j != (usz)joint) continue;
+			self.turn_aimed_dot = self.selected;
+			self.turn_aimed_was = self.gesture_aimed[i];
+		}
+		self.@notice("a look-at target steers this joint - R changes its roll; drag the ring to aim");
+	}
 
 	PoseChain only = { .effector = (usz)joint };
 	self.snapshot_chain(&view, only);
@@ -1369,7 +1491,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 	PoseChain chain = self.pose_chain(&view, self.drag.dot);
 	if (chain.count == 0 && !chain.slides && !chain.carries_root) return 0.0f;
 
-	rig::Pose pose = self.draft_pose(mem, &view);
+	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
 
 	// Pinned joints the grab can move: the whole body is solved at once, so the
@@ -1910,6 +2032,7 @@ fn GroundContacts AppState.gesture_contacts(&self, RigView* view, usz[] contact,
 *>
 fn void AppState.write_body(&self, RigView* view, rig::Pose pose)
 {
+	self.unaim_pose(&pose);
 	for (usz i = 0; i < self.body_joints; i++)
 	{
 		sz j = view.joint_of(self.body_joint_ids[i]);
@@ -1953,7 +2076,7 @@ fn void AppState.turn_joint(&self, Vec3 axis, float angle)
 	sz joint = view.joint_of(self.drag.dot);
 	if (joint < 0) return;
 
-	rig::Pose pose = self.draft_pose(mem, &view);
+	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
 
 	Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
@@ -1966,9 +2089,7 @@ fn void AppState.turn_joint(&self, Vec3 axis, float angle)
 	// part of this gesture.
 	int parent = view.skeleton.parents[(usz)joint];
 	Quaternionf rw_parent = parent >= 0 ? world[(usz)parent] : quaternion::IDENTITY;
-	Quaternionf was = self.pose_before_count > 0
-		? self.pose_before[0].rotation
-		: (Quaternionf)quaternion::IDENTITY;
+	Quaternionf was = self.turn_was();
 
 	Quaternionf turn = quaternion::from_axis_angle{float}(axis.normalize(), angle);
 	Quaternionf swept = rw_parent.invert().mul(turn).mul(rw_parent).mul(was).normalize();
@@ -2006,16 +2127,14 @@ fn void AppState.turn_joint_to(&self, JointRotationAxis axis, float angle)
 	sz joint = view.joint_of(self.drag.dot);
 	if (joint < 0) return;
 
-	rig::Pose pose = self.draft_pose(mem, &view);
+	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
 
 	JointRotationLimits limits = self.doc.rotation_limits_of(self.drag.dot);
 	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
 	if (!frame.usable()) return;
 
-	Quaternionf was = self.pose_before_count > 0
-		? self.pose_before[0].rotation
-		: (Quaternionf)quaternion::IDENTITY;
+	Quaternionf was = self.turn_was();
 	Vec3 angles = joint_angles_from_rotation(frame, was);
 	angles[axis.component()] = angle;
 	Quaternionf requested = constrain_joint_rotation(frame, limits,
@@ -2043,7 +2162,7 @@ fn float? AppState.turn_start_angle(&self, JointRotationAxis axis)
 	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids,
 		self.doc.rotation_limits_of(self.drag.dot));
 	if (!frame.usable()) return NO_TURN~;
-	return joint_angles_from_rotation(frame, self.pose_before[0].rotation)[axis.component()];
+	return joint_angles_from_rotation(frame, self.turn_was())[axis.component()];
 }
 
 <*
@@ -2087,6 +2206,8 @@ fn void AppState.land_turn(
 *>
 fn void AppState.write_pose(&self, RigView* view, rig::Pose pose)
 {
+	// Only authored rotations are ever written; see `unaim_pose`.
+	self.unaim_pose(&pose);
 	for (usz i = 0; i < self.pose_before_count; i++)
 	{
 		uint id = self.pose_before[i].dot_id;

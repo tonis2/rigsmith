@@ -346,6 +346,7 @@ fn usz hud_lines(AppState* app, HudSnapshot shown, char[] buffer, HudLine[] out)
 					: app.drag.axis == DragAxis.BONE
 						? text.@printf("move bone %+.3f", delta.dot(app.drag.lock_direction))
 						: text.@printf("move %+.3f %+.3f %+.3f", delta.x, delta.y, delta.z);
+		if (app.drag.verb == DragVerb.AIM && move.len > 0) move = text.@printf("target %s", move);
 		if (move.len > 0 && count < out.len)
 		{
 			out[count++] = { .text = move, .color = app.drag.axis.color() };

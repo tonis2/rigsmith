@@ -605,7 +605,7 @@ fn String? AppState.motion_guide_json(&self, String guide, uint frames, String s
 	{
 		int frame = (int)math::round(t * MOTION_FPS);
 		if (frame < 0 || frame >= (int)frames) { (*dropped)++; continue; }
-		rig::Pose pose = self.evaluated_clip_pose(mem, &view, *clip, ref, t);
+		rig::Pose pose = self.evaluated_clip_pose(mem, &view, *clip, ref, t, aimed: true);
 		defer pose.free(mem);
 		Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
 		if (catch palette) continue;

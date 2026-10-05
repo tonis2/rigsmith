@@ -639,10 +639,12 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	self.pose_edit_draft = {};
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
-	AnimRef landed = self.land_layered(ref, full_clip);
+	// A moved target lands with the pose, on the base clip.
+	AnimRef landed = self.land_layered(ref, self.with_aim_keys(full_clip, time));
 	self.pose_edit_draft = draft;
 	self.pose_edit_active = active;
 	self.pose_edit_pending = pending;
+	if (landed.valid()) self.drop_aim_draft();
 	if (active) self.refresh_posed();
 	return landed;
 }

@@ -205,9 +205,19 @@ struct AnimSnapshot
 	usz layers;
 	usz keys;
 	usz tracks;
+	// The look-at targets and their keys together: either changing redraws the lanes.
+	usz aims;
+	usz aim_keys;
 	// The last Check, when it is about this clip.
 	bool checked;
 	usz issues;
+}
+
+fn usz anim_aim_key_total(AnimTemplate* clip) @private
+{
+	usz total;
+	if (clip) foreach (&target : clip.aim_targets) total += target.keys.len;
+	return total;
 }
 
 fn AnimSnapshot anim_snapshot(AppState* app) @private
@@ -247,6 +257,8 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.layers = app.clip(app.editing) ? app.clip(app.editing).layers.len : 0,
 		.keys = app.key_clip(app.editing) ? app.key_clip(app.editing).keyframes.len : 0,
 		.tracks = app.timeline_tracks.len,
+		.aims = app.clip(app.editing) ? app.clip(app.editing).aim_targets.len : 0,
+		.aim_keys = anim_aim_key_total(app.clip(app.editing)),
 		.checked = app.anim_check.ran && app.anim_check.ref.same(app.editing),
 		.issues = app.anim_check.issues.len,
 	};
@@ -285,6 +297,8 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.layers != other.layers
 		|| self.keys != other.keys
 		|| self.tracks != other.tracks
+		|| self.aims != other.aims
+		|| self.aim_keys != other.aim_keys
 		|| self.checked != other.checked
 		|| self.issues != other.issues;
 }
@@ -924,18 +938,22 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 	AnimTemplate* shown = app.key_clip(app.editing);
 	AnimLayer* layer = app.keyed_layer_of(app.editing);
 	usz contacts = clip ? contact_lane_count(clip.ground) : 0;
+	// One lane per look-at target, after the contact lanes, in both views.
+	usz aims = clip ? clip.aim_targets.len : 0;
+	usz aim_keys = anim_aim_key_total(clip);
 	if (!app.anim_show_tracks && clip)
 	{
-		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts));
+		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts + aims));
 		self.lanes[0] = { .label = layer ? layer.name : "Poses" };
 		self.contact_rows(clip, 1);
-		self.marks = alloc::new_array(mem, TimelineMark, shown.keyframes.len);
+		self.marks = alloc::new_array(mem, TimelineMark, (sz)(shown.keyframes.len + aim_keys));
 		foreach (usz i, key : shown.keyframes)
 			self.marks[i] = { .lane = 0, .at = key.time, .curve = anim_frame_curve(shown, key),
 				.selected = app.animation_key_selected(app.editing, key.time) };
+		self.aim_rows(app, clip, 1 + contacts, shown.keyframes.len);
 		return;
 	}
-	if (tracks.len == 0) return;
+	if (tracks.len == 0 && aims == 0) return;
 	bool filtering = app.anim_tracks_selected_only;
 	StringList selected_names;
 	selected_names.init(mem);
@@ -952,8 +970,8 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 		if (track.translation_times.len > 0) { lanes++; total += track.translation_times.len; }
 	}
 
-	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts));
-	self.marks = alloc::new_array(mem, TimelineMark, (sz)total);
+	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts + aims));
+	self.marks = alloc::new_array(mem, TimelineMark, (sz)(total + aim_keys));
 	if (clip) self.contact_rows(clip, 0);
 
 	usz lane = contacts;
@@ -991,6 +1009,33 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 			}
 			lane++;
 		}
+	}
+	self.aim_rows(app, clip, lane, write);
+}
+
+<*
+ The clip's look-at lanes from lane `first` on, and their target keys as marks
+ from mark `first_mark` on.
+*>
+fn void AnimSheet.aim_rows(&self, AppState* app, AnimTemplate* clip, usz first, usz first_mark)
+{
+	if (!clip) return;
+	usz lane = first;
+	usz write = first_mark;
+	// The lane's and marks' `joint` carry the target's name.
+	foreach (&target : clip.aim_targets)
+	{
+		if (lane >= self.lanes.len) break;
+		self.lanes[lane] = { .label = target.name, .trailing = "Look at", .dimmed = target.mute,
+			.joint = target.name, .aim = true };
+		foreach (key : target.keys)
+		{
+			if (write >= self.marks.len) break;
+			self.marks[write++] = { .lane = lane, .at = key.time, .joint = target.name, .aim = true,
+				.curve = key.interpolation == HOLD ? HOLD : LINEAR,
+				.selected = app.animation_aim_key_selected(app.editing, target.name, key.time) };
+		}
+		lane++;
 	}
 }
 
@@ -1051,7 +1096,9 @@ fn void AnimSheet.update(&self, Element* elem, float dt) @dynamic
 	Timeline* timeline = elem.children[0].widget_as(Timeline);
 	foreach (&mark : self.marks)
 	{
-		bool selected = mark.joint.len == 0
+		bool selected = mark.aim
+			? app.animation_aim_key_selected(app.editing, mark.joint, mark.at)
+			: mark.joint.len == 0
 			? app.animation_key_selected(app.editing, mark.at)
 			: app.animation_key_selected(app.editing, mark.at)
 				|| app.animation_channel_key_selected(app.editing, mark.at, mark.joint, mark.channel);
@@ -1425,6 +1472,16 @@ fn void anim_mark_pressed(Ui* ui, TimelineMark mark, bool toggle) @private
 	float at = mark.at;
 	if (at < 0.0f) return;
 
+	// A look-at key is the aim's, not a pose key: select it and show where it is.
+	if (mark.aim)
+	{
+		bool held = app.animation_aim_key_selected(app.editing, mark.joint, at);
+		app.select_animation_aim_key(app.editing, mark.joint, at, additive: toggle || held, toggle: toggle);
+		app.anim_key_anchor = at;
+		anim_seek(ui, at);
+		return;
+	}
+
 	// A plain press starts a new selection, except on a key already in the
 	// selection: keeping that set intact is what lets the following drag move it.
 	bool channel = mark.joint.len > 0;
@@ -1457,6 +1514,17 @@ fn void anim_mark_range(Ui* ui, TimelineMark mark) @private
 	AppState* app = ui.inherit(AppState)!!;
 	float at = mark.at;
 	if (at < 0.0f) return;
+	if (mark.aim)
+	{
+		if (app.animation_aim_key_selection_count(app.editing) > 0 && app.anim_key_anchor >= 0.0f)
+		{
+			app.select_animation_aim_keys_between(app.editing, mark.joint, app.anim_key_anchor, at, additive: true);
+			anim_seek(ui, at);
+			return;
+		}
+		anim_mark_pressed(ui, mark, false);
+		return;
+	}
 	if (!app.anim_key_selection_ref.same(app.editing) || app.anim_key_anchor < 0.0f)
 	{
 		anim_mark_pressed(ui, mark, false);
@@ -1490,9 +1558,23 @@ fn void anim_range_selected(Ui* ui, TimelineLane[] lanes, usz first_lane, usz la
 		if (!additive) app.clear_animation_key_selection();
 		for (usz lane = first_lane; lane <= last_lane && lane < lanes.len; lane++)
 		{
-			if (lanes[lane].contact) continue;
+			if (lanes[lane].contact || lanes[lane].aim) continue;
 			app.select_animation_channel_keys_between(app.editing, lanes[lane].joint,
 				lanes[lane].channel, from, to, additive: true);
+		}
+	}
+	// Look-at keys are only picked when no pose key was, as the two never mix.
+	bool poses = app.animation_key_selection_count(app.editing) > 0
+		|| app.animation_channel_key_selection_count(app.editing) > 0;
+	if (!poses)
+	{
+		bool first = !additive;
+		for (usz lane = first_lane; lane <= last_lane && lane < lanes.len; lane++)
+		{
+			if (!lanes[lane].aim) continue;
+			app.select_animation_aim_keys_between(app.editing, lanes[lane].joint, from, to,
+				additive: !first || additive);
+			first = false;
 		}
 	}
 	// So a Ctrl+Shift press after a box drag extends from where the box opened.
@@ -1510,6 +1592,8 @@ fn void anim_range_selected(Ui* ui, TimelineLane[] lanes, usz first_lane, usz la
 fn void anim_mark_dragged(Ui* ui, TimelineMark mark, float to, bool done) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
+	// Retiming a look-at key by dragging is not built; leave it where it is.
+	if (mark.aim) return;
 	if (!anim_allow_navigation(ui, 1, to)) return;
 	app.prepare_timeline_navigation();
 

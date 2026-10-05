@@ -145,28 +145,42 @@ fn void? export_pack_glb(
 		if (name.len == 0) return ANIM_EXPORT_UNNAMED_JOINT~;
 	}
 
-	// This writer keeps the authored keys, and layers are not keys: written raw, a
-	// layered clip would lose them without a word. A clip with any unmuted layer
-	// is baked first (solo ignored), so the file carries the flattened motion.
+	// This writer keeps the authored keys, and layers and aims are not keys:
+	// written raw, such a clip would lose them without a word. A clip with any
+	// unmuted layer or aim is baked first (solo ignored), so the file carries the
+	// flattened motion; the project sidecar keeps the live aims.
 	AnimTemplate[] authored = templates;
 	AnimTemplate[] flattened = {};
+	bool[] made = {};
 	bool layered = false;
-	foreach (&template : authored) if (template.plays_layers(false)) layered = true;
+	foreach (&template : authored) if (template.plays_layers(false) || template.plays_aims()) layered = true;
 	if (layered)
 	{
 		flattened = alloc::new_array(allocator, AnimTemplate, (sz)authored.len);
+		made = alloc::new_array(allocator, bool, (sz)authored.len);
 		foreach (usz i, &template : authored)
 		{
-			flattened[i] = template.plays_layers(false)
-				? clip_flattened(allocator, *template, skeleton, names)
-				: *template;
+			flattened[i] = *template;
+			if (template.plays_layers(false))
+			{
+				flattened[i] = clip_flattened(allocator, *template, skeleton, names);
+				made[i] = true;
+			}
+			if (flattened[i].plays_aims())
+			{
+				AnimTemplate next = clip_aims_flattened(allocator, flattened[i], skeleton, names, constraints);
+				if (made[i]) flattened[i].free(allocator);
+				flattened[i] = next;
+				made[i] = true;
+			}
 		}
 		templates = flattened;
 	}
 	defer if (layered)
 	{
-		foreach (usz i, &template : authored) if (template.plays_layers(false)) flattened[i].free(allocator);
+		foreach (usz i, &template : flattened) if (made[i]) template.free(allocator);
 		alloc::free(allocator, flattened);
+		alloc::free(allocator, made);
 	};
 
 	usz clips = 0;
@@ -479,6 +493,7 @@ fn rig::Pose[] poses_at_times(
 			ground_pose(allocator, skeleton, names, template.ground, &posed[k],
 				template.phase_at(time));
 		}
+		aim_export_pose(allocator, skeleton, names, template, time, constraints, &posed[k]);
 	}
 	return posed;
 }
@@ -522,7 +537,10 @@ fn float[] bake_times(
 	bool bake,
 	bool force_dense = false) @local
 {
-	float[] times = bake_key_times(allocator, template, bake, force_dense);
+	float[] times = bake_key_times(allocator, template, bake, force_dense || template.plays_aims());
+	// A target moves the head between the body's keys, so its key times are
+	// samples too.
+	if (bake) times = aim_sample_times(allocator, &template, times);
 	// A layer adds motion between the base keys — a wave has none of its own —
 	// so a baked clip also samples where the layers need it.
 	if (bake) times = layer_sample_times(allocator, &template, times);
@@ -642,7 +660,26 @@ fn rig::Pose evaluated_export_pose(
 		ground_pose(allocator, skeleton, names, template.ground, &pose,
 			template.phase_at(time));
 	}
+	aim_export_pose(allocator, skeleton, names, template, time, constraints, &pose);
 	return pose;
+}
+
+// The clip's aims laid over an exported pose, after constraints and grounding as
+// in the viewport, held inside the constraint table when there is one.
+fn void aim_export_pose(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	String[] names,
+	AnimTemplate template,
+	float time,
+	ConstraintRig constraints,
+	rig::Pose* pose) @local
+{
+	if (!template.plays_aims()) return;
+	ConstraintRig held = constraints;
+	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
+	aim_pose(allocator, skeleton, names, template.aims, template.aim_targets, time, template.duration, template.loop,
+		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 }
 
 // Whether linear glTF interpolation between the two exported endpoint poses
@@ -807,7 +844,7 @@ fn float[] export_bake_times(
 	// Only the pure-linear seed is safe to thin: an auto or ground seed is
 	// deliberately dense across each span for a curve the floor does not describe,
 	// and its samples are left alone.
-	bool plain_linear = !template.plays_layers(false) && !template.uses_interpolation(AUTO)
+	bool plain_linear = !template.plays_layers(false) && !template.plays_aims() && !template.uses_interpolation(AUTO)
 		&& !template.uses_interpolation(HOLD) && !template.uses_easing()
 		&& !template.ground.solves();
 	if (plain_linear) seed = decimate_below_floor(seed, ANIM_CONSTRAINT_BAKE_MIN_SPAN);

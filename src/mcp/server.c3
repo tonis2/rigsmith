@@ -538,6 +538,31 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	// --- aim tools ---
+	server.add_tool({
+		.name = "get_aims",
+		.description = "A clip's look-at targets and the locks on them: targets are named points (name, mute, keyed positions in model space as a fraction of rig height); locks name a joint, the target it turns toward, its aim axis and how the turn is spread over it and its parents (spread, weights, influence, mute). Targets and locks are laid over the pose when it is shown, played or exported and are never written into the clip's keys. They live in the project sidecar (save_project).",
+		.input_schema = GET_AIMS_SCHEMA,
+		.handler = &tool_get_aims,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "set_aim_target",
+		.description = "Create, key, mute or remove a look-at target, a named point in space joints can lock to (see set_aim). A missing or new name creates a target and needs at, [x,y,z] in model space as a fraction of rig height; the default name is the lowest unused \"Target N\". On an existing target, at keys a new position at time and mute silences it and its locks; remove deletes it and every lock on it. One call is one undo step.",
+		.input_schema = SET_AIM_TARGET_SCHEMA,
+		.handler = &tool_set_aim_target,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "set_aim",
+		.description = "Lock a joint, usually the head or a finger, to a look-at target so it turns toward the target, or retune or remove the lock, without resending the clip. Any number of joints may lock to one target. The turn is spread over the joint and a few parents (head, neck, chest, about 50/30/20) and still obeys the joints' limits, and it is applied live on top of the clip's own keys, so muting or removing it gives the authored motion back exactly. A new lock captures its aim axis from the direction to the target on the clip's pose at time, so locking turns nothing. spread (1 to 4), weights, influence (0 to 1) and mute retune it; remove deletes it. One call is one undo step.",
+		.input_schema = SET_AIM_SCHEMA,
+		.handler = &tool_set_aim,
+		.user_data = app,
+		.hidden = true,
+	});
 	// --- pin tools ---
 	server.add_tool({
 		.name = "get_pins",
@@ -589,6 +614,15 @@ fn String? tool_patch_clip(Object* args, void* user_data, DString* detail) @priv
 
 fn String? tool_set_layer(Object* args, void* user_data, DString* detail) @private
 	=> set_layer_json((AppState*)user_data, args, detail);
+
+fn String? tool_get_aims(Object* args, void* user_data, DString* detail) @private
+	=> get_aims_json((AppState*)user_data, args, detail);
+
+fn String? tool_set_aim_target(Object* args, void* user_data, DString* detail) @private
+	=> set_aim_target_json((AppState*)user_data, args, detail);
+
+fn String? tool_set_aim(Object* args, void* user_data, DString* detail) @private
+	=> set_aim_json((AppState*)user_data, args, detail);
 
 fn String? tool_merge_layers(Object* args, void* user_data, DString* detail) @private
 	=> merge_layers_json((AppState*)user_data, args, detail);

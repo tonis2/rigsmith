@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[47] tool_names @local = {
+String[50] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -448,7 +448,7 @@ String[47] tool_names @local = {
 	"solve_targets", "plant_feet", "patch_clip", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
-	"get_pins", "set_pins", "pose_joint", "scale_model",
+	"get_pins", "set_pins", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and

@@ -39,8 +39,14 @@ struct ContextRow
 *>
 fn ContextRow[] scene_context_rows(AppState* app) @private
 {
-	ContextRow[] rows = alloc::new_array(tmem, ContextRow, 10);
+	ContextRow[] rows = alloc::new_array(tmem, ContextRow, 16);
 	usz n = 0;
+
+	// Opened from a target's ring: the target's own rows, and nothing else.
+	if (app.aim_menu_from_ring && app.aim_target_exists())
+	{
+		return rows[:scene_context_target_rows(app, rows, n)];
+	}
 
 	if (app.selected != 0)
 	{
@@ -60,6 +66,10 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 		{
 			rows[n++] = { .label = "Rename…",
 				.on_select = &scene_context_rename, .id = "viewport-context-rename" };
+		}
+		if (app.animation_pose_ready())
+		{
+			n = scene_context_aim_rows(app, rows, n, true);
 		}
 		rows[n++] = { .label = many ? "Mirror joints to other side" : "Mirror joint to other side",
 			.separator_before = true, .on_select = &viewport_context_mirror, .id = "viewport-context-mirror" };
@@ -114,7 +124,85 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 					.on_select = &scene_context_select_joints, .id = "viewport-context-select-joints" };
 			}
 	}
+	if (app.animation_pose_ready() && app.scene_selection != SKELETON && app.scene_selection != MODEL)
+	{
+		n = scene_context_aim_rows(app, rows, n, false);
+	}
 	return rows[:n];
+}
+
+<*
+ The target the "Lock to" row points at: the selected one, or the only one.
+ Borrowed from the editing clip; empty when there is no unambiguous target.
+*>
+fn String AppState.aim_lock_choice(&self)
+{
+	AnimTemplate* clip = self.clip(self.editing);
+	if (!clip) return "";
+	if (self.aim_target_exists()) return self.aim_target_selected;
+	if (clip.aim_targets.len == 1) return clip.aim_targets[0].name;
+	return "";
+}
+
+<*
+ Whether the selected target is still a target of the editing clip. It goes
+ stale on undo and clip switches, so every use checks.
+*>
+fn bool AppState.aim_target_exists(&self)
+{
+	AnimTemplate* clip = self.clip(self.editing);
+	if (!clip || self.aim_target_selected.len == 0) return false;
+	return aim_target_index_of(clip.aim_targets, self.aim_target_selected) >= 0;
+}
+
+// Whether any selected joint is locked to a look-at target.
+fn bool AppState.selection_has_aim(&self)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	foreach (dot : self.selected_aim_dots(tmem, &view))
+	{
+		if (self.aim_index(dot) >= 0) return true;
+	}
+	return false;
+}
+
+fn usz scene_context_aim_rows(AppState* app, ContextRow[] rows, usz n, bool joints) @private
+{
+	rows[n++] = { .label = "Add look-at target", .separator_before = joints || n > 0,
+		.on_select = &scene_context_add_aim, .id = "viewport-context-add-aim" };
+	if (!joints) return n;
+	String choice = app.aim_lock_choice();
+	if (choice.len > 0)
+	{
+		rows[n++] = { .label = string::tformat("Lock to %s", choice),
+			.on_select = &scene_context_lock_aim, .id = "viewport-context-lock-aim" };
+	}
+	if (app.selection_has_aim())
+	{
+		rows[n++] = { .label = "Unlock from look-at",
+			.on_select = &scene_context_unlock_aim, .id = "viewport-context-unlock-aim" };
+	}
+	return n;
+}
+
+fn usz scene_context_target_rows(AppState* app, ContextRow[] rows, usz n) @private
+{
+	AnimTemplate* clip = app.clip(app.editing);
+	sz at = aim_target_index_of(clip.aim_targets, app.aim_target_selected);
+	bool muted = at >= 0 && clip.aim_targets[(usz)at].mute;
+	if (app.selected != 0 && app.animation_pose_ready())
+	{
+		rows[n++] = { .label = "Lock selected joints",
+			.on_select = &scene_context_lock_aim, .id = "viewport-context-lock-aim" };
+	}
+	rows[n++] = { .label = muted ? "Unmute target" : "Mute target",
+		.on_select = &scene_context_mute_target, .id = "viewport-context-mute-target" };
+	rows[n++] = { .label = "Delete target", .separator_before = n > 0,
+		.on_select = &scene_context_delete_target, .id = "viewport-context-delete-target" };
+	return n;
 }
 
 <*
@@ -180,6 +268,52 @@ fn void scene_context_rotate_by(Ui* ui)
 {
 	close_scene_context(ui);
 	open_skeleton_rotation_dialog(ui);
+}
+
+fn void scene_context_add_aim(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.add_aim_target();
+	app.refresh_ui();
+}
+
+fn void scene_context_lock_aim(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	String target = app.aim_lock_choice();
+	if (target.len > 0) (void)app.lock_selection_to(target);
+	app.refresh_ui();
+}
+
+fn void scene_context_unlock_aim(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.unlock_selection();
+	app.refresh_ui();
+}
+
+fn void scene_context_mute_target(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	AnimTemplate* clip = app.clip(app.editing);
+	if (clip && app.aim_target_exists())
+	{
+		sz at = aim_target_index_of(clip.aim_targets, app.aim_target_selected);
+		(void)app.set_target_muted(app.aim_target_selected, !clip.aim_targets[(usz)at].mute);
+	}
+	app.refresh_ui();
+}
+
+fn void scene_context_delete_target(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.aim_target_exists()) (void)app.remove_aim_target(app.aim_target_selected);
+	app.refresh_ui();
 }
 
 fn void scene_context_rename(Ui* ui)

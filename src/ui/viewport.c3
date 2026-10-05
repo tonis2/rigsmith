@@ -94,6 +94,12 @@ const float TARGET_RADIUS = DOT_RADIUS;
 const float TARGET_WIDTH = 1.5;
 const float TARGET_LINE_WIDTH = 1.0;
 
+// A look-at target's handle: a ring a little bigger than a dot with a triangle
+// inside it, on a dashed line back to the joint that looks.
+const float AIM_RADIUS = DOT_RADIUS + 3.0;
+const float AIM_WIDTH = 1.5;
+const float AIM_MUTED_DIM = 0.4;
+
 // The ring on a contact that stopped a turn: a size up from a dot, so it
 // reads as a place on the skin rather than as another joint.
 const float CONTACT_RADIUS = DOT_RADIUS * 1.6;
@@ -113,6 +119,7 @@ struct Viewport (Widget)
 	bool orbiting;
 	bool panning;
 	bool maybe_place; // a left press that has not yet travelled far enough to be a drag
+	usz maybe_drag_aim; // 1 + the handle index of the target ring pressed; a drag past CLICK_SLOP moves the target
 	uint maybe_drag_dot; // selected on press; becomes a pose (or Alt rest) drag past CLICK_SLOP
 	bool maybe_rest_drag; // pressed with the Move tool: the drag moves the rest position, no Alt needed
 	Vec2 press_at;
@@ -217,6 +224,7 @@ fn void Viewport.on_hover(&self, Element* elem, bool entered) @dynamic
 {
 	if (entered) return;
 	AppState* hovered = elem.inherit(AppState)!!;
+	hovered.aim_ring_hover = false;
 	if (hovered.area_hover_island >= 0)
 	{
 		hovered.hover_area_island(-1);
@@ -512,6 +520,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	// crosses and less than the dot it is about.
 	self.paint_move_guides(elem, painter, view_projection);
 	self.paint_plan_target(elem, painter, view_projection);
+	self.paint_aim_targets(elem, painter, view_projection);
 	self.paint_contact(elem, painter, view_projection);
 
 	foreach (dot : doc.dots.array_view())
@@ -736,6 +745,22 @@ fn void Viewport.probe_island(&self, Element* elem, AppState* app, Vec2 pixel)
 }
 
 <*
+ A dashed line between two pixels, the dash and the gap the chain preview draws.
+*>
+fn void paint_dashed(Painter* painter, Vec2 from, Vec2 to, float width, Color ink)
+{
+	Vec2 span = to - from;
+	float length = span.length();
+	if (length <= 0.5f) return;
+	Vec2 dir = span / length;
+	for (float t = 0.0f; t < length; t += CHAIN_DASH + CHAIN_GAP)
+	{
+		float end = math::min(t + CHAIN_DASH, length);
+		painter.line(from + dir * t, from + dir * end, width, ink);
+	}
+}
+
+<*
  The dashed bone from the selected joint to where a click would place the next
  one, while auto-connect would bond them.
 *>
@@ -751,18 +776,8 @@ fn void Viewport.paint_chain_preview(&self, Element* elem, Painter* painter, Mat
 	if (catch from) return;
 	if (catch to) return;
 
-	Vec2 span = to - from;
-	float length = span.length();
 	Color ink = BONE.dim(0.9f);
-	if (length > 0.5f)
-	{
-		Vec2 dir = span / length;
-		for (float t = 0.0f; t < length; t += CHAIN_DASH + CHAIN_GAP)
-		{
-			float end = math::min(t + CHAIN_DASH, length);
-			painter.line(from + dir * t, from + dir * end, CHAIN_WIDTH, ink);
-		}
-	}
+	paint_dashed(painter, from, to, CHAIN_WIDTH, ink);
 	painter.circle(to, DOT_RADIUS * 0.65f, { .border_width = DOT_BORDER, .border_color = ink });
 }
 
@@ -985,6 +1000,63 @@ fn void Viewport.paint_plan_target(&self, Element* elem, Painter* painter, Matri
 }
 
 <*
+ Whether the look-at handles are on screen: with the rig, and not while the rig
+ itself is being edited, where nothing is posed and a target means nothing.
+*>
+fn bool aim_handles_shown(AppState* app)
+{
+	return app.show_rig && app.stage != JOINTS_STAGE && app.posed_aims.len > 0;
+}
+
+<*
+ Each look-at target: a dashed line from the joint that looks, a ring at the
+ target and a triangle in it. Lit while its joint is selected, dim while muted.
+ Drawn under the dots like the plan's target, and not clickable by anything but
+ `pick_aim`.
+*>
+fn void Viewport.paint_aim_targets(&self, Element* elem, Painter* painter, Matrix4f view_projection)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	if (!aim_handles_shown(app)) return;
+
+	foreach (usz i, handle : app.posed_aims)
+	{
+		Vec2? to = project(view_projection, handle.at, elem.size);
+		if (catch to) continue;
+
+		bool chosen = app.aim_target_selected == handle.target;
+		bool lit = chosen || (app.drag.verb == DragVerb.AIM && app.drag.aim == i);
+		Color ring = lit ? AIM_SELECTED : AIM_RING;
+		Color line = lit ? AIM_SELECTED.dim(0.6f) : AIM_LINE;
+		if (handle.muted)
+		{
+			ring = ring.dim(AIM_MUTED_DIM);
+			line = line.dim(AIM_MUTED_DIM);
+		}
+
+		foreach (link : app.posed_aim_links)
+		{
+			if (link.handle != i) continue;
+			Color dashed = link.muted && !handle.muted ? line.dim(AIM_MUTED_DIM) : line;
+			if (try Vec2 from = project(view_projection, link.joint_at, elem.size))
+			{
+				paint_dashed(painter, from, to, TARGET_LINE_WIDTH, dashed);
+			}
+		}
+		painter.circle(to, AIM_RADIUS, { .border_width = AIM_WIDTH, .border_color = ring });
+
+		// The triangle, pointing up, a little under the middle so it reads as centred.
+		float r = AIM_RADIUS * 0.5f;
+		Vec2 top = { to.x, to.y - r };
+		Vec2 left = { to.x - r * 0.9f, to.y + r * 0.6f };
+		Vec2 right = { to.x + r * 0.9f, to.y + r * 0.6f };
+		painter.line(top, left, AIM_WIDTH, ring);
+		painter.line(left, right, AIM_WIDTH, ring);
+		painter.line(right, top, AIM_WIDTH, ring);
+	}
+}
+
+<*
  Where the mesh stopped a turn or a pull, when the Advanced dialog asked to
  see it: a ring on each side of the contact and the gap between them, for
  as long as the pose it was found against is the one on screen — through
@@ -1035,13 +1107,20 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 	DragState drag = app.drag;
 	if (drag.dot == 0) return;
 
-	Dot* dot = app.doc.find(drag.dot);
-	if (!dot) return;
+	Dot* dot = drag.verb == DragVerb.AIM ? null : app.doc.find(drag.dot);
+	if (!dot && drag.verb != DragVerb.AIM) return;
 
 	// Where the thing being dragged is *now*. For a rest move that is the dot's
 	// own position; for a pose it is wherever the solve has carried the joint,
 	// which is what `dot_position` answers and what is drawn on screen.
-	Vec3 at = drag.verb == DragVerb.PLACE ? dot.position : app.dot_position(*dot);
+	Vec3 at = drag.from;
+	if (dot) at = drag.verb == DragVerb.PLACE ? dot.position : app.dot_position(*dot);
+	// A target drag moves the target, not the joint: the ghost trails from where
+	// the target was grabbed to where it is now.
+	if (drag.verb == DragVerb.AIM)
+	{
+		at = drag.aim < app.posed_aims.len ? app.posed_aims[drag.aim].at : drag.from;
+	}
 
 	// A turn reads the three keys as the axis it spins about rather than a line
 	// to travel along, so there is no constraint line to draw — the guide for it
@@ -1208,6 +1287,20 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					if (app.drag.dot != 0 && !app.drag.held)
 					{
 						app.end_drag();
+						app.refresh_ui();
+						elem.request_paint();
+						return true;
+					}
+
+					// A look-at target's handle is over the joints: its ring can sit on
+					// one, and the ring is what was aimed at.
+					sz aimed = (app.sketching || app.brushing || app.lassoing || app.areaing || input.shift_down())
+						? -1 : self.pick_aim(elem, event.pos);
+					if (aimed >= 0)
+					{
+						app.select_aim_target(app.posed_aims[(usz)aimed].target);
+						self.maybe_drag_aim = (usz)aimed + 1;
+						self.press_at = event.pos;
 						app.refresh_ui();
 						elem.request_paint();
 						return true;
@@ -1406,6 +1499,16 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					// is selected first, so right-clicking a joint acts on it; a press
 					// inside an existing multi-selection leaves the group whole, so the
 					// menu can mirror or delete all of it at once.
+					sz aimed_here = self.pick_aim(elem, event.pos);
+					if (aimed_here >= 0)
+					{
+						// A ring: select the target and open its rows.
+						app.select_aim_target(app.posed_aims[(usz)aimed_here].target);
+						app.refresh_ui();
+						elem.request_paint();
+						open_viewport_context(elem.ui, elem.absolute + event.pos, true);
+						return true;
+					}
 					uint picked = self.pick_dot(elem, event.pos);
 					if (picked == 0) return false;
 					if (!app.is_selected(picked))
@@ -1519,6 +1622,23 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				}
 			}
 
+			if (self.maybe_drag_aim != 0)
+			{
+				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
+				usz handle = self.maybe_drag_aim - 1;
+				self.maybe_drag_aim = 0;
+				if (app.begin_aim_drag(handle, true))
+				{
+					// The press was on the ring, not at its centre: the target moves by
+					// what the pointer moves from here, rather than jumping to it.
+					if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
+				}
+				if (app.drag.dot != 0) self.drag_dot(elem, event.pos);
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
 			if (self.maybe_drag_dot != 0)
 			{
 				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
@@ -1595,6 +1715,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			{
 				self.probe_chain(elem, app, event.pos);
 				self.probe_island(elem, app, event.pos);
+				app.aim_ring_hover = self.pick_aim(elem, event.pos) >= 0;
 				return false;
 			}
 
@@ -1667,6 +1788,13 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						self.area_painting = false;
 						app.drop_area_base();
 						app.refresh_ui();
+					}
+					else if (self.maybe_drag_aim != 0)
+					{
+						// A click on a handle: it selected the target on the press, and that is all.
+						self.maybe_drag_aim = 0;
+						app.refresh_ui();
+						elem.request_paint();
 					}
 					else if (self.maybe_drag_dot != 0)
 					{
@@ -1976,6 +2104,38 @@ fn uint Viewport.pick_dot(&self, Element* elem, Vec2 pixel)
 }
 
 <*
+ The look-at handle under a pixel: the nearest ring within the grab radius.
+ Asked before `pick_dot`, since a ring can sit over a joint and is what the
+ pointer is after. Hidden handles answer nothing, as hidden dots do.
+
+ @param pixel : `Viewport-local pixels.`
+ @return `The handle index in posed_aims, or -1.`
+*>
+fn sz Viewport.pick_aim(&self, Element* elem, Vec2 pixel)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	if (!aim_handles_shown(app)) return -1;
+
+	OrbitCamera* camera = self.view_camera(elem);
+	Matrix4f view_projection = app.model_view_projection(camera, elem.size.x / elem.size.y);
+
+	sz best = -1;
+	float best_distance = PICK_RADIUS;
+	foreach (usz i, handle : app.posed_aims)
+	{
+		Vec2? at = project(view_projection, handle.at, elem.size);
+		if (catch at) continue;
+		float distance = (at - pixel).length();
+		if (distance <= best_distance)
+		{
+			best_distance = distance;
+			best = (sz)i;
+		}
+	}
+	return best;
+}
+
+<*
  Where the model is under a pixel.
 
  @param pixel : `Viewport-local pixels.`
@@ -2042,8 +2202,9 @@ fn void Viewport.drag_dot(&self, Element* elem, Vec2 pixel)
 {
 	AppState* app = elem.inherit(AppState)!!;
 
-	Dot* dot = app.doc.find(app.drag.dot);
-	if (!dot)
+	// A target drag has no dot; everything else needs the one it moves.
+	Dot* dot = app.drag.verb == DragVerb.AIM ? null : app.doc.find(app.drag.dot);
+	if (!dot && app.drag.verb != DragVerb.AIM)
 	{
 		app.drag = {};
 		app.drag_mates.clear();
@@ -2141,6 +2302,12 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 	// joint holds still until the view or the lock changes.
 	if (catch target) return;
 
+	if (app.drag.verb == DragVerb.AIM)
+	{
+		app.aim_target_toward(target - app.drag.grab);
+		elem.request_paint();
+		return;
+	}
 	app.pose_toward(target - app.drag.grab);
 	elem.request_paint();
 }

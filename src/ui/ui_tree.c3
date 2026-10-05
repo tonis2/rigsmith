@@ -456,12 +456,16 @@ const String VIEWPORT_CONTEXT_ID = "viewport-context";
  The caller has already made sure something is selected — the menu acts on the
  selection, and an empty one has nothing to offer.
 *>
-fn void open_viewport_context(Ui* ui, Vec2 at)
+fn void open_viewport_context(Ui* ui, Vec2 at, bool from_ring = false)
 {
+	AppState* app = ui.inherit(AppState)!!;
+	app.aim_menu_from_ring = from_ring;
 	Element* elem = ui.find_id(VIEWPORT_CONTEXT_ID)!!;
 	Dialog* menu = elem.widget_as(Dialog);
 	menu.at = at;
 	menu.placed = true;
+	// Closed first so a menu already up is rebuilt from the selection it now has.
+	menu.set_open(elem, false);
 	menu.set_open(elem, true);
 }
 

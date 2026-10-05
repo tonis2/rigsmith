@@ -75,6 +75,8 @@ fn AnimTemplate mirror_template(
 		.blend = template.blend,
 		.ground = mirror_ground(allocator, template.ground, phase),
 		.layers = layers_mirrored(allocator, template.layers),
+		.aims = aims_mirrored(allocator, template.aims),
+		.aim_targets = aim_targets_mirrored(allocator, template.aim_targets),
 		.owned = true,
 	};
 
@@ -157,7 +159,7 @@ fn AnimLayer[] layers_mirrored(Allocator allocator, AnimLayer[] source)
 
 // The twin of a joint name, or the name itself when it has none. `name` is the
 // layer's own copy, so it is freed when replaced.
-fn String twin_or_same(Allocator allocator, String name) @local
+fn String twin_or_same(Allocator allocator, String name)
 {
 	if (name.len == 0) return name;
 	String twin = mirror_name(allocator, name);

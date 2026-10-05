@@ -219,6 +219,8 @@ fn AnimTemplate clip_with_frames(Allocator allocator, AnimTemplate source, AnimK
 		.blend = source.blend,
 		.ground = ground_copy(allocator, source.ground),
 		.layers = layers_copy(allocator, source.layers),
+		.aims = aims_copy(allocator, source.aims),
+		.aim_targets = aim_targets_copy(allocator, source.aim_targets),
 		.owned = true,
 	};
 }
@@ -354,6 +356,8 @@ fn AnimTemplate clip_retimed(Allocator allocator, AnimTemplate source, float dur
 	// Layers keep their place in the cycle: their times scale with the keys.
 	free_layers(allocator, out.layers);
 	out.layers = layers_copy(allocator, source.layers, scale);
+	free_aim_targets(allocator, out.aim_targets);
+	out.aim_targets = aim_targets_copy(allocator, source.aim_targets, scale);
 	foreach (usz i, frame : out.keyframes)
 	{
 		out.keyframes[i].time = frame.time * scale;
@@ -427,6 +431,8 @@ fn AnimTemplate clip_cropped(Allocator allocator, AnimTemplate source, float sta
 		.blend = source.blend,
 		.ground = ground_cropped(allocator, source.ground, source.duration, start, end),
 		.layers = layers_copy(allocator, source.layers, 1.0f, -start),
+		.aims = aims_copy(allocator, source.aims),
+		.aim_targets = aim_targets_copy(allocator, source.aim_targets, 1.0f, -start),
 		.owned = true,
 	};
 	out = edge_restated(allocator, out, source, start, 0.0f);
@@ -514,6 +520,8 @@ fn AnimTemplate clip_range_cut(Allocator allocator, AnimTemplate source, float s
 		.blend = source.blend,
 		.ground = ground_cut(allocator, source.ground, source.duration, start, end),
 		.layers = layers_copy(allocator, source.layers),
+		.aims = aims_copy(allocator, source.aims),
+		.aim_targets = aim_targets_copy(allocator, source.aim_targets),
 		.owned = true,
 	};
 	if (has_end)

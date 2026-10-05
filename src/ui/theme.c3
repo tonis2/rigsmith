@@ -108,6 +108,13 @@ const Color LABEL_DIM   = { 0.78, 0.82, 0.90, 0.85 };
 // — one marks where the dot was picked up, the other where it is wanted.
 const Color TARGET_RING = { 0.98, 0.78, 0.25, 0.85 };
 const Color TARGET_LINE = { 0.98, 0.78, 0.25, 0.45 };
+// A look-at target: the ring and its triangle, the dashed line back to the joint
+// that looks, and the same two when that joint is selected. Cool where the plan's
+// target is amber, because a target the clip aims at is a different kind of
+// thing from a place the rig is wanted.
+const Color AIM_RING = { 0.45, 0.80, 0.98, 0.85 };
+const Color AIM_LINE = { 0.45, 0.80, 0.98, 0.50 };
+const Color AIM_SELECTED = { 1.00, 0.88, 0.40, 1.00 };
 // Where the mesh stopped a turn. Red rather than the target's amber: a stop,
 // not a suggestion.
 const Color CONTACT_RING = { 0.95, 0.35, 0.30, 0.90 };

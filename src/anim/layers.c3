@@ -267,11 +267,6 @@ fn float AnimLayer.gain_at(&self, float time, float duration)
 	return gain;
 }
 
-fn Quaternionf slerp_short(Quaternionf a, Quaternionf b, float t) @local
-{
-	return (a.v.dot(b.v) < 0.0f ? a.slerp(-b, t) : a.slerp(b, t)).normalize();
-}
-
 // Whole-number cycles on a looping clip, so the generator closes on itself; at
 // least one, because rounding a small request to none would silently still it.
 fn float AnimTemplate.loop_cycles(&self, float cycles)

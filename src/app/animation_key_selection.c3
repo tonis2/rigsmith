@@ -10,6 +10,23 @@ struct AnimChannelKey
 	AnimChannels channel; // ROTATION or TRANSLATION, never BOTH
 }
 
+<*
+ One look-at target key picked in the sheet: the aim's target (owned, as the clip
+ spells it) and where along the clip. Never mixed with pose keys; see
+ `select_animation_aim_key`.
+*>
+struct AimKeyRef
+{
+	String target; // owned
+	float time;
+}
+
+fn void AppState.free_animation_aim_selection(&self)
+{
+	foreach (&selected : self.anim_aim_key_selection) selected.target.free(mem);
+	self.anim_aim_key_selection.free();
+}
+
 fn void AppState.free_animation_channel_selection(&self)
 {
 	foreach (&selected : self.anim_channel_key_selection) selected.joint.free(mem);
@@ -22,6 +39,7 @@ fn void AppState.clear_animation_key_selection(&self)
 {
 	self.anim_key_selection.free();
 	self.free_animation_channel_selection();
+	self.free_animation_aim_selection();
 	self.anim_key_selection_ref = NO_ANIM;
 	self.anim_key_anchor = -1.0f;
 }
@@ -35,6 +53,8 @@ fn void AppState.restart_key_selection(&self, AnimRef ref)
 	self.anim_key_selection.clear();
 	foreach (&selected : self.anim_channel_key_selection) selected.joint.free(mem);
 	self.anim_channel_key_selection.clear();
+	foreach (&selected : self.anim_aim_key_selection) selected.target.free(mem);
+	self.anim_aim_key_selection.clear();
 	self.anim_key_selection_ref = ref;
 }
 
@@ -55,10 +75,118 @@ fn void AppState.select_channel(&self, float time, String joint, AnimChannels ch
 // An empty selection is scoped to nothing.
 fn void AppState.settle_key_selection(&self)
 {
-	if (self.anim_key_selection.len() == 0 && self.anim_channel_key_selection.len() == 0)
+	if (self.anim_key_selection.len() == 0 && self.anim_channel_key_selection.len() == 0
+		&& self.anim_aim_key_selection.len() == 0)
 	{
 		self.anim_key_selection_ref = NO_ANIM;
 	}
+}
+
+fn bool AppState.animation_aim_key_selected(&self, AnimRef ref, String target, float time)
+{
+	if (!self.anim_key_selection_ref.same(ref)) return false;
+	foreach (selected : self.anim_aim_key_selection)
+	{
+		if (selected.target == target && math::abs(selected.time - time) < ANIM_SAME_TIME) return true;
+	}
+	return false;
+}
+
+fn usz AppState.animation_aim_key_selection_count(&self, AnimRef ref)
+{
+	return self.anim_key_selection_ref.same(ref) ? (usz)self.anim_aim_key_selection.len() : 0;
+}
+
+// `target` is copied.
+fn void AppState.select_aim(&self, String target, float time)
+{
+	if (!self.anim_aim_key_selection.is_initialized()) self.anim_aim_key_selection.init(mem);
+	self.anim_aim_key_selection.push({ .target = target.copy(mem), .time = time });
+}
+
+<*
+ Pick the target key of `target` near `time`. A selection holds look-at keys or
+ pose keys, never both, so anything else picked is let go unless this adds to a
+ selection of target keys already.
+*>
+fn bool AppState.select_animation_aim_key(&self, AnimRef ref, String target, float time,
+	bool additive = false, bool toggle = false)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip) return false;
+	sz at = aim_target_index_of(clip.aim_targets, target);
+	if (at < 0) return false;
+	sz found = -1;
+	foreach (usz i, key : clip.aim_targets[(usz)at].keys)
+	{
+		if (math::abs(key.time - time) < ANIM_SAME_TIME) { found = (sz)i; break; }
+	}
+	if (found < 0) return false;
+	time = clip.aim_targets[(usz)at].keys[(usz)found].time;
+
+	bool aim_only = self.anim_key_selection_ref.same(ref) && self.anim_key_selection.len() == 0
+		&& self.anim_channel_key_selection.len() == 0;
+	bool already = self.animation_aim_key_selected(ref, target, time);
+	if (toggle && already)
+	{
+		for (sz i = self.anim_aim_key_selection.len() - 1; i >= 0; i--)
+		{
+			AimKeyRef* selected = &self.anim_aim_key_selection[i];
+			if (selected.target != target || math::abs(selected.time - time) >= ANIM_SAME_TIME) continue;
+			selected.target.free(mem);
+			self.anim_aim_key_selection.remove_at(i);
+		}
+		self.settle_key_selection();
+		return true;
+	}
+	if (already && additive && aim_only) return true;
+	if (!(additive && aim_only)) self.restart_key_selection(ref);
+	self.select_aim(target, time);
+	return true;
+}
+
+fn usz AppState.select_animation_aim_keys_between(&self, AnimRef ref, String target,
+	float first, float last, bool additive = false)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip) return 0;
+	sz at = aim_target_index_of(clip.aim_targets, target);
+	float low = math::min(first, last);
+	float high = math::max(first, last);
+	bool keep = additive && self.anim_key_selection_ref.same(ref)
+		&& self.anim_key_selection.len() == 0 && self.anim_channel_key_selection.len() == 0;
+	if (!keep) self.restart_key_selection(ref);
+	if (at >= 0) foreach (key : clip.aim_targets[(usz)at].keys)
+	{
+		if (key.time >= low && key.time <= high
+			&& !self.animation_aim_key_selected(ref, target, key.time)) self.select_aim(target, key.time);
+	}
+	self.settle_key_selection();
+	return (usz)self.anim_aim_key_selection.len();
+}
+
+<*
+ Delete the selected look-at keys as one clip change. An aim left with no keys
+ goes with them.
+*>
+fn bool AppState.delete_selected_aim_keys(&self, AnimRef ref)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip || !self.anim_key_selection_ref.same(ref) || self.anim_aim_key_selection.len() == 0
+		|| self.pose_edit_pending) return false;
+	AnimTemplate built = clip_copy(mem, *clip);
+	foreach (selected : self.anim_aim_key_selection)
+	{
+		float[1] one = { selected.time };
+		AnimTemplate next = clip_without_target_keys(mem, built, selected.target, one[..]);
+		built.free(mem);
+		built = next;
+	}
+	AnimRef landed = self.land_clip(ref, built);
+	if (!landed.valid()) return false;
+	self.clear_animation_key_selection();
+	self.editing = landed;
+	return true;
 }
 
 fn bool AppState.animation_key_selected(&self, AnimRef ref, float time)
@@ -426,6 +554,8 @@ fn bool AppState.retime_selected_animation_channels(&self, AnimRef ref, KeyRetim
 
 fn bool AppState.delete_selected_animation_keys(&self, AnimRef ref)
 {
+	// The sheet never holds look-at keys beside pose keys.
+	if (self.animation_aim_key_selection_count(ref) > 0) return self.delete_selected_aim_keys(ref);
 	AnimTemplate* clip = self.key_clip(ref);
 	if (!clip || !self.anim_key_selection_ref.same(ref)
 		|| (self.anim_key_selection.len() == 0 && self.anim_channel_key_selection.len() == 0)

@@ -400,13 +400,18 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 	{
 		if (!parse_layers(app, layers, clip.duration, &clip.layers, detail)) return CLIP_INVALID~;
 	}
-	else
+	// The look-at targets are not stated here (`set_aim` owns them), so rewriting
+	// the keys of a clip keeps the ones the clip of this name already has.
+	AnimPack* authored = app.authored();
+	if (authored) foreach (held : authored.clips)
 	{
-		AnimPack* authored = app.authored();
-		if (authored) foreach (held : authored.clips)
-		{
-			if (held.name == name) { clip.layers = layers_copy(mem, held.layers); break; }
-		}
+		if (held.name != name) continue;
+		if (layers == null) clip.layers = layers_copy(mem, held.layers);
+		free_aims(mem, clip.aims);
+		clip.aims = aims_copy(mem, held.aims);
+		free_aim_targets(mem, clip.aim_targets);
+		clip.aim_targets = aim_targets_copy(mem, held.aim_targets);
+		break;
 	}
 
 	complete = true;
@@ -897,6 +902,11 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 	{
 		out.append_string(`,"layers":`);
 		append_layers_json(&out, clip.layers);
+	}
+	if (clip.aims.len > 0 || clip.aim_targets.len > 0)
+	{
+		out.append_string(`,"aims":`);
+		append_aims_json(&out, clip.aims, clip.aim_targets);
 	}
 	out.append_char('}');
 

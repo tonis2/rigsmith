@@ -54,6 +54,8 @@ struct TimelineLane
 	uint depth;
 	// A contact lane: thinner, holding bars rather than keys.
 	bool contact;
+	// A look-at lane: `joint` is the aim's joint, its marks are target keys.
+	bool aim;
 }
 
 <*
@@ -78,6 +80,9 @@ struct TimelineMark
 	// so a frozen channel reads as authored rather than as a curve that failed
 	// to move. INHERIT is a mix, drawn as a diamond.
 	AnimInterpolation curve;
+	// A look-at target key on `joint`'s aim; not a pose key, so pressing,
+	// selecting and deleting it go to the aim and dragging it does nothing.
+	bool aim;
 }
 
 <*

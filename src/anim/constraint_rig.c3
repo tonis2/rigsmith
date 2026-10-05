@@ -227,26 +227,61 @@ fn void constrain_pose_to_constraint_rig(
 
 	for (usz joint = 0; joint < count; joint++)
 	{
-		JointConstraint carried = constraints.joints[joint];
-		if (carried.status != EXACT) continue;
-
-		int primary = carried.frame_intent.uses_primary_child()
-			? carried.primary_child
-			: -1;
-		JointLimitFrame frame = joint_limit_frame_by_index(skeleton, joint, primary);
-		if (!frame.usable()) continue;
-		if (carried.frame_intent.has_adjustment())
-		{
-			frame.rotation = frame.rotation.mul(carried.frame_adjustment).normalize();
-		}
-
-		JointRotationLimits limits = {
-			.constrained = true,
-			.axes = carried.axes,
-		};
-		pose.rotations[joint] = constrain_joint_rotation(frame, limits,
+		pose.rotations[joint] = constrain_joint_to_constraint_rig(skeleton, constraints, joint,
 			pose.rotations[joint]);
 	}
+}
+
+<*
+ One joint of `constrain_pose_to_constraint_rig`: its local rotation handed back
+ inside the carried limits, or unchanged when the joint is free, unsupported, or
+ has no frame to read them in.
+*>
+fn Quaternionf constrain_joint_to_constraint_rig(
+	rig::Skeleton* skeleton,
+	ConstraintRig constraints,
+	usz joint,
+	Quaternionf rotation)
+{
+	if (joint >= constraints.joints.len || joint >= skeleton.len()) return rotation;
+	JointConstraint carried = constraints.joints[joint];
+	if (carried.status != EXACT) return rotation;
+
+	int primary = carried.frame_intent.uses_primary_child()
+		? carried.primary_child
+		: -1;
+	JointLimitFrame frame = joint_limit_frame_by_index(skeleton, joint, primary);
+	if (!frame.usable()) return rotation;
+	if (carried.frame_intent.has_adjustment())
+	{
+		frame.rotation = frame.rotation.mul(carried.frame_adjustment).normalize();
+	}
+
+	JointRotationLimits limits = {
+		.constrained = true,
+		.axes = carried.axes,
+	};
+	return constrain_joint_rotation(frame, limits, rotation);
+}
+
+<*
+ What `constraint_rig_aim_clamp` reads: the skeleton and the carried table.
+*>
+struct ConstraintAimContext
+{
+	rig::Skeleton* skeleton;
+	ConstraintRig* constraints;
+}
+
+<*
+ The export-side `AimClamp`: holds a joint inside the portable constraint table,
+ the same limits `constrain_pose_to_constraint_rig` applies, over a
+ `ConstraintAimContext`.
+*>
+fn Quaternionf constraint_rig_aim_clamp(void* ctx, usz joint, Quaternionf local)
+{
+	ConstraintAimContext* held = (ConstraintAimContext*)ctx;
+	return constrain_joint_to_constraint_rig(held.skeleton, *held.constraints, joint, local);
 }
 
 fn int constraint_joint_of(uint[] dot_ids, usz joints, uint dot_id) @private

@@ -589,6 +589,7 @@ fn void AppState.refresh_animation(&self, float dt = 0.0f)
 	// holds all three pieces at once, and because a split view paints the overlay
 	// once per pane and would otherwise rebuild the skeleton for each of them.
 	self.posed_dots = posed_overlay(mem, &view.skeleton, view.dot_ids, palette);
+	self.posed_aims = self.aim_handles(&view, self.current_anim, self.current_ref, self.anim_time, palette, &self.posed_aim_links);
 }
 
 <*
@@ -636,7 +637,8 @@ fn rig::Pose AppState.evaluated_clip_pose(
 	AnimTemplate clip,
 	AnimRef ref,
 	float time,
-	bool grounded = true)
+	bool grounded = true,
+	bool aimed = false)
 {
 	// The clip may have been handed in as a deferred stub — read its curves now so
 	// a timeline draft or a joint card samples the real motion, not an empty one.
@@ -652,6 +654,8 @@ fn rig::Pose AppState.evaluated_clip_pose(
 		ground_pose(allocator, &view.skeleton, names, clip.ground, &pose,
 			clip.phase_at(time));
 	}
+	// Last of all: the look-at targets never feed back into a limit or the floor.
+	if (aimed) self.apply_clip_aims(view, clip, ref, time, &pose);
 	return pose;
 }
 
@@ -679,7 +683,7 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	if (!self.blending())
 	{
 		return self.evaluated_clip_pose(allocator, view, anim, self.current_ref,
-			self.anim_time);
+			self.anim_time, aimed: true);
 	}
 
 	AnimTemplate from = self.fade_from;
@@ -700,7 +704,7 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	if (catch mixed)
 	{
 		return self.evaluated_clip_pose(allocator, view, anim, self.current_ref,
-			self.anim_time);
+			self.anim_time, aimed: true);
 	}
 
 	rig::Pose out = mixed;
@@ -710,6 +714,9 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	constrain_pose_to_joint_limits(&self.doc, &view.skeleton, view.dot_ids, &out);
 	AnimGround floor = anim.ground.solves() ? anim.ground : from.ground;
 	ground_pose(allocator, &view.skeleton, names, floor, &out, anim.phase_at(self.anim_time));
+	// Each clip's targets in proportion to how much of it is showing.
+	self.apply_clip_aims(view, from, self.fade_from_ref, self.fade_from_time, &out, null, 1.0f - t);
+	self.apply_clip_aims(view, anim, self.current_ref, self.anim_time, &out, null, t);
 	return out;
 }
 

@@ -840,6 +840,26 @@ struct AppState
 	*>
 	PositionLock[] position_locks;
 	PosedJoint[] pose_edit_draft;
+	// Look-at targets being moved, applied to the clip being edited like the pose
+	// draft; see `aim_edit.c3`. Owned, cleared with the pose draft.
+	AimDraft[] aim_draft;
+	// What a target drag began from, for Esc: whether the joint had a draft at the
+	// grab, and where the target was then (a fraction of rig height).
+	bool aim_drag_drafted;
+	Vec3 aim_drag_at;
+	<*
+	 What the look-at targets turned in the pose the last `gesture_pose` handed
+	 out: the joints (that build's indices), the authored rotation each held
+	 before the aims, and the aimed one the gesture solved from (`gesture_aimed`,
+	 parallel). `unaim_pose` reads them to take the aims back out of what the
+	 gesture wrote, and spends them. Owned; freed with the gesture.
+	*>
+	AimAppliedSet gesture_aim;
+	Quaternionf[] gesture_aimed;
+	// A turn on an aimed joint measures its sweep from the aimed rotation it began
+	// with, not the authored one the snapshot holds: the joint and that rotation.
+	uint turn_aimed_dot;
+	Quaternionf turn_aimed_was;
 	// Timeline-only state. A paused edited clip creates this on the first joint
 	// gesture; it deliberately does not touch the rest rig.
 	bool pose_edit_active;
@@ -889,6 +909,8 @@ struct AppState
 	AnimRef anim_key_selection_ref;
 	List{float} anim_key_selection;
 	List{AnimChannelKey} anim_channel_key_selection;
+	// Look-at target keys picked in the sheet; never held beside the two above.
+	List{AimKeyRef} anim_aim_key_selection;
 	// The key a range extend measures from — the time of the last key clicked in
 	// this selection. A Ctrl+Shift press on another key selects the span between
 	// the two. Negative means no anchor yet; reset by `clear_animation_key_selection`.
@@ -1051,6 +1073,27 @@ struct AppState
 	 Owned. Read through `dot_position`, never directly.
 	*>
 	PosedDot[] posed_dots;
+
+	<*
+	 The look-at targets of the clip on show, built beside `posed_dots` by
+	 `refresh_animation` and `refresh_posed`: where each aimed joint stands and
+	 where its target is. Owned; freed with the palette in `drop_palette`.
+	*>
+	AimHandle[] posed_aims;
+
+	<*
+	 One entry per lock of that clip: the line from a locked joint to its target's
+	 handle in `posed_aims`. Built and freed with it.
+	*>
+	AimLink[] posed_aim_links;
+
+	// The look-at target whose ring is selected (its name, owned), empty when none.
+	// Cleared when a model loads and when the target is removed; see `aim_edit.c3`.
+	String aim_target_selected;
+	// The context menu was raised from that target's ring, so it offers the target's rows.
+	bool aim_menu_from_ring;
+	// The pointer rests on a target's ring; the hint bar says what it does.
+	bool aim_ring_hover;
 
 	<*
 	 Every animation pack the app knows about, read from ANIM_DIRECTORY at startup.
@@ -1911,6 +1954,8 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path)
 	self.imported_skin.free(mem);
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
 	self.pose_edit_draft = {};
+	self.drop_aim_draft();
+	self.clear_aim_target();
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
 	self.stage = JOINTS_STAGE;
@@ -2189,6 +2234,7 @@ fn void AppState.free(&self)
 	self.motion_job.clear();
 	self.motion_draft.free();
 	self.drop_gesture_before();
+	self.drop_gesture_aim();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
 	self.anim_key_clipboard.free(mem);
@@ -2234,6 +2280,8 @@ fn void AppState.free(&self)
 	self.skin.free(mem);
 	self.imported_skin.free(mem);
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
+	self.drop_aim_draft();
+	self.clear_aim_target();
 	self.clear_position_locks();
 	self.drop_palette();
 	// Outlives every frame of playback by design, so it is here rather than in

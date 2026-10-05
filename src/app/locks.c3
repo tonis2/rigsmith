@@ -209,6 +209,15 @@ fn void AppState.set_anchor(&self, uint dot_id, bool position, bool rotation)
 		return;
 	}
 
+	// A look-at target owns the joint's orientation, so a rotation pin on it would
+	// only fight the aim: refused, the position half still allowed.
+	if (rotation && !self.locks_rotation(dot_id) && self.aim_index(dot_id) >= 0)
+	{
+		self.@notice("a look-at target steers this joint's rotation - remove the target to pin its angle");
+		rotation = false;
+		if (!position) return;
+	}
+
 	PositionLock lock = found >= 0 ? self.position_locks[(usz)found] : (PositionLock){ .dot_id = dot_id };
 	if (position && !lock.position) lock.target = self.dot_position(*dot);
 	if (rotation && !lock.rotation) lock.orient = self.dot_world_rotation(dot_id);
@@ -238,7 +247,8 @@ fn bool AppState.toggle_rotation_anchor(&self, uint dot_id)
 {
 	bool now = !self.locks_rotation(dot_id);
 	self.set_anchor(dot_id, self.locks_position(dot_id), now);
-	return now;
+	// An aimed joint refuses the pin, so what it holds is what to report.
+	return self.locks_rotation(dot_id);
 }
 
 // One half of an anchor set to `on`, the other left exactly as it stands — the

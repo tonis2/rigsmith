@@ -275,7 +275,34 @@ fn rig::Pose bake_sample(Allocator allocator, BakeSampling sampling, float time,
 		ground_pose(allocator, sampling.skeleton, sampling.names, sampling.source.ground, &pose,
 			sampling.source.phase_at(time));
 	}
+	// The aims are in the keys this writes, and the clip written has none.
+	if (sampling.source.plays_aims())
+	{
+		BakeAimContext ctx = { .limits = sampling.limits, .skeleton = sampling.skeleton, .dot_ids = sampling.dot_ids };
+		aim_pose(allocator, sampling.skeleton, sampling.names, sampling.source.aims, sampling.source.aim_targets, time,
+			sampling.source.duration, sampling.source.loop, &pose, sampling.skeleton.height(),
+			sampling.limits ? &bake_aim_clamp : null, &ctx);
+	}
 	return pose;
+}
+
+struct BakeAimContext @local
+{
+	RigDocument* limits;
+	rig::Skeleton* skeleton;
+	uint[] dot_ids;
+}
+
+// The document's joint limits as an `AimClamp`, the rule the viewport applies.
+fn Quaternionf bake_aim_clamp(void* ctx, usz joint, Quaternionf local) @local
+{
+	BakeAimContext* held = (BakeAimContext*)ctx;
+	if (joint >= held.dot_ids.len) return local;
+	JointRotationLimits limits = held.limits.rotation_limits_of(held.dot_ids[joint]);
+	if (!limits.constrained) return local;
+	JointLimitFrame frame = joint_limit_frame(held.skeleton, held.dot_ids, limits);
+	if (!frame.usable()) return local;
+	return constrain_joint_rotation(frame, limits, local);
 }
 
 fn void bake_prime(

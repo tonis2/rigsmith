@@ -442,6 +442,10 @@ struct AnimTemplate
 	// Adjustments laid over the keys, in order; see anim/layers.c3. Owned with an
 	// owned template and persisted in the project sidecar only.
 	AnimLayer[] layers;
+	// Look-at targets laid over the finished pose; see anim/aim.c3. Owned with an
+	// owned template and persisted in the project sidecar only.
+	AnimAim[] aims;
+	AnimAimTarget[] aim_targets; // the points the locks in `aims` turn toward, by name
 	AnimTrack[] tracks; // compiled sparse lookup, owned with an owned template
 	bool tracks_compiled;
 	bool owned; // heap-allocated; false for a template written out as a constant
@@ -583,6 +587,8 @@ fn void AnimTemplate.free(&self, Allocator allocator)
 	if (self.tracks.len > 0) alloc::free(allocator, self.tracks);
 	self.ground.free(allocator);
 	free_layers(allocator, self.layers);
+	free_aims(allocator, self.aims);
+	free_aim_targets(allocator, self.aim_targets);
 	*self = {};
 }
 

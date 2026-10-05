@@ -55,6 +55,11 @@ fn String hint_line(AppState* app)
 	String hovered = app.ui ? widgets::tooltip_hint(app.ui) : "";
 	if (hovered.len > 0 && app.drag.dot == 0 && !tool_hint_running(app, hovered)) return hovered;
 
+	if (app.aim_ring_hover && app.drag.dot == 0 && !app.transform_interaction.active)
+	{
+		return "drag to move target · right-click for locks";
+	}
+
 	if (app.drag.dot != 0)
 	{
 		// A dial's turn has its axis in hand already; the only key it answers
@@ -65,6 +70,12 @@ fn String hint_line(AppState* app)
 			return app.drag.axis == DragAxis.FREE
 				? "X / Y / Z · bone-local rotation axis     Y or B · twist along bone     esc · cancel"
 				: "X / Y / Z · switch local axis     same key · free rotation     Y or B · bone twist     esc · cancel";
+		}
+		if (app.drag.verb == DragVerb.AIM)
+		{
+			return app.drag.axis == DragAxis.FREE
+				? "moving the look-at target     X / Y / Z · world axis     shift + axis · world plane     esc · cancel"
+				: "moving the look-at target     X / Y / Z · switch axis     shift + axis · plane     same key · free     esc · cancel";
 		}
 		return app.drag.axis == DragAxis.FREE
 			? "X / Y / Z · world axis     shift + axis · world plane     B · bone axis     esc · cancel"

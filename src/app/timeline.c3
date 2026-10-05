@@ -92,6 +92,8 @@ fn bool AppState.discard_pose_edit(&self)
 	if (!self.pose_edit_active) return false;
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
 	self.pose_edit_draft = {};
+	self.drop_aim_draft();
+	self.drop_gesture_aim();
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
 	// Put the shown body back where the draft found it, now — not on the trust
@@ -138,6 +140,8 @@ fn bool AppState.key_pose_edit(&self, AnimKeyScope scope = ALL)
 
 fn bool AppState.pose_edit_differs(&self, AnimRef ref, float time)
 {
+	// A target moved and not yet keyed is a pending edit all the same.
+	if (self.aim_draft.len > 0) return true;
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return true;
 	RigView view = opened;
@@ -368,7 +372,15 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	AnimLayer* layered = self.active_layer_ptr(ref);
 	if (layered)
 	{
-		if (layered.kind == KEYED) return self.key_into_layer(ref, time, scope);
+		// Targets key onto the base clip whichever layer is active: a layer holds
+		// poses, and the aim is laid over the whole stack.
+		if (layered.kind == KEYED)
+		{
+			AnimRef keyed = self.key_into_layer(ref, time, scope);
+			if (keyed.valid() || self.aim_draft.len == 0) return keyed;
+			return self.key_aims_only(ref, time);
+		}
+		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
 		self.@notice("layer \"%s\" is generated, so it has no keys — choose the base or a keyed layer to key a pose", layered.name);
 		return NO_ANIM;
 	}
@@ -413,6 +425,7 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	if (written.dots.len == 0)
 	{
 		written.free(mem);
+		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
 		return NO_ANIM;
 	}
 	if (scope != ALL)
@@ -465,6 +478,8 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 		written.dots = filtered.to_array(mem);
 		if (written.dots.len == 0)
 		{
+			// Only a target moved: it is keyed alone, with nothing said about the pose.
+			if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
 			self.@notice(scope == SELECTED ? "select joints to key" : "no changed channels to key");
 			return NO_ANIM;
 		}
@@ -478,11 +493,28 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	self.pose_edit_draft = {};
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
-	AnimRef landed = self.land_clip(ref, clip_with_key(mem, *clip, written));
+	// The pose and any moved target land as one entry, so one Ctrl+Z takes back both.
+	AnimTemplate keyed = self.with_aim_keys(clip_with_key(mem, *clip, written), time);
+	AnimRef landed = self.land_clip(ref, keyed);
 	self.pose_edit_draft = draft;
 	self.pose_edit_active = active;
 	self.pose_edit_pending = pending;
+	if (landed.valid()) self.drop_aim_draft();
 	if (active) self.refresh_posed();
+	return landed;
+}
+
+<*
+ Key the pending targets at `time` and nothing else: what Key pose does when only
+ a target has moved. One undo step on the base clip.
+*>
+fn AnimRef AppState.key_aims_only(&self, AnimRef ref, float time)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip) return NO_ANIM;
+	AnimRef landed = self.land_aim_clip(ref, self.with_aim_keys(clip_copy(mem, *clip), time));
+	if (landed.valid()) self.drop_aim_draft();
+	if (self.pose_edit_active) self.refresh_posed();
 	return landed;
 }
 

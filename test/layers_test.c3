@@ -421,9 +421,9 @@ fn void a_version_19_sidecar_without_layers_still_reads() @test
 	String text = crig::session_text(mem, &doc, "hero.glb", source[..]);
 	defer text.free(mem);
 	test::@check(!text.contains(`"layers"`), "a clip with no layers wrote a layers member");
-	test::@check(text.contains(`"version": 20`), "the sidecar is not version 20");
+	test::@check(text.contains(`"version": 22`), "the sidecar is not version 22");
 
-	String old = text.replace(mem, `"version": 20`, `"version": 19`);
+	String old = text.replace(mem, `"version": 22`, `"version": 19`);
 	defer old.free(mem);
 	RigDocument? opened = crig::parse_session(mem, old);
 	if (catch fault error = opened)
@@ -443,7 +443,7 @@ fn void a_version_19_sidecar_without_layers_still_reads() @test
 	defer crig::free_animations(mem, back);
 	test::@check(back.len == 1 && back[0].layers.len == 0 && back[0].keyframes.len == 1, "a clip with no layers came back with some");
 
-	String future = text.replace(mem, `"version": 20`, `"version": 21`);
+	String future = text.replace(mem, `"version": 22`, `"version": 23`);
 	defer future.free(mem);
 	RigDocument? refused = crig::parse_session(mem, future);
 	test::@check(@failed(refused), "a version from the future was accepted");

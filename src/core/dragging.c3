@@ -108,6 +108,10 @@ const Vec3[3] AXIS_DIRECTION = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
  joint it became is carried somewhere else — which is why they are reachable only
  during animation posing, and why a posed display refuses a PLACE.
 
+ AIM moves a look-at target (`aim_edit.c3`) rather than any joint: `dot` is the
+ joint that looks, `from` is where the target was grabbed, in model units, and
+ nothing of the rig is touched until the target is keyed.
+
  One field rather than a second struct beside `DragState`, because five readers
  already ask "is a move in progress" by testing `drag.dot`, and a parallel state
  would give that question two answers. What they each mean by it stays true; the
@@ -118,6 +122,7 @@ enum DragVerb
 	PLACE,
 	POSE,
 	TURN,
+	AIM,
 }
 
 <*
@@ -130,12 +135,13 @@ enum DragVerb
 *>
 struct DragState
 {
-	uint dot;      // the dot being moved, 0 when none is
+	uint dot;      // the dot being moved, 0 when none is; AIM_DRAG_DOT while a look-at target is dragged
+	usz aim;       // AIM: the target's handle, an index into `posed_aims`
 	<*
 	 Where the gesture began.
 
 	 PLACE: the dot's rest position — the undo entry's "before", and the
-	 constraint line's origin. POSE and TURN: the joint's *posed* world position,
+	 constraint line's origin. AIM: the target's position. POSE and TURN: the joint's *posed* world position,
 	 which is the line's origin for one and the pivot for the other. Both are
 	 "where the thing being dragged was when it was grabbed"; what differs is
 	 whether the rig or the pose is what put it there.

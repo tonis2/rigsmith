@@ -125,7 +125,7 @@ fn RigView? AppState.onion_view(&self, bool* owned)
 // The clip's pose at `time` as a palette. The caller owns it; empty on a mismatch.
 fn Matrix4f[] AppState.onion_palette(&self, RigView* view, AnimTemplate* clip, float time)
 {
-	rig::Pose pose = self.evaluated_clip_pose(mem, view, *clip, self.editing, time);
+	rig::Pose pose = self.evaluated_clip_pose(mem, view, *clip, self.editing, time, aimed: true);
 	defer pose.free(mem);
 	Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
 	if (catch palette) return {};

@@ -184,7 +184,17 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // 20 added animation layers to authored clips (`authored_clips[i].layers`). They
 // are optional and live in the sidecar only — a glb carries the flattened
 // channels and no layer data — so a version 19 file reads as a clip with none.
-const uint SESSION_VERSION = 20;
+//
+// 21 added look-at targets to authored clips (`authored_clips[i].aims`), written
+// after the layers. They are optional and sidecar-only too — a glb carries the
+// aimed head as ordinary keys when exported — so a version 20 file reads as a
+// clip with none.
+//
+// 22 split look-at into shared targets and locks: `aim_targets` carries each
+// target's name and keys, and `aims` is now a lock (`joint`, `target`, forward,
+// spread, weights, influence, mute) with no keys of its own. A version 21 aim
+// that carries keys reads as a target "Target N" plus a lock on it.
+const uint SESSION_VERSION = 22;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -618,6 +628,41 @@ fn String session_text(
 				}
 				text.append_char(']');
 			}
+			if (clip.aim_targets.len > 0)
+			{
+				text.append_string(`,"aim_targets":[`);
+				foreach (usz t, &target : clip.aim_targets)
+				{
+					if (t > 0) text.append_char(',');
+					text.append_string(`{"name":`); append_json_string(&text, target.name);
+					text.appendf(`,"mute":%s,"keys":[`, target.mute)!!;
+					foreach (usz k, key : target.keys)
+					{
+						if (k > 0) text.append_char(',');
+						text.appendf(`{"time":%s,"at":%s`, (JsonFloat)key.time, (JsonVec3)key.at)!!;
+						if (key.interpolation != INHERIT) text.appendf(`,"interp":"%s"`, key.interpolation.serialized())!!;
+						text.append_char('}');
+					}
+					text.append_string("]}");
+				}
+				text.append_char(']');
+			}
+			if (clip.aims.len > 0)
+			{
+				text.append_string(`,"aims":[`);
+				foreach (usz a, &aim : clip.aims)
+				{
+					if (a > 0) text.append_char(',');
+					text.append_string(`{"joint":`); append_json_string(&text, aim.joint);
+					text.append_string(`,"target":`); append_json_string(&text, aim.target);
+					text.appendf(`,"forward":%s,"spread":%d,"weights":[%s,%s,%s,%s],"influence":%s,"mute":%s}`,
+						(JsonVec3)aim.forward, aim.spread,
+						(JsonFloat)aim.weights[0], (JsonFloat)aim.weights[1],
+						(JsonFloat)aim.weights[2], (JsonFloat)aim.weights[3],
+						(JsonFloat)aim.influence, aim.mute)!!;
+				}
+				text.append_char(']');
+			}
 			text.append_char('}');
 		}
 		text.append_char(']');
@@ -895,9 +940,165 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 			}
 		}
 	}
+	Object* target_list;
+	Object* aim_list;
+	usz target_count;
+	usz aim_count;
+	if (try Object* found = entry.get("aim_targets"))
+	{
+		if (!found.is_null())
+		{
+			if (!is_list(found)) return SESSION_SHAPE~;
+			target_list = found;
+			target_count = (usz)found.get_len();
+		}
+	}
+	if (try Object* found = entry.get("aims"))
+	{
+		if (!found.is_null())
+		{
+			if (!is_list(found)) return SESSION_SHAPE~;
+			aim_list = found;
+			aim_count = (usz)found.get_len();
+		}
+	}
+	if (target_count + aim_count > 0)
+	{
+		// Room for every listed target and, for a version 21 file, one more per aim.
+		AnimAimTarget[] targets = alloc::new_array(allocator, AnimAimTarget, (sz)(target_count + aim_count));
+		AnimAim[] locks = alloc::new_array(allocator, AnimAim, (sz)aim_count);
+		usz targets_used;
+		usz locks_used;
+		bool adopted = false;
+		defer if (!adopted)
+		{
+			free_aim_targets(allocator, targets[:targets_used]);
+			free_aims(allocator, locks[:locks_used]);
+			if (targets_used == 0) alloc::free(allocator, targets);
+			if (locks_used == 0 && locks.len > 0) alloc::free(allocator, locks);
+		};
+		for (usz t = 0; t < target_count; t++)
+		{
+			targets[t] = session_aim_target(allocator, target_list.get_at((sz)t))!;
+			targets_used = t + 1;
+			for (usz p = 0; p < t; p++) if (targets[p].name == targets[t].name) return SESSION_SHAPE~;
+		}
+		for (usz a = 0; a < aim_count; a++)
+		{
+			Object* held = aim_list.get_at((sz)a);
+			if (!held.is_keyable()) return SESSION_SHAPE~;
+			String target;
+			if (held.get("keys") ?? null)
+			{
+				// Version 21: the aim carried its own keys; they become a target.
+				AnimAimTarget migrated = session_aim_target(allocator, held, next_target_name(allocator, targets[:targets_used]))!;
+				targets[targets_used++] = migrated;
+				target = migrated.name;
+			}
+			else
+			{
+				target = held.get_string("target")!;
+				// A lock on a target the clip lacks is dropped, not refused.
+				if (aim_target_index_of(targets[:targets_used], target) < 0) continue;
+			}
+			AnimAim lock = session_aim(allocator, held, target)!;
+			locks[locks_used++] = lock;
+			for (usz p = 0; p + 1 < locks_used; p++) if (locks[p].joint == lock.joint) return SESSION_SHAPE~;
+		}
+		adopted = true;
+		clip.aim_targets = targets_used > 0 ? targets[:targets_used] : {};
+		clip.aims = locks_used > 0 ? locks[:locks_used] : {};
+		if (targets_used == 0) alloc::free(allocator, targets);
+		if (locks_used == 0 && locks.len > 0) alloc::free(allocator, locks);
+	}
 	clip.compile_tracks(allocator);
 	complete = true;
 	return clip;
+}
+
+// The keys of a look-at target. Refused for no keys, or key times that are
+// negative or do not increase.
+fn AnimAimKey[]? session_aim_keys(Allocator allocator, Object* keys) @private
+{
+	if (!is_list(keys) || keys.get_len() == 0) return SESSION_SHAPE~;
+	AnimAimKey[] out = alloc::new_array(allocator, AnimAimKey, keys.get_len());
+	bool complete = false;
+	defer if (!complete) alloc::free(allocator, out);
+	float previous = -1.0f;
+	for (sz k = 0; k < keys.get_len(); k++)
+	{
+		Object* key = keys.get_at(k);
+		if (!key.is_keyable()) return SESSION_SHAPE~;
+		float time = (float)key.get_float("time")!;
+		if (!math::is_finite(time) || time < 0.0f || time <= previous) return SESSION_SHAPE~;
+		previous = time;
+		AnimInterpolation interpolation = LINEAR;
+		if (try String value = key.get_string("interp"))
+		{
+			if (!parse_anim_interpolation(value, &interpolation)) return SESSION_SHAPE~;
+		}
+		Vec3 at = session_vec3(key.get("at")!)!;
+		if (!(math::is_finite(at.x) && math::is_finite(at.y) && math::is_finite(at.z))) return SESSION_SHAPE~;
+		out[(usz)k] = { .time = time, .at = at, .interpolation = interpolation };
+	}
+	complete = true;
+	return out;
+}
+
+// One look-at target of a clip, named by its "name" or, for a version 21 aim
+// that has none, by `fallback` (taken over; freed when the name is not used).
+// Refused for an empty name or bad keys.
+fn AnimAimTarget? session_aim_target(Allocator allocator, Object* entry, String fallback = "") @private
+{
+	bool complete = false;
+	defer if (!complete && fallback.len > 0) alloc::free(allocator, fallback.ptr);
+	if (!entry.is_keyable()) return SESSION_SHAPE~;
+	String name = fallback;
+	if (fallback.len == 0)
+	{
+		name = entry.get_string("name")!;
+		if (name.len == 0) return SESSION_SHAPE~;
+	}
+	AnimAimKey[] keys = session_aim_keys(allocator, entry.get("keys")!)!;
+	complete = true;
+	AnimAimTarget target = {
+		.name = fallback.len > 0 ? fallback : name.copy(allocator),
+		.mute = fallback.len > 0 ? false : (entry.get_bool("mute") ?? false),
+		.keys = keys,
+	};
+	return target;
+}
+
+// One look-at lock of a clip, on the target `target` (copied). Refused for a
+// joint with no name, a spread outside 1..AIM_MAX_SPREAD, a number that is not
+// finite or an influence outside 0..1.
+fn AnimAim? session_aim(Allocator allocator, Object* entry, String target) @private
+{
+	if (!entry.is_keyable()) return SESSION_SHAPE~;
+	String joint = entry.get_string("joint")!;
+	Vec3 forward = session_vec3(entry.get("forward")!)!;
+	double spread = entry.get_float("spread")!;
+	float influence = (float)entry.get_float("influence")!;
+	Object* weights = entry.get("weights")!;
+	if (joint.len == 0 || target.len == 0 || forward.length_sq() < 1.0e-12f
+		|| !(spread >= 1.0 && spread <= (double)AIM_MAX_SPREAD) || spread != math::floor(spread)
+		|| !(influence >= 0.0f && influence <= 1.0f)
+		|| !is_list(weights) || weights.get_len() != (sz)AIM_MAX_SPREAD) return SESSION_SHAPE~;
+	AnimAim aim = {
+		.forward = forward,
+		.spread = (usz)spread,
+		.influence = influence,
+		.mute = entry.get_bool("mute") ?? false,
+	};
+	for (usz w = 0; w < AIM_MAX_SPREAD; w++)
+	{
+		float weight = (float)weights.get_float_at((sz)w)!;
+		if (!math::is_finite(weight) || weight < 0.0f) return SESSION_SHAPE~;
+		aim.weights[w] = weight;
+	}
+	aim.joint = joint.copy(allocator);
+	aim.target = target.copy(allocator);
+	return aim;
 }
 
 // One layer of a clip. Its keys, when it has any, are read like the clip's own.

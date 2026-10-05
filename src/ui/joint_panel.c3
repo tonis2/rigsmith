@@ -44,6 +44,11 @@ import std::math;
 import std::math::quaternion;
 
 const String JOINT_PANEL_ID = "joint-panel";
+const String JOINT_AIM_TARGET_ID = "joint-aim-target";
+const String JOINT_AIM_SPREAD_ID = "joint-aim-spread";
+const String JOINT_AIM_INFLUENCE_ID = "joint-aim-influence";
+const String JOINT_AIM_MUTE_ID = "joint-aim-mute";
+const String JOINT_AIM_UNLOCK_ID = "joint-aim-unlock";
 const String JOINT_TAB_JOINT_ID = "joint-tab-joint";
 const String JOINT_TAB_ALIGN_ID = "joint-tab-align";
 const String JOINT_TAB_WEIGHTS_ID = "joint-tab-weights";
@@ -347,8 +352,10 @@ struct JointPanel (Widget)
 {
 	JointPanelSnapshot shown;
 	char[320] readout; // the Weights card's readout line, held for the label to borrow
+	char[160] aim_chain; // the Look at row's list of joints the turn is shared by
 	String[] child_labels;
 	uint[] child_ids;
+	String[] aim_labels; // the Look at picker's rows: None, then each target, owned
 }
 
 fn void JointPanel.release_choices(&self)
@@ -358,6 +365,9 @@ fn void JointPanel.release_choices(&self)
 	if (self.child_ids.len > 0) alloc::free(mem, self.child_ids);
 	self.child_labels = {};
 	self.child_ids = {};
+	foreach (label : self.aim_labels) alloc::free(mem, label.ptr);
+	if (self.aim_labels.len > 0) alloc::free(mem, self.aim_labels);
+	self.aim_labels = {};
 }
 
 fn void JointPanel.unmount(&self, Element* elem) @dynamic => self.release_choices();
@@ -659,6 +669,57 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 												@node((Label) { .text = "Pin · held in place while you pose another joint",
 													.size = 12.0f, .color = TEXT_DIM });
 												@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+
+												// Look at: this joint, and a few of its parents, turned toward a
+												// target handle in the view. See `anim/aim.c3`.
+												@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
+												sz aim_at = app.aim_index(app.selected);
+												AnimTemplate* aim_clip = app.clip(app.editing);
+												if (aim_clip)
+												{
+													self.aim_labels = alloc::new_array(mem, String, (sz)aim_clip.aim_targets.len + 1);
+													self.aim_labels[0] = "None".copy(mem);
+													foreach (usz t, &target : aim_clip.aim_targets) self.aim_labels[t + 1] = target.name.copy(mem);
+												}
+												if (!aim_clip || aim_clip.aim_targets.len == 0)
+												{
+													@node((Label) { .text = "Look at · turn this joint toward a target", .size = 12.0f,
+														.color = TEXT_DIM });
+													@node((Label) { .text = "Add a target from the 3D view's right-click menu",
+														.size = 12.0f, .color = TEXT_DIM });
+												}
+												else
+												{
+													sz picked = 0;
+													if (aim_at >= 0) picked = aim_target_index_of(aim_clip.aim_targets, aim_clip.aims[(usz)aim_at].target) + 1;
+													@node((Label) { .text = "Look at · turn this joint toward", .size = 12.0f,
+														.color = TEXT_DIM });
+													@node((Select) { .options = self.aim_labels, .selected = (usz)picked,
+														.width = JOINT_PANEL_W, .style = VIEW_MENU_STYLE,
+														.on_change = &joint_aim_target_chosen }).with_id(JOINT_AIM_TARGET_ID);
+												}
+												if (aim_clip && aim_at >= 0)
+												{
+													AnimAim* aim = &aim_clip.aims[(usz)aim_at];
+													@node((Label) { .text = "Turn shared with the parents", .size = 12.0f,
+														.color = TEXT_DIM });
+													@node((Segmented) { .options = joint_aim_spread_labels[..],
+														.selected = (sz)math::clamp(aim.spread, (usz)1, AIM_MAX_SPREAD) - 1,
+														.on_change = &joint_aim_spread_chosen, .style = SEGMENTED_STYLE })
+														.with_id(JOINT_AIM_SPREAD_ID);
+													@node((Label) { .text = aim_chain_text(&view, joint, aim.spread, &self.aim_chain),
+														.size = 12.0f, .color = TEXT_DIM });
+													@node((Slider) { .label = "Influence", .value = aim.influence, .max = 1.0f,
+														.step = 0.05f, .decimals = 2, .on_commit = &joint_aim_influence_committed,
+														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_AIM_INFLUENCE_ID);
+													@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+													{
+														@node((Checkbox) { .label = "Mute", .checked = aim.mute,
+															.on_change = &joint_aim_mute_toggled, .style = CHECKBOX_STYLE })
+															.with_id(JOINT_AIM_MUTE_ID);
+														@node(panel_button("Unlock", &joint_aim_unlocked)).with_id(JOINT_AIM_UNLOCK_ID);
+													};
+												}
 											}
 
 											if (!frame.usable())
@@ -1308,6 +1369,73 @@ fn void joint_primary_child_chosen(Ui* ui, usz row) @private
 	JointRotationLimits limits = app.doc.rotation_limits_of(app.selected);
 	limits.primary_child = chosen;
 	(void)commit_joint_limits(ui, limits);
+}
+
+// The Look at row. Each lands one clip change, so one undo step.
+String[4] joint_aim_spread_labels = { "1 joint", "2 joints", "3 joints", "4 joints" };
+
+// "Turns head, neck, chest": the joints the aim shares its turn between.
+fn String aim_chain_text(RigView* view, usz joint, usz spread, char[] buffer) @private
+{
+	AimChain chain = aim_chain_of(&view.skeleton, joint, spread);
+	DString text = dstring::new(tmem);
+	text.append_string("Turns ");
+	for (usz k = 0; k < chain.count; k++)
+	{
+		if (k > 0) text.append_string(", ");
+		usz at = chain.joints[k];
+		String name = at < view.names.len && view.names[at].len > 0 ? view.names[at] : "joint";
+		text.append_string(name);
+	}
+	String line = text.str_view();
+	usz used = line.len < buffer.len ? line.len : buffer.len;
+	buffer[:used] = line[:used];
+	return (String)buffer[:used];
+}
+
+fn void joint_aim_unlocked(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.unlock_joint(app.selected);
+	refresh_joint_panel(ui);
+}
+
+// Row 0 is None; row n is the clip's target n - 1.
+fn void joint_aim_target_chosen(Ui* ui, usz row)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	AnimTemplate* clip = app.clip(app.editing);
+	if (!clip || app.selected == 0) return;
+	if (row == 0)
+	{
+		app.unlock_joint(app.selected);
+	}
+	else if (row <= clip.aim_targets.len)
+	{
+		app.lock_joint_to(app.selected, clip.aim_targets[row - 1].name);
+	}
+	refresh_joint_panel(ui);
+}
+
+fn void joint_aim_spread_chosen(Ui* ui, usz index) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.set_aim_spread(app.selected, index + 1);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_aim_influence_committed(Ui* ui, float value) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.set_aim_influence(app.selected, value);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_aim_mute_toggled(Ui* ui, bool checked) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.set_aim_muted(app.selected, checked);
+	refresh_joint_panel(ui);
 }
 
 fn void joint_limits_toggled(Ui* ui, bool checked) @private
