@@ -4,7 +4,11 @@ Rig and animate 3D characters. Open a `.glb`, place a skeleton, skin it, pose it
 key it, or generate motion from a text prompt. Everything is saved back into the same
 file. Rigsmith runs on macOS, Windows and Linux through Vulkan.
 
-![Rigsmith playing a walk cycle](docs/demo.gif)
+
+
+https://github.com/user-attachments/assets/d0544199-e109-434b-9f2e-6c0b603e99e3
+
+
 
 ## Download
 
