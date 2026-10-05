@@ -411,6 +411,8 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 		clip.aims = aims_copy(mem, held.aims);
 		free_aim_targets(mem, clip.aim_targets);
 		clip.aim_targets = aim_targets_copy(mem, held.aim_targets);
+		free_pins(mem, clip.pins);
+		clip.pins = pins_copy(mem, held.pins);
 		break;
 	}
 
@@ -907,6 +909,21 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 	{
 		out.append_string(`,"aims":`);
 		append_aims_json(&out, clip.aims, clip.aim_targets);
+	}
+	if (clip.pins.len > 0)
+	{
+		out.append_string(`,"pins":[`);
+		foreach (usz i, &pin : clip.pins)
+		{
+			if (i > 0) out.append_char(',');
+			out.append_string(`{"joint":`);
+			append_json_string(&out, pin.joint);
+			out.appendf(`,"position":%s,"rotation":%s,"at":`, pin.position ? "true" : "false", pin.rotation ? "true" : "false")!!;
+			append_vec3(&out, pin.at);
+			out.appendf(`,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s}`, (JsonQuat)pin.orient,
+				(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute ? "true" : "false")!!;
+		}
+		out.append_char(']');
 	}
 	out.append_char('}');
 

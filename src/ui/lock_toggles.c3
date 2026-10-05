@@ -173,7 +173,7 @@ fn String lock_tip(Element* holder, Vec2 pos)
 	Element* locks = holder.children[0];
 	if (pos.x - locks.absolute.x < locks.size.x * 0.5f)
 	{
-		return "Pin position (L) — hold this joint in place while you pose another";
+		return "Pin position (L) — hold this joint in place while you pose another; with a clip open it holds in playback too";
 	}
-	return "Pin angle (Shift+L) — hold this joint's orientation while you pose another";
+	return "Pin angle (Shift+L) — hold this joint's orientation while you pose another; with a clip open it holds in playback too";
 }

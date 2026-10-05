@@ -297,6 +297,7 @@ fn void AppState.stepped_history(&self, bool had_draft)
 	// position, so the weights are unchanged — but a step cannot tell what kind of
 	// edit it just applied without inspecting the group, and one wasted bind on
 	// a keypress is cheaper than that branch.
+	self.sync_clip_pins();
 	self.refresh_pose_display();
 	if (had_draft && self.editing.valid())
 	{

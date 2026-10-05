@@ -542,6 +542,7 @@ fn void AppState.refresh_animation(&self, float dt = 0.0f)
 	AnimTemplate anim = self.current_anim;
 	if (anim.keyframes.len == 0) return;
 
+	self.sync_clip_pins();
 	self.drop_palette();
 
 	// Rebuilt only when the rig actually changed — a clip that moves nothing but
@@ -619,6 +620,8 @@ fn void AppState.cache_player_pose(&self, rig::Pose pose)
 <*
  Sample one clip through the rig's current joint limits.
 
+ Pass `aimed` to lay the clip's live layers over it, pins first and then aims.
+
  The clip is always sampled ungrounded first. A constrained knee changes where
  its foot lands, so grounding has to measure the permitted pose rather than the
  raw key and is deliberately last. The returned arrays are temporary evaluated
@@ -654,8 +657,13 @@ fn rig::Pose AppState.evaluated_clip_pose(
 		ground_pose(allocator, &view.skeleton, names, clip.ground, &pose,
 			clip.phase_at(time));
 	}
-	// Last of all: the look-at targets never feed back into a limit or the floor.
-	if (aimed) self.apply_clip_aims(view, clip, ref, time, &pose);
+	// Last of all, pins and then aims: neither feeds back into a limit or the floor,
+	// and a head looks from where the body is held.
+	if (aimed)
+	{
+		self.apply_clip_pins(view, clip, ref, time, &pose);
+		self.apply_clip_aims(view, clip, ref, time, &pose);
+	}
 	return pose;
 }
 
@@ -714,7 +722,9 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	constrain_pose_to_joint_limits(&self.doc, &view.skeleton, view.dot_ids, &out);
 	AnimGround floor = anim.ground.solves() ? anim.ground : from.ground;
 	ground_pose(allocator, &view.skeleton, names, floor, &out, anim.phase_at(self.anim_time));
-	// Each clip's targets in proportion to how much of it is showing.
+	// Each clip's pins and then targets in proportion to how much of it is showing.
+	self.apply_clip_pins(view, from, self.fade_from_ref, self.fade_from_time, &out, 1.0f - t);
+	self.apply_clip_pins(view, anim, self.current_ref, self.anim_time, &out, t);
 	self.apply_clip_aims(view, from, self.fade_from_ref, self.fade_from_time, &out, null, 1.0f - t);
 	self.apply_clip_aims(view, anim, self.current_ref, self.anim_time, &out, null, t);
 	return out;

@@ -275,7 +275,15 @@ fn rig::Pose bake_sample(Allocator allocator, BakeSampling sampling, float time,
 		ground_pose(allocator, sampling.skeleton, sampling.names, sampling.source.ground, &pose,
 			sampling.source.phase_at(time));
 	}
-	// The aims are in the keys this writes, and the clip written has none.
+	// The pins and the aims are in the keys this writes, and the clip written has
+	// none. Pins first, as everywhere: a head looks from where the body is held.
+	if (sampling.source.plays_pins())
+	{
+		BakeAimContext ctx = { .limits = sampling.limits, .skeleton = sampling.skeleton, .dot_ids = sampling.dot_ids };
+		pin_pose(allocator, sampling.skeleton, sampling.names, sampling.source.pins, time,
+			sampling.source.duration, sampling.source.loop, &pose, sampling.skeleton.height(),
+			sampling.limits ? &bake_aim_clamp : null, &ctx);
+	}
 	if (sampling.source.plays_aims())
 	{
 		BakeAimContext ctx = { .limits = sampling.limits, .skeleton = sampling.skeleton, .dot_ids = sampling.dot_ids };

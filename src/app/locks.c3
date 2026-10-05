@@ -202,6 +202,14 @@ fn void AppState.set_anchor(&self, uint dot_id, bool position, bool rotation)
 	Dot* dot = self.doc.find(dot_id);
 	if (dot_id == 0 || !dot) return;
 
+	// With a clip open the pin belongs to the clip: written there as one undo step,
+	// and `position_locks` follows from it. See `clip_pins.c3`.
+	if (self.clip_pins(dot_id))
+	{
+		(void)self.set_clip_pin(dot_id, position, rotation);
+		return;
+	}
+
 	sz found = self.lock_index(dot_id);
 	if (!position && !rotation)
 	{
@@ -380,6 +388,11 @@ fn bool AppState.lock_rotation(&self, uint dot_id)
 *>
 fn void AppState.refresh_lock_target(&self, uint dot_id)
 {
+	if (self.clip_pins(dot_id))
+	{
+		self.refresh_clip_pin_target(dot_id);
+		return;
+	}
 	sz found = self.lock_index(dot_id);
 	if (found < 0) return;
 	Dot* dot = self.doc.find(dot_id);

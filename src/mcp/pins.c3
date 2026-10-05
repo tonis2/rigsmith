@@ -8,7 +8,9 @@
  "sit the dog down on its hind paws", which is the gesture the pins exist for.
 
  - `get_pins` reads the set: each pin's joint, which halves are on, the point and
-   how far the last gesture left it from it.
+   how far the last gesture left it from it. With a clip open the pins are the
+   clip's (`app/clip_pins.c3`): `pins` are the ones whose window covers the
+   playhead, `clip_pins` all of them with their `from`/`to`/`blend`.
  - `set_pins` changes the set, each pin captured where its joint stands on screen.
  - `pose_joint` is the viewport drag, made by a caller: it selects the joint and
    runs **the same `begin_pose` / `pose_toward` / `end_drag` (or `begin_turn` /
@@ -34,12 +36,15 @@ const usz POSE_JOINT_STEPS = 12;
 const String GET_PINS_SCHEMA = `{"type":"object","properties":{}}`;
 
 const String SET_PINS_SCHEMA = `{"type":"object","properties":{
-	"pins":{"type":"array","description":"Pins to add or change. Each holds the joint where it stands on screen right now, and a pin already holding that half keeps the point it has. A joint left out keeps whatever it had.","items":{"type":"object","properties":{
+	"pins":{"type":"array","description":"Pins to add or change. With a clip open they are the clip's pins: they hold during playback and export for their from..to window, and one call is one undo step per pin. Each holds the joint where it stands on screen right now, and a pin already holding that half keeps the point it has. A joint left out keeps whatever it had.","items":{"type":"object","properties":{
 		"joint":{"type":"string","description":"The joint's name."},
 		"position":{"type":"boolean","description":"Hold its world position (the Joint panel's Pin position). Default true unless rotation is given alone."},
-		"rotation":{"type":"boolean","description":"Hold its world orientation (Pin angle), so a foot stays flat. Default false."}
+		"rotation":{"type":"boolean","description":"Hold its world orientation (Pin angle), so a foot stays flat. Default false."},
+		"from":{"type":"number","description":"With a clip open: seconds into the clip where the pin starts holding. Default: the pin's own, or 0 for a new pin."},
+		"to":{"type":"number","description":"With a clip open: seconds where it stops holding. Default: the pin's own, or the clip's end for a new pin."},
+		"blend":{"type":"number","description":"With a clip open: seconds the pin eases in and out at the window ends (0 is a hard edge). Default: the pin's own, or 0.1 for a new pin."}
 	},"required":["joint"]}},
-	"clear":{"type":"boolean","description":"Drop every pin first. With no pins, this just clears."},
+	"clear":{"type":"boolean","description":"Drop every pin first (the clip's pins when a clip is open). With no pins, this just clears."},
 	"balance":{"type":"boolean","description":"Whether the body leans to keep its centre of mass over the pinned feet (the Balance toggle). Left as it is when omitted."},
 	"clip":{"type":"string","description":"Put this clip on show first, so pins are captured from its pose. Default: the clip open in the timeline."},
 	"time":{"type":"number","description":"Seconds into the clip to put on show. Default: the playhead."}
@@ -111,6 +116,18 @@ fn void append_pin_state(AppState* app, DString* out)
 	AnimTemplate* clip = app.editing.valid() ? app.clip(app.editing) : null;
 	if (clip)
 	{
+		out.append_string(`,"clip_pins":[`);
+		foreach (usz i, &pin : clip.pins)
+		{
+			if (i > 0) out.append_char(',');
+			out.append_string(`{"joint":`);
+			append_json_string(out, pin.joint);
+			out.appendf(`,"position":%s,"rotation":%s,"from":%.6g,"to":%.6g,"blend":%.6g,"mute":%s,"at":`,
+				pin.position, pin.rotation, pin.from, pin.to, pin.blend, pin.mute);
+			append_vec3(out, pin.at);
+			out.append_char('}');
+		}
+		out.append_char(']');
 		out.append_string(`,"clip":`);
 		append_json_string(out, clip.name);
 		out.appendf(`,"time":%.6g`, app.edit_time);
@@ -146,6 +163,15 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 		{
 			return PINS_REFUSED~;
 		}
+		foreach (key : (String[3]){ "from", "to", "blend" })
+		{
+			Object* given = member(entry, key);
+			if (given != null && ((!given.is_float() && !given.is_int()) || (entry.get_float(key) ?? 0.0) < 0.0))
+			{
+				detail.appendf(`pins[%d]: "%s" must be a number of seconds, 0 or more.`, i, key);
+				return PINS_REFUSED~;
+			}
+		}
 		if (app.dot_named(joint) == null)
 		{
 			detail.appendf(`pins[%d]: no joint is called "%s". get_skeleton lists them.`, i, joint);
@@ -162,7 +188,7 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 	// against has to be the one about to be posed.
 	if (!put_on_show(app, args, detail, false)) return PINS_REFUSED~;
 
-	if (clear) app.clear_position_locks();
+	if (clear) app.clear_editor_pins();
 	for (sz i = 0; i < count; i++)
 	{
 		Object* entry = list.get_at(i);
@@ -175,7 +201,18 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 		bool want_rotation = rotation_given ? (entry.get_bool("rotation") ?? false) : app.locks_rotation(dot.id);
 		bool want_position = position_given ? (entry.get_bool("position") ?? true)
 			: (rotation_given ? app.locks_position(dot.id) : true);
-		app.set_anchor(dot.id, want_position, want_rotation);
+		if (app.clip_pins_drive())
+		{
+			// The clip's pin, window and all, in one landing.
+			float from = member(entry, "from") != null ? (float)entry.get_float("from")!! : -1.0f;
+			float to = member(entry, "to") != null ? (float)entry.get_float("to")!! : -1.0f;
+			float blend = member(entry, "blend") != null ? (float)entry.get_float("blend")!! : -1.0f;
+			(void)app.set_clip_pin(dot.id, want_position, want_rotation, from, to, blend);
+		}
+		else
+		{
+			app.set_anchor(dot.id, want_position, want_rotation);
+		}
 	}
 	if (member(args, "balance") != null) app.balance_off = !(args.get_bool("balance") ?? true);
 

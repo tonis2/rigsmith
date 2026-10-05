@@ -35,6 +35,11 @@ fn void anim_contact_bar_edited(Ui* ui, TimelineBar bar, TimelineGrip grip, floa
 	AppState* app = ui.inherit(AppState)!!;
 	if (!anim_can_rewrite(ui)) return;
 	AnimTemplate* clip = app.clip(app.editing);
+	if (bar.pin)
+	{
+		anim_pin_bar_edited(app, clip, bar, grip, delta);
+		return;
+	}
 	if (!clip || clip.duration <= 0.0f || bar.window >= clip.ground.feet.len) return;
 	AnimFoot foot = clip.ground.feet[bar.window];
 	float d = delta / clip.duration;
@@ -61,9 +66,43 @@ fn void anim_contact_bar_edited(Ui* ui, TimelineBar bar, TimelineGrip grip, floa
 	anim_contact_landed(ui, app.set_contact_window(app.editing, bar.window, down, span));
 }
 
+<*
+ A pin lane's bar dragged: its ends (or the whole bar, on a move) shifted by
+ `delta` seconds and kept inside the clip, landed as one undo step.
+*>
+fn void anim_pin_bar_edited(AppState* app, AnimTemplate* clip, TimelineBar bar, TimelineGrip grip, float delta)
+{
+	if (!clip || clip.duration <= 0.0f || bar.window >= clip.pins.len) return;
+	AnimPin pin = clip.pins[bar.window];
+	float from = pin.from;
+	float to = pin.to;
+	switch (grip)
+	{
+		case MOVE:
+			delta = math::clamp(delta, -from, clip.duration - to);
+			from += delta;
+			to += delta;
+		case FROM: from = math::clamp(from + delta, 0.0f, to);
+		case TO: to = math::clamp(to + delta, from, clip.duration);
+	}
+	String joint = pin.joint.tcopy();
+	RigView? opened = app.open_rig(mem);
+	if (catch opened) return;
+	RigView view = opened;
+	defer view.free(mem);
+	foreach (usz j, name : app.names_for(&view, app.editing))
+	{
+		if (name != joint || j >= view.dot_ids.len) continue;
+		(void)app.set_clip_pin_window(view.dot_ids[j], from, to, -1.0f);
+		break;
+	}
+	app.refresh_ui();
+}
+
 fn void anim_contact_bar_added(Ui* ui, TimelineLane lane, float from, float to)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (lane.pin) return;
 	if (!anim_can_rewrite(ui)) return;
 	AnimTemplate* clip = app.clip(app.editing);
 	if (!clip || clip.duration <= 0.0f || lane.joint.len == 0) return;
@@ -83,6 +122,7 @@ fn void open_anim_contact_menu(Ui* ui, Vec2 at) @private
 fn void anim_contact_bar_context(Ui* ui, TimelineBar bar, Vec2 pixel)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (bar.pin) return;
 	AnimTemplate* clip = app.clip(app.editing);
 	if (!clip || bar.window >= clip.ground.feet.len) return;
 	app.anim_contact_window = (sz)bar.window;
@@ -93,6 +133,7 @@ fn void anim_contact_bar_context(Ui* ui, TimelineBar bar, Vec2 pixel)
 fn void anim_contact_lane_context(Ui* ui, TimelineLane lane, float at, Vec2 pixel)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (lane.pin) return;
 	AnimTemplate* clip = app.clip(app.editing);
 	if (!clip) return;
 	usz foot = contact_first_of(clip.ground, lane.joint);

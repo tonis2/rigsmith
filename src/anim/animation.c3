@@ -446,6 +446,9 @@ struct AnimTemplate
 	// owned template and persisted in the project sidecar only.
 	AnimAim[] aims;
 	AnimAimTarget[] aim_targets; // the points the locks in `aims` turn toward, by name
+	// Joints held in place for a window of the clip, solved live like the aims; see
+	// anim/pin.c3. Owned with an owned template and persisted in the project sidecar only.
+	AnimPin[] pins;
 	AnimTrack[] tracks; // compiled sparse lookup, owned with an owned template
 	bool tracks_compiled;
 	bool owned; // heap-allocated; false for a template written out as a constant
@@ -589,6 +592,7 @@ fn void AnimTemplate.free(&self, Allocator allocator)
 	free_layers(allocator, self.layers);
 	free_aims(allocator, self.aims);
 	free_aim_targets(allocator, self.aim_targets);
+	free_pins(allocator, self.pins);
 	*self = {};
 }
 

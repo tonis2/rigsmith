@@ -200,7 +200,13 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // (`frame_seed`) instead of by whichever way it leans by a degree. A rotation
 // limit table read from an older file, with no frame of its own, is pinned to
 // the frame it was written against wherever the two rules disagree.
-const uint SESSION_VERSION = 23;
+//
+// 24 added clip pins to authored clips (`authored_clips[i].pins`), written after
+// the aims: a joint, where it is held (`at`, a fraction of the rig's height, and
+// `orient`), a window (`from`, `to`, `blend`) and what is held. They are optional
+// and sidecar-only — a glb carries the held foot as ordinary keys when exported —
+// so a version 23 file reads as a clip with none.
+const uint SESSION_VERSION = 24;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -669,6 +675,19 @@ fn String session_text(
 				}
 				text.append_char(']');
 			}
+			if (clip.pins.len > 0)
+			{
+				text.append_string(`,"pins":[`);
+				foreach (usz n, &pin : clip.pins)
+				{
+					if (n > 0) text.append_char(',');
+					text.append_string(`{"joint":`); append_json_string(&text, pin.joint);
+					text.appendf(`,"position":%s,"rotation":%s,"at":%s,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s}`,
+						pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
+						(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
+				}
+				text.append_char(']');
+			}
 			text.append_char('}');
 		}
 		text.append_char(']');
@@ -1017,9 +1036,58 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 		if (targets_used == 0) alloc::free(allocator, targets);
 		if (locks_used == 0 && locks.len > 0) alloc::free(allocator, locks);
 	}
+	if (try Object* found = entry.get("pins"))
+	{
+		if (!found.is_null())
+		{
+			if (!is_list(found)) return SESSION_SHAPE~;
+			AnimPin[] pins = alloc::new_array(allocator, AnimPin, found.get_len());
+			usz used;
+			bool adopted = false;
+			defer if (!adopted)
+			{
+				free_pins(allocator, pins[:used]);
+				if (used == 0 && pins.len > 0) alloc::free(allocator, pins);
+			};
+			for (usz n = 0; n < (usz)found.get_len(); n++)
+			{
+				pins[n] = session_pin(allocator, found.get_at((sz)n))!;
+				used = n + 1;
+				for (usz q = 0; q < n; q++) if (pins[q].joint == pins[n].joint) return SESSION_SHAPE~;
+			}
+			adopted = true;
+			clip.pins = pins;
+		}
+	}
 	clip.compile_tracks(allocator);
 	complete = true;
 	return clip;
+}
+
+// One pin of a clip. Refused for no joint, a non-finite number or an inverted window.
+fn AnimPin? session_pin(Allocator allocator, Object* entry) @private
+{
+	if (!entry.is_keyable()) return SESSION_SHAPE~;
+	String joint = entry.get_string("joint")!;
+	Vec3 at = session_vec3(entry.get("at")!)!;
+	Quaternionf orient = session_quat(entry.get("orient")!)!;
+	float from = (float)entry.get_float("from")!;
+	float to = (float)entry.get_float("to")!;
+	float blend = (float)entry.get_float("blend")!;
+	if (joint.len == 0 || !math::is_finite(at.x) || !math::is_finite(at.y) || !math::is_finite(at.z)
+		|| !math::is_finite(from) || !math::is_finite(to) || !math::is_finite(blend)
+		|| from < 0.0f || to < from || blend < 0.0f || orient.v.length_sq() < 1.0e-12f) return SESSION_SHAPE~;
+	return {
+		.joint = joint.copy(allocator),
+		.position = entry.get_bool("position") ?? true,
+		.rotation = entry.get_bool("rotation") ?? false,
+		.at = at,
+		.orient = orient.normalize(),
+		.from = from,
+		.to = to,
+		.blend = blend,
+		.mute = entry.get_bool("mute") ?? false,
+	};
 }
 
 // The keys of a look-at target. Refused for no keys, or key times that are

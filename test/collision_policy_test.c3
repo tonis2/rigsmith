@@ -649,7 +649,7 @@ fn void exclusions_round_trip_through_the_session_and_stale_ones_are_dropped() @
 
 	String text = crig::session_text(mem, &doc, "excluded.glb");
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 23`) && text.contains(`"collision_exclusions"`),
+	test::@check(text.contains(`"version": 24`) && text.contains(`"collision_exclusions"`),
 		"the session did not identify or write the new data");
 
 	crig::RigDocument? parsed = crig::parse_session(mem, text);

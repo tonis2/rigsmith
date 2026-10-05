@@ -141,6 +141,13 @@ fn String hint_line(AppState* app)
 		if (try line) return (String)line;
 		return "chaining from the selected joint · esc to start a new limb";
 	}
+
+	// Pins on an open clip are the clip's own: they keep holding when it plays and
+	// exports, which is not something the padlock alone says.
+	if (app.pose_edit_active && app.position_locks.len > 0 && app.clip_pins_drive())
+	{
+		return "pins hold while the clip plays and exports · set their from / to in the Joint panel or the dopesheet's Pins lane";
+	}
 	return "";
 }
 

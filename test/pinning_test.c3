@@ -286,6 +286,72 @@ fn void the_humanoid_squats_on_pinned_feet() @test
 	}
 }
 
+// The angle the leg is folded by at `knee`, in degrees: 0 for a straight leg.
+fn float Model.fold(&self, String thigh, String knee, String ankle)
+{
+	Vec3 above = (self.at(knee) - self.at(thigh)).normalize();
+	Vec3 below = (self.at(ankle) - self.at(knee)).normalize();
+	return (float)math::acos(math::clamp(above.dot(below), -1.0f, 1.0f)) * 180.0f / (float)math::PI;
+}
+
+<*
+ Both ankles pinned and the body pulled down by `spine`: the knees fold and both
+ feet stay on their pins. The grab is what gives way, never a pin — and never
+ just one leg of the two.
+*>
+fn void check_spine_pulled_down(bool grounded, Vec3 by_fraction, bool walking = false, float at = 0.0f) @local
+{
+	Model m;
+	if (!m.open(PERSON, walking)) return;
+	defer m.close();
+	if (at > 0.0f) test::@check(m.app.park_clip(m.app.editing, at), "the clip would not park at %.2f", at);
+	if (grounded && !walking) m.stand_on("toe_L", "toe_R");
+	Vec3 foot_l = m.at("ankle_L");
+	Vec3 foot_r = m.at("ankle_R");
+	m.pin("ankle_L");
+	m.pin("ankle_R");
+	m.pull("spine", by_fraction * m.height);
+	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
+	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
+	io::printfn("  grounded=%s ankle_L off %.4f ankle_R off %.4f knees %.1f %.1f", grounded,
+		m.off("ankle_L", foot_l), m.off("ankle_R", foot_r), fold_l, fold_r);
+	m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "spine pulled down");
+	test::@check(fold_l > 20.0f, "the left knee only folded %.1f degrees", fold_l);
+	test::@check(fold_r > 20.0f, "the right knee only folded %.1f degrees", fold_r);
+}
+
+fn void pulling_the_spine_down_folds_both_knees_on_pinned_ankles() @test
+{
+	io::printn("humanoid: spine down with both ankles pinned");
+	foreach (bool grounded : { false, true })
+	{
+		// The grounded body is also standing on its toes, so it sits only as deep as flat feet allow.
+		check_spine_pulled_down(grounded, { 0, grounded ? -0.05f : -0.15f, 0 });
+	}
+}
+
+fn void pulling_the_spine_down_in_a_grounded_walk_keeps_both_feet() @test
+{
+	io::printn("humanoid, grounded Walk: spine down with both ankles pinned");
+	// Shallow: a planted toe under a pinned ankle holds only as deep as the ankle's own limits let the foot stay flat.
+	foreach (float at : { 0.0f, 0.2f, 0.4f, 0.6f, 0.8f })
+	{
+		check_spine_pulled_down(true, { 0, -0.02f, 0 }, true, at);
+	}
+}
+
+fn void pulling_the_spine_down_and_aside_keeps_both_feet() @test
+{
+	io::printn("humanoid: spine down and a little sideways with both ankles pinned");
+	foreach (bool grounded : { false, true })
+	{
+		foreach (float side : { 0.03f, -0.03f })
+		{
+			check_spine_pulled_down(grounded, { side, grounded ? -0.05f : -0.15f, 0 });
+		}
+	}
+}
+
 fn void turning_the_humanoids_hips_keeps_the_feet_down() @test
 {
 	io::printn("humanoid: turn the hips with both feet pinned");

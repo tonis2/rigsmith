@@ -392,7 +392,13 @@ fn void an_unreachable_anchor_reports_the_gap() @test
 
 	app.lock_position(fixture.ankle_l);
 	// Held a leg and a half below the floor: nothing the leg does can reach it.
-	app.position_locks[0].target = app.position_locks[0].target - (Vec3){ 0, 1.5, 0 };
+	// The pin is the clip's while a clip is edited, so it is moved there and the
+	// gesture pins follow (`sync_clip_pins`).
+	crig::RigView view = app.open_rig(mem)!!;
+	float height = view.skeleton.height();
+	view.free(mem);
+	app.clip(app.editing).pins[0].at.y -= 1.5f / height;
+	app.sync_clip_pins();
 
 	app.select(fixture.hips);
 	test::@check(app.begin_pose(), "G did not begin on the hips");

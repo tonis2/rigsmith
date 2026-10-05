@@ -45,6 +45,10 @@ const Color DOT_OUTLINE  = { 0.05, 0.06, 0.09, 1.0 };
 // Red, apart from every dot state — blue plain, gold selected, green root — so a
 // foot pinned to the floor reads as pinned and not as one more selection.
 const Color DOT_LOCKED   = { 0.98, 0.42, 0.42, 1.0 };
+// The same ring on a pin that did not hold: its limb could not reach the point, or
+// the joint limits stood in the way. Orange, between the pin's red and the gold of
+// a selection, so a foot that has left its pin reads differently from one that holds.
+const Color DOT_PIN_MISSED = { 1.0, 0.62, 0.15, 1.0 };
 const Color BONE         = { 0.85, 0.88, 0.95, 0.85 };
 
 // What the physics owns, in a hue nothing else on the overlay uses: the dots are

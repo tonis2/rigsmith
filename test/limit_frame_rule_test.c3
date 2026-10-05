@@ -98,7 +98,7 @@ fn void an_older_sessions_tables_keep_the_axes_they_were_written_on() @test
 
 	String text = crig::session_text(mem, doc, "hand.glb", limits: true);
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 23`), "the session is not version 23");
+	test::@check(text.contains(`"version": 24`), "the session is not version 24");
 
 	crig::RigDocument? current = crig::parse_session(mem, text);
 	if (catch current) { test::@check(false, "today's session did not read"); return; }
@@ -106,7 +106,7 @@ fn void an_older_sessions_tables_keep_the_axes_they_were_written_on() @test
 	defer today.free();
 	test::@check(!today.rotation_limits_of(knuckle).has_saved_frame, "a current table was pinned");
 
-	String older = text.replace(mem, `"version": 23`, `"version": 22`);
+	String older = text.replace(mem, `"version": 24`, `"version": 22`);
 	defer older.free(mem);
 	crig::RigDocument? opened = crig::parse_session(mem, older);
 	if (catch opened) { test::@check(false, "the version 22 session did not read"); return; }

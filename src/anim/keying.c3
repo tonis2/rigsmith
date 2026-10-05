@@ -221,6 +221,7 @@ fn AnimTemplate clip_with_frames(Allocator allocator, AnimTemplate source, AnimK
 		.layers = layers_copy(allocator, source.layers),
 		.aims = aims_copy(allocator, source.aims),
 		.aim_targets = aim_targets_copy(allocator, source.aim_targets),
+		.pins = pins_copy(allocator, source.pins),
 		.owned = true,
 	};
 }
@@ -358,6 +359,9 @@ fn AnimTemplate clip_retimed(Allocator allocator, AnimTemplate source, float dur
 	out.layers = layers_copy(allocator, source.layers, scale);
 	free_aim_targets(allocator, out.aim_targets);
 	out.aim_targets = aim_targets_copy(allocator, source.aim_targets, scale);
+	// A pin's window and blend scale with the keys, so it holds the same stretch of motion.
+	free_pins(allocator, out.pins);
+	out.pins = pins_copy(allocator, source.pins, scale);
 	foreach (usz i, frame : out.keyframes)
 	{
 		out.keyframes[i].time = frame.time * scale;
@@ -433,6 +437,7 @@ fn AnimTemplate clip_cropped(Allocator allocator, AnimTemplate source, float sta
 		.layers = layers_copy(allocator, source.layers, 1.0f, -start),
 		.aims = aims_copy(allocator, source.aims),
 		.aim_targets = aim_targets_copy(allocator, source.aim_targets, 1.0f, -start),
+		.pins = pins_copy(allocator, source.pins, 1.0f, -start, length),
 		.owned = true,
 	};
 	out = edge_restated(allocator, out, source, start, 0.0f);
@@ -522,6 +527,7 @@ fn AnimTemplate clip_range_cut(Allocator allocator, AnimTemplate source, float s
 		.layers = layers_copy(allocator, source.layers),
 		.aims = aims_copy(allocator, source.aims),
 		.aim_targets = aim_targets_copy(allocator, source.aim_targets),
+		.pins = pins_cut(allocator, source.pins, start, end),
 		.owned = true,
 	};
 	if (has_end)

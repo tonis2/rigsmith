@@ -49,6 +49,9 @@ const String JOINT_AIM_SPREAD_ID = "joint-aim-spread";
 const String JOINT_AIM_INFLUENCE_ID = "joint-aim-influence";
 const String JOINT_AIM_MUTE_ID = "joint-aim-mute";
 const String JOINT_AIM_UNLOCK_ID = "joint-aim-unlock";
+const String JOINT_PIN_FROM_ID = "joint-pin-from";
+const String JOINT_PIN_TO_ID = "joint-pin-to";
+const String JOINT_PIN_BLEND_ID = "joint-pin-blend";
 const String JOINT_TAB_JOINT_ID = "joint-tab-joint";
 const String JOINT_TAB_ALIGN_ID = "joint-tab-align";
 const String JOINT_TAB_WEIGHTS_ID = "joint-tab-weights";
@@ -669,6 +672,26 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 												@node((Label) { .text = "Pin · held in place while you pose another joint",
 													.size = 12.0f, .color = TEXT_DIM });
 												@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+
+												// A pin on the open clip is the clip's: held while it plays, over a
+												// window. Seconds into the clip; one undo step per commit.
+												AnimPin* clip_pin = app.clip_pin_of(app.selected);
+												AnimTemplate* pin_clip = app.clip(app.editing);
+												if (clip_pin && pin_clip)
+												{
+													float span = math::max(pin_clip.duration, 0.01f);
+													@node((Label) { .text = "Holds from · to · blend (seconds)", .size = 12.0f,
+														.color = TEXT_DIM });
+													@node((Slider) { .label = "From", .value = clip_pin.from, .max = span, .step = 0.01f,
+														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_from_committed,
+														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_FROM_ID);
+													@node((Slider) { .label = "To", .value = clip_pin.to, .max = span, .step = 0.01f,
+														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_to_committed,
+														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_TO_ID);
+													@node((Slider) { .label = "Blend", .value = clip_pin.blend, .max = span, .step = 0.01f,
+														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_blend_committed,
+														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_BLEND_ID);
+												}
 
 												// Look at: this joint, and a few of its parents, turned toward a
 												// target handle in the view. See `anim/aim.c3`.
@@ -1421,6 +1444,27 @@ fn void joint_aim_spread_chosen(Ui* ui, usz index) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
 	app.set_aim_spread(app.selected, index + 1);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_pin_from_committed(Ui* ui, float value)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.set_clip_pin_window(app.selected, value, -1.0f, -1.0f);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_pin_to_committed(Ui* ui, float value)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.set_clip_pin_window(app.selected, -1.0f, value, -1.0f);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_pin_blend_committed(Ui* ui, float value)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.set_clip_pin_window(app.selected, -1.0f, -1.0f, value);
 	refresh_joint_panel(ui);
 }
 

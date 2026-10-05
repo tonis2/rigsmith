@@ -255,6 +255,7 @@ fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 	}
 	self.undo_stack.commit();
 	self.editing = landed;
+	self.sync_clip_pins();
 
 	if (forked)
 	{

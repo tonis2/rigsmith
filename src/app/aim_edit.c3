@@ -137,6 +137,44 @@ fn void AppState.apply_clip_aims(
 }
 
 <*
+ The clip's pins held over `pose`, which has had its limits and its ground solve
+ and not yet its aims.
+
+ Live, like the aims: the keys are untouched and the limb of each pinned joint
+ bends to keep it where the pin says while its window covers `time`.
+
+ @param gain : `A crossfade's weight for this clip's pins.`
+*>
+fn void AppState.apply_clip_pins(
+	&self,
+	RigView* view,
+	AnimTemplate clip,
+	AnimRef ref,
+	float time,
+	rig::Pose* pose,
+	float gain = 1.0f)
+{
+	if (!clip.plays_pins()) return;
+	String[] names = self.names_for(view, ref);
+	AimClampContext ctx = { .app = self, .view = view };
+
+	// The joint being grabbed is moving on purpose: its own pin stands aside for the
+	// drag (as its gesture pin does in `resolve_position_locks`) and follows it when
+	// it lets go (`refresh_clip_pin_target`), or the pin would hold the grab in place.
+	AnimPin[] pins = clip.pins;
+	sz grabbed = self.drag.dot != 0 && ref.same(self.editing) ? view.joint_of(self.drag.dot) : -1;
+	if (grabbed >= 0 && (usz)grabbed < names.len)
+	{
+		pins = alloc::new_array(tmem, AnimPin, (sz)clip.pins.len);
+		usz kept;
+		foreach (pin : clip.pins) if (pin.joint != names[(usz)grabbed]) pins[kept++] = pin;
+		pins = pins[:kept];
+	}
+	pin_pose(mem, &view.skeleton, names, pins, time, clip.duration, clip.loop, pose,
+		view.skeleton.height(), &doc_aim_clamp, &ctx, gain);
+}
+
+<*
  The handles of a clip's targets at `time`, for the overlay to draw and pick: one
  per target, where it is in model units, and `links` (when given) one per lock
  whose joint and target both exist, where its joint stands in `palette`. Drafts

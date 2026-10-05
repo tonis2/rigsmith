@@ -153,7 +153,7 @@ fn void? export_pack_glb(
 	AnimTemplate[] flattened = {};
 	bool[] made = {};
 	bool layered = false;
-	foreach (&template : authored) if (template.plays_layers(false) || template.plays_aims()) layered = true;
+	foreach (&template : authored) if (template.plays_layers(false) || template.plays_live_layers()) layered = true;
 	if (layered)
 	{
 		flattened = alloc::new_array(allocator, AnimTemplate, (sz)authored.len);
@@ -166,7 +166,7 @@ fn void? export_pack_glb(
 				flattened[i] = clip_flattened(allocator, *template, skeleton, names);
 				made[i] = true;
 			}
-			if (flattened[i].plays_aims())
+			if (flattened[i].plays_live_layers())
 			{
 				AnimTemplate next = clip_aims_flattened(allocator, flattened[i], skeleton, names, constraints);
 				if (made[i]) flattened[i].free(allocator);
@@ -537,10 +537,11 @@ fn float[] bake_times(
 	bool bake,
 	bool force_dense = false) @local
 {
-	float[] times = bake_key_times(allocator, template, bake, force_dense || template.plays_aims());
+	float[] times = bake_key_times(allocator, template, bake, force_dense || template.plays_live_layers());
 	// A target moves the head between the body's keys, so its key times are
 	// samples too.
 	if (bake) times = aim_sample_times(allocator, &template, times);
+	if (bake) times = pin_sample_times(allocator, &template, times);
 	// A layer adds motion between the base keys — a wave has none of its own —
 	// so a baked clip also samples where the layers need it.
 	if (bake) times = layer_sample_times(allocator, &template, times);
@@ -675,9 +676,13 @@ fn void aim_export_pose(
 	ConstraintRig constraints,
 	rig::Pose* pose) @local
 {
-	if (!template.plays_aims()) return;
+	if (!template.plays_live_layers()) return;
 	ConstraintRig held = constraints;
 	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
+	// Pins before aims, the viewport's order.
+	pin_pose(allocator, skeleton, names, template.pins, time, template.duration, template.loop,
+		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
+	if (!template.plays_aims()) return;
 	aim_pose(allocator, skeleton, names, template.aims, template.aim_targets, time, template.duration, template.loop,
 		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 }
@@ -844,7 +849,7 @@ fn float[] export_bake_times(
 	// Only the pure-linear seed is safe to thin: an auto or ground seed is
 	// deliberately dense across each span for a curve the floor does not describe,
 	// and its samples are left alone.
-	bool plain_linear = !template.plays_layers(false) && !template.plays_aims() && !template.uses_interpolation(AUTO)
+	bool plain_linear = !template.plays_layers(false) && !template.plays_live_layers() && !template.uses_interpolation(AUTO)
 		&& !template.uses_interpolation(HOLD) && !template.uses_easing()
 		&& !template.ground.solves();
 	if (plain_linear) seed = decimate_below_floor(seed, ANIM_CONSTRAINT_BAKE_MIN_SPAN);

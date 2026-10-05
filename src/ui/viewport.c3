@@ -83,6 +83,10 @@ const float ROOT_RING_GAP = 4.0;
 const float LOCK_RING_GAP = 2.5;
 const float LOCK_RING_WIDTH = 2.0;
 
+// How far a pin may end from its point, in rig heights, before its ring turns to
+// the missed colour: past what the solve's own tolerance and a pixel of drift explain.
+const float PIN_MISSED_RING = 0.01;
+
 // Gap between a dot and the name under it, in pixels. Clear of the root ring,
 // which is the widest a dot can wear, so a name never sits inside one.
 const float LABEL_GAP = DOT_RADIUS + ROOT_RING_GAP + 3.0;
@@ -523,6 +527,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	self.paint_aim_targets(elem, painter, view_projection);
 	self.paint_contact(elem, painter, view_projection);
 
+	float pin_missed = app.position_locks.len > 0 ? app.model_height() * PIN_MISSED_RING : 0.0f;
 	foreach (dot : doc.dots.array_view())
 	{
 		Vec3 position = app.dot_position(dot);
@@ -575,7 +580,8 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 		{
 			painter.circle(at, radius + LOCK_RING_GAP, {
 				.border_width = LOCK_RING_WIDTH,
-				.border_color = rig_overlay_ink(DOT_LOCKED, opacity),
+				.border_color = rig_overlay_ink(
+					pin_missed > 0.0f && app.lock_position_residual(dot.id) > pin_missed ? DOT_PIN_MISSED : DOT_LOCKED, opacity),
 			});
 		}
 

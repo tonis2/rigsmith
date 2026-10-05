@@ -842,6 +842,9 @@ struct AppState
 	 written to the model, cleared when a document is loaded. See `locks.c3`.
 	*>
 	PositionLock[] position_locks;
+	// Whether `position_locks` was last rebuilt from the editing clip's pins
+	// (`sync_clip_pins`), so closing the clip knows to drop them. See `clip_pins.c3`.
+	bool pins_from_clip;
 	PosedJoint[] pose_edit_draft;
 	// Look-at targets being moved, applied to the clip being edited like the pose
 	// draft; see `aim_edit.c3`. Owned, cleared with the pose draft.

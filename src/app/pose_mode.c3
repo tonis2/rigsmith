@@ -124,6 +124,7 @@ fn bool AppState.animation_pose_ready(&self)
 *>
 fn bool AppState.prepare_animation_pose(&self)
 {
+	self.sync_clip_pins();
 	if (self.pose_edit_active) return true;
 	if (!self.editing.valid() || !self.clip(self.editing))
 	{
@@ -284,6 +285,10 @@ fn rig::Pose AppState.draft_pose(&self, Allocator allocator, RigView* view)
  that ends the same call (`write_pose`/`write_body`) hands them to `unaim_pose`.
  A clip with no aims, or no active draft, costs nothing and records nothing.
 
+ **Clip pins are not laid over here.** A gesture solves on the draft and holds what
+ it must with its own `position_locks`; the shown pose (`refresh_posed`) puts the
+ clip's pins over whatever the gesture wrote, in the same order playback uses.
+
  The caller owns the returned arrays.
 *>
 fn rig::Pose AppState.gesture_pose(&self, Allocator allocator, RigView* view)
@@ -377,6 +382,7 @@ fn Quaternionf AppState.turn_was(&self)
 *>
 fn void AppState.refresh_posed(&self)
 {
+	self.sync_clip_pins();
 	if (!self.pose_edit_active) return;
 	self.drop_palette();
 
@@ -399,7 +405,8 @@ fn void AppState.refresh_posed(&self)
 			String[] names = self.names_for(&view, self.editing);
 			ground_pose(mem, &view.skeleton, names, clip.ground, &pose,
 				clip.phase_at(self.edit_time));
-			// After the floor, as everywhere: the targets never feed back into it.
+			// After the floor, as everywhere: the pins and targets never feed back into it.
+			self.apply_clip_pins(&view, *clip, self.editing, self.edit_time, &pose);
 			self.apply_clip_aims(&view, *clip, self.editing, self.edit_time, &pose);
 		}
 	}
@@ -990,6 +997,9 @@ fn usz claim_joint(uint[] buf, usz count, uint joint) @local
  half ended from its orientation. Measured after all the placing, so a later anchor
  that disturbed an earlier one is reported honestly, not by each solve's own gap.
 
+ `shift` — the ground correction between the frame the pose is solved in and the
+ one the pins were read in (see `body_pose`): the targets are carried back by it.
+
  `report: false` — the pinned solves honor joint limits but leave the collision
  report to the gesture the hand is on. A position anchor whose joint has no
  ancestor run (a root, or a trunk joint) bends nothing: nothing above it can lift
@@ -997,7 +1007,7 @@ fn usz claim_joint(uint[] buf, usz count, uint joint) @local
 
  Written into `pose`; the caller's `write_pose` puts the results on screen.
 *>
-fn void AppState.resolve_position_locks(&self, RigView* view, rig::Pose* pose, uint moving_dot)
+fn void AppState.resolve_position_locks(&self, RigView* view, rig::Pose* pose, uint moving_dot, Vec3 shift = {})
 {
 	if (self.position_locks.len == 0) return;
 
@@ -1065,7 +1075,7 @@ fn void AppState.resolve_position_locks(&self, RigView* view, rig::Pose* pose, u
 				Vec3[IK_MAX_CHAIN + 1] points;
 				self.chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
 				(void)self.solve_limited_pose_chain(view, chain, pose,
-					points[:chain.count + 1], lock.target, tolerance, {}, false);
+					points[:chain.count + 1], lock.target - shift, tolerance, {}, false);
 				for (usz t = 0; t < chain.count; t++)
 				{
 					held_count = claim_joint(held_joints[..], held_count, (uint)chain.joints[t]);
@@ -1106,7 +1116,7 @@ fn void AppState.resolve_position_locks(&self, RigView* view, rig::Pose* pose, u
 		sz j = view.joint_of(lock.dot_id);
 		if (j < 0) continue;
 		self.position_locks[i].residual = lock.position
-			? (view.skeleton.joints[(usz)j].transform(palette[(usz)j]) - lock.target).length()
+			? (view.skeleton.joints[(usz)j].transform(palette[(usz)j]) - (lock.target - shift)).length()
 			: 0.0f;
 		self.position_locks[i].turn_residual = lock.rotation
 			? rotation_angle_between(world[(usz)j], lock.orient)
@@ -1864,7 +1874,7 @@ fn bool AppState.body_pose(&self, RigView* view, rig::Pose* pose, PoseChain chai
 			if (j < 0 || !lock.position) continue;
 			if (try palette = start)
 			{
-				lock.loose = (skeleton.joints[(usz)j].transform(palette[(usz)j]) + shift - lock.target).length() > h * PIN_LOOSE;
+				lock.loose = !pin_in_reach(skeleton, self.pose_chain(view, lock.dot_id), palette, lock.target - shift);
 			}
 			foreach (other : self.position_locks)
 			{
@@ -2001,12 +2011,12 @@ fn bool AppState.body_pose(&self, RigView* view, rig::Pose* pose, PoseChain chai
 		}
 		body_ik(skeleton, pose, joints[:joint_count], goals[:goal_count], &settings);
 
-		// Rotation pins, after every position is placed: the frame they read is final.
-		foreach (usz i, lock : self.position_locks)
-		{
-			if (!lock.rotation || lock.dot_id == self.drag.dot) continue;
-			self.hold_world_rotation(view, pose, lock.dot_id, lock.orient);
-		}
+		// Pins win. The solve above only weighs them against the grab and the
+		// floor, so what it leaves is close, not exact: each limb is now solved to
+		// its point through the same pass the plain path runs, rotation holds
+		// included, and the grab is what gives way (`body_grab_miss`).
+		self.resolve_position_locks(view, pose, self.drag.dot, shift);
+		if (start.len > 0) self.hold_riding_contacts(view, pose, grabbed, start, contact[:floor_spec.count], planted[:floor_spec.count]);
 
 		// What the settled body leaves below the floor is held on it, and the solve
 		// goes again from the same start — a foot held up may bring another down,
@@ -2130,11 +2140,86 @@ fn void body_keep_trunk_rigid(rig::Skeleton* skeleton, BodyJoint[] joints, usz* 
 	*count = kept;
 }
 
-// Whether `joint` hangs below one of these pinned joints, and so rides on it.
+<*
+ Whether `joint` is on the same limb as one of these pinned joints: it hangs below
+ one, and rides on it, or one hangs below it and is part of its run. Either way
+ the pin already says where the joint is, and a second goal there would only fight it.
+*>
 fn bool body_rides_a_pin(rig::Skeleton* skeleton, BodyGoal[] pins, usz joint) @local
 {
-	foreach (pin : pins) if (body_above(skeleton, pin.joint, joint)) return true;
+	foreach (pin : pins)
+	{
+		if (body_above(skeleton, pin.joint, joint) || body_above(skeleton, joint, pin.joint)) return true;
+	}
 	return false;
+}
+
+<*
+ Whether a position pin's point is within its own limb's reach: no further from
+ the top of its run than the run's bones are long, summed from the effector up.
+ A pin set beyond that cannot hold, so it reports its miss without steering the
+ solve; any other pin is the solve's to hold, however far the grab then pulls.
+
+ @param palette : `The pose's palette, in the same frame as the target.`
+*>
+fn bool pin_in_reach(rig::Skeleton* skeleton, PoseChain chain, Matrix4f[] palette, Vec3 target) @local
+{
+	// No run to reach with: a trunk joint is carried by the root's slide, which has
+	// no limit but the grab's own, so the pin is the solve's to hold.
+	if (chain.count == 0) return true;
+	float reach = 0.0f;
+	usz below = chain.effector;
+	foreach (above : chain.joints[:chain.count])
+	{
+		reach += (skeleton.joints[below].transform(palette[below]) - skeleton.joints[above].transform(palette[above])).length();
+		below = above;
+	}
+	Vec3 top = skeleton.joints[below].transform(palette[below]);
+	return (target - top).length() <= reach + skeleton.height() * IK_TOLERANCE;
+}
+
+<*
+ Keeps a planted foot flat on its floor point while its ankle is pinned.
+
+ A pinned ankle placed exactly (`resolve_position_locks`) leaves the foot to tilt
+ with the shin, so the toe sinks and the ground solve lifts the whole figure, pin
+ and all. A contact that rides a pinned position joint is therefore turned back to
+ where it stood, by the joints between it and the pin — the pin itself does not
+ move. A pin that also holds its angle already says where its foot is, and is left.
+
+ @param start : `The palette the gesture's goals were read from, in the solve's frame.`
+*>
+fn void AppState.hold_riding_contacts(&self, RigView* view, rig::Pose* pose, usz grabbed, Matrix4f[] start,
+	usz[] contact, bool[] planted)
+{
+	rig::Skeleton* skeleton = &view.skeleton;
+	float tolerance = skeleton.height() * IK_TOLERANCE;
+	foreach (usz i, foot : contact)
+	{
+		if (!planted[i] || foot == grabbed) continue;
+		foreach (lock : self.position_locks)
+		{
+			sz found = view.joint_of(lock.dot_id);
+			if (found < 0 || !lock.position || lock.rotation || lock.dot_id == self.drag.dot || lock.loose || lock.yielded) continue;
+			if (!body_above(skeleton, (usz)found, foot)) continue;
+			PoseChain chain;
+			chain.effector = foot;
+			usz[IK_MAX_CHAIN] run;
+			usz n = skeleton.ancestor_run(foot, run[..]);
+			// From the foot up to and including the pinned joint.
+			foreach (usz t, joint : run[:n])
+			{
+				chain.joints[t] = joint;
+				if (joint == (usz)found) { chain.count = t + 1; break; }
+			}
+			if (chain.count == 0) continue;
+			Vec3[IK_MAX_CHAIN + 1] points;
+			self.chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
+			(void)self.solve_limited_pose_chain(view, chain, pose, points[:chain.count + 1],
+				skeleton.joints[foot].transform(start[foot]), tolerance, {}, false);
+			break;
+		}
+	}
 }
 
 // Which goal holds `joint`, or -1.
@@ -2215,6 +2300,13 @@ fn GroundContacts AppState.gesture_contacts(&self, RigView* view, usz[] contact,
 fn void AppState.write_body(&self, RigView* view, rig::Pose pose)
 {
 	self.unaim_pose(&pose);
+	// Every joint the exact pin pass may have turned, not only the solve's own
+	// columns: the gesture's snapshot holds them all, so undo and escape cover them.
+	foreach (was : self.gesture_before)
+	{
+		sz j = view.joint_of(was.dot_id);
+		if (j >= 0) self.set_working_pose(was.dot_id, pose.rotations[(usz)j], pose.offsets[(usz)j]);
+	}
 	for (usz i = 0; i < self.body_joints; i++)
 	{
 		sz j = view.joint_of(self.body_joint_ids[i]);

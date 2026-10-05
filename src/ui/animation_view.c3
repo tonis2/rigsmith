@@ -208,6 +208,9 @@ struct AnimSnapshot
 	// The look-at targets and their keys together: either changing redraws the lanes.
 	usz aims;
 	usz aim_keys;
+	// The clip pins and a hash of their windows: a bar moved redraws the lanes.
+	usz pins;
+	uint pin_windows;
 	// The last Check, when it is about this clip.
 	bool checked;
 	usz issues;
@@ -224,6 +227,18 @@ fn usz anim_aim_key_total(AnimTemplate* clip) @private
 	usz total;
 	if (clip) foreach (&target : clip.aim_targets) total += target.keys.len;
 	return total;
+}
+
+// The pins' windows folded into one number, so a pin whose window moved is a change.
+fn uint anim_pin_window_hash(AnimTemplate* clip) @private
+{
+	uint hash = 2166136261u;
+	if (clip) foreach (&pin : clip.pins)
+	{
+		hash = (hash ^ (uint)(pin.from * 1000.0f)) * 16777619u;
+		hash = (hash ^ (uint)(pin.to * 1000.0f)) * 16777619u;
+	}
+	return hash;
 }
 
 fn AnimSnapshot anim_snapshot(AppState* app) @private
@@ -265,6 +280,8 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.tracks = app.timeline_tracks.len,
 		.aims = app.clip(app.editing) ? app.clip(app.editing).aim_targets.len : 0,
 		.aim_keys = anim_aim_key_total(app.clip(app.editing)),
+		.pins = app.clip(app.editing) ? app.clip(app.editing).pins.len : 0,
+		.pin_windows = anim_pin_window_hash(app.clip(app.editing)),
 		.checked = app.anim_check.ran && app.anim_check.ref.same(app.editing),
 		.issues = app.anim_check.issues.len,
 		.ghosts = app.config.show_ghosts,
@@ -310,6 +327,8 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.tracks != other.tracks
 		|| self.aims != other.aims
 		|| self.aim_keys != other.aim_keys
+		|| self.pins != other.pins
+		|| self.pin_windows != other.pin_windows
 		|| self.checked != other.checked
 		|| self.issues != other.issues
 		|| self.ghosts != other.ghosts
@@ -964,9 +983,11 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 	// One lane per look-at target, after the contact lanes, in both views.
 	usz aims = clip ? clip.aim_targets.len : 0;
 	usz aim_keys = anim_aim_key_total(clip);
+	// And one per clip pin after those: the window it holds, as a bar.
+	usz pins = clip ? clip.pins.len : 0;
 	if (!app.anim_show_tracks && clip)
 	{
-		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts + aims));
+		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts + aims + pins));
 		self.lanes[0] = { .label = layer ? layer.name : "Poses" };
 		self.contact_rows(clip, 1);
 		self.marks = alloc::new_array(mem, TimelineMark, (sz)(shown.keyframes.len + aim_keys));
@@ -974,9 +995,10 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 			self.marks[i] = { .lane = 0, .at = key.time, .curve = anim_frame_curve(shown, key),
 				.selected = app.animation_key_selected(app.editing, key.time) };
 		self.aim_rows(app, clip, 1 + contacts, shown.keyframes.len);
+		self.pin_rows(clip, 1 + contacts + aims);
 		return;
 	}
-	if (tracks.len == 0 && aims == 0) return;
+	if (tracks.len == 0 && aims == 0 && pins == 0) return;
 	bool filtering = app.anim_tracks_selected_only;
 	StringList selected_names;
 	selected_names.init(mem);
@@ -993,7 +1015,7 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 		if (track.translation_times.len > 0) { lanes++; total += track.translation_times.len; }
 	}
 
-	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts + aims));
+	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts + aims + pins));
 	self.marks = alloc::new_array(mem, TimelineMark, (sz)(total + aim_keys));
 	if (clip) self.contact_rows(clip, 0);
 
@@ -1034,6 +1056,30 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 		}
 	}
 	self.aim_rows(app, clip, lane, write);
+	self.pin_rows(clip, lane + aims);
+}
+
+<*
+ One lane per clip pin from lane `first` on, each holding one bar: the window the
+ pin holds its joint over. The bars join the contact bars in `self.bars`, a pin's
+ flagged so a drag on its ends edits the pin (`anim_pin_bar_edited`).
+*>
+fn void AnimSheet.pin_rows(&self, AnimTemplate* clip, usz first)
+{
+	if (!clip || clip.pins.len == 0) return;
+	AnimPin[] pins = clip.pins;
+	TimelineBar[] bars = alloc::new_array(mem, TimelineBar, (sz)(self.bars.len + pins.len));
+	foreach (usz i, bar : self.bars) bars[i] = bar;
+	foreach (usz i, &pin : pins)
+	{
+		usz lane = first + i;
+		if (lane >= self.lanes.len) break;
+		self.lanes[lane] = { .label = pin.joint, .trailing = pin.mute ? "Pin (muted)" : "Pin", .dimmed = pin.mute,
+			.joint = pin.joint, .contact = true, .pin = true };
+		bars[self.bars.len + i] = { .lane = lane, .from = pin.from, .to = pin.to, .window = i, .pin = true };
+	}
+	if (self.bars.len > 0) alloc::free(mem, self.bars);
+	self.bars = bars;
 }
 
 <*

@@ -61,7 +61,8 @@ fn void pose_pins_clear_clicked(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	usz held = app.position_locks.len;
-	app.clear_position_locks();
+	if (AnimTemplate* clip = app.clip_pins_drive() ? app.clip(app.editing) : null) held = math::max(held, (usz)clip.pins.len);
+	app.clear_editor_pins();
 	app.@notice(held == 0 ? "nothing is pinned" : "all pins cleared");
 	app.refresh_ui();
 	refresh_joint_panel(ui);

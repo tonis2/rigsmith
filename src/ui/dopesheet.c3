@@ -56,6 +56,9 @@ struct TimelineLane
 	bool contact;
 	// A look-at lane: `joint` is the aim's joint, its marks are target keys.
 	bool aim;
+	// A pin lane: a contact-shaped lane (`contact` is set too) whose one bar is the
+	// clip pin's window on `joint`. Drags edit the pin, not a ground contact.
+	bool pin;
 }
 
 <*
@@ -108,6 +111,8 @@ struct TimelineBar
 	usz window;
 	bool open_from;
 	bool open_to;
+	// A clip pin's window; `window` is its index in the clip's pins.
+	bool pin;
 }
 
 // Which part of a bar a drag holds.

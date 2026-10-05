@@ -836,11 +836,14 @@ fn AnimTemplate clip_copy_without_aims(Allocator allocator, AnimTemplate source)
 	return out;
 }
 
-// Samples per span when an aimed clip is written into keys.
+// Samples per span when an aimed or pinned clip is written into keys.
 const usz AIM_FLAT_STEPS = 4;
 
 <*
- The clip with its unmuted aims baked into its keys, and no aims left.
+ The clip with its unmuted aims and pins baked into its keys, and none left.
+
+ Pins are laid over each sample first and the aims after, the viewport's order; the
+ joints a pin's limb turns get keys like the aimed ones.
 
  Sampled at the clip's key times, the aims' own key times and a few instants in
  every span between them (the turn is not linear in the target), each sample the
@@ -855,11 +858,17 @@ const usz AIM_FLAT_STEPS = 4;
 fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 	rig::Skeleton* skeleton, String[] names, ConstraintRig constraints = {})
 {
-	if (!source.plays_aims() || !(source.duration > 0.0f)) return clip_copy_without_aims(allocator, source);
+	if (!source.plays_live_layers() || !(source.duration > 0.0f))
+	{
+		AnimTemplate plain = clip_copy_without_aims(allocator, source);
+		free_pins(allocator, plain.pins);
+		plain.pins = {};
+		return plain;
+	}
 
 	float[] seed = alloc::new_array(allocator, float, (sz)source.keyframes.len);
 	foreach (usz i, frame : source.keyframes) seed[i] = frame.time;
-	float[] keyed = aim_sample_times(allocator, &source, seed);
+	float[] keyed = pin_sample_times(allocator, &source, aim_sample_times(allocator, &source, seed));
 	defer alloc::free(allocator, keyed);
 
 	// The spans between those, cut finer.
@@ -892,6 +901,8 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 		}
 	}
 
+	pin_mark_turned(skeleton, names, &source, turned);
+
 	ConstraintRig held = constraints;
 	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
 	Vec3[] bones = skeleton.bone_directions(allocator);
@@ -903,6 +914,8 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 		rig::Pose pose = source.pose(allocator, skeleton, names, time, false, honor_solo: false);
 		defer pose.free(allocator);
 		if (source.ground.solves()) ground_pose(allocator, skeleton, names, source.ground, &pose, source.phase_at(time));
+		pin_pose(allocator, skeleton, names, source.pins, time, source.duration, source.loop, &pose,
+			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 		aim_pose(allocator, skeleton, names, source.aims, source.aim_targets, time, source.duration, source.loop, &pose,
 			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 
@@ -949,6 +962,8 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 	free_aim_targets(allocator, out.aim_targets);
 	out.aims = {};
 	out.aim_targets = {};
+	free_pins(allocator, out.pins);
+	out.pins = {};
 	out.compile_tracks(allocator);
 	return out;
 }
