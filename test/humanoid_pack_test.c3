@@ -216,15 +216,7 @@ fn void the_rig_carries_a_limit_on_every_joint_that_turns() @test
 	}
 	test::eq(exact, (usz)51);
 
-	// The sidecar carries none; the open reads them off the model.
-	String sidecar = crig::session_path(mem, HUMANOID);
-	defer sidecar.free(mem);
-	crig::ProjectSession? session = crig::read_project_session(mem, sidecar);
-	if (catch session) { test::@check(false, "%s did not read as a session", sidecar); return; }
-	crig::ProjectSession read_session = session;
-	defer read_session.free(mem);
-	test::eq(read_session.doc.rotation_limits.len(), (sz)0);
-
+	// The open reads them off the model.
 	rig::TriMesh? loaded = rig::load_gltf(mem, HUMANOID);
 	if (catch loaded) { test::@check(false, "%s did not load as a mesh", HUMANOID); return; }
 	rig::TriMesh mesh = loaded;

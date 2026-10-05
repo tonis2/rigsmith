@@ -474,11 +474,7 @@ fn void humanoid_save_carries_its_limits_and_takes_them_back() @test
 	defer alloc::free(mem,original);
 	file::save(path,original)!!;
 	defer (void)file::delete(path);
-	String source_sidecar = crig::session_path(mem, source);
-	defer source_sidecar.free(mem);
-	char[] session = file::load(mem,source_sidecar)!!;
-	defer alloc::free(mem,session);
-	file::save(sidecar,session)!!;
+	// No sidecar is copied: the open imports the rig the model carries.
 	defer (void)file::delete(sidecar);
 
 	rig::TriMesh mesh = rig::load_gltf(mem,path)!!;

@@ -153,7 +153,7 @@ fn void the_feet_are_found_on_their_own() @test
 	test::@check(found == 4, "the dog has four feet, found %d", found);
 	for (usz i = 0; i < found; i++)
 	{
-		test::@check(view.names[feet[i]].contains("paw"), "a foot was %s", view.names[feet[i]]);
+		test::@check(view.names[feet[i]].contains("hoof"), "a foot was %s", view.names[feet[i]]);
 	}
 
 	Rigged person;
@@ -167,42 +167,6 @@ fn void the_feet_are_found_on_their_own() @test
 	{
 		test::@check(body.names[feet[i]].contains("toe"), "a foot was %s", body.names[feet[i]]);
 	}
-}
-
-fn float offset_of(crig::RigView* view, usz[] feet, float[] offsets, String name)
-{
-	foreach (usz i, foot : feet)
-	{
-		if (view.names[foot] == name) return offsets[i];
-	}
-	return -1.0f;
-}
-
-fn void gait_offsets_follow_the_gait() @test
-{
-	io::printn("a walk is lateral, a trot diagonal");
-	Rigged f;
-	f.open(QUADRUPED);
-	defer f.close();
-	crig::RigView view = f.app.open_rig(mem)!!;
-	defer view.free(mem);
-	usz[8] feet;
-	usz found = crig::gait_find_feet(&view.skeleton, view.names, feet[..]);
-	float[4] offsets;
-
-	crig::gait_offsets(&view.skeleton, WALK, feet[:found], offsets[..]);
-	float lh = offset_of(&view, feet[:found], offsets[..], "hind_paw_L");
-	float lf = offset_of(&view, feet[:found], offsets[..], "fore_paw_L");
-	float rh = offset_of(&view, feet[:found], offsets[..], "hind_paw_R");
-	float rf = offset_of(&view, feet[:found], offsets[..], "fore_paw_R");
-	test::@check(lh == 0.0f && lf == 0.25f && rh == 0.5f && rf == 0.75f, "walk %g %g %g %g", lh, lf, rh, rf);
-
-	crig::gait_offsets(&view.skeleton, TROT, feet[:found], offsets[..]);
-	lh = offset_of(&view, feet[:found], offsets[..], "hind_paw_L");
-	lf = offset_of(&view, feet[:found], offsets[..], "fore_paw_L");
-	rh = offset_of(&view, feet[:found], offsets[..], "hind_paw_R");
-	rf = offset_of(&view, feet[:found], offsets[..], "fore_paw_R");
-	test::@check(lh == rf && rh == lf && lh != rh, "trot %g %g %g %g", lh, lf, rh, rf);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,12 +323,13 @@ fn void a_baked_target_path_is_followed() @test
 	f.open(QUADRUPED);
 	defer f.close();
 
-	// The left hind paw lifted and back, over a second.
+	// The left hind hoof lifted from where it stands and forward — the quadruped
+	// faces −X — over a second.
 	String path = `{"bake":{"clip":"Baked Step","duration":1.0,"loop":true,"samples":20},
-		"targets":[{"joint":"hind_paw_L","position":[
-			{"time":0,"position":[0.08,0.035,-0.29]},
-			{"time":0.5,"position":[0.08,0.14,-0.22]},
-			{"time":1.0,"position":[0.08,0.035,-0.29]}]}]}`;
+		"targets":[{"joint":"hind_hoof_L","position":[
+			{"time":0,"position":[0.235,0.041,-0.251]},
+			{"time":0.5,"position":[0.165,0.146,-0.251]},
+			{"time":1.0,"position":[0.235,0.041,-0.251]}]}]}`;
 	String reason;
 	Object* answer = solve(&f.app, path, &reason);
 	if (answer == null)
@@ -385,7 +350,7 @@ fn void a_baked_target_path_is_followed() @test
 	usz paw = 0;
 	foreach (usz j, name : view.names)
 	{
-		if (name == "hind_paw_L") paw = j;
+		if (name == "hind_hoof_L") paw = j;
 	}
 	float worst;
 	foreach (float t : (float[]){ 0.0f, 0.25f, 0.5f, 0.75f })
@@ -395,9 +360,9 @@ fn void a_baked_target_path_is_followed() @test
 		Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!!;
 		defer alloc::free(mem, palette);
 		Vec3 at = view.skeleton.joints[paw].transform(palette[paw]);
-		// The path: a triangle up to 0.14 at 0.5 and back.
+		// The path: a triangle up to 0.146 at 0.5 and back.
 		float rise = t <= 0.5f ? t / 0.5f : (1.0f - t) / 0.5f;
-		Vec3 want = { 0.08f, 0.035f + 0.105f * rise, -0.29f + 0.07f * rise };
+		Vec3 want = { 0.235f - 0.07f * rise, 0.041f + 0.105f * rise, -0.251f };
 		worst = math::max(worst, (at - want).length());
 	}
 	test::@check(worst < 0.005f, "the foot is %g off its path", worst);

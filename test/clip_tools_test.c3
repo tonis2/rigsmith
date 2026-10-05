@@ -94,7 +94,7 @@ fn void planting_a_smooth_clip_does_not_ring() @test
 {
 	io::printn("plant_feet on a smooth sparse clip cuts foot_slide and keys linearly");
 	mcp::Fixture fixture;
-	if (!open_quadruped(&fixture)) return;
+	if (!fixture.open_model(QUADRUPED)) return;
 	defer fixture.close();
 	mcp::Fixture* f = &fixture;
 
@@ -121,7 +121,7 @@ fn void planting_a_smooth_clip_does_not_ring() @test
 	{
 		foreach (dot : frame.dots)
 		{
-			if (dot.joint_name != "knee_L" && dot.joint_name != "hock_L") continue;
+			if (dot.joint_name != "hip_L" && dot.joint_name != "hind_knee_L") continue;
 			if (dot.rotation_interpolation == LINEAR) linear++;
 			if (dot.rotation_interpolation == INHERIT) inherited++;
 		}
@@ -131,26 +131,10 @@ fn void planting_a_smooth_clip_does_not_ring() @test
 	(void)inherited;
 }
 
-// A smooth hind-left swing over sparse keys, with the paw down for the first half.
-const String SMOOTH_STEP @local = `{"name":"smooth_step","duration":1.0,"loop":true,"blend":"smooth","keyframes":[{"time":0,"joints":[{"name":"hip_L","rotation":{"axis":[1,0,0],"angle":0.5}},{"name":"knee_L","rotation":{"axis":[1,0,0],"angle":0.2}}]},{"time":0.5,"joints":[{"name":"hip_L","rotation":{"axis":[1,0,0],"angle":-0.5}},{"name":"knee_L","rotation":{"axis":[1,0,0],"angle":-0.2}}]}],"ground":{"feet":[{"joint":"hind_paw_L","down":0.0,"up":0.5}]}}`;
+// A smooth hind-left swing over sparse keys, with the hoof down for the first half.
+// The quadruped faces −X, so its legs swing about Z.
+const String SMOOTH_STEP @local = `{"name":"smooth_step","duration":1.0,"loop":true,"blend":"smooth","keyframes":[{"time":0,"joints":[{"name":"hip_L","rotation":{"axis":[0,0,1],"angle":0.5}},{"name":"hind_knee_L","rotation":{"axis":[0,0,1],"angle":0.2}}]},{"time":0.5,"joints":[{"name":"hip_L","rotation":{"axis":[0,0,1],"angle":-0.5}},{"name":"hind_knee_L","rotation":{"axis":[0,0,1],"angle":-0.2}}]}],"ground":{"feet":[{"joint":"hind_hoof_L","down":0.0,"up":0.5}]}}`;
 
-<*
- The quadruped rig, opened over a bare app the way a model with a sidecar opens.
-*>
-fn bool open_quadruped(mcp::Fixture* fixture)
-{
-	fixture.app = crig::new_app({}, QUADRUPED);
-	fixture.app.adopt_source_rig();
-	if (fixture.app.doc.dots.len() == 0)
-	{
-		test::@check(false, "the quadruped rig would not import");
-		fixture.app.free();
-		return false;
-	}
-	fixture.tools = crig::new_tool_table(&fixture.app);
-	fixture.server = crig::serve_table(&fixture.tools, &fixture.app);
-	return true;
-}
 
 // ---------------------------------------------------------------------------
 // 3. Bare names ranked

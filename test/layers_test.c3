@@ -471,11 +471,7 @@ fn void save_flattens_the_layers_into_the_model_and_the_sidecar_keeps_them() @te
 	defer alloc::free(mem, original);
 	file::save(path, original)!!;
 	defer (void)file::delete(path);
-	String source_sidecar = crig::session_path(mem, source);
-	defer source_sidecar.free(mem);
-	char[] session = file::load(mem, source_sidecar)!!;
-	defer alloc::free(mem, session);
-	file::save(sidecar, session)!!;
+	// The save writes a sidecar beside the copy; the open imports the rig the model carries.
 	defer (void)file::delete(sidecar);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;

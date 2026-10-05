@@ -28,17 +28,13 @@ fn void Opened.open(&self, String path)
 	char[] original = file::load(mem, HUMANOID)!!;
 	defer alloc::free(mem, original);
 	file::save(path, original)!!;
-	String from = crig::session_path(mem, HUMANOID);
-	defer from.free(mem);
-	String to = crig::session_path(mem, path);
-	defer to.free(mem);
-	char[] session = file::load(mem, from)!!;
-	defer alloc::free(mem, session);
-	file::save(to, session)!!;
 
 	self.mesh = rig::load_gltf(mem, path)!!;
 	self.app = crig::new_app(self.mesh, path);
 	self.app.adopt_source_rig();
+	// A disposable copy under build: saving may write back into it, the way a
+	// model with a sidecar beside it would be.
+	self.app.saves_in_place = true;
 }
 
 fn void Opened.close(&self)

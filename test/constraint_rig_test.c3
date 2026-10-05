@@ -202,10 +202,10 @@ fn void ambiguous_transfer_frames_are_reported_not_guessed() @test
 		"the constraint report counted %d unsupported rows", constraints.unsupported());
 }
 
-const String PACK_CONSTRAINT_GLB = "test/out_constraint_pack.glb";
-const String RIGGED_CONSTRAINT_GLB = "test/out_constraint_rigged.glb";
-const String FOREIGN_CONSTRAINT_GLB = "test/out_constraint_foreign.glb";
-const String FOREIGN_ROUNDTRIP_GLB = "test/out_constraint_foreign_roundtrip.glb";
+const String PACK_CONSTRAINT_GLB = "build/out_constraint_pack.glb";
+const String RIGGED_CONSTRAINT_GLB = "build/out_constraint_rigged.glb";
+const String FOREIGN_CONSTRAINT_GLB = "build/out_constraint_foreign.glb";
+const String FOREIGN_ROUNDTRIP_GLB = "build/out_constraint_foreign_roundtrip.glb";
 
 fn int node_named(gltf::GltfStream* stream, String name)
 {
@@ -773,9 +773,9 @@ fn void fitted_templates_apply_exact_constraints_in_one_undo_step() @test
 // ---------------------------------------------------------------------------
 // P5: target-derived physical bodies
 
-const String PHYSICAL_BODY_GLB = "test/out_constraint_bodies.glb";
-const String PHYSICAL_BODY_BASELINE_GLB = "test/out_constraint_bodies_baseline.glb";
-const String PHYSICAL_BODY_COEXIST_GLB = "test/out_constraint_bodies_coexist.glb";
+const String PHYSICAL_BODY_GLB = "build/out_constraint_bodies.glb";
+const String PHYSICAL_BODY_BASELINE_GLB = "build/out_constraint_bodies_baseline.glb";
+const String PHYSICAL_BODY_COEXIST_GLB = "build/out_constraint_bodies_coexist.glb";
 
 alias P5Vec3List = List{Vec3};
 alias P5UintList = List{uint};
@@ -1073,8 +1073,8 @@ fn void target_hulls_are_small_weighted_and_form_a_complete_available_graph() @t
 // ---------------------------------------------------------------------------
 // P6: complete physical-export acceptance on a differently proportioned target
 
-const String P6_SOURCE_GLB = "test/out_physical_source.glb";
-const String P6_TARGET_GLB = "test/out_physical_target.glb";
+const String P6_SOURCE_GLB = "build/out_physical_source.glb";
+const String P6_TARGET_GLB = "build/out_physical_target.glb";
 
 alias P6UshortList = List{ushort};
 

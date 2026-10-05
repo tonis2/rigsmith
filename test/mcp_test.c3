@@ -78,6 +78,9 @@ struct Fixture
 	// bridge from it, shared with these checks so that both drive the same list.
 	crig::ToolTable tools;
 	mcp::Server server;
+	// The model's mesh when the fixture opened a .glb (`open_model`); the app only
+	// borrows it, so it is freed after the app.
+	rig::TriMesh mesh;
 }
 
 fn void Fixture.open(&self)
@@ -293,6 +296,27 @@ fn void Fixture.open_playing(&self)
 fn void Fixture.close(&self)
 {
 	self.app.free();
+	self.mesh.free(mem);
+}
+
+<*
+ Opens a model from assets/animations with the rig it carries, and serves the
+ tools over it. False, with a failed check, when the rig would not import.
+*>
+fn bool Fixture.open_model(&self, String path)
+{
+	self.mesh = rig::load_gltf(mem, path)!!;
+	self.app = crig::new_app(self.mesh, path);
+	self.app.adopt_source_rig();
+	if (self.app.doc.dots.len() == 0)
+	{
+		test::@check(false, "%s would not import its rig", path);
+		self.close();
+		return false;
+	}
+	self.tools = crig::new_tool_table(&self.app);
+	self.server = crig::serve_table(&self.tools, &self.app);
+	return true;
 }
 
 <*

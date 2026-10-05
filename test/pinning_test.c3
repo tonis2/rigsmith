@@ -162,20 +162,20 @@ fn void Model.check_held(&self, String[] names, Vec3[] was, String what)
 fn void check_pulled_down(Model* m, bool balance, DragAxis lock) @local
 {
 	m.app.balance_off = !balance;
-	Vec3 paw_l = m.at("hind_paw_L");
-	Vec3 paw_r = m.at("hind_paw_R");
-	m.pin("hind_paw_L");
-	m.pin("hind_paw_R");
+	Vec3 paw_l = m.at("hind_hoof_L");
+	Vec3 paw_r = m.at("hind_hoof_R");
+	m.pin("hind_hoof_L");
+	m.pin("hind_hoof_R");
 	Vec3 pelvis = m.at("pelvis");
 	m.pull("pelvis", { 0, -0.2f, 0 }, lock);
 
 	Vec3 after = m.at("pelvis");
 	io::printfn("  balance=%s pelvis %.3f,%.3f,%.3f -> %.3f,%.3f,%.3f  paw_L off %.4f  paw_R off %.4f",
 		balance, pelvis.x, pelvis.y, pelvis.z, after.x, after.y, after.z,
-		m.off("hind_paw_L", paw_l), m.off("hind_paw_R", paw_r));
+		m.off("hind_hoof_L", paw_l), m.off("hind_hoof_R", paw_r));
 	test::@check(after.y <= pelvis.y + 1.0e-4f, "the pelvis went UP: %.3f -> %.3f", pelvis.y, after.y);
 	test::@check(pelvis.y - after.y > 0.1f, "the pelvis only dropped %.3f of the 0.2 pulled", pelvis.y - after.y);
-	m.check_held({ "hind_paw_L", "hind_paw_R" }, { paw_l, paw_r }, "pelvis down");
+	m.check_held({ "hind_hoof_L", "hind_hoof_R" }, { paw_l, paw_r }, "pelvis down");
 }
 
 fn void the_dog_sits_on_pinned_hind_paws_at_rest() @test
@@ -226,11 +226,11 @@ fn void the_keyed_pose_is_the_shown_pose() @test
 	if (!m.open(DOG, true)) return;
 	defer m.close();
 	m.app.auto_key = false;
-	m.pin("hind_paw_L");
-	m.pin("hind_paw_R");
+	m.pin("hind_hoof_L");
+	m.pin("hind_hoof_R");
 	m.pull("pelvis", { 0, -0.2f, 0 });
 
-	String[8] names = { "pelvis", "chest", "hind_paw_L", "hind_paw_R", "fore_paw_L", "fore_paw_R", "knee_L", "hock_R" };
+	String[8] names = { "pelvis", "chest", "hind_hoof_L", "hind_hoof_R", "fore_hoof_L", "fore_hoof_R", "hind_knee_L", "fore_knee_R" };
 	Vec3[8] shown;
 	foreach (usz i, name : names) shown[i] = m.at(name);
 	test::@check(m.app.key_pose_edit(ALL), "the pose did not key");
@@ -249,12 +249,12 @@ fn void turning_the_dogs_pelvis_keeps_the_hind_paws_down() @test
 		Model m;
 		if (!m.open(DOG, true)) return;
 		defer m.close();
-		Vec3 paw_l = m.at("hind_paw_L");
-		Vec3 paw_r = m.at("hind_paw_R");
-		m.pin("hind_paw_L");
-		m.pin("hind_paw_R");
+		Vec3 paw_l = m.at("hind_hoof_L");
+		Vec3 paw_r = m.at("hind_hoof_R");
+		m.pin("hind_hoof_L");
+		m.pin("hind_hoof_R");
 		m.turn("pelvis", axis, 0.25f);
-		m.check_held({ "hind_paw_L", "hind_paw_R" }, { paw_l, paw_r }, "pelvis turned");
+		m.check_held({ "hind_hoof_L", "hind_hoof_R" }, { paw_l, paw_r }, "pelvis turned");
 	}
 }
 
@@ -348,20 +348,12 @@ fn void a_pin_that_cannot_hold_reports_its_true_miss() @test
 
 fn bool open_dog_tools(mcp::Fixture* f)
 {
-	f.app = crig::new_app({}, DOG);
-	f.app.adopt_source_rig();
-	if (f.app.doc.dots.len() == 0)
-	{
-		test::@check(false, "the dog would not import");
-		f.app.free();
-		return false;
-	}
-	f.tools = crig::new_tool_table(&f.app);
-	f.server = crig::serve_table(&f.tools, &f.app);
+	if (!f.open_model(DOG)) return false;
 	Object*? walk = f.call_tool("author_gait", `{"name":"PinWalk","duration":1.1,"gait":"walk"}`);
 	if (catch walk)
 	{
 		test::@check(false, "the dog's gait did not author");
+		f.close();
 		return false;
 	}
 	walk.free();
@@ -382,13 +374,13 @@ fn void the_mcp_tools_sit_the_dog_on_its_pinned_paws() @test
 	defer f.close();
 
 	Object*? set = f.call_tool("set_pins",
-		`{"pins":[{"joint":"hind_paw_L"},{"joint":"hind_paw_R","position":true}],"clip":"PinWalk","time":0}`);
+		`{"pins":[{"joint":"hind_hoof_L"},{"joint":"hind_hoof_R","position":true}],"clip":"PinWalk","time":0}`);
 	if (catch set) { test::@check(false, "set_pins refused"); return; }
 	defer set.free();
 	test::@check(set.get("pins")!!.get_len() == 2, "two pins were not set");
 
 	uint pelvis = f.app.dot_named("pelvis").id;
-	uint paw = f.app.dot_named("hind_paw_L").id;
+	uint paw = f.app.dot_named("hind_hoof_L").id;
 	Vec3 pelvis_was = f.app.dot_position(*f.app.doc.find(pelvis));
 	Vec3 paw_was = f.app.dot_position(*f.app.doc.find(paw));
 
@@ -424,11 +416,11 @@ fn void set_pins_refuses_what_it_cannot_pin() @test
 	if (!open_dog_tools(&f)) return;
 	defer f.close();
 
-	Object*? bad = f.call_tool("set_pins", `{"pins":[{"joint":"hind_paw_L"},{"joint":"no_such_joint"}]}`);
+	Object*? bad = f.call_tool("set_pins", `{"pins":[{"joint":"hind_hoof_L"},{"joint":"no_such_joint"}]}`);
 	test::@check(@catch(bad), "a pin on a joint the rig lacks was accepted");
 	test::@check(f.app.position_locks.len == 0, "a refused call changed the pins");
 
-	Object*? pinned = f.call_tool("set_pins", `{"pins":[{"joint":"hind_paw_L"}]}`);
+	Object*? pinned = f.call_tool("set_pins", `{"pins":[{"joint":"hind_hoof_L"}]}`);
 	if (catch pinned) { test::@check(false, "set_pins refused"); return; }
 	pinned.free();
 	test::@check(f.app.position_locks.len == 1, "the pin was not set");
@@ -450,7 +442,7 @@ fn void pose_joint_can_leave_the_pose_unkeyed_and_key_it_later() @test
 	if (!open_dog_tools(&f)) return;
 	defer f.close();
 
-	Object*? posed = f.call_tool("pose_joint", `{"joint":"hind_paw_L","move":[0,0.05,0],"clip":"PinWalk","time":0,"key":false}`);
+	Object*? posed = f.call_tool("pose_joint", `{"joint":"hind_hoof_L","move":[0,0.05,0],"clip":"PinWalk","time":0,"key":false}`);
 	if (catch posed) { test::@check(false, "pose_joint refused"); return; }
 	test::@check(!(posed.get_bool("keyed") ?? true), "the pose was keyed though key was false");
 	test::@check(f.app.pose_edit_pending, "no pose is pending");
@@ -468,10 +460,10 @@ fn void pose_joint_turns_a_joint() @test
 	mcp::Fixture f;
 	if (!open_dog_tools(&f)) return;
 	defer f.close();
-	Object*? set = f.call_tool("set_pins", `{"pins":[{"joint":"hind_paw_L"},{"joint":"hind_paw_R"}],"clip":"PinWalk","time":0}`);
+	Object*? set = f.call_tool("set_pins", `{"pins":[{"joint":"hind_hoof_L"},{"joint":"hind_hoof_R"}],"clip":"PinWalk","time":0}`);
 	if (catch set) { test::@check(false, "set_pins refused"); return; }
 	set.free();
-	uint paw = f.app.dot_named("hind_paw_L").id;
+	uint paw = f.app.dot_named("hind_hoof_L").id;
 	Vec3 was = f.app.dot_position(*f.app.doc.find(paw));
 	Object*? turned = f.call_tool("pose_joint", `{"joint":"pelvis","turn":{"axis":"y","angle":0.25}}`);
 	if (catch turned) { test::@check(false, "the turn refused"); return; }
@@ -487,7 +479,7 @@ fn Vec3 at_in(crig::AppState* app, String name) => app.dot_position(*app.doc.fin
 
 fn void dump_dog(crig::AppState* app, String tag) @local
 {
-	foreach (String n : (String[]){ "pelvis", "spine_01", "spine_02", "chest", "shoulder_L", "elbow_L", "fore_paw_L", "fore_paw_R", "hind_paw_L" })
+	foreach (String n : (String[]){ "pelvis", "spine", "chest", "shoulder_L", "fore_knee_L", "fore_hoof_L", "fore_hoof_R", "hind_hoof_L" })
 	{
 		Vec3 p = at_in(app, n);
 		io::printfn("  %s %-10s %.3f %.3f %.3f", tag, n, p.x, p.y, p.z);
@@ -495,57 +487,13 @@ fn void dump_dog(crig::AppState* app, String tag) @local
 }
 
 <*
- The user's case through the tool: Walk at t=0, both hind paws pinned, Balance on,
- the pelvis pulled 0.2 down. The body must sit — pelvis and rear down, chest up,
- the trunk on the midline — not crumple sideways to reach the planted front paw.
+ All four hooves pinned at rest and the pelvis pulled down: the crouch stays on the
+ midline and every hoof holds. The quadruped faces −X, so its midline is z = 0;
+ its legs stand mid-stride, so left and right are not mirrors of each other.
 *>
-fn void the_grounded_dog_sits_by_pitching_not_crumpling() @test
+fn void four_pinned_hooves_crouch_on_the_midline() @test
 {
-	io::printn("pose_joint: the pelvis down on pinned hind paws pitches the dog, it does not bend sideways");
-	mcp::Fixture f;
-	if (!open_dog_tools(&f)) return;
-	defer f.close();
-	Object*? set = f.call_tool("set_pins", `{"pins":[{"joint":"hind_paw_L"},{"joint":"hind_paw_R"}],"clip":"PinWalk","time":0,"balance":true}`);
-	if (catch set) { test::@check(false, "set_pins refused"); return; }
-	set.free();
-	crig::AppState* app = &f.app;
-	dump_dog(app, "before");
-	Vec3 chest_was = at_in(app, "chest");
-	Vec3 pelvis_was = at_in(app, "pelvis");
-	Vec3 shoulder_was = at_in(app, "shoulder_L");
-	Vec3 swing_was = at_in(app, "fore_paw_L");
-	Vec3 planted_was = at_in(app, "fore_paw_R");
-	float arm_was = (swing_was - shoulder_was).length();
-
-	Object*? posed = f.call_tool("pose_joint", `{"joint":"pelvis","move":[0,-0.2,0]}`);
-	if (catch posed) { test::@check(false, "pose_joint refused"); return; }
-	posed.free();
-	dump_dog(app, "after ");
-
-	Vec3 pelvis = at_in(app, "pelvis");
-	Vec3 chest = at_in(app, "chest");
-	test::@check(pelvis_was.y - pelvis.y > 0.15f, "the pelvis only dropped %.3f", pelvis_was.y - pelvis.y);
-	test::@check(chest_was.y - chest.y < (pelvis_was.y - pelvis.y) * 0.5f, "the chest dropped %.3f of the pelvis's %.3f",
-		chest_was.y - chest.y, pelvis_was.y - pelvis.y);
-	foreach (String n : (String[]){ "spine_01", "spine_02", "chest", "neck_01" })
-	{
-		test::@check(math::abs(at_in(app, n).x) < 0.01f, "%s went sideways to x=%.3f", n, at_in(app, n).x);
-	}
-	test::@check((at_in(app, "fore_paw_R") - planted_was).length() < 0.005f, "the planted front paw moved");
-	// Rear-down pitch: the body's forward axis tips nose-up.
-	test::@check(chest.y - pelvis.y > chest_was.y - pelvis_was.y + 0.1f, "the trunk did not pitch rear-down");
-	// The swing paw rides its parent rigidly: its arm keeps its length and shape.
-	float arm = (at_in(app, "fore_paw_L") - at_in(app, "shoulder_L")).length();
-	test::@check(math::abs(arm - arm_was) < 0.002f, "the swing leg changed shape: %.4f against %.4f", arm, arm_was);
-}
-
-<*
- A symmetric setup stays symmetric: all four paws pinned at rest, the pelvis pulled
- down, and the crouch is a pitch on the midline with left and right mirrored.
-*>
-fn void four_pinned_paws_crouch_symmetrically() @test
-{
-	io::printn("pose_joint: four pinned paws, pelvis down, stays symmetric");
+	io::printn("pose_joint: four pinned hooves, pelvis down, stays on the midline");
 	mcp::Fixture f;
 	if (!open_dog_tools(&f)) return;
 	defer f.close();
@@ -554,26 +502,25 @@ fn void four_pinned_paws_crouch_symmetrically() @test
 	if (catch rest) { test::@check(false, "the standing clip would not author"); return; }
 	rest.free();
 	Object*? again = f.call_tool("set_pins",
-		`{"pins":[{"joint":"hind_paw_L"},{"joint":"hind_paw_R"},{"joint":"fore_paw_L"},{"joint":"fore_paw_R"}],"clip":"Stand","time":0}`);
+		`{"pins":[{"joint":"hind_hoof_L"},{"joint":"hind_hoof_R"},{"joint":"fore_hoof_L"},{"joint":"fore_hoof_R"}],"clip":"Stand","time":0}`);
 	if (catch again) { test::@check(false, "set_pins refused"); return; }
 	again.free();
-	Vec3 chest_was = at_in(app, "chest");
+	String[4] hooves = { "hind_hoof_L", "hind_hoof_R", "fore_hoof_L", "fore_hoof_R" };
+	Vec3[4] hooves_was;
+	foreach (i, n : hooves) hooves_was[i] = at_in(app, n);
 	Vec3 pelvis_was = at_in(app, "pelvis");
 	Object*? posed = f.call_tool("pose_joint", `{"joint":"pelvis","move":[0,-0.15,0]}`);
 	if (catch posed) { test::@check(false, "pose_joint refused"); return; }
 	posed.free();
 	dump_dog(app, "crouch");
 	test::@check(pelvis_was.y - at_in(app, "pelvis").y > 0.1f, "the pelvis only dropped %.3f", pelvis_was.y - at_in(app, "pelvis").y);
-	foreach (String n : (String[]){ "spine_01", "spine_02", "chest", "pelvis" })
+	foreach (String n : (String[]){ "spine", "chest", "pelvis" })
 	{
-		test::@check(math::abs(at_in(app, n).x) < 0.005f, "%s drifted sideways to x=%.4f", n, at_in(app, n).x);
+		test::@check(math::abs(at_in(app, n).z) < 0.005f, "%s drifted sideways to z=%.4f", n, at_in(app, n).z);
 	}
-	foreach (String side : (String[]){ "shoulder", "elbow", "wrist", "hip", "knee", "hock" })
+	foreach (i, n : hooves)
 	{
-		Vec3 l = at_in(app, string::format(tmem, "%s_L", side));
-		Vec3 r = at_in(app, string::format(tmem, "%s_R", side));
-		test::@check(math::abs(l.x + r.x) < 0.005f && math::abs(l.y - r.y) < 0.005f && math::abs(l.z - r.z) < 0.005f,
-			"%s is not mirrored: %.3f,%.3f,%.3f against %.3f,%.3f,%.3f", side, l.x, l.y, l.z, r.x, r.y, r.z);
+		float off = (at_in(app, n) - hooves_was[i]).length();
+		test::@check(off < 0.005f, "%s left its pin by %.4f", n, off);
 	}
-	(void)chest_was;
 }

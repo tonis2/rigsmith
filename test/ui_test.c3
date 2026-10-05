@@ -56,9 +56,9 @@ const float CHROME_H = crig::BAR_H + TAB_H + VIEW_BAR_H;
 const Vec2 VIEWPORT        = { crig::WIN_W, crig::WIN_H - CHROME_H };
 const Vec2 VIEWPORT_ORIGIN = { 0.0, CHROME_H };
 
-// Joints in the shipped quadruped pack (assets/animations/quadruped.glb): the dog,
-// with its spine, neck, ears, tail and four-segment legs.
-const sz QUADRUPED_PACK_DOTS = 36;
+// Joints in the shipped quadruped pack (assets/animations/quadruped.glb): pelvis,
+// spine, chest, neck, head, a two-joint tail and four three-joint legs.
+const sz QUADRUPED_PACK_DOTS = 19;
 
 const Vec2 VIEWPORT_CENTER = {
 	crig::WIN_W * 0.5,
