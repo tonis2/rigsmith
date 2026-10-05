@@ -2917,11 +2917,10 @@ fn void drag_orbits_instead_of_placing() @test
 }
 
 <*
- The other reading of the same gesture: an Alt-drag that starts on a dot moves
- that dot and leaves the camera alone. Both are the left button, and which one
- happens is decided by what the press landed on — and, on a dot, by whether Alt
- is held. Moving a joint's rest position is Alt's alone now: a bare drag with no
- clip to pose leaves the dot where it is, so only Alt reshapes the skeleton.
+ The other reading of the same gesture: a drag that starts on a dot moves that
+ dot and leaves the camera alone. Both are the left button, and which one happens
+ is decided by what the press landed on. Only on Joints: on Pose no drag, Alt
+ held or not, moves a joint on the model.
 *>
 fn void drag_on_a_dot_moves_it() @test
 {
@@ -2964,11 +2963,11 @@ fn void drag_on_a_dot_moves_it() @test
 	test::@check(held != null && held.position == before.position,
 		"a bare drag on Pose moved the rest dot");
 
-	// Alt held, the rest dot follows the pointer on Pose too.
+	// Nor with Alt held: Pose never moves a joint on the model.
 	fixture.alt_drag(at, at + (Vec2) { DRAG_PIXELS, 0 });
 
-	Dot* moved = fixture.doc().find(before.id);
-	test::@check(moved != null && moved.position != before.position, "the dot followed the pointer");
+	Dot* kept = fixture.doc().find(before.id);
+	test::@check(kept != null && kept.position == before.position, "an Alt-drag on Pose moved the rest dot");
 	test::@check(fixture.app.camera.yaw == yaw, "grabbing a dot does not orbit");
 }
 
@@ -7436,16 +7435,14 @@ fn void posing_bends_the_limb_and_holds_the_fork() @test
 }
 
 <*
- On the posing stage a bare dot drag poses the joint; Alt-drag edits the rest dot.
+ On the posing stage a dot drag poses the joint, and never edits the rest dot.
 
- Both gestures live on the one stage, so the drag a user means as a pose must not
- fall through into a rest-rig move — that was the footgun: forgetting G moved the
- rest skeleton and lost the pose. A bare drag now runs the same IK as G. The rest
- skeleton is still editable here, with Alt held, and doing so does not throw the
- pose away: the draft is rebuilt against the edited rig. This is what lets rig
- fitting and animation posing share the regular viewport.
+ The drag a user means as a pose must not fall through into a rest-rig move —
+ that was the footgun: forgetting G moved the rest skeleton and lost the pose.
+ A drag runs the same IK as G, with Alt held too; the rest skeleton is edited on
+ Joints.
 *>
-fn void dragging_a_joint_poses_it_and_alt_drag_edits_the_rest_dot() @test
+fn void dragging_a_joint_poses_it_and_never_edits_the_rest_dot() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -7455,7 +7452,7 @@ fn void dragging_a_joint_poses_it_and_alt_drag_edits_the_rest_dot() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("a bare drag poses the joint; Alt-drag edits the rest dot");
+	io::printn("a drag poses the joint; Pose never edits the rest dot");
 	fixture.reset();
 
 	PosedLimb limb = build_limb(fixture);
@@ -7502,7 +7499,7 @@ fn void dragging_a_joint_poses_it_and_alt_drag_edits_the_rest_dot() @test
 		"the bare drag did not move the posed joint (%.5f) — IK did not run",
 		(ankle_posed - ankle_before).length());
 
-	// --- Alt-drag edits the rest dot, and the animation is not destroyed ----
+	// --- an Alt-drag poses too: Pose never edits the rest dot ----
 	Vec2? posed_px = fixture.pixel_of(limb.ankle);
 	if (catch posed_px)
 	{
@@ -7513,10 +7510,10 @@ fn void dragging_a_joint_poses_it_and_alt_drag_edits_the_rest_dot() @test
 	Vec2 rest_target = { posed_px.x - 35.0f, posed_px.y + 15.0f };
 	fixture.alt_drag(posed_px, rest_target);
 
-	test::@check((fixture.doc().find(limb.ankle).position - rest_pinned).length() > 0.01f,
-		"the Alt-drag did not move the rest-rig dot");
+	test::@check((fixture.doc().find(limb.ankle).position - rest_pinned).length() < 0.005f,
+		"the Alt-drag moved the rest-rig dot on Pose");
 	test::@check(fixture.app.clip(clip).keyframes.len >= keys_after,
-		"the Alt-drag rest edit threw the posed animation away");
+		"the Alt-drag threw the posed animation away");
 }
 
 <*
@@ -7842,6 +7839,8 @@ fn void an_alt_rest_move_keeps_a_parked_clip_posed() @test
 	}
 	Vec3 rest_before = fixture.doc().find(limb.knee).position;
 
+	// The rest rig is edited on Joints.
+	fixture.app.stage = crig::EditStage.JOINTS_STAGE;
 	fixture.alt_drag(grab, { grab.x + DRAG_PIXELS, grab.y - 15.0f });
 
 	test::@check(fixture.app.skinned(), "the Alt rest-move dropped the mesh out of its pose");

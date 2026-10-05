@@ -155,7 +155,6 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "Joints | Pose", .action = "top of the 3D view: whether a drag moves or poses" },
 	{ .binding = "drag a joint", .action = "on Pose: pose it through IK, the same as G" },
 	{ .binding = "G", .action = "pose the selected joint — sweep the pointer, click to confirm" },
-	{ .binding = "alt+drag a joint", .action = "move its rest position instead, without leaving the pose" },
 	{ .binding = "R", .action = "turn the selected joint — sweep the pointer around it, click to confirm" },
 	{ .binding = "Joint card dials", .action = "turn the selected joint about one bone-local axis, off the model" },
 	{ .binding = "X / Y / Z", .action = "lock a move to one axis, or turn about that axis" },

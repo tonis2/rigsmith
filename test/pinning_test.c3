@@ -352,6 +352,62 @@ fn void pulling_the_spine_down_and_aside_keeps_both_feet() @test
 	}
 }
 
+<*
+ Nothing pinned: G on `spine` still moves the body — the hips slide under it and
+ the whole figure follows the pointer, legs and all.
+*>
+fn void the_spine_moves_the_body_with_nothing_pinned() @test
+{
+	Model m;
+	if (!m.open(PERSON, false)) return;
+	defer m.close();
+	Vec3 spine = m.at("spine");
+	Vec3 hips = m.at("hips");
+	Vec3 foot = m.at("ankle_L");
+	Vec3 by = (Vec3){ 0.05f, -0.1f, 0.02f } * m.height;
+	m.pull("spine", by);
+	test::@check(m.off("spine", spine + by) < 0.005f, "the spine missed the pointer by %.4f heights", m.off("spine", spine + by));
+	test::@check(m.off("hips", hips + by) < 0.005f, "the hips did not carry the body");
+	test::@check(m.off("ankle_L", foot + by) < 0.005f, "the legs did not come along");
+}
+
+<*
+ Nothing pinned on a clip shown grounded: the feet it has planted hold, so pulling
+ `spine` down folds the knees instead of the floor lifting the body straight back.
+*>
+fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
+{
+	Model m;
+	if (!m.open(PERSON, false)) return;
+	defer m.close();
+	m.stand_on("toe_L", "toe_R");
+	Vec3 spine = m.at("spine");
+	Vec3 toe_l = m.at("toe_L");
+	Vec3 toe_r = m.at("toe_R");
+	Vec3 by = { 0, -0.05f * m.height, 0 };
+	m.pull("spine", by);
+	float dropped = (spine.y - m.at("spine").y) / m.height;
+	test::@check(dropped > 0.04f, "the spine came down only %.4f heights", dropped);
+	m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "grounded spine pull");
+	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
+	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
+	test::@check(fold_l > 10.0f && fold_r > 10.0f, "the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
+}
+
+<*
+ A thigh hangs off the hips too, but it is a limb, not the trunk: with nothing
+ pinned G still points at R rather than sliding the body from the leg.
+*>
+fn void the_thigh_is_still_refused_with_nothing_pinned() @test
+{
+	Model m;
+	if (!m.open(PERSON, false)) return;
+	defer m.close();
+	m.app.select(m.id("thigh_L"));
+	test::@check(!m.app.begin_pose(), "G began on a thigh with nothing pinned");
+	test::@check(m.app.drag.dot == 0, "a refused pose left a drag in flight");
+}
+
 fn void turning_the_humanoids_hips_keeps_the_feet_down() @test
 {
 	io::printn("humanoid: turn the hips with both feet pinned");

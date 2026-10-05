@@ -190,8 +190,15 @@ fn void the_move_tool_drags_a_joints_rest_position() @test
 	test::@check(fixture.doc().find(first).position == before, "a bare drag under the Select tool on Pose moved the rest position");
 	fixture.feed_key(Key.ESCAPE);
 
+	// Nor the Move tool's: on Pose it poses, never moves the joint on the model.
 	crig::menu_move_tool(fixture.ui);
 	fixture.feed(VIEWPORT_CENTER);
+	fixture.drag(at, at + (Vec2){ 0, 30 });
+	test::@check(fixture.doc().find(first).position == before, "the Move tool's drag on Pose moved the rest position");
+	fixture.feed_key(Key.ESCAPE);
+
+	// On Joints it moves the joint.
+	fixture.app.stage = crig::EditStage.JOINTS_STAGE;
 	fixture.drag(at, at + (Vec2){ 0, 30 });
 	test::@check(fixture.doc().find(first).position != before, "a plain drag with the Move tool did not move the joint");
 	test::@check(fixture.app.undo(), "the move did not undo");
@@ -242,4 +249,47 @@ fn void turn_around_turns_the_skeleton_in_one_step() @test
 	test::@check(fixture.app.undo(), "Turn around did not undo");
 	Vec3 back = fixture.doc().find(hips).position;
 	test::@check((back - (Vec3){ 0.1f, 0.0f, 0.3f }).length() < 1e-5f, "one undo did not turn it back");
+}
+
+<*
+ G on Pose with nothing to pose — no clip, several joints selected — is refused,
+ not turned into a move of the rest skeleton: Pose never edits the rig.
+*>
+fn void g_on_pose_never_moves_the_rest_skeleton() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("G on Pose never moves the rest skeleton");
+	fixture.reset();
+
+	fixture.click(SPOT_A);
+	uint first = fixture.app.selected;
+	fixture.feed_key(Key.ESCAPE);
+	fixture.click(SPOT_C);
+	uint second = fixture.app.selected;
+	if (first == 0 || second == 0 || fixture.doc().dots.len() != 2)
+	{
+		test::@check(false, "SKIPPED — the joints did not place");
+		return;
+	}
+	fixture.feed_key(Key.ESCAPE);
+	Vec3 first_was = fixture.doc().find(first).position;
+	Vec3 second_was = fixture.doc().find(second).position;
+
+	fixture.app.stage = crig::EditStage.POSE_STAGE;
+	fixture.app.select(first);
+	fixture.app.extend_selection(second);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.feed_key(Key.G);
+	fixture.feed(VIEWPORT_CENTER + (Vec2){ 40, 25 });
+	fixture.click(VIEWPORT_CENTER + (Vec2){ 40, 25 });
+	test::@check(!fixture.app.transform_interaction.active, "G began a rest transform on Pose");
+	test::@check(fixture.doc().find(first).position == first_was, "G on Pose moved a joint on the model");
+	test::@check(fixture.doc().find(second).position == second_was, "G on Pose moved a joint on the model");
 }

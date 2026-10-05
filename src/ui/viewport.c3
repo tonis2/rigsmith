@@ -124,8 +124,7 @@ struct Viewport (Widget)
 	bool panning;
 	bool maybe_place; // a left press that has not yet travelled far enough to be a drag
 	usz maybe_drag_aim; // 1 + the handle index of the target ring pressed; a drag past CLICK_SLOP moves the target
-	uint maybe_drag_dot; // selected on press; becomes a pose (or Alt rest) drag past CLICK_SLOP
-	bool maybe_rest_drag; // pressed with the Move tool: the drag moves the rest position, no Alt needed
+	uint maybe_drag_dot; // selected on press; becomes a pose (or, on Joints, a rest) drag past CLICK_SLOP
 	Vec2 press_at;
 
 	// A grow (shift) or shrink (ctrl) drag in the Area tool: where it began and
@@ -1366,14 +1365,11 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						if (app.transform_tool != SELECT_TOOL)
 						{
 							if (!(app.selection_count() > 1 && app.is_selected(hit))) app.select(hit);
-							// The Move tool edits the rest skeleton, so a plain drag on a
-							// joint moves its rest position — Alt's job under the Select tool.
-							// While posing it poses the joint instead, as the Select tool's
-							// drag does.
+							// The Move tool's drag on a joint is the Select tool's: it moves
+							// the joint on Joints and poses it on Pose.
 							if (app.transform_tool == MOVE_TOOL)
 							{
 								self.maybe_drag_dot = hit;
-								self.maybe_rest_drag = !transform_tool_poses(app);
 								self.press_at = event.pos;
 							}
 							app.refresh_ui();
@@ -1654,16 +1650,13 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			{
 				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
 				uint id = self.maybe_drag_dot;
-				bool rest = self.maybe_rest_drag;
 				self.maybe_drag_dot = 0;
-				self.maybe_rest_drag = false;
-				// The header's Joints | Pose switch says what a bare drag does. On
-				// Joints it moves the joint on the model. On Pose it poses the joint,
-				// exactly as G does, and never falls through to a rest-rig move that
-				// would land a rig edit in the history — Alt is the deliberate "move
-				// the joint instead" there, as is the Move tool's own drag.
-				bool alt = input.alt_down();
-				if (alt || rest || app.stage == JOINTS_STAGE)
+				// The header's Joints | Pose switch says what a drag does. On Joints
+				// it moves the joint on the model. On Pose it poses the joint, exactly
+				// as G does, and never moves it on the model — not with Alt held, not
+				// with the Move tool, not with several joints selected: a slip there
+				// would land a rig edit in the history under a pose being built.
+				if (app.stage == JOINTS_STAGE)
 				{
 					app.begin_drag(id);
 				}
@@ -1819,8 +1812,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						// only fires when a group was held open for a drag that never came.
 						if (app.selection_count() > 1) app.select(self.maybe_drag_dot);
 						self.maybe_drag_dot = 0;
-						self.maybe_rest_drag = false;
-						app.refresh_ui();
+								app.refresh_ui();
 						elem.request_paint();
 					}
 					else if (app.drag.dot != 0 && app.drag.held)

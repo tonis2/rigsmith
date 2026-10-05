@@ -212,11 +212,10 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 }
 
 <*
- Without an anchor the spine is still "R turns it": nothing above it can move it,
- and moving the whole body from a mid-trunk joint with nothing pinned would be a
- surprise, not a pose.
+ Without an anchor the spine still moves: the root slides under it and carries
+ the whole body to the pointer.
 *>
-fn void the_spine_is_refused_without_an_anchor() @test
+fn void the_spine_carries_the_body_without_an_anchor() @test
 {
 	Sitter fixture;
 	test::@check(fixture.open(), "the fixture did not open");
@@ -224,8 +223,15 @@ fn void the_spine_is_refused_without_an_anchor() @test
 	crig::AppState* app = &fixture.app;
 
 	app.select(fixture.spine);
-	test::@check(!app.begin_pose(), "G on the spine should be refused with no foot anchored");
-	test::@check(app.drag.dot == 0, "a refused pose left a drag in flight");
+	test::@check(app.begin_pose(), "G on the spine was refused with no foot anchored");
+	Vec3 spine_from = fixture.at(fixture.spine);
+	Vec3 foot_from = fixture.at(fixture.ankle_l);
+	Vec3 by = { 0.1f, -0.2f, 0 };
+	app.pose_toward(spine_from + by);
+	float off = (fixture.at(fixture.spine) - (spine_from + by)).length();
+	test::@check(off < 0.02f, "the spine did not follow the drag; %.3f off the target", off);
+	float carried = (fixture.at(fixture.ankle_l) - (foot_from + by)).length();
+	test::@check(carried < 0.02f, "the unpinned foot did not ride along; %.3f off", carried);
 }
 
 <*

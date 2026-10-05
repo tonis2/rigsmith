@@ -87,9 +87,10 @@ struct TransformGizmoFrame
 	Vec2 size;
 }
 
+// The rest rig is not edited on Pose, nor while a clip shows or a pose is pending.
 fn bool transform_target_locked(AppState* app, TransformTarget target) @private
 {
-	return target.kind != MODEL_TARGET && app.rig_locked();
+	return target.kind != MODEL_TARGET && (app.rig_locked() || app.stage == POSE_STAGE);
 }
 
 fn bool transform_tool_claims_pointer(AppState* app) @private
@@ -148,6 +149,10 @@ fn String transform_tool_hint(AppState* app)
 	}
 	if (transform_target_locked(app, target))
 	{
+		if (app.stage == POSE_STAGE && !app.rig_locked())
+		{
+			return "Pose · select one joint to pose it with the tool · switch to Joints to edit the rig";
+		}
 		return app.animating
 			? "An animation is showing · switch to Pose to move a joint in it (the hips carry the whole body) · Model moves the character in the scene, not in the clip"
 			: "Key or discard the pose before editing the rest skeleton";
@@ -480,7 +485,9 @@ fn bool Viewport.begin_transform_interaction(
 	}
 	if (transform_target_locked(app, target))
 	{
-		app.@notice("finish animation posing before editing the rest skeleton");
+		app.@notice(app.stage == POSE_STAGE
+			? "Pose poses joints · switch to Joints to edit the rest skeleton"
+			: "finish animation posing before editing the rest skeleton");
 		app.refresh_ui();
 		return false;
 	}
