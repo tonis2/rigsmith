@@ -522,7 +522,7 @@ fn void limits_round_trip_through_the_project_session() @test
 
 	String bare = crig::session_text(mem, &fixture.doc, "limited.glb");
 	defer bare.free(mem);
-	test::@check(bare.contains(`"version": 22`) && !bare.contains(`"rotation_limits"`),
+	test::@check(bare.contains(`"version": 23`) && !bare.contains(`"rotation_limits"`),
 		"a session written for a model that carries the limits wrote them too");
 
 	String text = crig::session_text(mem, &fixture.doc, "limited.glb", limits: true);
@@ -616,9 +616,9 @@ fn void a_recorded_limit_table_undoes_and_redoes_as_one_edit() @test
 }
 
 <*
- A near-vertical thigh derives its X from whichever way it leans least, so a
- knee nudged from leaning forward to leaning sideways would turn the hip's axes
- a quarter turn and put its forward swing on the sideways row. The move keeps the
+ A thigh leaning past the near-axis band derives its X from whichever way it
+ leans least, so a knee moved from leaning forward to leaning sideways would turn
+ the hip's axes a quarter turn and put its forward swing on the sideways row. The move keeps the
  hip's axes instead, carried onto the new bone, and one undo takes both back.
 *>
 fn void moving_a_joint_keeps_its_parents_limit_axes() @test
@@ -627,8 +627,8 @@ fn void moving_a_joint_keeps_its_parents_limit_axes() @test
 	defer app.free();
 
 	uint hip = app.doc.add_dot({ 0, 1, 0 }, "hip");
-	uint knee = app.doc.add_dot({ 0.02f, 0.5f, 0.05f }, "knee");
-	uint foot = app.doc.add_dot({ 0.02f, 0, 0.05f }, "foot");
+	uint knee = app.doc.add_dot({ 0.06f, 0.5f, 0.125f }, "knee");
+	uint foot = app.doc.add_dot({ 0.06f, 0, 0.125f }, "foot");
 	app.doc.connect(hip, knee);
 	app.doc.connect(knee, foot);
 
@@ -640,20 +640,20 @@ fn void moving_a_joint_keeps_its_parents_limit_axes() @test
 	Vec3 x_before = frame_of(&app.doc, hip).axis(X);
 
 	// Leaning sideways more than forward: the derived rule would now seed Z.
-	test::@check(app.move_recorded(knee, { 0.02f, 0.5f, 0.05f }, { 0.06f, 0.5f, 0.01f }), "the knee did not move");
+	test::@check(app.move_recorded(knee, { 0.06f, 0.5f, 0.125f }, { 0.125f, 0.5f, 0.06f }), "the knee did not move");
 	app.undo_stack.commit();
 	crig::JointRotationLimits held = app.doc.rotation_limits_of(hip);
 	test::@check(held.has_saved_frame, "the move let the hip's axes be re-derived");
 	Vec3 x_after = frame_of(&app.doc, hip).axis(X);
 	test::@check(x_after.dot(x_before) > 0.99f, "the hip's X turned %s -> %s", x_before, x_after);
-	test::@check(near(frame_of(&app.doc, hip).axis(Y).dot(((Vec3){ 0.06f, -0.5f, 0.01f }).normalize()), 1.0f),
+	test::@check(near(frame_of(&app.doc, hip).axis(Y).dot(((Vec3){ 0.125f, -0.5f, 0.06f }).normalize()), 1.0f),
 		"the kept axes do not follow the bone");
 
 	test::@check(app.undo(), "the move would not undo");
 	test::@check(!app.doc.rotation_limits_of(hip).has_saved_frame, "undo left the kept frame behind");
 
 	// A move that does not switch the seed leaves the table derived.
-	test::@check(app.move_recorded(knee, { 0.02f, 0.5f, 0.05f }, { 0.025f, 0.5f, 0.06f }), "the knee did not move");
+	test::@check(app.move_recorded(knee, { 0.06f, 0.5f, 0.125f }, { 0.065f, 0.5f, 0.13f }), "the knee did not move");
 	app.undo_stack.commit();
 	test::@check(!app.doc.rotation_limits_of(hip).has_saved_frame, "a small move saved a frame");
 }

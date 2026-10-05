@@ -475,8 +475,9 @@ fn void a_joint_limit_is_never_exceeded() @test
 		for (usz i = 0; i < 3; i++)
 		{
 			Vec3 angles = crig::joint_angles_from_rotation(limits[i].frame, chain.rotations[i]);
-			worst = math::max(worst, math::max(math::abs(angles.x), math::abs(angles.z)));
-			reached = math::max(reached, math::abs(angles.z));
+			float swing = math::max(math::abs(angles.x), math::abs(angles.z));
+			worst = math::max(worst, swing);
+			reached = math::max(reached, swing);
 		}
 
 		// The rotations, fed back through the palette, put the joints on the

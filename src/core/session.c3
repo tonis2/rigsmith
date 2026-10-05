@@ -60,6 +60,7 @@ import libc;
 import std::math;
 import std::math::vector;
 import gltf_edit;
+import rig;
 
 // The JSON string and number writers every crig writer uses — the session, the pack
 // `extras` and every MCP answer. They are `gltf_edit`'s, the lowest layer that
@@ -194,7 +195,12 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // target's name and keys, and `aims` is now a lock (`joint`, `target`, forward,
 // spread, weights, influence, mute) with no keys of its own. A version 21 aim
 // that carries keys reads as a target "Target N" plus a lock on it.
-const uint SESSION_VERSION = 22;
+//
+// 23 rolls a bone that runs nearly along a world axis by a fixed rule
+// (`frame_seed`) instead of by whichever way it leans by a degree. A rotation
+// limit table read from an older file, with no frame of its own, is pinned to
+// the frame it was written against wherever the two rules disagree.
+const uint SESSION_VERSION = 23;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -1243,7 +1249,40 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 		doc.free();
 		return SESSION_SHAPE~;
 	}
+	if (version < 23) keep_legacy_limit_frames(&doc);
 	return doc;
+}
+
+<*
+ Pins each derived limit table of a pre-23 session to the frame it was written
+ against, where the near-axis rule now rolls that bone another way. The numbers
+ then keep turning the joint about the axes they always did; a table whose frame
+ the rule left alone stays derived.
+*>
+fn void keep_legacy_limit_frames(RigDocument* doc) @private
+{
+	if (doc.rotation_limits.len() == 0) return;
+	@pool()
+	{
+		uint[] ids;
+		rig::Skeleton? skeleton = build_skeleton(doc, tmem, &ids);
+		if (catch skeleton) return;
+		JointRotationLimits[] pinned = alloc::new_array(tmem, JointRotationLimits, doc.rotation_limits.len());
+		usz count = 0;
+		foreach (limits : doc.rotation_limits.array_view())
+		{
+			if (limits.has_saved_frame) continue;
+			JointLimitFrame now = joint_limit_frame(&skeleton, ids, limits);
+			if (!now.usable()) continue;
+			JointLimitFrame was = legacy_limit_frame(now);
+			if (math::abs(now.rotation.v.dot(was.rotation.v)) > 0.99999f) continue;
+			JointRotationLimits held = limits;
+			held.has_saved_frame = true;
+			held.saved_frame = was.rotation;
+			pinned[count++] = held;
+		}
+		foreach (limits : pinned[:count]) doc.set_rotation_limits(limits.dot_id, limits);
+	};
 }
 
 <*
