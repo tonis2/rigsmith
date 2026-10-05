@@ -1678,7 +1678,13 @@ fn AppState new_app_with_geometry(
 		// interface laid out in an infinitely large space; `clamp_ui_scale`
 		// catches it anyway, and a struct that never held the impossible value is
 		// one fewer place that has to.
-		.config = { .ui_scale = DEFAULT_UI_SCALE },
+		.config = {
+			.ui_scale = DEFAULT_UI_SCALE,
+			.ghost_past = DEFAULT_GHOST_SIDE,
+			.ghost_future = DEFAULT_GHOST_SIDE,
+			.ghost_step = 1,
+			.ghost_opacity = DEFAULT_GHOST_OPACITY,
+		},
 
 		.doc = {
 			// On by default: placing a chain of joints is the common case, and

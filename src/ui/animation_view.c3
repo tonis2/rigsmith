@@ -211,6 +211,12 @@ struct AnimSnapshot
 	// The last Check, when it is about this clip.
 	bool checked;
 	usz issues;
+	// Ghosts shade the timeline around the playhead: on or off, and how far.
+	bool ghosts;
+	int ghost_past;
+	int ghost_future;
+	int ghost_step;
+	int fps;
 }
 
 fn usz anim_aim_key_total(AnimTemplate* clip) @private
@@ -261,6 +267,11 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.aim_keys = anim_aim_key_total(app.clip(app.editing)),
 		.checked = app.anim_check.ran && app.anim_check.ref.same(app.editing),
 		.issues = app.anim_check.issues.len,
+		.ghosts = app.config.show_ghosts,
+		.ghost_past = app.ghost_past_count(),
+		.ghost_future = app.ghost_future_count(),
+		.ghost_step = app.ghost_step_frames(),
+		.fps = app.anim_fps,
 	};
 }
 
@@ -300,7 +311,12 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.aims != other.aims
 		|| self.aim_keys != other.aim_keys
 		|| self.checked != other.checked
-		|| self.issues != other.issues;
+		|| self.issues != other.issues
+		|| self.ghosts != other.ghosts
+		|| self.ghost_past != other.ghost_past
+		|| self.ghost_future != other.ghost_future
+		|| self.ghost_step != other.ghost_step
+		|| self.fps != other.fps;
 }
 
 // ---------------------------------------------------------------------------
@@ -628,7 +644,8 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 						}
 						else
 						{
-							// The transport. Ghosts and Path live in the View menu.
+							// The transport. Ghosts opens its floating panel; Path is in there
+							// and in the View menu.
 							@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = ANIM_GAP, .cross_align = CENTER })
 							{
 								@tree(widgets::tip("Start (Home) — jump to the first frame"))
@@ -662,6 +679,12 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 								// back to the first pose; see `clip_looped`.
 								@node((ToggleButton) { .label = "Loop", .on = app.clip(app.editing).loop,
 									.on_change = &anim_loop_toggled, .style = SEGMENTED_STYLE }).with_id(ANIM_LOOP_TOGGLE_ID);
+								// Onion skin: lit while on; the panel it opens is movable.
+								@tree(widgets::tip("Ghosts — show the pose before and after the playhead as see-through copies. Opens its settings."))
+								{
+									@node(app.config.show_ghosts ? accent_button("Ghosts", &anim_ghosts_clicked)
+										: panel_button("Ghosts", &anim_ghosts_clicked)).with_id(ANIM_GHOSTS_ID);
+								};
 							};
 							// The key row: the only editing left in the dock. Greyed out in
 							// the Joints stage.
@@ -1140,6 +1163,9 @@ fn Element* AnimSheet.build(&self, Element* elem) @dynamic
 			// Display/snapping are independent of the stored key times and export.
 			.snap = app.anim_snap_off ? 0 : 1.0f / (float)app.anim_fps,
 			.fps = app.anim_fps,
+			.ghost_past = app.config.show_ghosts ? app.ghost_past_span() : 0.0f,
+			.ghost_future = app.config.show_ghosts ? app.ghost_future_span() : 0.0f,
+			.ghost_loop = clip ? clip.loop : false,
 			.zoom = math::max(app.anim_timeline_zoom, 1.0f),
 			.view_start = clip ? math::clamp(app.anim_timeline_start, 0.0f,
 				clip.duration - clip.duration / math::max(app.anim_timeline_zoom, 1.0f)) : 0,

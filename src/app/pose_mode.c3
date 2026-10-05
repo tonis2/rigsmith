@@ -572,6 +572,20 @@ const float TURN_ROOT_STIFFNESS = 8.0;
 // weight over the pinned feet: the lean settles in, it does not lead the pull.
 const float BALANCE_TILT_STIFFNESS = 8.0;
 const uint POSE_IK_PASSES = 12;
+
+<*
+ A chain no longer than this share of the figure's height is a digit — a finger,
+ a toe, a tail tip — and curls rather than reaches.
+
+ Measured by length, not by name: an arm's run is a third of the height and a
+ leg's more than half, a finger's is under five percent. The line is drawn at
+ a tenth, which a hand's longest finger clears three times over and no limb comes
+ near.
+*>
+const float CURL_CHAIN_SHARE = 0.1f;
+
+// A curl is reached by smaller steps, so it spends more of them.
+const uint CURL_PASS_FACTOR = 4;
 const float POSE_IK_MAX_STEP = 0.5;
 
 <*
@@ -1213,6 +1227,59 @@ fn usz pose_chain_joint(PoseChain chain, usz point) @private
 }
 
 <*
+ Where a digit's tip can go when it curls towards `target`, along the line from
+ the chain's anchor to `target`.
+
+ The pointer asks for a direction from the knuckle as much as a place. A finger
+ that follows it curls — every joint bends by the same turn, the way a finger
+ closes — and a curl is shorter than the straight finger it started as. So the
+ target's distance is cut to the chord that curl has, when it is further than
+ that: the solve then aims at a place the curled finger reaches rather than at
+ one only the straight finger comes near. A target already inside the curl's
+ chord is left where it is.
+
+ With `n` bones turning at `n` joints, bone `j` has turned `j` times the one
+ step by the time it is reached, and the chord points along their average, which
+ is `(n + 1) / 2` steps, so for a chord turned by `angle` the step is
+ `2 * angle / (n + 1)`.
+
+ @param points : `Anchor first and tip last, as the solver reads them.`
+*>
+fn Vec3 curl_target(Vec3[] points, Vec3 target) @local
+{
+	usz bones = points.len - 1;
+	Vec3 chord = points[bones] - points[0];
+	Vec3 want = target - points[0];
+	float straight = chord.length();
+	float distance = want.length();
+	if (bones < 2 || straight <= 0.0f || distance <= 0.0f) return target;
+
+	float cosine = math::clamp(chord.dot(want) / (straight * distance), -1.0f, 1.0f);
+	float angle = (float)math::acos((double)cosine);
+	float step = 2.0f * angle / (float)(bones + 1);
+
+	float along = 0.0f;
+	float across = 0.0f;
+	for (usz j = 1; j <= bones; j++)
+	{
+		float length = (points[j] - points[j - 1]).length();
+		along += length * (float)math::cos((double)(step * (float)j));
+		across += length * (float)math::sin((double)(step * (float)j));
+	}
+	float reach = math::sqrt(along * along + across * across);
+	if (distance <= reach) return target;
+	return points[0] + want * (reach / distance);
+}
+
+// The length of the polyline through `points`.
+fn float chain_length(Vec3[] points) @local
+{
+	float total = 0.0f;
+	for (usz i = 1; i < points.len; i++) total += (points[i] - points[i - 1]).length();
+	return total;
+}
+
+<*
  Bend an anchor-first point chain while applying each joint's authored limits.
 
  This is collision::ik's CCD loop at crig's side of the world/local seam. A
@@ -1289,7 +1356,56 @@ fn float AppState.solve_limited_pose_chain(
 	bool checked = report && tip > 0 && self.collision_blocking_active() && !self.collision_suspended;
 	float reach = (points[tip] - points[0]).length();
 
-	for (uint pass = 0; pass < POSE_IK_PASSES; pass++)
+	// A digit curls: every pivot takes an equal part of each pass's turn instead of
+	// the nearest taking all it can and the rest finishing off. CCD run
+	// greedily puts the bend where the lever is longest, which on a finger is the
+	// knuckle, and drags the tip down on a finger that stays straight. Sharing the
+	// turn lets the arc each pivot would take on its own — largest nearest the tip,
+	// where the target is furthest in angle — decide the proportions, which is a
+	// finger closing. Arms and legs run at a share of 1, exactly as before.
+	//
+	// And the target is pulled in to where such a curl can put the tip: a pointer
+	// dragged straight across a straight finger is always a little beyond its
+	// reach, and the closest the tip can come to it is by staying straight and
+	// pivoting at the knuckle, which is the stiff finger this is here to avoid.
+	float share = 1.0f;
+	bool curl_start = false;
+	uint passes = POSE_IK_PASSES;
+	if (tip > 1 && chain_length(points[:tip + 1]) <= view.skeleton.height() * CURL_CHAIN_SHARE)
+	{
+		share = 1.0f / (float)tip;
+		passes *= CURL_PASS_FACTOR;
+		target = curl_target(points[:tip + 1], target);
+		curl_start = true;
+	}
+
+	// The curl itself, before any pass: every pivot turns the same step about the
+	// one axis that swings the finger towards the pointer. Where the passes below
+	// are left to find *a* way to the target, this is the way they start from, so
+	// what they refine is a finger already closing evenly rather than one that has
+	// leaned on whichever joint they reached first. Through the same limits and the
+	// same carry as any step, so a joint that cannot bend that way gives its part to
+	// the passes instead of being forced.
+	if (curl_start)
+	{
+		Vec3 chord = points[tip] - points[0];
+		Vec3 want = target - points[0];
+		Vec3 axis = chord.cross(want);
+		float angle = (float)math::atan2((double)axis.length(), (double)chord.dot(want));
+		if (axis.length() > 0.0f && angle > 0.0f)
+		{
+			Quaternionf each = quaternion::from_axis_angle{float}(axis.normalize(), 2.0f * angle / (float)(tip + 1));
+			for (usz pivot = 0; pivot < tip; pivot++)
+			{
+				JointLimitFrame frame;
+				JointRotationLimits limits;
+				Quaternionf allowed = self.pivot_step(view, chain, pose, points, world, pivot, target, &frame, &limits, 1.0f, &each);
+				carry_pivot(view, chain, pose, points, world, pivot, allowed);
+			}
+		}
+	}
+
+	for (uint pass = 0; pass < passes; pass++)
 	{
 		float gap = (target - points[tip]).length();
 		if (tolerance > 0.0f && gap <= tolerance) break;
@@ -1301,7 +1417,7 @@ fn float AppState.solve_limited_pose_chain(
 			usz pivot = k - 1;
 			JointLimitFrame frame;
 			JointRotationLimits limits;
-			Quaternionf allowed = self.pivot_step(view, chain, pose, points, world, pivot, target, &frame, &limits);
+			Quaternionf allowed = self.pivot_step(view, chain, pose, points, world, pivot, target, &frame, &limits, share);
 			carry_pivot(view, chain, pose, points, world, pivot, allowed);
 		}
 	}
@@ -1332,7 +1448,7 @@ fn float AppState.solve_limited_pose_chain(
 		usz joint = pivots[pivot];
 		JointLimitFrame frame;
 		JointRotationLimits limits;
-		Quaternionf allowed = self.pivot_step(view, chain, pose, points, world, pivot, target, &frame, &limits);
+		Quaternionf allowed = self.pivot_step(view, chain, pose, points, world, pivot, target, &frame, &limits, share);
 		Quaternionf was = pose.rotations[joint];
 		uint[] carried = subtree_joints(mem, &view.skeleton, joint);
 		defer if (carried.len > 0) alloc::free(mem, carried);
@@ -1366,6 +1482,8 @@ fn float AppState.solve_limited_pose_chain(
 
  @param frame : `Receives the joint's limit frame, for a caller that constrains a further candidate.`
  @param limits : `Receives the joint's limits, likewise.`
+ @param share : `The part of the arc this pivot takes; 1 is all of it, less leaves the rest to the pivots after it.`
+ @param forced : `A world-space step to take instead of the arc towards the target, still carried into the parent's frame and constrained.`
 *>
 fn Quaternionf AppState.pivot_step(
 	&self,
@@ -1377,12 +1495,16 @@ fn Quaternionf AppState.pivot_step(
 	usz pivot,
 	Vec3 target,
 	JointLimitFrame* frame,
-	JointRotationLimits* limits)
+	JointRotationLimits* limits,
+	float share = 1.0f,
+	Quaternionf* forced = null)
 {
 	usz tip = chain.count;
 	usz joint = pose_chain_joint(chain, pivot);
-	Quaternionf wanted = ik::shortest_arc(
-		points[tip] - points[pivot], target - points[pivot], POSE_IK_MAX_STEP);
+	Quaternionf wanted = forced
+		? *forced
+		: ik::shortest_arc(points[tip] - points[pivot], target - points[pivot], POSE_IK_MAX_STEP);
+	if (share < 1.0f && !forced) wanted = ((Quaternionf)quaternion::IDENTITY).slerp(wanted, share);
 
 	int parent = view.skeleton.parents[joint];
 	Quaternionf parent_world = parent >= 0

@@ -735,25 +735,13 @@ fn void menu_show_floor(Ui* ui)
 
 fn MenuItemFlags query_show_floor(Ui* ui) => { .checked = !ui.inherit(AppState)!!.config.hide_floor };
 
-// The animation aids that used to sit in the dock's transport row: neighbouring
-// keys as faint skeletons (how many each side) and the selected joint's path.
-// Remembered in the config like the floor.
+// The animation aids: onion-skin ghosts of the mesh around the playhead (tuned in
+// the floating Ghosts panel the transport row's button opens) and the selected
+// joint's path. Remembered in the config like the floor.
 fn void menu_ghosts(Ui* ui) => anim_ghosts_toggled(ui, !ui.inherit(AppState)!!.config.show_ghosts);
 fn MenuItemFlags query_ghosts(Ui* ui) => { .checked = ui.inherit(AppState)!!.config.show_ghosts };
 
-fn void menu_ghost_keys_1(Ui* ui) => anim_ghost_keys_chosen(ui, 0);
-fn void menu_ghost_keys_2(Ui* ui) => anim_ghost_keys_chosen(ui, 1);
-fn void menu_ghost_keys_3(Ui* ui) => anim_ghost_keys_chosen(ui, 2);
-
-fn MenuItemFlags ghost_keys_flags(Ui* ui, int keys)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	return { .checked = app.config.show_ghosts && app.ghost_range() == keys, .disabled = !app.config.show_ghosts };
-}
-
-fn MenuItemFlags query_ghost_keys_1(Ui* ui) => ghost_keys_flags(ui, 1);
-fn MenuItemFlags query_ghost_keys_2(Ui* ui) => ghost_keys_flags(ui, 2);
-fn MenuItemFlags query_ghost_keys_3(Ui* ui) => ghost_keys_flags(ui, 3);
+fn void menu_ghost_settings(Ui* ui) => set_dialog_open(ui, ANIM_GHOSTS_DIALOG_ID, true);
 
 fn void menu_motion_path(Ui* ui) => anim_path_toggled(ui, !ui.inherit(AppState)!!.config.show_motion_path);
 fn MenuItemFlags query_motion_path(Ui* ui) => { .checked = ui.inherit(AppState)!!.config.show_motion_path };
@@ -1220,7 +1208,7 @@ MenuItem[19] rig_items = {
 //
 // B for the mesh because M is already the mirror. S is free and is the letter
 // the item starts with, which is as much as either key can claim.
-MenuItem[28] view_items = {
+MenuItem[26] view_items = {
 	{ .label = "Front", .shortcut = "1", .on_select = &menu_view_front, .state = &query_has_view },
 	{ .label = "Back", .shortcut = "Ctrl+1", .on_select = &menu_view_back, .state = &query_has_view },
 	{ .label = "Right", .shortcut = "3", .on_select = &menu_view_right, .state = &query_has_view },
@@ -1235,9 +1223,7 @@ MenuItem[28] view_items = {
 	{ .label = "Wireframe", .shortcut = "Z", .on_select = &menu_wireframe, .state = &query_wireframe },
 	{ .label = "Floor", .on_select = &menu_show_floor, .state = &query_show_floor },
 	{ .label = "Ghosts", .on_select = &menu_ghosts, .state = &query_ghosts },
-	{ .label = "Ghost range: 1 key", .on_select = &menu_ghost_keys_1, .state = &query_ghost_keys_1 },
-	{ .label = "Ghost range: 2 keys", .on_select = &menu_ghost_keys_2, .state = &query_ghost_keys_2 },
-	{ .label = "Ghost range: 3 keys", .on_select = &menu_ghost_keys_3, .state = &query_ghost_keys_3 },
+	{ .label = "Ghost settings...", .on_select = &menu_ghost_settings },
 	{ .label = "Motion path", .on_select = &menu_motion_path, .state = &query_motion_path },
 	{ .label = "Weight falloff", .shortcut = "F", .on_select = &menu_falloff, .state = &query_falloff },
 	// With the tint views rather than beside the mesh toggles: like them it
@@ -2266,6 +2252,9 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_TOOLS_MENU_ID);
 			// The last Check's findings. Floats over the dock instead of pushing the
 			// sheet down; not modal, so the ruler's flags stay clickable.
+			// Ghosts' settings float the same way, and move: dragged by the bar.
+			@node((Dialog) { .title = "Ghosts", .body = &build_anim_ghosts_body,
+				.style = DIALOG_STYLE }).with_id(ANIM_GHOSTS_DIALOG_ID);
 			@node((Dialog) { .title = "Check", .body = &build_anim_check_body,
 				.style = DIALOG_STYLE }).with_id(ANIM_CHECK_DIALOG_ID);
 			@node((Dialog) { .body = &build_viewport_context,

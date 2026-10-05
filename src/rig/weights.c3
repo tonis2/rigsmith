@@ -498,7 +498,106 @@ fn float[] bind_geodesic(
         }
     }
 
+    // Last, once every repair has had its say: a vertex keeps to its own chain,
+    // so neighbouring fingers cannot pull on one another — see `isolate_chains`.
+    isolate_chains(allocator, dense, parents);
+
     return dense;
+}
+
+<*
+ What a sibling chain keeps of its weight on a vertex that is not its own, as a
+ fraction of what it had.
+
+ Not zero, and the reason is the brush: a hand correction is a multiplier, and a
+ multiplier of nothing is nothing, so a bone zeroed here could never be painted
+ back onto a vertex. At this size the leftover is a share of a hundred-thousandth
+ — nothing a pose can show — and a correction that asks for the bone solves for
+ the factor as it does for any other.
+*>
+const float SIBLING_LEAK = 1.0e-5f;
+
+<*
+ Keep a vertex's weight inside its own chain: a vertex may be weighted to the
+ bone that owns it, that bone's ancestors and that bone's direct children —
+ and, to all intents, nothing else (see `SIBLING_LEAK`).
+
+ `bind_geodesic` measures distance through the body, but the body of a hand is
+ five fingers a couple of voxels apart, so the flood and the straight-line near
+ field both let a finger's vertices hold a share of the finger beside it. LBS
+ then leaves them half behind when one finger bends: a wedge of skin stretched
+ between the two. A finger is its own part, so this does not ask the distance
+ field to resolve it; it uses the skeleton instead.
+
+ The owner is the strongest bone of the row. Ancestors stay allowed because a
+ limb's skin has to blend up its own parent chain (finger into palm into wrist
+ into forearm), and direct children because the same blend runs the other way
+ across a joint — the palm taking the knuckles of every finger, the chest taking
+ both shoulders. Everything else is **a sibling branch** — a bone whose path to
+ the owner goes up through a shared parent and back down another way, the other
+ fingers, the other leg, the other arm — and is zeroed.
+
+ Name-free and mesh-free: only the parent array is read, so it applies the same
+ to a hand, a tail or a wing. The owner always keeps its own weight, so a row
+ that held anything still holds something. Rows already rigid are untouched.
+
+ Cost: one pass, plus a bones-by-bones ancestor table. Applied by `bind_geodesic`
+ (not by `bind_geometric`, which stays the unmodified straight-line baseline)
+ and by `AppState.bind_dense` for a file's own weights, so the
+ preview, the views and the file all see one answer.
+
+ @param dense : `[vertices, bones], rewritten in place.`
+ @param parents : `One per joint, -1 for a root.`
+*>
+fn void isolate_chains(alloc::Allocator allocator, float[] dense, int[] parents)
+{
+    usz bones = parents.len;
+    if (bones < 3 || dense.len == 0 || dense.len % bones != 0) return;
+
+    // related[o * bones + b]: bone b may weight a vertex owned by o.
+    bool[] related = alloc::new_array(allocator, bool, (sz)(bones * bones));
+    defer alloc::free(allocator, related);
+    related[:bones * bones] = false;
+
+    for (usz o = 0; o < bones; o++)
+    {
+        related[o * bones + o] = true;
+
+        // Ancestors. The step count bounds a malformed, cyclic parent array.
+        int at = parents[o];
+        usz steps = 0;
+        while (at >= 0 && (usz)at < bones && steps++ < bones)
+        {
+            related[o * bones + (usz)at] = true;
+            at = parents[(usz)at];
+        }
+
+        // Direct children.
+        int parent = parents[o];
+        if (parent >= 0 && (usz)parent < bones) related[(usz)parent * bones + o] = true;
+    }
+
+    usz vertices = dense.len / bones;
+    for (usz v = 0; v < vertices; v++)
+    {
+        usz base = v * bones;
+        usz owner = 0;
+        float strongest = 0.0f;
+        for (usz b = 0; b < bones; b++)
+        {
+            if (dense[base + b] > strongest)
+            {
+                strongest = dense[base + b];
+                owner = b;
+            }
+        }
+        if (strongest <= 0.0f) continue;
+
+        for (usz b = 0; b < bones; b++)
+        {
+            if (!related[owner * bones + b]) dense[base + b] *= SIBLING_LEAK;
+        }
+    }
 }
 
 <*

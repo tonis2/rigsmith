@@ -1107,6 +1107,8 @@ fn void with_no_grid_it_falls_back_to_straight_lines() @test
 	float[] straight = rig::bind_geometric(
 		mem, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);
 	defer alloc::free(mem, straight);
+	// The binder keeps a vertex to its own chain, which the baseline does not.
+	rig::isolate_chains(mem, straight, fixture.skeleton.parents);
 
 	float[] fallback = rig::bind_geodesic(
 		mem, null, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);

@@ -692,8 +692,8 @@ fn void the_clip_menu_and_from_library() @test
 	if (try Element* back = f.ui.find(AreaTabStrip)) f.click(tab_center(&f, back, 0));
 }
 
-// Ghosts and Path are View menu items now; Ghosts brings its key count as three
-// more items, and all of them are what the viewport's aids read.
+// The View menu keeps Ghosts and Motion path, and reaches the Ghosts panel; all of
+// them are what the viewport's aids read.
 fn void the_view_menu_toggles_ghosts_and_the_motion_path() @test
 {
 	Fixture f;
@@ -703,17 +703,10 @@ fn void the_view_menu_toggles_ghosts_and_the_motion_path() @test
 	f.app.select(f.app.doc.dots[1].id);
 
 	test::@check(!f.app.config.show_ghosts, "Ghosts starts off");
-	test::@check(crig::query_ghost_keys_2(f.ui).disabled, "the ghost range is offered with Ghosts off");
 	crig::menu_ghosts(f.ui);
 	f.ui.flush();
 	test::@check(f.app.config.show_ghosts, "Ghosts did not turn on");
 	test::@check(crig::query_ghosts(f.ui).checked, "the View item does not show Ghosts on");
-	test::@check(!crig::query_ghost_keys_2(f.ui).disabled, "the ghost range stays greyed with Ghosts on");
-	crig::menu_ghost_keys_2(f.ui);
-	f.feed({ 0, 0 });
-	test::eq(f.app.ghost_range(), 2);
-	test::@check(crig::query_ghost_keys_2(f.ui).checked && !crig::query_ghost_keys_1(f.ui).checked,
-		"the View menu does not show the range");
 
 	crig::menu_motion_path(f.ui);
 	f.ui.flush();
@@ -723,9 +716,168 @@ fn void the_view_menu_toggles_ghosts_and_the_motion_path() @test
 	test::@check(f.app.selected_motion_path() != null, "no path for the selected joint");
 	test::@check(f.app.ghost_poses().len > 0, "no ghosts around the playhead");
 
+	crig::menu_ghost_settings(f.ui);
+	f.ui.flush();
+	test::@check(crig::anim_ghosts_dialog_open(f.ui), "Ghost settings did not open the panel");
+
 	crig::menu_ghosts(f.ui);
 	crig::menu_motion_path(f.ui);
 	f.ui.flush();
 	test::@check(!f.app.config.show_ghosts && !f.app.config.show_motion_path, "the toggles did not turn off");
 	test::eq(f.app.ghost_poses().len, (sz)0);
+}
+
+fn Dialog* ghosts_dialog(Fixture* f)
+{
+	return f.ui.find_id(crig::ANIM_GHOSTS_DIALOG_ID)!!.widget_as(Dialog);
+}
+
+// A press on a slider's track, at `fraction` of its length.
+fn void click_slider(Fixture* f, String id, float fraction)
+{
+	Element* elem = f.ui.find_id(id)!!;
+	Vec2 span = elem.widget_as(Slider).track_span(elem);
+	f.click(elem.absolute + (Vec2){ span.x + span.y * fraction, elem.size.y * 0.5f });
+}
+
+fn void the_ghosts_button_toggles_ghosts_and_opens_a_floating_panel() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	multi_pose_workspace(&f);
+
+	test::@check(f.in_tree(crig::ANIM_GHOSTS_ID), "the transport row has no Ghosts button");
+	test::@check(f.in_tree(crig::ANIM_GHOSTS_DIALOG_ID), "the Ghosts panel is not mounted");
+	Dialog* panel = ghosts_dialog(&f);
+	test::@check(!panel.open && !panel.modal, "the Ghosts panel starts open or modal");
+	test::@check(!f.app.config.show_ghosts, "Ghosts starts on");
+	Element* button = f.ui.find_id(crig::ANIM_GHOSTS_ID)!!;
+	test::@check(button.absolute.y < f.ui.find(Timeline)!!.absolute.y, "the button is not above the sheet");
+
+	// On, and the panel is up, with the sliders on the config.
+	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	test::@check(f.app.config.show_ghosts, "the button did not turn Ghosts on");
+	panel = ghosts_dialog(&f);
+	test::@check(panel.open, "the button did not open the panel");
+	foreach (id : (String[]) { crig::ANIM_GHOSTS_ON_ID, crig::ANIM_GHOSTS_PAST_ID, crig::ANIM_GHOSTS_FUTURE_ID,
+		crig::ANIM_GHOSTS_STEP_ID, crig::ANIM_GHOSTS_OPACITY_ID, crig::ANIM_GHOSTS_SPREAD_ID,
+		crig::ANIM_GHOSTS_DIRECTION_ID, crig::ANIM_GHOSTS_PATH_ID })
+	{
+		test::@check(f.in_tree(id), "the panel has no %s", id);
+	}
+	test::@check(f.ui.find_id(crig::ANIM_GHOSTS_PAST_ID)!!.widget_as(Slider).value == (float)crig::DEFAULT_GHOST_SIDE,
+		"Past does not show the config");
+	test::@check(f.ui.find_id(crig::ANIM_GHOSTS_ON_ID)!!.widget_as(Checkbox).checked, "the On box is not ticked");
+
+	// It moves: a Dialog is dragged by its bar and keeps what it is given.
+	panel.at = { 40, 60 };
+	panel.placed = true;
+	f.feed({ 0, 0 });
+	test::@check(panel.placed && panel.at.x <= 40.5f, "the panel did not stay where it was put");
+
+	// Pressing the button with the panel up puts both away.
+	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
+	f.ui.flush();
+	test::@check(!f.app.config.show_ghosts && !ghosts_dialog(&f).open, "the second press did not turn Ghosts off");
+	// Pressing it on a closed panel with Ghosts on reopens the panel.
+	crig::anim_ghosts_toggled(f.ui, true);
+	f.ui.flush();
+	test::@check(!ghosts_dialog(&f).open, "toggling Ghosts opened the panel");
+	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
+	f.ui.flush();
+	test::@check(f.app.config.show_ghosts && ghosts_dialog(&f).open, "the button did not reopen the panel");
+}
+
+fn void the_ghosts_panel_edits_the_config() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	multi_pose_workspace(&f);
+	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+
+	// Dragging a track writes the config, whatever the number.
+	click_slider(&f, crig::ANIM_GHOSTS_PAST_ID, 0.5f);
+	test::eq(f.app.config.ghost_past, 15);
+	click_slider(&f, crig::ANIM_GHOSTS_FUTURE_ID, 1.0f);
+	test::eq(f.app.config.ghost_future, crig::MAX_GHOST_SIDE);
+	click_slider(&f, crig::ANIM_GHOSTS_STEP_ID, 1.0f);
+	test::eq(f.app.config.ghost_step, crig::MAX_GHOST_STEP);
+	click_slider(&f, crig::ANIM_GHOSTS_OPACITY_ID, 1.0f);
+	test::@check(f.app.config.ghost_opacity == 1.0f, "the opacity track did not reach 1 (%f)", f.app.config.ghost_opacity);
+	test::eq(f.app.ghost_past_count(), 15);
+
+	// Spread is a share of the rig's height, 0 to the cap; Direction is a strip.
+	click_slider(&f, crig::ANIM_GHOSTS_SPREAD_ID, 1.0f);
+	test::@check(math::abs(f.app.config.ghost_spread - crig::MAX_GHOST_SPREAD) < 1e-4f, "the spread track did not reach the cap (%f)", f.app.config.ghost_spread);
+	click_slider(&f, crig::ANIM_GHOSTS_SPREAD_ID, 0.0f);
+	test::@check(f.app.config.ghost_spread == 0.0f, "the spread track did not reach 0 (%f)", f.app.config.ghost_spread);
+	crig::anim_ghost_spread_moved(f.ui, 9.0f);
+	test::@check(f.app.config.ghost_spread == crig::MAX_GHOST_SPREAD, "spread was not clamped");
+	test::eq(f.app.config.ghost_direction, 0);
+	Element* strip = f.ui.find_id(crig::ANIM_GHOSTS_DIRECTION_ID)!!;
+	f.click({ strip.absolute.x + strip.size.x - 6.0f, strip.absolute.y + strip.size.y * 0.5f });
+	f.ui.flush();
+	test::eq(f.app.config.ghost_direction, 2);
+	crig::anim_ghost_direction_chosen(f.ui, 1);
+	test::eq(f.app.config.ghost_direction, 1);
+	crig::anim_ghost_direction_chosen(f.ui, 7);
+	test::eq(f.app.config.ghost_direction, 1);
+
+	// The callbacks clamp: nothing the panel can send breaks the ranges.
+	crig::anim_ghost_past_moved(f.ui, -4.0f);
+	test::eq(f.app.config.ghost_past, 0);
+	crig::anim_ghost_step_moved(f.ui, 0.0f);
+	test::eq(f.app.config.ghost_step, 1);
+	crig::anim_ghost_opacity_moved(f.ui, 0.0f);
+	test::@check(f.app.config.ghost_opacity >= crig::MIN_GHOST_OPACITY, "the opacity went invisible");
+	crig::anim_ghost_future_moved(f.ui, 99.0f);
+	test::eq(f.app.config.ghost_future, crig::MAX_GHOST_SIDE);
+
+	// The panel's boxes are the same switches the View menu has.
+	f.click(f.center_of(crig::ANIM_GHOSTS_PATH_ID)!!);
+	f.ui.flush();
+	test::@check(f.app.config.show_motion_path && crig::query_motion_path(f.ui).checked, "the panel's Motion path box did not turn it on");
+	f.click(f.center_of(crig::ANIM_GHOSTS_ON_ID)!!);
+	f.ui.flush();
+	test::@check(!f.app.config.show_ghosts && !crig::query_ghosts(f.ui).checked, "the panel's Ghosts box did not turn them off");
+}
+
+fn void the_timeline_shades_the_ghosts_reach() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	multi_pose_workspace(&f);
+
+	Timeline* timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
+	test::@check(timeline.ghost_past == 0.0f && timeline.ghost_future == 0.0f, "the sheet shades with Ghosts off");
+
+	f.app.config.ghost_past = 4;
+	f.app.config.ghost_future = 2;
+	f.app.config.ghost_step = 3;
+	crig::anim_ghosts_toggled(f.ui, true);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
+	// At 30 fps, three frames is a tenth of a second.
+	test::@check(math::abs(timeline.ghost_past - 0.4f) < 1e-4f, "the past shade is %f s, not 0.4", timeline.ghost_past);
+	test::@check(math::abs(timeline.ghost_future - 0.2f) < 1e-4f, "the future shade is %f s, not 0.2", timeline.ghost_future);
+
+	crig::anim_ghost_step_moved(f.ui, 1.0f);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
+	test::@check(math::abs(timeline.ghost_past - 4.0f / 30.0f) < 1e-4f, "the shade did not follow the step (%f)", timeline.ghost_past);
+
+	crig::anim_ghosts_toggled(f.ui, false);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
+	test::@check(timeline.ghost_past == 0.0f && timeline.ghost_future == 0.0f, "the shade stayed with Ghosts off");
 }

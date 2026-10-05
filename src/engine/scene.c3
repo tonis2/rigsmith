@@ -173,6 +173,11 @@ uint stage_serial @local = 0;
  with nothing to explain it.
 *>
 bool pane_on_screen @local = false;
+// The first viewport's eye and near plane, and how many viewports there are:
+// what a future ghost needs to be drawn over the body (see `sync_ghosts`).
+Vec3 primary_eye @local;
+float primary_near @local = 0.1f;
+usz viewport_count @local = 0;
 
 <*
  The document's mesh, camera and pane, into three. Once per host iteration.
@@ -213,6 +218,8 @@ fn void sync_scene(AppState* app)
 	// rebuild is owed on almost none — and because the node it pushes at has to
 	// exist, which is the one thing `sync_mesh` decides.
 	sync_pose(app);
+	// Last: a ghost is a copy of the model's own draws, so they have to exist.
+	sync_ghosts(app);
 }
 
 <*
@@ -251,6 +258,224 @@ fn void sync_pose(AppState* app) @local
 		// way the node goes back to the identity rest palette `attach_skin`
 		// uploaded, which draws the vertices where they were built.
 		stage.clear_palette(stage_nodes[i]);
+	}
+}
+
+<*
+ ## Ghosts: onion skin as see-through copies of the model
+
+ A ghost is the model's own draws again, as more nodes over the *same assets*
+ (`add_mesh` on the asset a model node already shows, so no vertex is uploaded),
+ each given the pose of a ghost frame through `set_palette` — the same palette
+ path the live model takes, only with a clip evaluated at another time. The CPU
+ never skins them; `AppState.ghost_poses` supplies the palettes and caches them.
+
+ Look and draw order come from the material and the node colour, with nothing
+ changed in three:
+
+ - Both ghost materials are `BLENDING_NORMAL`, which is `ALPHA_STATE`: blended
+ after the opaque pass, depth *tested* and never depth *written*. So ghosts do
+ not occlude one another, and are hidden where the live body is in front.
+ - **Past ghosts** use `create_texture_material` over that state and nothing
+ else, so the live body occludes them: they read as behind it.
+ - **Future ghosts** use a vertex-only `create_material` whose `displace` slides
+ each vertex along its ray from the camera to just in front of the near plane.
+ The pixel it lands on is unchanged, its depth is nearer than anything the live
+ body wrote, and the depth test passes — so they draw over the body, see-through.
+ The eye is a material uniform, sent every frame, and the shader finds it in
+ each node's own space from `v.origin`, so the per-ghost spread offset (below)
+ does not need a material of its own.
+ - The tint is the node colour: warm for past, cool for future, with its alpha
+ the Ghosts opacity times the fade by distance from the playhead.
+
+ - **Spread**: a ghost's node sits at the model's transform plus its offset
+ (`ghost_offset_of`, in model space, turned by the model's rotation), so an
+ in-place clip fans out instead of stacking on one spot.
+
+ Wireframe shading, and a model drawn as more than a few nodes, keep the old
+ skeleton ghosts (`GhostCache.meshed` tells the viewport which).
+*>
+const usz MAX_GHOST_DRAWS = 4;
+const usz MAX_GHOST_NODES = (usz)MAX_GHOSTS * MAX_GHOST_DRAWS;
+// How far in front of the camera a future ghost's vertices are pulled to, in
+// near planes. Far enough that the nearest corner of the frustum is not clipped.
+const float GHOST_NEAR_REACH = 4.0f;
+
+// `displace` runs in the node's own space, before its matrix, and a ghost's node
+// is the model's transform plus its own spread offset. So the eye arrives in the
+// world (`eye.xyz`) with the model's rotation as three columns, and each vertex
+// turns it into its own node's space through `v.origin` (the node's world
+// position, offset included): rotate^-1 * (eye - origin).
+const String GHOST_FRONT_VERTEX = `fn void displace(inout Vertex v)
+{
+	float3 d = v.uniforms.eye.xyz - v.origin;
+	float3 eye = float3(dot(v.uniforms.col_x.xyz, d), dot(v.uniforms.col_y.xyz, d), dot(v.uniforms.col_z.xyz, d));
+	float3 to_vertex = v.position - eye;
+	float away = max(length(to_vertex), 0.0001);
+	v.position = eye + to_vertex * (v.uniforms.eye.w / away);
+}`;
+
+three::NodeId[MAX_GHOST_NODES] ghost_nodes @local;
+usz ghost_node_count @local = 0;
+uint ghost_nodes_serial @local = 0;
+// What the nodes' palettes were last written from; a different cache build
+// means the poses moved and they are written again.
+uint ghost_pushed_builds @local = 0;
+bool ghost_pushed @local = false;
+ProjectTransform ghost_transform @local;
+float ghost_pushed_spread @local = 0;
+int ghost_pushed_direction @local = 0;
+bool ghost_materials_made @local = false;
+bool ghost_front_made @local = false;
+bool ghost_nodes_front @local = false;
+uint ghost_back_material @local = three::DEFAULT_MATERIAL;
+uint ghost_front_material @local = three::DEFAULT_MATERIAL;
+
+fn void drop_ghost_nodes() @local
+{
+	if (stage != null)
+	{
+		for (usz i = 0; i < ghost_node_count; i++)
+		{
+			stage.clear_palette(ghost_nodes[i]);
+			stage.remove(ghost_nodes[i]);
+		}
+	}
+	ghost_node_count = 0;
+	ghost_pushed = false;
+}
+
+// The two materials, made once and kept for the life of the pass.
+fn void ensure_ghost_materials(AppState* app) @local
+{
+	if (ghost_materials_made) return;
+	ghost_materials_made = true;
+	three::MeshPass* pass = stage_pass();
+	uint? behind = pass.create_texture_material(three::NO_TEXTURE, three::SIDE_FRONT, three::BLENDING_NORMAL);
+	if (try behind) ghost_back_material = behind;
+	ghost_front_material = ghost_back_material;
+	@pool()
+	{
+		three::MaterialUniform[4] uniforms = { { "eye", 4, 1 }, { "col_x", 4, 1 }, { "col_y", 4, 1 }, { "col_z", 4, 1 } };
+		uint? ahead = pass.create_material(&stage_renderer().gpu, &stage_renderer().target, "", uniforms[..],
+			three::SIDE_FRONT, three::BLENDING_NORMAL, {}, GHOST_FRONT_VERTEX, 0.0f);
+		if (try ahead)
+		{
+			ghost_front_material = ahead;
+			ghost_front_made = true;
+		}
+		else
+		{
+			app.@notice("Future ghosts will sit behind the body: three would not take their material.");
+		}
+	};
+}
+
+<*
+ The ghost nodes, kept in step with `AppState.ghost_poses`. Every frame, cheap:
+ the nodes and palettes change only when the cache or the model does; the colours
+ and the eye are three stores.
+*>
+fn void sync_ghosts(AppState* app) @local
+{
+	app.ghosts.meshed = false;
+	bool usable = built && drawn_skinned && stage_count > 0 && stage_count <= MAX_GHOST_DRAWS
+		&& drawn_shading != ShadingMode.WIREFRAME;
+	GhostPose[] ghosts = usable ? app.ghost_poses() : (GhostPose[]){};
+	if (ghosts.len == 0)
+	{
+		// Hidden rather than dropped: playing a clip stops the ghosts and then
+		// they are back, and rebuilding sixty nodes for each is waste.
+		for (usz i = 0; i < ghost_node_count; i++) stage.set_visible(ghost_nodes[i], false);
+		return;
+	}
+
+	ensure_ghost_materials(app);
+	// The eye is one camera's: with a second viewport the pulled-forward ghosts
+	// would be wrong in it, so the future ghosts go back to sitting behind the body.
+	bool front = ghost_front_made && viewport_count == 1;
+	usz wanted = ghosts.len * stage_count;
+	// What the spread is made of: a ghost's node is the model's own transform plus
+	// its offset, so a change to either places the nodes again.
+	float spread_now = app.ghost_spread() <= 0 ? 0.0f : app.ghost_spread() * app.ghost_rig_height();
+	int direction_now = app.ghost_direction();
+	bool moved = !ghost_pushed || !ghost_transform.same(app.doc.model_transform)
+		|| ghost_pushed_spread != spread_now || ghost_pushed_direction != direction_now;
+	if (ghost_nodes_serial != stage_serial || ghost_node_count != wanted || ghost_nodes_front != front)
+	{
+		drop_ghost_nodes();
+		ghost_nodes_serial = stage_serial;
+		ghost_nodes_front = front;
+		moved = true;
+		for (usz i = 0; i < ghosts.len; i++)
+		{
+			for (usz j = 0; j < stage_count; j++)
+			{
+				three::NodeId model = stage_nodes[j];
+				three::NodeId node = stage.add_mesh(stage.node(model).asset, 0, stage.root, "crig:ghost");
+				if (!node.is_set()) { drop_ghost_nodes(); return; }
+				stage.set_skin(node, 0);
+				stage.set_material(node, ghosts[i].before || !front ? ghost_back_material : ghost_front_material);
+				ghost_nodes[ghost_node_count++] = node;
+			}
+		}
+	}
+
+	bool repose = !ghost_pushed || ghost_pushed_builds != app.ghosts.builds || moved;
+	bool visible = app.show_mesh && pane_on_screen;
+	float strength = app.ghost_strength();
+	bool drawn_any;
+	for (usz i = 0; i < ghosts.len; i++)
+	{
+		GhostPose* ghost = &ghosts[i];
+		Color tint = ghost.before ? GHOST_PAST_TINT : GHOST_FUTURE_TINT;
+		float[4] color = { tint.r, tint.g, tint.b, strength * ghost.fade };
+		bool fits = ghost.palette.len == (usz)drawn_joints;
+		for (usz j = 0; j < stage_count; j++)
+		{
+			three::NodeId node = ghost_nodes[i * stage_count + j];
+			if (repose)
+			{
+				if (fits) stage.set_palette(node, ghost.palette);
+				if (moved)
+				{
+					// The offset is in model space, so it turns with the model.
+					Vec3 shift = app.doc.model_transform.orientation().rotate_vec3(app.ghost_offset_of(ghost));
+					stage.set_position(node, app.doc.model_transform.location + shift);
+					stage.set_quaternion(node, app.doc.model_transform.orientation());
+				}
+			}
+			stage.set_color(node, color);
+			stage.set_visible(node, visible && fits);
+			drawn_any = drawn_any || fits;
+		}
+	}
+	ghost_pushed = true;
+	ghost_pushed_builds = app.ghosts.builds;
+	ghost_transform = app.doc.model_transform;
+	ghost_pushed_spread = spread_now;
+	ghost_pushed_direction = direction_now;
+	app.ghosts.meshed = visible && drawn_any;
+
+	if (front)
+	{
+		// Where the camera is in the world, the model's rotation (its columns,
+		// which are the rows of the inverse the shader applies) and how far in
+		// front of the camera the vertices are pulled.
+		Vec3 eye = primary_eye;
+		Quaternionf turn = app.doc.model_transform.orientation();
+		Vec3 col_x = turn.rotate_vec3({ 1, 0, 0 });
+		Vec3 col_y = turn.rotate_vec3({ 0, 1, 0 });
+		Vec3 col_z = turn.rotate_vec3({ 0, 0, 1 });
+		float reach = math::max(primary_near, 0.0001f) * GHOST_NEAR_REACH;
+		three::Material* material = stage_pass().material(ghost_front_material);
+		if (material)
+		{
+			(void)material.set_uniform("eye", (float[]){ eye.x, eye.y, eye.z, reach });
+			(void)material.set_uniform("col_x", (float[]){ col_x.x, col_x.y, col_x.z, 0 });
+			(void)material.set_uniform("col_y", (float[]){ col_y.x, col_y.y, col_y.z, 0 });
+			(void)material.set_uniform("col_z", (float[]){ col_z.x, col_z.y, col_z.z, 0 });
+		}
 	}
 }
 
@@ -314,6 +539,8 @@ fn void sync_mesh(AppState* app) @local
 	// empty view rather than the previous document's model under the current
 	// document's dots, which is the same choice `service_open` makes about a file
 	// that will not load.
+	// The ghosts are copies of these draws and hold the same assets; they go first.
+	drop_ghost_nodes();
 	for (usz i = 0; i < stage_count; i++)
 	{
 		// Before the node, not left to `sweep_palettes`. Nothing breaks either way
@@ -787,6 +1014,7 @@ fn void sync_views(AppState* app) @local
 	{
 		if (elem.size.x >= 1.0f && elem.size.y >= 1.0f) count++;
 	};
+	viewport_count = count;
 	if (count == 0) return;
 	pane_on_screen = true;
 
@@ -799,6 +1027,11 @@ fn void sync_views(AppState* app) @local
 			if (elem.size.x >= 1.0f && elem.size.y >= 1.0f)
 			{
 				OrbitCamera* camera = elem.widget_as(Viewport).view_camera(elem);
+				if (at == 0)
+				{
+					primary_eye = camera.eye();
+					primary_near = camera.near_plane;
+				}
 				views[at++] = {
 					.camera = scene_camera(camera),
 					.rect = {

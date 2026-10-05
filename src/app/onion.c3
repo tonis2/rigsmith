@@ -1,10 +1,12 @@
 <*
- Animation aids drawn over the rig: ghost poses (the keys either side of the
- playhead as faint skeletons) and the selected joint's motion path.
+ Animation aids drawn over the rig: ghost poses (the clip at frames around the
+ playhead, `ghost_step` frames apart, drawn as see-through copies of the mesh by
+ engine/scene.c3, or as faint skeletons without one) and the selected joint's
+ motion path.
 
  Both are sampled through `evaluated_clip_pose`, the door the player uses, so a
- ghost is exactly the pose the rig shows when parked on that key. Both are
- cached: the ghosts by clip, key times picked and document revision, the path by
+ ghost is exactly the pose the rig shows when parked on that frame. Both are
+ cached: the ghosts by clip, ghost times picked and document revision, the path by
  clip, joint, display fps and revision. A frame that changes none of those reads
  the cache; a frame with the toggles off touches nothing.
 *>
@@ -13,8 +15,11 @@ module crig;
 import rig;
 import std::math;
 
-const int MAX_GHOST_KEYS = 3;
-const int MAX_GHOSTS = MAX_GHOST_KEYS * 2;
+// Ghosts drawn at once, whatever the two sides ask for: each is a posed copy of
+// the mesh, and a few dozen of them already read as a smear.
+const int MAX_GHOSTS = 60;
+// The farthest ghost keeps this share of the nearest one's strength.
+const float GHOST_FAR_FADE = 0.2f;
 const float GHOST_KEY_EPSILON = 0.0001f;
 // A long clip at 60 fps stops here; the path is a picture, not a bake.
 const usz MAX_PATH_SAMPLES = 2400;
@@ -22,9 +27,11 @@ const usz MAX_PATH_SAMPLES = 2400;
 struct GhostPose
 {
 	float time;
-	bool before; // a key behind the playhead (drawn cool) or ahead of it (warm)
-	int step;    // 1 = the nearest key on its side, 2 = the one past it, …
+	bool before; // behind the playhead (warm) or ahead of it (cool)
+	int step;    // 1 = the nearest ghost on its side, 2 = the one past it, …
+	float fade;  // 1 for the nearest, falling to GHOST_FAR_FADE for the farthest
 	PosedDot[] dots;
+	Matrix4f[] palette; // the pose as a skin palette, for the mesh ghost
 }
 
 // What a cache was built against; any field moving rebuilds it.
@@ -45,6 +52,19 @@ struct GhostCache
 	usz count;
 	GhostPose[MAX_GHOSTS] poses;
 	uint builds; // how many times it was sampled, for the tests
+	// The pose edit the ghosts were sampled with folded in (`draft_signature`).
+	uint draft;
+	// Written by the scene each frame: the ghosts are on screen as meshes, so the
+	// viewport leaves the skeleton fallback out.
+	bool meshed;
+	// The rig's height the spread is a share of, kept until the model changes
+	// (a bounds walk over every vertex is not a per-frame cost).
+	float height;
+	uint height_revision;
+	uint height_generation;
+	usz height_ptr;
+	usz height_len;
+	bool height_known;
 }
 
 struct MotionPath
@@ -86,16 +106,173 @@ fn bool AppState.onion_gesture(&self)
 	return self.drag.dot != 0 || self.stroke_open;
 }
 
+<*
+ The pending pose edit as one number: 0 with no edit open, else a hash of the
+ draft, the moved targets and the time it will be keyed at. A ghost cache built
+ against another number is out of date, whatever the document says.
+*>
+fn uint AppState.draft_signature(&self)
+{
+	if (!self.pose_edit_active) return 0;
+	uint hash = 2166136261u;
+	hash = (hash ^ bitcast(self.edit_time, uint)) * 16777619u;
+	foreach (joint : self.pose_edit_draft)
+	{
+		float[7] parts = { joint.rotation.i, joint.rotation.j, joint.rotation.k, joint.rotation.l,
+			joint.offset.x, joint.offset.y, joint.offset.z };
+		hash = (hash ^ joint.dot_id) * 16777619u;
+		foreach (part : parts) hash = (hash ^ bitcast(part, uint)) * 16777619u;
+	}
+	foreach (aim : self.aim_draft)
+	{
+		float[3] parts = { aim.at.x, aim.at.y, aim.at.z };
+		foreach (part : parts) hash = (hash ^ bitcast(part, uint)) * 16777619u;
+	}
+	return hash | 1u;
+}
+
+<*
+ The open clip as it would play with the pose edit in hand keyed at the playhead
+ (what Auto-key, or Key pose on the changed channels, would write): the saved clip
+ with the draft folded in as a key. Nothing lands and the undo stack is not
+ touched; the caller frees `out`.
+
+ @param out : `Set only when this returns true.`
+ @return `False when there is no edit that would key anything, or a layer is open — its key goes into the layer, so the saved clip is what the ghosts sample.`
+*>
+fn bool AppState.onion_drafted_clip(&self, AnimTemplate* clip, AnimTemplate* out)
+{
+	if (!self.pose_edit_active || !self.editing.valid()) return false;
+	if (self.active_layer_ptr(self.editing) || clip.plays_layers()) return false;
+	float time = self.edit_time;
+	AnimKeyframe? drafted = self.draft_key(self.editing, clip, time, CHANGED, false);
+	if (catch drafted) return false;
+	AnimKeyframe key = drafted;
+	if (key.dots.len == 0)
+	{
+		key.free(mem);
+		if (self.aim_draft.len == 0) return false;
+		*out = self.with_aim_keys(clip_copy(mem, *clip), time);
+		return true;
+	}
+	*out = self.with_aim_keys(clip_with_key(mem, *clip, key), time);
+	return true;
+}
+
 // The playhead of the open clip: the running clock when it is the clip playing.
 fn float AppState.onion_playhead(&self)
 {
 	return self.animating && self.current_ref.same(self.editing) ? self.anim_time : self.edit_time;
 }
 
-fn int AppState.ghost_range(&self)
+fn int AppState.ghost_past_count(&self) => math::clamp(self.config.ghost_past, 0, MAX_GHOST_SIDE);
+fn int AppState.ghost_future_count(&self) => math::clamp(self.config.ghost_future, 0, MAX_GHOST_SIDE);
+fn int AppState.ghost_step_frames(&self) => math::clamp(self.config.ghost_step, 1, MAX_GHOST_STEP);
+
+// The strongest a ghost gets; a config that never named it reads as the default.
+fn float AppState.ghost_strength(&self)
 {
-	int keys = self.config.ghost_keys;
-	return keys >= 1 && keys <= MAX_GHOST_KEYS ? keys : 1;
+	float opacity = self.config.ghost_opacity;
+	return opacity >= MIN_GHOST_OPACITY ? math::min(opacity, 1.0f) : DEFAULT_GHOST_OPACITY;
+}
+
+// The spread asked for, as a share of the rig's height per ghost.
+fn float AppState.ghost_spread(&self)
+{
+	float spread = self.config.ghost_spread;
+	return spread >= 0 && spread <= MAX_GHOST_SPREAD ? spread : DEFAULT_GHOST_SPREAD;
+}
+
+fn int AppState.ghost_direction(&self)
+{
+	int direction = self.config.ghost_direction;
+	return direction >= 0 && direction < GHOST_DIRECTIONS ? direction : 0;
+}
+
+<*
+ The model-space unit vector the ghosts are spread along: 0 forward (+Z, the way
+ the rig faces), 1 sideways (+X), 2 up (+Y).
+*>
+fn Vec3 ghost_axis(int direction)
+{
+	switch (direction)
+	{
+		case 1: return { 1, 0, 0 };
+		case 2: return { 0, 1, 0 };
+		default: return { 0, 0, 1 };
+	}
+}
+
+<*
+ Where a ghost is pushed to, in model space and on top of its real pose: its
+ signed index from the playhead (past -1, -2 ..., future +1, +2 ...) times
+ `spread` of the rig's `height`, along the direction. Zero spread, zero offset.
+*>
+fn Vec3 ghost_offset(bool before, int step, float spread, float height, int direction)
+{
+	float signed_index = before ? -(float)step : (float)step;
+	return ghost_axis(direction) * (signed_index * spread * height);
+}
+
+<*
+ The rig's height, cached against the model: the mesh's extent along Y.
+*>
+fn float AppState.ghost_rig_height(&self)
+{
+	GhostCache* cache = &self.ghosts;
+	usz ptr = (usz)self.geometry.positions.ptr;
+	usz len = self.geometry.positions.len;
+	if (!cache.height_known || cache.height_revision != self.undo_stack.revision
+		|| cache.height_generation != self.rig_generation || cache.height_ptr != ptr || cache.height_len != len)
+	{
+		cache.height = self.model_height();
+		cache.height_revision = self.undo_stack.revision;
+		cache.height_generation = self.rig_generation;
+		cache.height_ptr = ptr;
+		cache.height_len = len;
+		cache.height_known = true;
+	}
+	return cache.height;
+}
+
+// Where a pose's ghost sits relative to the live pose, in model space.
+fn Vec3 AppState.ghost_offset_of(&self, GhostPose* ghost)
+{
+	float spread = self.ghost_spread();
+	if (spread <= 0) return {};
+	return ghost_offset(ghost.before, ghost.step, spread, self.ghost_rig_height(), self.ghost_direction());
+}
+
+// Frames per second the ghosts are spaced at: the dock's display rate.
+fn int AppState.ghost_fps(&self) => self.anim_fps > 0 ? self.anim_fps : 30;
+
+// Seconds between two neighbouring ghosts.
+fn float AppState.ghost_spacing(&self) => (float)self.ghost_step_frames() / (float)self.ghost_fps();
+
+// How far the ghosts reach either side of the playhead, in seconds. What the
+// timeline shades.
+fn float AppState.ghost_past_span(&self) => (float)self.ghost_past_count() * self.ghost_spacing();
+fn float AppState.ghost_future_span(&self) => (float)self.ghost_future_count() * self.ghost_spacing();
+
+<*
+ Both sides trimmed to what MAX_GHOSTS allows, the larger side giving way first.
+*>
+fn void ghost_counts(int past, int future, int* out_past, int* out_future)
+{
+	while (past + future > MAX_GHOSTS)
+	{
+		if (past >= future) { past--; } else { future--; }
+	}
+	*out_past = past;
+	*out_future = future;
+}
+
+// How strongly ghost number `step` of `side` shows against the nearest: 1 for
+// the first, GHOST_FAR_FADE for the last.
+fn float ghost_fade(int step, int side)
+{
+	if (side <= 1) return 1.0f;
+	return 1.0f - (1.0f - GHOST_FAR_FADE) * (float)(step - 1) / (float)(side - 1);
 }
 
 // The open clip, read in if it was a deferred stub, or null.
@@ -133,38 +310,44 @@ fn Matrix4f[] AppState.onion_palette(&self, RigView* view, AnimTemplate* clip, f
 }
 
 <*
- The ghost key times for `playhead`: up to `range` keys strictly before it,
- nearest first, then up to `range` strictly after it. A key under the playhead
- is the pose on screen and gets no ghost.
+ The times ghosts stand at: `past` of them behind `playhead` at `step` frames
+ apart, then `future` ahead of it, each side nearest first. A time outside the
+ clip is skipped, or wrapped round to the other end when the clip loops. A
+ wrapped time that lands back on the playhead or on a ghost already placed is
+ dropped, so a short looping clip is not drawn over itself.
+
+ @param fps : `Frame rate that turns a step into seconds.`
+ @return `How many were written; times, before and steps hold at least MAX_GHOSTS.`
 *>
-fn usz ghost_times(AnimTemplate* clip, float playhead, int range, float[] times, bool[] before, int[] steps)
+fn usz ghost_times(float duration, bool loop, float playhead, int fps, int past, int future, int step,
+	float[] times, bool[] before, int[] steps, float[] fades = {})
 {
 	usz count;
-	float bound = playhead - GHOST_KEY_EPSILON;
-	for (int step = 1; step <= range; step++)
+	if (duration <= 0.0f || fps <= 0) return 0;
+	ghost_counts(past, future, &past, &future);
+	int side_past = past;
+	int side_future = future;
+	float spacing = (float)math::max(step, 1) / (float)fps;
+	for (int pass = 0; pass < 2; pass++)
 	{
-		bool found;
-		float best;
-		foreach (key : clip.keyframes)
+		bool behind = pass == 0;
+		int total = behind ? side_past : side_future;
+		for (int k = 1; k <= total; k++)
 		{
-			if (key.time < bound && (!found || key.time > best)) { best = key.time; found = true; }
+			float time = playhead + (behind ? -1.0f : 1.0f) * (float)k * spacing;
+			if (time < -GHOST_KEY_EPSILON || time > duration + GHOST_KEY_EPSILON)
+			{
+				if (!loop) break;
+				time -= math::floor(time / duration) * duration;
+			}
+			time = math::clamp(time, 0.0f, duration);
+			bool taken = math::abs(time - playhead) < GHOST_KEY_EPSILON;
+			for (usz i = 0; !taken && i < count; i++) taken = math::abs(times[i] - time) < GHOST_KEY_EPSILON;
+			if (taken) continue;
+			times[count] = time; before[count] = behind; steps[count] = k;
+			if (fades.len > count) fades[count] = ghost_fade(k, total);
+			count++;
 		}
-		if (!found) break;
-		times[count] = best; before[count] = true; steps[count] = step; count++;
-		bound = best - GHOST_KEY_EPSILON;
-	}
-	bound = playhead + GHOST_KEY_EPSILON;
-	for (int step = 1; step <= range; step++)
-	{
-		bool found;
-		float best;
-		foreach (key : clip.keyframes)
-		{
-			if (key.time > bound && (!found || key.time < best)) { best = key.time; found = true; }
-		}
-		if (!found) break;
-		times[count] = best; before[count] = false; steps[count] = step; count++;
-		bound = best + GHOST_KEY_EPSILON;
 	}
 	return count;
 }
@@ -174,6 +357,7 @@ fn void AppState.drop_ghosts(&self)
 	for (usz i = 0; i < self.ghosts.count; i++)
 	{
 		if (self.ghosts.poses[i].dots.len > 0) alloc::free(mem, self.ghosts.poses[i].dots);
+		if (self.ghosts.poses[i].palette.len > 0) alloc::free(mem, self.ghosts.poses[i].palette);
 		self.ghosts.poses[i] = {};
 	}
 	self.ghosts.count = 0;
@@ -181,8 +365,8 @@ fn void AppState.drop_ghosts(&self)
 }
 
 <*
- The ghost skeletons to draw this frame, or none: Ghosts off, no clip open, or
- the clip running (the ghosts would flicker past every key).
+ The ghost poses to draw this frame, or none: Ghosts off, no clip open, or the
+ clip running (the ghosts would flicker past every frame).
 *>
 fn GhostPose[] AppState.ghost_poses(&self)
 {
@@ -194,37 +378,54 @@ fn GhostPose[] AppState.ghost_poses(&self)
 	float[MAX_GHOSTS] times;
 	bool[MAX_GHOSTS] before;
 	int[MAX_GHOSTS] steps;
-	usz count = ghost_times(clip, self.onion_playhead(), self.ghost_range(), times[..], before[..], steps[..]);
+	float[MAX_GHOSTS] fades;
+	usz count = ghost_times(clip.duration, clip.loop, self.onion_playhead(), self.ghost_fps(),
+		self.ghost_past_count(), self.ghost_future_count(), self.ghost_step_frames(),
+		times[..], before[..], steps[..], fades[..]);
 
 	OnionStamp stamp = self.onion_stamp(self.editing, clip);
+	uint draft = self.draft_signature();
+	bool gesture = self.onion_gesture();
 	bool same = self.ghosts.built && self.ghosts.count == count;
-	if (same && !self.onion_gesture()) same = self.ghosts.stamp.same(stamp);
+	// Held through a drag: re-sampling every ghost mid-gesture costs far more than
+	// the drag itself, so they catch up with the draft on the release.
+	if (same && !gesture)
+	{
+		same = self.ghosts.stamp.same(stamp) && self.ghosts.draft == draft;
+	}
 	for (usz i = 0; same && i < count; i++)
 	{
 		GhostPose* held = &self.ghosts.poses[i];
-		same = held.time == times[i] && held.before == before[i] && held.step == steps[i];
+		same = held.time == times[i] && held.before == before[i] && held.step == steps[i] && held.fade == fades[i];
 	}
 	if (same) return self.ghosts.poses[:self.ghosts.count];
 
 	self.drop_ghosts();
 	self.ghosts.builds++;
+	// The clip as it will play once the edit in hand is keyed, so the ghosts
+	// show what Auto-key (or Key pose) is about to make of it.
+	AnimTemplate drafted;
+	bool folded = self.onion_drafted_clip(clip, &drafted);
+	defer if (folded) drafted.free(mem);
+	AnimTemplate* sampled = folded ? &drafted : clip;
 	bool owned;
 	RigView? opened = self.onion_view(&owned);
 	if (try view = opened)
 	{
 		for (usz i = 0; i < count; i++)
 		{
-			Matrix4f[] palette = self.onion_palette(&view, clip, times[i]);
+			Matrix4f[] palette = self.onion_palette(&view, sampled, times[i]);
 			self.ghosts.poses[i] = {
-				.time = times[i], .before = before[i], .step = steps[i],
+				.time = times[i], .before = before[i], .step = steps[i], .fade = fades[i],
 				.dots = posed_overlay(mem, &view.skeleton, view.dot_ids, palette),
+				.palette = palette,
 			};
-			if (palette.len > 0) alloc::free(mem, palette);
 		}
 		self.ghosts.count = count;
 		if (owned) view.free(mem);
 	}
 	self.ghosts.stamp = stamp;
+	self.ghosts.draft = draft;
 	self.ghosts.built = true;
 	return self.ghosts.poses[:self.ghosts.count];
 }

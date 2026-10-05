@@ -17,7 +17,12 @@
        "hide_floor": false,
        "viewport_shading": 0,
        "show_ghosts": false,
-       "ghost_keys": 1,
+       "ghost_past": 3,
+       "ghost_future": 3,
+       "ghost_step": 1,
+       "ghost_opacity": 0.35,
+       "ghost_spread": 0.12,
+       "ghost_direction": 0,
        "show_motion_path": false,
        "anim_layers_ratio": 0.25,
        "joint_panel_tab": 0,
@@ -128,6 +133,19 @@ const int MCP_PORT = 8808;
  this file reads has to live where that target can see it.
 *>
 const float DEFAULT_UI_SCALE = 1.0;
+
+// Ghosts (onion skin): how many either side of the playhead, how many frames
+// apart, and how strong the nearest one is.
+const int MAX_GHOST_SIDE = 30;
+const int MAX_GHOST_STEP = 10;
+const int DEFAULT_GHOST_SIDE = 3;
+const float DEFAULT_GHOST_OPACITY = 0.35;
+const float MIN_GHOST_OPACITY = 0.05;
+// How far apart ghosts are pushed, as a share of the rig's height per ghost, and
+// along which axis of the model: 0 forward (+Z), 1 sideways (+X), 2 up (+Y).
+const float DEFAULT_GHOST_SPREAD = 0.12;
+const float MAX_GHOST_SPREAD = 0.5;
+const int GHOST_DIRECTIONS = 3;
 const float MIN_UI_SCALE = 0.5;
 const float MAX_UI_SCALE = 3.0;
 
@@ -262,10 +280,18 @@ struct CrigConfig
 	// zero, so a config without the key keeps the grey model crig always drew.
 	ShadingMode viewport_shading;
 
-	// The animation aids in the transport row: previous/next-key ghost skeletons
-	// (`ghost_keys` each side, 0 read as 1) and the selected joint's motion path.
+	// The animation aids: onion-skin ghosts of the posed mesh `ghost_past` and
+	// `ghost_future` steps either side of the playhead, each `ghost_step` frames
+	// apart and `ghost_opacity` at most, and the selected joint's motion path.
+	// `load_config` fills the defaults; a config that names the retired
+	// `ghost_keys` gets that many either side.
 	bool show_ghosts;
-	int ghost_keys;
+	int ghost_past;
+	int ghost_future;
+	int ghost_step;
+	float ghost_opacity;
+	float ghost_spread;
+	int ghost_direction;
 	bool show_motion_path;
 
 	// The Animations dock's divider: the share of its width the Layers column takes
@@ -329,6 +355,12 @@ fn CrigConfig load_config()
 		.mcp_port = MCP_PORT,
 		.ui_scale = DEFAULT_UI_SCALE,
 		.rig_overlay_strength = DEFAULT_RIG_OVERLAY_STRENGTH,
+		.ghost_past = DEFAULT_GHOST_SIDE,
+		.ghost_future = DEFAULT_GHOST_SIDE,
+		.ghost_step = 1,
+		.ghost_opacity = DEFAULT_GHOST_OPACITY,
+		.ghost_spread = DEFAULT_GHOST_SPREAD,
+		.ghost_direction = 0,
 		.directory = config_home(mem),
 	};
 	config.recent.init(mem);
@@ -432,9 +464,39 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	}
 	if (try bool wanted = parsed.get_bool("show_ghosts")) self.show_ghosts = wanted;
 	if (try bool wanted = parsed.get_bool("show_motion_path")) self.show_motion_path = wanted;
+	// The retired key count, read as the same number of ghosts each side so an
+	// old config keeps a sensible picture. The new keys win when both are there.
 	if (try double wanted = parsed.get_float("ghost_keys"))
 	{
-		if (wanted >= 1 && wanted <= MAX_GHOST_KEYS) self.ghost_keys = (int)wanted;
+		if (wanted >= 1 && wanted <= MAX_GHOST_SIDE)
+		{
+			self.ghost_past = (int)wanted;
+			self.ghost_future = (int)wanted;
+		}
+	}
+	if (try double wanted = parsed.get_float("ghost_past"))
+	{
+		if (wanted >= 0 && wanted <= MAX_GHOST_SIDE) self.ghost_past = (int)wanted;
+	}
+	if (try double wanted = parsed.get_float("ghost_future"))
+	{
+		if (wanted >= 0 && wanted <= MAX_GHOST_SIDE) self.ghost_future = (int)wanted;
+	}
+	if (try double wanted = parsed.get_float("ghost_step"))
+	{
+		if (wanted >= 1 && wanted <= MAX_GHOST_STEP) self.ghost_step = (int)wanted;
+	}
+	if (try double wanted = parsed.get_float("ghost_opacity"))
+	{
+		if (wanted >= MIN_GHOST_OPACITY && wanted <= 1.0) self.ghost_opacity = (float)wanted;
+	}
+	if (try double wanted = parsed.get_float("ghost_spread"))
+	{
+		if (wanted >= 0 && wanted <= MAX_GHOST_SPREAD) self.ghost_spread = (float)wanted;
+	}
+	if (try double wanted = parsed.get_float("ghost_direction"))
+	{
+		if (wanted >= 0 && wanted < GHOST_DIRECTIONS) self.ghost_direction = (int)wanted;
 	}
 	// A ratio outside what the divider can reach reads as absent, like ui_scale.
 	if (try double wanted = parsed.get_float("anim_layers_ratio"))
@@ -733,7 +795,12 @@ struct ConfigFile @private
 	bool hide_floor;
 	int viewport_shading;
 	bool show_ghosts;
-	int ghost_keys;
+	int ghost_past;
+	int ghost_future;
+	int ghost_step;
+	float ghost_opacity;
+	float ghost_spread;
+	int ghost_direction;
 	bool show_motion_path;
 	float anim_layers_ratio;
 	int joint_panel_tab;
@@ -786,7 +853,12 @@ fn void CrigConfig.save(&self)
 		.hide_floor = self.hide_floor,
 		.viewport_shading = self.viewport_shading.ordinal,
 		.show_ghosts = self.show_ghosts,
-		.ghost_keys = self.ghost_keys,
+		.ghost_past = self.ghost_past,
+		.ghost_future = self.ghost_future,
+		.ghost_step = self.ghost_step,
+		.ghost_opacity = self.ghost_opacity,
+		.ghost_spread = self.ghost_spread,
+		.ghost_direction = self.ghost_direction,
 		.show_motion_path = self.show_motion_path,
 		.anim_layers_ratio = self.anim_layers_ratio,
 		.joint_panel_tab = self.joint_panel_tab,

@@ -742,6 +742,12 @@ fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool p
 			// binder gave before the file was adopted.
 			self.blank_shell_riders();
 			self.riders_stale = false;
+			// A file's weights are the file's, with one exception: a vertex may not
+			// hold a share of a sibling chain (a finger of the next finger). Files
+			// from other tools often blend them, and the mesh then shows a wedge
+			// between two fingers whenever one bends. The binder's own rule, so
+			// both branches answer alike; under the paint, like the binder's.
+			rig::isolate_chains(allocator, taken, view.skeleton.parents);
 			if (painted)
 			{
 				paint_over(taken, view.len(), view.paint);

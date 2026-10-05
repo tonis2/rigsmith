@@ -351,40 +351,17 @@ fn String AppState.unused_clip_name(&self, Allocator allocator, String name)
 }
 
 <*
- Write the pose the document is holding into a clip at `time`.
+ The keyframe `key_here` would write at `time` for the draft the document holds,
+ without landing it: the sampled pose when parked, else the draft, narrowed by
+ `scope` to the channels it names. Empty `dots` when there is nothing to key.
+ `ref` must be the clip `clip` points to, with no layer active.
 
- 	`app.key_here(ref, app.anim_time);`
-
- ALL keys every named joint, including rest. SELECTED keys both channels of
- selected joints even when unchanged. CHANGED compares the draft with the
- ungrounded sample and keys only changed channels. Same-time insertion merges
- channels through `clip_with_key`; `land_clip` supplies grouped undo and forks
- a library clip on first edit.
-
- @return `The reference to hold afterwards, or NO_ANIM when nothing was written.`
+ @param notify : `Say why a narrowed scope keyed nothing.`
+ @return `The key; the caller owns it.`
+ @return? RIG_EMPTY : `There is no rig to read a pose off.`
 *>
-fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope = ALL)
+fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, float time, AnimKeyScope scope, bool notify)
 {
-	AnimTemplate* clip = self.clip(ref);
-	if (!clip) return NO_ANIM;
-	// A layer is active: keying stores a delta into it (layer_edit.c3). A
-	// generator holds no keys, so there is nothing to key into.
-	AnimLayer* layered = self.active_layer_ptr(ref);
-	if (layered)
-	{
-		// Targets key onto the base clip whichever layer is active: a layer holds
-		// poses, and the aim is laid over the whole stack.
-		if (layered.kind == KEYED)
-		{
-			AnimRef keyed = self.key_into_layer(ref, time, scope);
-			if (keyed.valid() || self.aim_draft.len == 0) return keyed;
-			return self.key_aims_only(ref, time);
-		}
-		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
-		self.@notice("layer \"%s\" is generated, so it has no keys — choose the base or a keyed layer to key a pose", layered.name);
-		return NO_ANIM;
-	}
-
 	AnimKeyframe? key;
 	bool parked = !self.pose_edit_active && self.animating && self.anim_paused
 		&& self.current_ref.same(ref);
@@ -399,9 +376,7 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	}
 	else if (parked)
 	{
-		RigView? opened = self.open_rig(mem);
-		if (catch opened) return NO_ANIM;
-		RigView view = opened;
+		RigView view = self.open_rig(mem)!;
 		defer view.free(mem);
 		rig::Pose sampled = self.evaluated_clip_pose(mem, &view, *clip, ref, time,
 			false);
@@ -415,19 +390,8 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	{
 		key = self.keyframe_here(mem, time, ref);
 	}
-	if (catch key)
-	{
-		self.@notice("there is no rig to key a pose from");
-		return NO_ANIM;
-	}
-
-	AnimKeyframe written = key;
-	if (written.dots.len == 0)
-	{
-		written.free(mem);
-		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
-		return NO_ANIM;
-	}
+	AnimKeyframe written = key!;
+	if (written.dots.len == 0) return written;
 	if (scope != ALL)
 	{
 		RigView view = self.open_rig(mem)!!;
@@ -476,13 +440,63 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 		}
 		if (written.dots.len > 0) alloc::free(mem, written.dots);
 		written.dots = filtered.to_array(mem);
-		if (written.dots.len == 0)
+		// Nothing left: the caller keys a moved target alone, or says so.
+		if (written.dots.len == 0 && notify && self.aim_draft.len == 0)
 		{
-			// Only a target moved: it is keyed alone, with nothing said about the pose.
-			if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
 			self.@notice(scope == SELECTED ? "select joints to key" : "no changed channels to key");
-			return NO_ANIM;
 		}
+	}
+	return written;
+}
+
+<*
+ Write the pose the document is holding into a clip at `time`.
+
+ 	`app.key_here(ref, app.anim_time);`
+
+ ALL keys every named joint, including rest. SELECTED keys both channels of
+ selected joints even when unchanged. CHANGED compares the draft with the
+ ungrounded sample and keys only changed channels. Same-time insertion merges
+ channels through `clip_with_key`; `land_clip` supplies grouped undo and forks
+ a library clip on first edit.
+
+ @return `The reference to hold afterwards, or NO_ANIM when nothing was written.`
+*>
+fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope = ALL)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip) return NO_ANIM;
+	// A layer is active: keying stores a delta into it (layer_edit.c3). A
+	// generator holds no keys, so there is nothing to key into.
+	AnimLayer* layered = self.active_layer_ptr(ref);
+	if (layered)
+	{
+		// Targets key onto the base clip whichever layer is active: a layer holds
+		// poses, and the aim is laid over the whole stack.
+		if (layered.kind == KEYED)
+		{
+			AnimRef keyed = self.key_into_layer(ref, time, scope);
+			if (keyed.valid() || self.aim_draft.len == 0) return keyed;
+			return self.key_aims_only(ref, time);
+		}
+		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
+		self.@notice("layer \"%s\" is generated, so it has no keys — choose the base or a keyed layer to key a pose", layered.name);
+		return NO_ANIM;
+	}
+
+	AnimKeyframe? drafted = self.draft_key(ref, clip, time, scope, true);
+	if (catch drafted)
+	{
+		self.@notice("there is no rig to key a pose from");
+		return NO_ANIM;
+	}
+	AnimKeyframe written = drafted;
+	if (written.dots.len == 0)
+	{
+		written.free(mem);
+		// Only a target moved: it is keyed alone, with nothing said about the pose.
+		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
+		return NO_ANIM;
 	}
 	// Restarting the watched clip releases draft state. The draft belongs to
 	// this editing transaction, not that playback restart; park it while the

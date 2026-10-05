@@ -73,10 +73,17 @@ const float PHYSICS_CAPSULE_WIDTH = 1.0;
 // grey of the model, which is exactly where it is usually drawn.
 const Color GHOST        = { 0.85, 0.88, 0.95, 0.75 };
 
-// Ghost poses: the key behind the playhead cool, the one ahead warm, both faint
-// so the live rig stays the thing being read. Alpha falls with each key further.
-const Color ONION_BEFORE = { 0.35, 0.70, 1.00, 0.42 };
-const Color ONION_AFTER  = { 1.00, 0.58, 0.30, 0.42 };
+// Ghost skeletons (the fallback when there is no skinned mesh): behind the
+// playhead warm, ahead cool, both faint so the live rig stays the thing being
+// read. Alpha falls with each ghost further out.
+const Color ONION_BEFORE = { 1.00, 0.45, 0.22, 0.50 };
+const Color ONION_AFTER  = { 0.30, 0.62, 1.00, 0.50 };
+
+// Ghosts as see-through copies of the mesh and as the timeline's shade around the
+// playhead: the frames behind it warm, the frames ahead cool. Their alpha is set
+// where they are drawn, by distance from the playhead.
+const Color GHOST_PAST_TINT   = { 1.00, 0.45, 0.22, 1.0 };
+const Color GHOST_FUTURE_TINT = { 0.30, 0.62, 1.00, 1.0 };
 
 // The selected joint's motion path, its key dots and the playhead marker on it.
 const Color MOTION_PATH  = { 0.55, 0.95, 0.75, 0.70 };

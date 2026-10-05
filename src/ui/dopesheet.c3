@@ -234,6 +234,12 @@ struct Timeline (Widget)
 	OnTimelineLaneContext on_lane_context;
 	float duration;
 	float playhead;
+	// Ghosts' reach around the playhead, in seconds, shaded warm behind it and
+	// cool ahead of it and fading with distance; 0 draws nothing. `ghost_loop`
+	// carries the shade across the clip's ends the way the ghosts wrap.
+	float ghost_past;
+	float ghost_future;
+	bool ghost_loop;
 	int fps; // 0 retains the seconds ruler
 	float zoom; // <= 1 fits the entire clip
 	float view_start;
@@ -461,6 +467,8 @@ fn void Timeline.paint(&self, Element* elem, Painter* painter) @dynamic
 		}
 	}
 
+	self.paint_ghost_shade(elem, painter);
+
 	// Frame ticks adapt to the visible range without becoming a hatch pattern.
 	if (self.duration > 0.0f && span.y > 0.0f)
 	{
@@ -590,6 +598,76 @@ fn void Timeline.paint(&self, Element* elem, Painter* painter) @dynamic
 	{
 		float x = self.x_of(elem, self.playhead);
 		painter.line({ x, 0 }, { x, elem.size.y }, s.playhead_width, s.playhead);
+	}
+}
+
+// Widest a shading strip is, in pixels: narrow enough to read as a gradient.
+const float TIMELINE_SHADE_STRIP = 4.0;
+// How strong the shade is beside the playhead; it fades to nothing at its far end.
+const float TIMELINE_SHADE_ALPHA = 0.34;
+
+<*
+ One side of the ghost shade: the part of [from, to] on the axis, as strips whose
+ strength falls with the distance from the playhead. `shift` moves a wrapped
+ piece back to where it sits relative to the playhead, so the fade runs across
+ the clip's end rather than restarting.
+*>
+fn void Timeline.paint_shade_band(&self, Element* elem, Painter* painter, float from, float to,
+	float shift, float reach, Color tint)
+{
+	float lo = math::max(from, self.view_start);
+	float hi = math::min(to, self.view_start + self.visible_duration());
+	if (hi <= lo || reach <= 0.0f) return;
+	Vec2 span = self.track_span(elem);
+	float x0 = self.x_of(elem, lo);
+	float x1 = self.x_of(elem, hi);
+	int strips = math::max(1, (int)math::ceil((x1 - x0) / TIMELINE_SHADE_STRIP));
+	float step_t = (hi - lo) / (float)strips;
+	for (int i = 0; i < strips; i++)
+	{
+		float a = lo + step_t * (float)i;
+		float mid = a + step_t * 0.5f;
+		float distance = math::abs(mid + shift - self.playhead) / reach;
+		Color ink = tint;
+		ink.a = TIMELINE_SHADE_ALPHA * math::max(1.0f - distance, 0.0f);
+		float left = self.x_of(elem, a);
+		float right = self.x_of(elem, a + step_t);
+		if (left < span.x) left = span.x;
+		if (right > span.x + span.y) right = span.x + span.y;
+		if (right <= left) continue;
+		// A hair of overlap, so the strips do not show seams between them.
+		painter.rect({ left, 0 }, { right - left + 0.5f, elem.size.y }, { .color = ink });
+	}
+}
+
+<*
+ The ghosts' reach on the sheet, warm to the left of the playhead and cool to the
+ right, each fading away from it, over the lanes and under the keys.
+*>
+fn void Timeline.paint_ghost_shade(&self, Element* elem, Painter* painter)
+{
+	if (self.duration <= 0.0f || (self.ghost_past <= 0.0f && self.ghost_future <= 0.0f)) return;
+	float head = math::clamp(self.playhead, 0.0f, self.duration);
+	if (self.ghost_past > 0.0f)
+	{
+		float lo = head - self.ghost_past;
+		self.paint_shade_band(elem, painter, math::max(lo, 0.0f), head, 0.0f, self.ghost_past, GHOST_PAST_TINT);
+		if (self.ghost_loop && lo < 0.0f)
+		{
+			// The part behind the first frame is the end of the clip.
+			self.paint_shade_band(elem, painter, math::max(self.duration + lo, head), self.duration,
+				-self.duration, self.ghost_past, GHOST_PAST_TINT);
+		}
+	}
+	if (self.ghost_future > 0.0f)
+	{
+		float hi = head + self.ghost_future;
+		self.paint_shade_band(elem, painter, head, math::min(hi, self.duration), 0.0f, self.ghost_future, GHOST_FUTURE_TINT);
+		if (self.ghost_loop && hi > self.duration)
+		{
+			self.paint_shade_band(elem, painter, 0.0f, math::min(hi - self.duration, head),
+				self.duration, self.ghost_future, GHOST_FUTURE_TINT);
+		}
 	}
 }
 

@@ -497,6 +497,26 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 	paint_over(dense, bones, view.paint);
 	pin_over(dense, bones, view.pins);
 
+	// A rig that adopted its file's weights deforms with those, not with this bind:
+	// the bind above is then only wanted for the riders and distances that come out
+	// of it. Count over what the views paint and the skin rides — `painted_bind` —
+	// so this describes the weights somebody is looking at. It used to rebind
+	// regardless and ignore the file's, which is how it could report a leak the
+	// view did not show.
+	if (self.doc.skin_from_file)
+	{
+		float[] shown = self.painted_bind(mem, &view);
+		if (shown.len == dense.len)
+		{
+			alloc::free(mem, dense);
+			dense = shown;
+		}
+		else if (shown.len > 0)
+		{
+			alloc::free(mem, shown);
+		}
+	}
+
 	JointStake[] stakes = alloc::new_array(allocator, JointStake, (sz)bones);
 	for (usz j = 0; j < bones; j++)
 	{

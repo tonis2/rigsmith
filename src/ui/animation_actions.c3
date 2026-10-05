@@ -14,33 +14,6 @@ fn void anim_tracks_toggled(Ui* ui, bool checked)
 	refresh_animations_view(ui);
 }
 
-String[MAX_GHOST_KEYS] ghost_key_options = { "1 key", "2 keys", "3 keys" };
-
-fn void anim_ghosts_toggled(Ui* ui, bool on)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.config.show_ghosts = on;
-	app.config.save();
-	app.refresh_ui();
-}
-
-fn void anim_ghost_keys_chosen(Ui* ui, usz row)
-{
-	if (row >= MAX_GHOST_KEYS) return;
-	AppState* app = ui.inherit(AppState)!!;
-	app.config.ghost_keys = (int)row + 1;
-	app.config.save();
-	app.refresh_ui();
-}
-
-fn void anim_path_toggled(Ui* ui, bool on)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.config.show_motion_path = on;
-	app.config.save();
-	app.refresh_ui();
-}
-
 fn void anim_tracks_selected_only_toggled(Ui* ui, bool checked)
 {
 	AppState* app = ui.inherit(AppState)!!;

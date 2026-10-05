@@ -91,6 +91,10 @@ fn void a_first_run_has_defaults() @test
 	test::@check(config.rig_overlay_strength == crig::DEFAULT_RIG_OVERLAY_STRENGTH,
 		"the rig overlay starts restrained (%.2f)", config.rig_overlay_strength);
 	test::@check(!config.self_collision, "the self-collision system is on without being asked for");
+	test::@check(!config.show_ghosts && config.ghost_past == crig::DEFAULT_GHOST_SIDE
+		&& config.ghost_future == crig::DEFAULT_GHOST_SIDE && config.ghost_step == 1
+		&& config.ghost_opacity == crig::DEFAULT_GHOST_OPACITY && config.ghost_spread == crig::DEFAULT_GHOST_SPREAD
+		&& config.ghost_direction == 0, "ghosts start off with their usual settings");
 	test::@check(config.directory.len > 0, "and the config knows where it would save");
 }
 
@@ -117,7 +121,12 @@ fn void settings_survive_a_restart() @test
 	written.tutorial_seen = true;
 	written.viewport_shading = crig::ShadingMode.TEXTURED;
 	written.show_ghosts = true;
-	written.ghost_keys = 3;
+	written.ghost_past = 7;
+	written.ghost_future = 5;
+	written.ghost_step = 4;
+	written.ghost_opacity = 0.6f;
+	written.ghost_spread = 0.3f;
+	written.ghost_direction = 2;
 	written.show_motion_path = true;
 	written.anim_layers_ratio = 0.4f;
 	written.joint_panel_tab = 3;
@@ -143,7 +152,11 @@ fn void settings_survive_a_restart() @test
 	test::@check(read.hide_guide, "and the hidden workflow guide");
 	test::@check(read.tutorial_seen, "and the answered welcome");
 	test::@check(read.viewport_shading == crig::ShadingMode.TEXTURED, "and the viewport shading");
-	test::@check(read.show_ghosts && read.ghost_keys == 3, "and the ghost poses");
+	test::@check(read.show_ghosts && read.ghost_past == 7 && read.ghost_future == 5 && read.ghost_step == 4,
+		"and the ghost counts and spacing (%d, %d, every %d)", read.ghost_past, read.ghost_future, read.ghost_step);
+	test::@check(math::abs(read.ghost_opacity - 0.6f) < 0.001f, "and the ghost opacity (%.3f)", read.ghost_opacity);
+	test::@check(math::abs(read.ghost_spread - 0.3f) < 0.001f && read.ghost_direction == 2,
+		"and the ghost spread and direction (%.3f, %d)", read.ghost_spread, read.ghost_direction);
 	test::@check(read.show_motion_path, "and the motion path");
 	test::@check(math::abs(read.anim_layers_ratio - 0.4f) < 0.001f, "and the dock's divider (%.3f)", read.anim_layers_ratio);
 	test::@check(read.joint_panel_tab == 3, "and the N-panel's open tab");
@@ -173,6 +186,55 @@ fn void an_impossible_dock_ratio_reads_as_the_default() @test
 	defer config.free();
 	test::@check(config.anim_layers_ratio == 0.0f, "a ratio of 0.95 was adopted (%.2f)", config.anim_layers_ratio);
 	test::@check(config.joint_panel_tab == 0, "a tab 40 was adopted");
+}
+
+<*
+ A config from before ghosts were frames: `ghost_keys` is read as that many ghosts
+ each side, the new keys win over it, and numbers out of range read as defaults.
+*>
+fn void the_retired_ghost_key_count_still_reads() @test
+{
+	String file_path = fresh("old-ghost-keys");
+	defer done(file_path);
+
+	if (catch file::save(file_path, `{ "version": 1, "show_ghosts": true, "ghost_keys": 2 }`[..]))
+	{
+		test::@check(false, "SKIPPED — could not write the fixture");
+		return;
+	}
+	crig::CrigConfig old = crig::load_config();
+	test::@check(old.show_ghosts && old.ghost_past == 2 && old.ghost_future == 2,
+		"ghost_keys 2 did not become 2 each side (%d, %d)", old.ghost_past, old.ghost_future);
+	test::@check(old.ghost_step == 1 && old.ghost_opacity == crig::DEFAULT_GHOST_OPACITY
+		&& old.ghost_spread == crig::DEFAULT_GHOST_SPREAD && old.ghost_direction == 0, "and the rest stays default");
+	old.save();
+	old.free();
+
+	crig::CrigConfig again = crig::load_config();
+	test::@check(again.ghost_past == 2 && again.ghost_future == 2, "the migrated counts did not survive a save");
+	again.free();
+
+	if (catch file::save(file_path, `{ "version": 1, "ghost_keys": 2, "ghost_past": 9, "ghost_future": 0, "ghost_step": 3 }`[..]))
+	{
+		test::@check(false, "SKIPPED — could not write the fixture");
+		return;
+	}
+	crig::CrigConfig both = crig::load_config();
+	test::@check(both.ghost_past == 9 && both.ghost_future == 0 && both.ghost_step == 3,
+		"the new keys did not win (%d, %d, %d)", both.ghost_past, both.ghost_future, both.ghost_step);
+	both.free();
+
+	if (catch file::save(file_path, `{ "version": 1, "ghost_past": 99, "ghost_future": -1, "ghost_step": 0, "ghost_opacity": 4, "ghost_spread": 3, "ghost_direction": 9 }`[..]))
+	{
+		test::@check(false, "SKIPPED — could not write the fixture");
+		return;
+	}
+	crig::CrigConfig silly = crig::load_config();
+	test::@check(silly.ghost_past == crig::DEFAULT_GHOST_SIDE && silly.ghost_future == crig::DEFAULT_GHOST_SIDE
+		&& silly.ghost_step == 1 && silly.ghost_opacity == crig::DEFAULT_GHOST_OPACITY
+		&& silly.ghost_spread == crig::DEFAULT_GHOST_SPREAD && silly.ghost_direction == 0,
+		"impossible ghost settings were adopted");
+	silly.free();
 }
 
 <*

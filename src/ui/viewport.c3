@@ -613,23 +613,28 @@ fn Vec3? ghost_at(GhostPose* ghost, uint dot) @private
 }
 
 <*
- The keys either side of the playhead as faint skeletons, cool behind and warm
- ahead, fainter with each key further out. No occlusion test: flat and cheap.
+ The ghost frames as faint skeletons, warm behind the playhead and cool ahead,
+ fainter with each one further out. Only the fallback: when the scene draws the
+ ghosts as meshes (`GhostCache.meshed`) this paints nothing. No occlusion test.
 *>
 fn void Viewport.paint_ghosts(&self, Element* elem, Painter* painter, Matrix4f view_projection, AppState* app)
 {
 	GhostPose[] ghosts = app.ghost_poses();
+	if (app.ghosts.meshed) return;
 	RigDocument* doc = &app.doc;
 	foreach (&ghost : ghosts)
 	{
+		Vec3 shift = app.ghost_offset_of(ghost);
 		Color base = ghost.before ? ONION_BEFORE : ONION_AFTER;
-		Color ink = rig_overlay_ink(base, 1.0f / (float)ghost.step);
+		Color ink = rig_overlay_ink(base, ghost.fade);
 		foreach (edge : doc.edges.array_view())
 		{
 			Vec3? a = ghost_at(ghost, edge.a);
 			Vec3? b = ghost_at(ghost, edge.b);
 			if (catch a) continue;
 			if (catch b) continue;
+			a += shift;
+			b += shift;
 			Vec2? from = project(view_projection, a, elem.size);
 			Vec2? to = project(view_projection, b, elem.size);
 			if (catch from) continue;
@@ -638,7 +643,7 @@ fn void Viewport.paint_ghosts(&self, Element* elem, Painter* painter, Matrix4f v
 		}
 		foreach (posed : ghost.dots)
 		{
-			Vec2? at = project(view_projection, posed.at, elem.size);
+			Vec2? at = project(view_projection, posed.at + shift, elem.size);
 			if (catch at) continue;
 			painter.circle(at, GHOST_DOT_RADIUS, { .color = ink });
 		}
