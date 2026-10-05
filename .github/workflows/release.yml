@@ -1,0 +1,163 @@
+# Build a downloadable bundle of Rigsmith for each platform.
+#
+# DRAFT — adapted from libs/three/.github/workflows/release.yml and NOT yet
+# run on GitHub. Expect to fix the first run (the likely suspects: LFS for the
+# .glb assets, the llm.c3l zip in libs/, setup.sh on the Linux image).
+#
+#   push a tag v*        build every platform, publish a GitHub release
+#   run it by hand       build every platform, keep the zips as artifacts
+#
+# Nothing renders on a runner (no GPU), so the only check is that the bundle
+# starts: `rigsmith --help` prints usage from inside the unzipped bundle.
+#
+# The zip holds the executable, assets/ (the built-in body plans and clips —
+# Rigsmith finds `assets/animations` relative to where it is run) and, on macOS,
+# the Vulkan loader and driver. Asset names (rigsmith-linux-x64.zip, …) are the ones
+# the website's download cards expect (rigsmith-website: site/lib/site.mjs).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a GitHub release (tag builds do this anyway)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  C3C_VERSION: v0.8.3
+
+jobs:
+  build:
+    name: ${{ matrix.bundle }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental == true }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bundle: rigsmith-macos-arm64
+            runner: macos-26
+            c3c_asset: c3-macos.zip
+            target: macos-aarch64
+            exe: rigsmith
+          - bundle: rigsmith-linux-x64
+            runner: ubuntu-24.04
+            c3c_asset: c3-linux-static.tar.gz
+            target: linux-x64
+            exe: rigsmith
+            experimental: true
+          - bundle: rigsmith-windows-x64
+            runner: windows-2022
+            c3c_asset: c3-windows.zip
+            target: windows-x64
+            exe: rigsmith.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true   # assets/**/*.glb live in Git LFS
+
+      - name: Install c3c
+        run: |
+          set -euo pipefail
+          url="https://github.com/c3lang/c3c/releases/download/${C3C_VERSION}/${{ matrix.c3c_asset }}"
+          curl -fsSL -o c3c-dist "$url"
+          mkdir -p "$HOME/c3c"
+          case "${{ matrix.c3c_asset }}" in
+            *.zip)     unzip -q c3c-dist -d "$HOME/c3c" ;;
+            *.tar.gz)  tar -xzf c3c-dist -C "$HOME/c3c" ;;
+          esac
+          c3c_bin="$(find "$HOME/c3c" -type f \( -name c3c -o -name c3c.exe \) | head -1)"
+          test -n "$c3c_bin" || { echo "no c3c in the archive"; exit 1; }
+          chmod +x "$c3c_bin" || true
+          echo "$(dirname "$c3c_bin")" >> "$GITHUB_PATH"
+
+      - run: c3c --version
+
+      # three's staging: submodules + (macOS) the Vulkan driver.
+      - name: three setup.sh
+        run: ./libs/three/setup.sh
+
+      - name: Build
+        run: c3c build rigsmith --trust=full --safe=no -O3
+
+      - name: Assemble the bundle
+        id: assemble
+        run: |
+          set -euo pipefail
+          name="${{ matrix.bundle }}"
+          out="dist/${name}"
+          mkdir -p "$out"
+          cp "build/${{ matrix.exe }}" "$out/"
+          chmod +x "$out/${{ matrix.exe }}" || true
+
+          # Built-in library: body plans and clips. Must not be LFS pointers.
+          mkdir -p "$out/assets"
+          cp -R assets/animations "$out/assets/"
+          for f in "$out"/assets/animations/*.glb; do
+            if head -c 40 "$f" | grep -q 'git-lfs'; then
+              echo "::error::$f is an LFS pointer, not the model — lfs checkout failed"; exit 1
+            fi
+          done
+
+          # macOS: the Vulkan loader and driver, found by name beside the exe.
+          if [ -d "libs/three/lib/vulkan.c3l/${{ matrix.target }}" ]; then
+            ./libs/three/packaging/stage-libs.sh "libs/three/lib/vulkan.c3l/${{ matrix.target }}" "$out"
+          fi
+
+          cp LICENSE "$out/" 2>/dev/null || true
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "out=$out"   >> "$GITHUB_OUTPUT"
+          ls -la "$out"; du -sh "$out"
+
+      - name: Check the bundle starts
+        run: |
+          set -euo pipefail
+          cd "${{ steps.assemble.outputs.out }}"
+          ./${{ matrix.exe }} --help > help.log 2>&1 || true
+          cat help.log
+          test -s help.log || { echo "::error::${{ matrix.exe }} printed nothing — a library is missing from the bundle"; exit 1; }
+          rm -f help.log
+          echo "::warning::CI verifies that the bundle LOADS only. Run it on a real GPU before announcing a release."
+
+      - name: Zip
+        run: |
+          set -euo pipefail
+          cd dist
+          if command -v zip >/dev/null 2>&1; then
+            zip -qry "${{ steps.assemble.outputs.name }}.zip" "${{ steps.assemble.outputs.name }}"
+          else
+            tar -a -c -f "${{ steps.assemble.outputs.name }}.zip" "${{ steps.assemble.outputs.name }}"
+          fi
+          ls -la *.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.assemble.outputs.name }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || inputs.publish)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -1,0 +1,4 @@
+[submodule "lib/three.c3"]
+	path = libs/three
+	url = git@github.com:tonis2/three.c3.git
+	branch = main

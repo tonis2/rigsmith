@@ -1,0 +1,34 @@
+{
+	"langrev": "1",
+	"warnings": ["no-unused"],
+	"authors": [],
+	"version": "0.1.0",
+	"dependency-search-paths": ["libs-dev", "libs/three/lib", "libs"],
+	"dependencies": ["vk", "c3w", "gltf", "image", "collision", "quickjs", "mcp", "ktx", "font", "cui", "shady", "llm"],
+	"features": [],
+	"script-dir": "./",
+	"test-sources": ["test/**", "tools/body_plans.c3", "tools/humanoid_plan.c3", "tools/humanoid_clips.c3"],
+	"targets": {
+		"rigsmith": {
+			"type": "executable",
+			"sources": [
+				"src/**",
+				"libs/three/src/app/**",
+				"libs/three/src/gpu/**",
+				"libs/three/src/js/**",
+				"libs/three/src/mcp/**",
+				"libs/three/src/render/**",
+				"libs/three/src/scene/**",
+				"libs/three/src/shader/**",
+				"libs/three/src/advice.c3",
+				"libs/three/src/paths.c3",
+				"libs/three/src/reload.c3"
+			]
+		},
+		"make-anims": {
+			"type": "executable",
+			"sources": ["src/rig/**", "src/core/**", "src/anim/**", "src/gltf/**", "tools/**"]
+		}
+	},
+	"output": "./build"
+}

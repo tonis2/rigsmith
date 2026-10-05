@@ -1,0 +1,6 @@
+# A local checkout of a library in libs/, to build against while working on it:
+#   ln -s ../../llm-runner libs-dev/llm.c3l
+# It shadows the packed copy in libs/ because project.json searches here first.
+# Nothing here is committed.
+*
+!.gitignore
