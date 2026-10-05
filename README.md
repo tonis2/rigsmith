@@ -20,6 +20,10 @@ Get the latest build from **[Releases](https://github.com/tonis2/rigsmith/releas
 | Windows | `Rigsmith-<version>-windows-x64.zip` | Portable: unzip anywhere and run `rigsmith.exe`. |
 | macOS 26+ (Apple Silicon) | `Rigsmith-<version>-macos-arm64.dmg` | Drag Rigsmith to Applications. The app isn't notarized, so the first time, right-click it and choose **Open**. |
 
+The first time it starts, Rigsmith copies its built-in animations to
+`Documents/Rigsmith/animations`. They show up in the asset browser, and that is
+where **Open** starts.
+
 On Windows, if `rigsmith.exe` won't start, install the
 [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
 

@@ -187,6 +187,8 @@ fn int main(String[] args)
 	// started from anywhere, and its assets are beside the executable — under
 	// Contents/Resources in a macOS .app, usr/share/rigsmith in an AppImage.
 	locate_bundle();
+	// And the library goes where a person can find it: ~/Documents/Rigsmith.
+	install_user_library();
 
 	// Before anything compiles a shader. crig has no `shaders/` of its own — the
 	// mesh pass and its shaders went to three with the executable — so the working

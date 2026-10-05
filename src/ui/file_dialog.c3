@@ -170,6 +170,14 @@ fn void open_file_dialog(Ui* ui, FilePurpose purpose)
 	// Settled before the body is built, because the browser reads it from its
 	// literal and holds the slice — a directory decided afterwards would be read
 	// from a field that was still empty when the widget copied it.
+	//
+	// A remembered folder that has gone is forgotten first: an AppImage is
+	// mounted somewhere new each run, so one remembered inside the bundled
+	// library names a mount point that no longer exists.
+	if (app.config.browse_directory.len > 0 && !file::is_dir(app.config.browse_directory))
+	{
+		app.remember_directory("");
+	}
 	if (app.config.browse_directory.len == 0)
 	{
 		String start = app.browse_start(mem);

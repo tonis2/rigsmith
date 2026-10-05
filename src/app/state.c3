@@ -2067,9 +2067,12 @@ enum FilePurpose
 <*
  Where the file browser should start, as an absolute directory.
 
- The last place it was, then the directory of the current mesh, then the working
- directory — each a better guess than the one after it, and the last one always
- answers.
+ The last place it was, then the directory of the current mesh, then — in a
+ packaged build — the built-in animations, in the user's Documents when
+ `install_user_library` put them there — then the working directory, each a better
+ guess than the one after it, and the last one always answers. A packaged app is
+ started from wherever its launcher likes (`/` from the Finder), so there the
+ working directory is no guess at all, and the shipped library is.
 
  The caller owns the returned string.
 *>
@@ -2081,6 +2084,12 @@ fn String AppState.browse_start(&self, Allocator allocator)
 	{
 		String directory = widgets::parent_of(self.source_path);
 		if (directory.len > 0) return directory.copy(allocator);
+	}
+
+	if (user_library.len > 0 && file::is_dir(user_library)) return user_library.copy(allocator);
+	if (bundle_root.len > 0 && file::is_dir(bundled(DEFAULT_LIBRARY_PATH)))
+	{
+		if (try Path shipped = path::new(tmem, bundled(DEFAULT_LIBRARY_PATH)).absolute(allocator)) return (String)shipped;
 	}
 
 	if (try Path here = path::cwd(allocator)) return (String)here;
