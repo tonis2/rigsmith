@@ -81,6 +81,11 @@ const TutorialStep[*] TUTORIAL_STEPS = {
 		.targets = { "stage-switch", "" },
 	},
 	{
+		.title = "Name sides to mirror them",
+		.body = "Name paired joints by side, like arm_l and arm_r. Then M in Joints copies the selected joints to the other side, and shift+M in Pose mirrors their pose, so you build and pose one side only.",
+		.targets = { "stage-switch", "" },
+	},
+	{
 		.title = "How the model is drawn",
 		.body = "Switch between wireframe, solid and textured here. The tints button next to it colours the mesh by bone weight.",
 		.targets = { "shading", "tints" },

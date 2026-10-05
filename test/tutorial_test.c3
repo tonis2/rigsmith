@@ -119,7 +119,7 @@ fn void tutorial_step_with_nothing_mounted_still_shows_its_card() @test
 	// The fixture is one pane, so the timeline is not mounted: the step has no
 	// target to light and must still be readable rather than failing.
 	crig::tutorial_start(f.ui);
-	while (f.app.tutorial_step < 6) crig::tutorial_next(f.ui);
+	while (f.app.tutorial_step < 7) crig::tutorial_next(f.ui);
 	tutorial_settle(&f);
 	test::@check(f.app.tutorial_active, "the tour carries on");
 	test::@check(tutorial_dialog_open(&f, crig::TUTORIAL_DIALOG_ID), "with its card showing");
