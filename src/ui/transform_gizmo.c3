@@ -103,8 +103,8 @@ fn bool transform_tool_claims_pointer(AppState* app) @private
  rest skeleton: on Pose, with an animation to key into and one joint selected.
 
  An arrow is then G locked to that axis and a ring is R locked to it, so a pose
- can be built with the tools as well as the keys. The hips, having nothing above
- them, slide — which carries the whole body, and is how a clip jumps.
+ can be built with the tools as well as the keys. The hips carry the whole body
+ with them, which is how a clip jumps.
 *>
 fn bool transform_tool_poses(AppState* app) @private
 {

@@ -448,7 +448,7 @@ fn ToolTable new_tool_table(AppState* app)
 		.hidden = true,
 	});
 	// Placing a hand or a foot at a point without composing the joints above it by
-	// hand — the solver `resolve_position_locks` already drives, exposed for
+	// hand — the limit-aware chain solver a finger's curl runs, exposed for
 	// authoring. Listed, because it is the answer to the hardest part of writing a
 	// clip by MCP: guessing shoulder and elbow angles until the hand lands right.
 	server.add_tool({
@@ -566,7 +566,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// --- pin tools ---
 	server.add_tool({
 		.name = "get_pins",
-		.description = "The pins holding joints in place while another is posed — the Joint panel's Pin position and Pin angle — and how well they held. Each entry names the joint, which halves are on (position, rotation), the point a position pin holds, and what the last pose left it from that point: residual in model units, residual_fraction of rig height, turn_residual in radians for a held angle. yielded marks a pin stood down because it sits on another pin's own limb, loose one that began out of its limb's reach and only reports. Beside the list: balance (whether the body leans to keep its weight over pinned feet), pose_unkeyed (a posed but unkeyed pose is showing), and the clip and time the pose is at. With no clip open pins are working memory of the session, not saved with the project; with a clip open they are the clip's own pins (saved with it, held in playback and export): pins lists those whose window covers the playhead and clip_pins every one with from, to and blend in seconds. See the pins topic of get_crig_docs.",
+		.description = "The pins holding joints in place while another is posed — the Joint panel's Pin position and Pin angle — and how well they held. Each entry names the joint, which halves are on (position, rotation), the point a position pin holds, and what the last pose left it from that point: residual in model units, residual_fraction of rig height, turn_residual in radians for a held angle; a pin that could not hold — out of its limb's reach, or against another pin — is one with a residual above zero. Beside the list: balance (whether the body leans to keep its weight over pinned feet), pose_unkeyed (a posed but unkeyed pose is showing), and the clip and time the pose is at. With no clip open pins are working memory of the session, not saved with the project; with a clip open they are the clip's own pins (saved with it, held in playback and export): pins lists those whose window covers the playhead and clip_pins every one with from, to and blend in seconds. See the pins topic of get_crig_docs.",
 		.input_schema = GET_PINS_SCHEMA,
 		.handler = &tool_get_pins,
 		.user_data = app,

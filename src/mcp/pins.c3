@@ -3,7 +3,7 @@
 
  A pin (the Joint panel's "Pin position" and "Pin angle", the code's "anchor" or
  "position lock" — see `app/locks.c3`) holds a joint where it stands while another
- is dragged, through the whole-body solve `body_pose` runs. Until these tools it
+ is dragged, through the whole-body solve `pose_body` runs. Until these tools it
  was reachable only with a mouse: a script could author keys but could not say
  "sit the dog down on its hind paws", which is the gesture the pins exist for.
 
@@ -82,8 +82,8 @@ fn String? tool_get_pins(Object* args, void* user_data, DString* detail) @privat
  `residual` is how far the joint is from its point in model units on the body as
  it is shown — after the clip's ground solve — `residual_fraction` the same as a
  share of rig height, and `turn_residual` the angle in radians a held orientation
- missed by. `yielded` marks a pin stood down because it sits on another pin's own
- limb; `loose` one that began a gesture out of its limb's reach and only reports.
+ missed by. A pin that could not hold — out of its limb's reach, or against
+ another pin — is one whose residual is not zero.
 *>
 fn void append_pin_state(AppState* app, DString* out)
 {
@@ -110,7 +110,7 @@ fn void append_pin_state(AppState* app, DString* out)
 			out.appendf(`,"residual":%.6g,"residual_fraction":%.6g`, lock.residual, height > 0.0f ? lock.residual / height : 0.0f);
 		}
 		if (lock.rotation) out.appendf(`,"turn_residual":%.6g`, lock.turn_residual);
-		out.appendf(`,"yielded":%s,"loose":%s}`, lock.yielded, lock.loose);
+		out.append_char('}');
 	}
 	out.appendf(`],"balance":%s,"pose_unkeyed":%s`, !app.balance_off, app.pose_edit_pending);
 	AnimTemplate* clip = app.editing.valid() ? app.clip(app.editing) : null;
@@ -394,7 +394,7 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 		app.select(id);
 		if (!app.begin_pose(true))
 		{
-			detail.appendf(`nothing above "%s" can move it without moving its neighbours. Turn it instead, pin a foot so the body carries it, or pose a limb joint.`, joint);
+			detail.appendf(`the pose gesture on "%s" would not begin: %s`, joint, app.notice());
 			return PINS_REFUSED~;
 		}
 		Vec3 from = app.drag.from;

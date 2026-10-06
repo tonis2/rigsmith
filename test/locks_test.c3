@@ -37,8 +37,8 @@ struct Sitter
    thigh_L → knee_L → ankle_L
    thigh_R → knee_R → ankle_R
 
- The fork at the hips is the point: an ankle's run is knee and thigh anchored
- there, the spine has no run of its own (the carry-the-root path), and
+ The fork at the hips is the point: an ankle's limb is knee and thigh hanging
+ there, the spine rides the hips (a pull on it carries the body), and
  `upper_spine` is the waist a user grabs to sit the figure down.
 
  The legs are **perfectly straight**, the T-pose, and the knees are hinges — one
@@ -197,11 +197,9 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 	test::@check(app.lock_position(fixture.ankle_l), "the left foot did not lock");
 	test::@check(app.lock_position(fixture.ankle_r), "the right foot did not lock");
 
-	app.select(fixture.spine);
-	test::@check(app.begin_pose(), "G was refused on the spine with a foot anchored");
 	Vec3 spine_from = fixture.at(fixture.spine);
 	Vec3 target = spine_from - (Vec3){ 0, 0.35, 0 };
-	app.pose_toward(target);
+	pull_in_steps(&fixture, fixture.spine, target - spine_from);
 
 	// The spine reached the pointer, carried there by the root sliding under it.
 	float off = (fixture.at(fixture.spine) - target).length();
@@ -212,8 +210,9 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 }
 
 <*
- Without an anchor the spine still moves: the root slides under it and carries
- the whole body to the pointer.
+ Without an anchor the spine still moves, and the body with it: the hips follow
+ it and the unpinned legs ride along — near enough the spine's own move, the
+ pelvis turning a little where the pull is sideways.
 *>
 fn void the_spine_carries_the_body_without_an_anchor() @test
 {
@@ -225,13 +224,16 @@ fn void the_spine_carries_the_body_without_an_anchor() @test
 	app.select(fixture.spine);
 	test::@check(app.begin_pose(), "G on the spine was refused with no foot anchored");
 	Vec3 spine_from = fixture.at(fixture.spine);
+	Vec3 hips_from = fixture.at(fixture.hips);
 	Vec3 foot_from = fixture.at(fixture.ankle_l);
 	Vec3 by = { 0.1f, -0.2f, 0 };
-	app.pose_toward(spine_from + by);
+	for (int k = 1; k <= 10; k++) app.pose_toward(spine_from + by * (k / 10.0f));
 	float off = (fixture.at(fixture.spine) - (spine_from + by)).length();
 	test::@check(off < 0.02f, "the spine did not follow the drag; %.3f off the target", off);
+	float hips = (fixture.at(fixture.hips) - (hips_from + by)).length();
+	test::@check(hips < 0.05f, "the hips did not come with the spine; %.3f off its move", hips);
 	float carried = (fixture.at(fixture.ankle_l) - (foot_from + by)).length();
-	test::@check(carried < 0.02f, "the unpinned foot did not ride along; %.3f off", carried);
+	test::@check(carried < 0.1f, "the unpinned foot did not ride along; %.3f off", carried);
 }
 
 <*
@@ -354,9 +356,8 @@ fn void a_rotation_anchor_holds_the_foot_flat() @test
 }
 
 <*
- Every anchor that held reports a residual near zero — K2's read-back. Two feet on
- separate legs never contend for a joint, so both hold and neither yields, and the
- rotation-anchored foot's angular miss is small too.
+ Every anchor that held reports a residual near zero — K2's read-back: both feet
+ hold, and the rotation-anchored foot's angular miss is small too.
 *>
 fn void anchors_report_that_they_held() @test
 {
@@ -380,8 +381,6 @@ fn void anchors_report_that_they_held() @test
 		"the right foot reports %.3f off its pin", app.lock_position_residual(fixture.ankle_r));
 	test::@check(app.lock_rotation_residual(fixture.ankle_l) < 0.1f,
 		"the left foot's tilt reports %.3f rad off held", app.lock_rotation_residual(fixture.ankle_l));
-	test::@check(!app.lock_yielded(fixture.ankle_l) && !app.lock_yielded(fixture.ankle_r),
-		"a foot yielded when the two share no joint");
 }
 
 <*
@@ -418,9 +417,9 @@ fn void an_unreachable_anchor_reports_the_gap() @test
 		app.lock_position_residual(fixture.ankle_l));
 }
 
-// Runs the sit with the two same-leg anchors added in the given order and reports
-// which one stood down — the machinery the determinism test drives both ways.
-fn bool knee_yields_ankle_holds(Sitter* fixture, bool ankle_first) @local
+// Pins the knee and the ankle of one leg in the given order, optionally moves the
+// knee's pin `knee_drop` below where the knee stands, and sits the figure.
+fn void sit_on_knee_and_ankle(Sitter* fixture, bool ankle_first, float knee_drop) @local
 {
 	crig::AppState* app = &fixture.app;
 	if (ankle_first)
@@ -433,32 +432,68 @@ fn bool knee_yields_ankle_holds(Sitter* fixture, bool ankle_first) @local
 		app.lock_position(fixture.knee_l);
 		app.lock_position(fixture.ankle_l);
 	}
+	if (knee_drop != 0.0f)
+	{
+		crig::RigView view = app.open_rig(mem)!!;
+		float height = view.skeleton.height();
+		view.free(mem);
+		foreach (&pin : app.clip(app.editing).pins)
+		{
+			if (pin.joint == "knee_L") pin.at.y -= knee_drop / height;
+		}
+		app.sync_clip_pins();
+	}
 	app.select(fixture.hips);
-	if (!app.begin_pose()) return false;
+	test::@check(app.begin_pose(), "G did not begin on the hips");
 	Vec3 hips_from = fixture.at(fixture.hips);
-	app.pose_toward(hips_from - (Vec3){ 0, 0.35, 0 });
-	// The foot held (its longer run wins the shared thigh) and the knee stood down.
-	return app.lock_yielded(fixture.knee_l)
-		&& !app.lock_yielded(fixture.ankle_l)
-		&& app.lock_position_residual(fixture.ankle_l) < 0.03f;
+	for (int k = 1; k <= 10; k++) app.pose_toward(hips_from - (Vec3){ 0, 0.035f * k, 0 });
 }
 
 <*
- Two anchors on one leg share the thigh, so they cannot both hold. The outcome is
- fixed and independent of which was locked first: the foot — the longer run —
- holds, and the knee yields. The deterministic-conflict half of K2.
+ Two pins on one leg — the knee and the ankle — that agree with each other both
+ hold: nothing stands down for the other. Pulled where they cannot both be met
+ the body stops, and neither is torn off.
 *>
-fn void a_shared_joint_anchor_yields_the_shorter_run() @test
+fn void consistent_pins_on_one_leg_both_hold() @test
 {
-	Sitter a;
-	test::@check(a.open(), "the fixture did not open");
-	test::@check(knee_yields_ankle_holds(&a, true), "foot-first: the foot did not hold and the knee yield");
-	a.close();
+	Sitter fixture;
+	test::@check(fixture.open(), "the fixture did not open");
+	defer fixture.close();
+	crig::AppState* app = &fixture.app;
+	Vec3 knee = fixture.at(fixture.knee_l);
+	Vec3 ankle = fixture.at(fixture.ankle_l);
+	sit_on_knee_and_ankle(&fixture, true, 0.0f);
+	test::@check((fixture.at(fixture.knee_l) - knee).length() < 0.014f, "the knee left its pin by %.3f", (fixture.at(fixture.knee_l) - knee).length());
+	test::@check((fixture.at(fixture.ankle_l) - ankle).length() < 0.014f, "the ankle left its pin by %.3f", (fixture.at(fixture.ankle_l) - ankle).length());
+	test::@check(app.lock_position_residual(fixture.knee_l) < 0.014f && app.lock_position_residual(fixture.ankle_l) < 0.014f,
+		"the readout says the pins missed (%.3f, %.3f)", app.lock_position_residual(fixture.knee_l), app.lock_position_residual(fixture.ankle_l));
+}
 
-	Sitter b;
-	test::@check(b.open(), "the fixture did not open");
-	test::@check(knee_yields_ankle_holds(&b, false), "knee-first: the outcome differed from foot-first");
-	b.close();
+<*
+ Two pins on one leg that cannot both hold — the knee's set below where the shin
+ lets it reach from the ankle — report what each misses by, honestly and whatever
+ order they were set in: the same miss either way, and on screen what the readout
+ says.
+*>
+fn void inconsistent_pins_report_their_miss_in_either_order() @test
+{
+	float[2] misses;
+	foreach (usz run, bool ankle_first : (bool[2]){ true, false })
+	{
+		Sitter fixture;
+		test::@check(fixture.open(), "the fixture did not open");
+		defer fixture.close();
+		crig::AppState* app = &fixture.app;
+		sit_on_knee_and_ankle(&fixture, ankle_first, 0.2f);
+		float knee = app.lock_position_residual(fixture.knee_l);
+		float ankle = app.lock_position_residual(fixture.ankle_l);
+		sz k = app.lock_index(fixture.knee_l);
+		float shown = (fixture.at(fixture.knee_l) - app.position_locks[(usz)k].target).length();
+		test::@check(knee + ankle > 0.1f, "two pins 0.2 apart from agreeing report only %.3f and %.3f", knee, ankle);
+		test::@check(math::abs(knee - shown) < 0.003f, "the knee reads %.3f off and is %.3f off", knee, shown);
+		misses[run] = knee + ankle;
+	}
+	test::@check(math::abs(misses[0] - misses[1]) < 0.01f, "the order the pins were set in changed the miss: %.3f against %.3f", misses[0], misses[1]);
 }
 
 <*

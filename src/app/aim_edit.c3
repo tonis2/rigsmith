@@ -159,7 +159,7 @@ fn void AppState.apply_clip_pins(
 	AimClampContext ctx = { .app = self, .view = view };
 
 	// The joint being grabbed is moving on purpose: its own pin stands aside for the
-	// drag (as its gesture pin does in `resolve_position_locks`) and follows it when
+	// drag (as its gesture pin does in `pose_body`) and follows it when
 	// it lets go (`refresh_clip_pin_target`), or the pin would hold the grab in place.
 	AnimPin[] pins = clip.pins;
 	sz grabbed = self.drag.dot != 0 && ref.same(self.editing) ? view.joint_of(self.drag.dot) : -1;

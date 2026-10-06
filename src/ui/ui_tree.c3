@@ -1795,7 +1795,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			app.refresh_ui();
 			return true;
 		}
-		// A refused verb still consumed its key — G on a joint nothing can move
+		// A refused verb still consumed its key — G or R with no animation to pose
 		// has already said so, and letting it fall through to `set_root` below
 		// would re-root the rig instead.
 		if (event.key == Key.G || event.key == Key.R)

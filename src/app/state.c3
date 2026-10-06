@@ -818,22 +818,15 @@ struct AppState
 	PoseMate[POSE_MATES] pose_mates;
 	usz pose_mate_count;
 	<*
-	 Every joint as the draft held it when a pose gesture began — what the whole-
-	 body solve (`body_pose`) may move is any joint on the paths between the grab
-	 and the pins, plus the root's slide, so escape and the release compare and
-	 restore the lot rather than a fixed chain. Owned; freed when the gesture ends.
+	 Every joint as the draft held it when a pose gesture began — the body solve
+	 (`pose_body`) may move any joint of the figure, the root's slide with them,
+	 so escape and the release compare and restore the lot rather than a fixed
+	 chain. Owned; freed when the gesture ends.
 	*>
 	PosedJoint[] gesture_before;
-	// What the last whole-body solve turned, by dot id, for `write_body`; and how
-	// far the grab ended from the pointer.
-	uint[BODY_IK_MAX_DOF] body_joint_ids;
-	usz body_joints;
-	uint body_root;
-	bool body_moves_root;
-	float body_grab_miss;
-	// Whether a waist or hips pull with the feet pinned leaves the body where the
-	// pointer puts it rather than leaning it over the feet (`body_pose`). Off by
-	// default — balanced — so it is spelt as the exception.
+	// Whether a gesture with the feet pinned or planted leaves the body where the
+	// pointer puts it rather than keeping its weight over them (`pose_body`). Off
+	// by default — balanced — so it is spelt as the exception.
 	bool balance_off;
 	<*
 	 Session-only IK anchors: joints whose posed world position the solver holds

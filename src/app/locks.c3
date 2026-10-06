@@ -3,13 +3,13 @@
 
  An anchor names a dot and, independently, whether to hold its world **position**,
  its world **orientation**, or both — each captured from where the joint stands
- the moment that half is switched on. It is a goal, not a constraint on the rig:
- nothing stops the joint being carried away by a gesture, but every gesture ends
- by bending the joint's own limb back toward the held point and turning the joint
- back to the held orientation. So a foot pinned position-and-rotation stays flat
- on the floor while the hips drop and the knee folds, which is a sit — and it is
- `solve_limited_pose_chain` and `hold_world_rotation` doing the work, one leg at a
- time. See `resolve_position_locks` in `pose_mode.c3`.
+ the moment that half is switched on. Every gesture holds it hard: the body solve
+ (`pose_body` in `pose_mode.c3`, `point_pose` in `core/point_pose.c3`) bends the
+ whole figure around the pins, so a foot pinned position-and-rotation stays flat
+ on the floor while the hips drop and the knee folds, which is a sit. Where a pin
+ cannot hold — out of its limb's reach, or against another pin — the grab gives
+ way first, and what is left of the miss is read back as the anchor's residual
+ (`measure_position_locks`).
 
  **The two halves are separate on purpose.** Position alone pins the ankle but
  lets the foot pivot; rotation alone holds the foot's tilt but lets it slide;
@@ -40,19 +40,13 @@ struct PositionLock
 	bool position;
 	bool rotation;
 
-	// Derived, not part of the goal: what the last `resolve_position_locks` left
-	// this anchor holding, refreshed every gesture and meaningless until one has
-	// run. `residual` is the model-space distance the position half ended from its
-	// held point; `turn_residual` the angle (radians) the rotation half ended from
-	// its held orientation. `yielded` is set when the anchor's limb shared a joint
-	// with a higher-priority anchor and it was stood down so that one could hold —
-	// the deterministic-conflict flag, read back through `lock_yielded`.
+	// Derived, not part of the goal: what the last gesture left this anchor
+	// holding (`measure_position_locks`), meaningless until one has run.
+	// `residual` is the model-space distance the position half ended from its held
+	// point; `turn_residual` the angle (radians) the rotation half ended from its
+	// held orientation.
 	float residual;
 	float turn_residual;
-	bool yielded;
-	// Set when the current gesture began with this pin already out of its limb's
-	// reach: it reports its miss but does not steer the whole-body solve.
-	bool loose;
 }
 
 <*
@@ -100,9 +94,9 @@ fn bool AppState.any_position_anchor(&self)
 <*
  How far this dot's position anchor ended from the point it holds, at the last
  gesture that ran the anchors — in model units, 0 for a dot with no position
- anchor. It is a reading of the settled pose, so it tells the honest miss whether
- the target was out of the limb's reach, cut short by a joint limit, or given up
- to a higher-priority anchor (`lock_yielded`). Zero until a gesture has resolved.
+ anchor. It is a reading of the settled pose as shown, so it tells the honest
+ miss whether the point was out of the limb's reach, cut short by a joint limit,
+ or held against by another pin. Zero until a gesture has run.
 *>
 fn float AppState.lock_position_residual(&self, uint dot_id)
 {
@@ -119,18 +113,6 @@ fn float AppState.lock_rotation_residual(&self, uint dot_id)
 {
 	sz i = self.lock_index(dot_id);
 	return i >= 0 ? self.position_locks[(usz)i].turn_residual : 0.0f;
-}
-
-<*
- Whether this dot's anchor stood down at the last resolve because its limb shared
- a joint with a higher-priority anchor — the deterministic-conflict flag. A stood-
- down anchor is not solved for that gesture, so its residual reports how far the
- higher-priority hold left it. See `resolve_position_locks`.
-*>
-fn bool AppState.lock_yielded(&self, uint dot_id)
-{
-	sz i = self.lock_index(dot_id);
-	return i >= 0 && self.position_locks[(usz)i].yielded;
 }
 
 // One longer, with `add` on the end. The old storage is released.
@@ -381,7 +363,7 @@ fn bool AppState.lock_rotation(&self, uint dot_id)
  Move this dot's held point and orientation to where the dot now stands.
 
  The gesture that grabs an anchored joint is deliberately moving it, so its own
- anchor is not solved against it during the drag — see `resolve_position_locks`.
+ anchor is not solved against it during the drag — see `pose_body`.
  The release calls this so the anchor follows the joint to where it was placed,
  rather than snapping it back on the next unrelated gesture. Only the live halves
  are re-captured.

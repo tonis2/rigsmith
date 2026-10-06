@@ -62,7 +62,7 @@ fn bool AppState.clip_pins(&self, uint dot_id)
  Called whenever the clip, the time or the history moves (`land_clip`,
  `refresh_posed`, `refresh_animation` while paused, `stepped_history`, the start
  of a pose gesture). Left alone mid-gesture, so a pin is not swapped under a drag,
- and while the clip plays. Derived fields (`residual`, `loose`, ...) carry over
+ and while the clip plays. Derived fields (`residual`, `turn_residual`) carry over
  for a pin that stays, and a list that comes out unchanged is not reallocated.
  When the clip closes, the pins it drove are dropped so they do not linger as
  session pins of a clip that is gone.
@@ -106,8 +106,6 @@ fn void AppState.sync_clip_pins(&self)
 			PositionLock old = self.position_locks[(usz)held];
 			lock.residual = old.residual;
 			lock.turn_residual = old.turn_residual;
-			lock.yielded = old.yielded;
-			lock.loose = old.loose;
 		}
 		next[count++] = lock;
 	}

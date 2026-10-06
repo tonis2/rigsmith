@@ -709,6 +709,142 @@ fn bool AppState.blocked_chain_pass(
 }
 
 <*
+ Cut a whole-body solve to the largest fraction the mesh allows.
+
+ 	`app.blocked_body_pass(&view, &pose, before, root, held_rotation, held_offset, &app.last_block);`
+
+ `pose` arrives holding the solve's answer and `before` the pose the solve began
+ from. A body solve moves the root, and the root carries every triangle alike, so
+ it changes no distance between two of them: the test is made with the root held
+ where the gesture found it (`held_rotation`, `held_offset`), and what is moving
+ is every joint whose own turn changed and everything below it. Held there for
+ every test of a gesture, the surface the earlier ones refitted still agrees with
+ every row this one does not touch. Clear, and the solve stands. In contact, the
+ whole answer — the root's slide and turn with it — is slerped back toward
+ `before` as one, to the largest clear fraction, the way `blocked_chain_pass`
+ cuts a chain.
+
+ @return `True when the solve was accepted whole.`
+*>
+fn bool AppState.blocked_body_pass(
+	&self,
+	RigView* view,
+	rig::Pose* pose,
+	rig::Pose before,
+	usz root,
+	Quaternionf held_rotation,
+	Vec3 held_offset,
+	CollisionBlock* report)
+{
+	if (!self.collision_blocking_active() || self.collision_suspended) return true;
+	usz n = view.len();
+	bool[] inside = mem::new_array(bool, (sz)n);
+	defer mem::free(inside);
+	float sweep = 0.0f;
+	bool turned = false;
+	for (usz j = 0; j < n; j++)
+	{
+		int parent = view.skeleton.parents[j];
+		bool bent = parent >= 0 && pose.rotations[j].v != before.rotations[j].v;
+		if (bent)
+		{
+			turned = true;
+			sweep = math::max(sweep, rotation_angle_between(before.rotations[j], pose.rotations[j]));
+		}
+		inside[j] = bent || (parent >= 0 && inside[(usz)parent]);
+	}
+	if (!turned) return true;
+	List{uint} listed;
+	listed.init(mem);
+	defer listed.free();
+	for (usz j = 0; j < n; j++) if (inside[j]) listed.push((uint)j);
+	uint[] moving = listed.array_view();
+	if (self.moves_whole_skin(moving)) return true;
+
+	report.tested = true;
+	report.mode = self.collision_mode;
+	Clock clock = clock::now();
+	defer report.seconds += (float)clock.mark().to_sec();
+
+	rig::Pose after = pose.copy(mem);
+	defer after.free(mem);
+	rig::Pose test = pose.copy(mem);
+	defer test.free(mem);
+	CollisionContact contact;
+	self.blend_body(view, &test, before, after, 1.0f, root, held_rotation, held_offset, true);
+	report.tests++;
+	if (self.pose_clear(view, test, moving, &contact)) return true;
+	report.blocked = true;
+	report.contact = contact;
+
+	usz steps = self.collision_search_depth(sweep);
+	float low = 1.0f / (float)(1 << steps);
+	self.blend_body(view, &test, before, after, low, root, held_rotation, held_offset, true);
+	report.tests++;
+	bool settled = self.pose_clear(view, test, moving, &contact);
+	if (!settled)
+	{
+		if (contact.gap.distance < report.contact.gap.distance) report.contact = contact;
+		low = 0.0f;
+	}
+	else
+	{
+		low = @bisect_clear(report, &contact, low, steps, &settled; float middle)
+		{
+			self.blend_body(view, &test, before, after, middle, root, held_rotation, held_offset, true);
+			settled = self.pose_clear(view, test, moving, &contact);
+		};
+	}
+	report.fraction = low;
+	self.blend_body(view, pose, before, after, low, root, held_rotation, held_offset, false);
+	if (!settled)
+	{
+		self.blend_body(view, &test, before, after, low, root, held_rotation, held_offset, true);
+		self.settle_collision_surface(view, test, moving);
+	}
+	return false;
+}
+
+<*
+ `out` set `fraction` of the way from `before` to `after`: every turn slerped and
+ put back through its joint's limits, the root's slide carried the same share.
+ With `hold_root`, the root instead stands where the gesture found it — the frame
+ `blocked_body_pass` tests in.
+*>
+fn void AppState.blend_body(
+	&self,
+	RigView* view,
+	rig::Pose* out,
+	rig::Pose before,
+	rig::Pose after,
+	float fraction,
+	usz root,
+	Quaternionf held_rotation,
+	Vec3 held_offset,
+	bool hold_root)
+{
+	foreach (usz j, was : before.rotations)
+	{
+		if (fraction <= 0.0f || was.v == after.rotations[j].v)
+		{
+			out.rotations[j] = fraction <= 0.0f ? was : after.rotations[j];
+		}
+		else
+		{
+			JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[j]);
+			JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+			out.rotations[j] = constrain_joint_rotation(frame, limits, was.slerp(after.rotations[j], fraction).normalize());
+		}
+		out.offsets[j] = before.offsets[j] + (after.offsets[j] - before.offsets[j]) * math::max(fraction, 0.0f);
+	}
+	if (hold_root && root < out.rotations.len)
+	{
+		out.rotations[root] = held_rotation;
+		out.offsets[root] = held_offset;
+	}
+}
+
+<*
  Every joint of a chain slerped the same `fraction` of the way from what it
  held to a pass's answer, each through its own limits; zero puts back what
  was held.

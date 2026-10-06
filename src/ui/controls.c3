@@ -158,7 +158,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "R", .action = "turn the selected joint — sweep the pointer around it, click to confirm" },
 	{ .binding = "Joint card dials", .action = "turn the selected joint about one bone-local axis, off the model" },
 	{ .binding = "X / Y / Z", .action = "lock a move to one axis, or turn about that axis" },
-	{ .binding = "esc", .action = "put the joint back where the gesture found it" },
+	{ .binding = "esc", .action = "put the pose back where the gesture found it" },
 	{ .binding = "L", .action = "anchor the selected joints' position, so other moves bend around them" },
 	{ .binding = "shift+L", .action = "anchor their rotation instead" },
 	{ .binding = "Anim panel", .action = "Rest pose: show the rest shape, without changing the clip" },

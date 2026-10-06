@@ -190,12 +190,6 @@ struct DragState
 	float turned;
 
 	<*
-	 POSE and TURN: whether the whole-body solve has turned this gesture's
-	 pinned hinges past straight yet — done once per gesture, see `body_unfold`.
-	*>
-	bool body_primed;
-
-	<*
 	 Whether a button is being held for this gesture.
 
 	 Held means the release ends it, which is every PLACE move and a turn begun by

@@ -7292,19 +7292,21 @@ struct PosedLimb
 }
 
 <*
- G bends the limb and leaves the fork above it alone.
+ G bends the limb, and the fork above it barely moves.
 
  The claim the whole feature rests on: grabbing a foot turns the knee and the
- thigh, and the hips — which the other limb hangs off — do not move at all. A
- solver that walked past the fork would place the foot just as well and swing the
- chest doing it, and only this check would notice.
+ thigh, and the hips — which the other limb hangs off — join in only by their
+ weight. The whole body is in every solve, so a foot pulled out of the leg's
+ reach would bring the hips; one the leg can reach on its own leaves them nearly
+ where they were, and only this check would notice a solver that swung the
+ chest instead.
 
  **Two mouse moves, not one.** From rest every joint's world rotation is the
  identity, so a conversion that forgot to divide by the parent's rotation is
  exactly right on the first move and wrong on every one after it. One move would
  pass over that bug completely.
 *>
-fn void posing_bends_the_limb_and_holds_the_fork() @test
+fn void posing_bends_the_limb_and_barely_moves_the_fork() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -7314,7 +7316,7 @@ fn void posing_bends_the_limb_and_holds_the_fork() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("G bends the limb above the grabbed joint and holds the fork still");
+	io::printn("G bends the limb above the grabbed joint and barely moves the fork");
 	fixture.reset();
 
 	PosedLimb limb = build_limb(fixture);
@@ -7355,18 +7357,16 @@ fn void posing_bends_the_limb_and_holds_the_fork() @test
 
 	test::@check(fixture.app.working_pose(limb.thigh).rotation.v[3] != 1.0f, "the thigh did not turn");
 	test::@check(fixture.app.working_pose(limb.knee).rotation.v[3] != 1.0f, "the knee did not turn");
-	test::@check(fixture.app.working_pose(limb.hips).rotation.v[3] == 1.0f,
-		"the hips turned, and the chest hanging off them went with it");
 	test::@check(fixture.app.working_pose(limb.ankle).rotation.v[3] == 1.0f,
 		"the grabbed joint turned — it is aimed, never turned");
 
 	Vec3 hips_now = fixture.app.dot_position(*fixture.doc().find(limb.hips));
 	Vec3 ankle_now = fixture.app.dot_position(*fixture.doc().find(limb.ankle));
 
-	test::@check((hips_now - hips_was).length() < 1.0e-5f,
-		"the fork itself moved %.5f", (hips_now - hips_was).length());
 	test::@check((ankle_now - ankle_was).length() > 0.05f,
 		"the grabbed joint only travelled %.5f", (ankle_now - ankle_was).length());
+	test::@check((hips_now - hips_was).length() < (ankle_now - ankle_was).length() * 0.1f,
+		"the fork moved %.5f, against the foot's %.5f", (hips_now - hips_was).length(), (ankle_now - ankle_was).length());
 
 	// --- and it arrived where the pointer was -----------------------------
 	//
@@ -8185,8 +8185,8 @@ fn void turning_holds_the_joint_and_carries_the_limb() @test
 	fixture.reset();
 
 	PosedLimb limb = build_limb(fixture);
-	// The thigh: the joint G refuses, because the hips above it carry the chest
-	// too. R is the verb that moves it, which is what the refusal points at.
+	// The thigh: a joint whose parent forks. G carries the body from it; R turns
+	// it in place, which is what this checks.
 	AnimRef clip = fixture.app.new_clip("Turn gesture", 1.0f, from_rest: true);
 	fixture.app.editing = clip;
 	test::@check(fixture.app.park_clip(clip, 0.0f), "the turn clip would not park");
@@ -8205,12 +8205,14 @@ fn void turning_holds_the_joint_and_carries_the_limb() @test
 		return;
 	}
 
-	// G first, to prove the refusal this test's premise rests on.
-	fixture.tap(pivot_px, Key.G);
-	test::@check(fixture.app.drag.dot == 0, "G started a gesture on a joint whose parent forks");
-	test::@check(fixture.notice_text().starts_with("nothing above thigh"), "and did not point at R");
-
+	// G begins on it — the body moves from any joint — and escape puts it back.
 	Vec3 thigh_was = fixture.app.dot_position(*fixture.doc().find(limb.thigh));
+	fixture.tap(pivot_px, Key.G);
+	test::@check(fixture.app.drag.dot == limb.thigh && fixture.app.drag.verb == DragVerb.POSE,
+		"G did not begin on a joint whose parent forks");
+	test::@check(fixture.app.cancel_drag(), "escape found no gesture");
+	test::@check((fixture.app.dot_position(*fixture.doc().find(limb.thigh)) - thigh_was).length() < 1.0e-5f,
+		"escape left the thigh moved");
 
 	// R begins the turn outright — nothing is drawn around the joint to press,
 	// which is the point: a ring there hid the very limb being turned. The

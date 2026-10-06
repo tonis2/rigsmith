@@ -13,13 +13,14 @@
  viewport, and the first gesture seeds a transient `pose_edit_draft` from its
  playhead. Auto-key commits it on release; otherwise Save pose does.
 
- **Where the solving happens is not here.** The chain rule and the frame
- conversion are crig's, because both are statements about *this* rig; the search
- that bends a polyline toward a point is `collision::ik`, because it is not about
- rigs at all. The seam between them is world space — the one frame two libraries
- can agree on without either learning the other's conventions — which is why this
- file gathers world positions out of the palette, hands them over as plain points,
- and converts what comes back into `rig::Pose`'s local rotations itself.
+ **Where the solving happens is not here.** A gesture on the body — a hand, a
+ foot, the hips, any joint — is one `point_pose` solve (`core/point_pose.c3`) over
+ the whole figure, with the pins, the planted feet, the floor and the balance as
+ its goals; this file says what the gesture asks for and writes back what comes
+ out (`pose_body`). A finger or a toe's tip curls along its own short run instead,
+ through the limit-aware CCD below, whose step toward a point is
+ `collision::ik`'s. Both meet the rig in world space and convert what comes back
+ into `rig::Pose`'s local rotations themselves.
 *>
 module crig;
 
@@ -29,8 +30,7 @@ import collision::ik;
 import std::math;
 import std::math::matrix;
 import std::math::quaternion;
-
-
+import std::collections::list;
 
 <*
  The longest run of joints one gesture may turn, and the snapshot that holds
@@ -432,7 +432,10 @@ fn void AppState.refresh_posed(&self)
 // The chain, and the two gestures over it.
 
 <*
- The joints one pose gesture may turn, in this rig's joint order.
+ The grabbed joint and the unbranched run of joints above it, in this rig's joint
+ order: what a finger curls along, what a selected mate is carried by, and what
+ the MCP's target solve bends. A body gesture moves far more than this
+ (`pose_body`).
 
  Short-lived, like the `RigView` it was read out of — joint indices are that
  build's BFS output and mean nothing after the next dot edit. What outlives the
@@ -443,19 +446,6 @@ struct PoseChain
 	usz effector;               // the grabbed joint; it is aimed, never turned
 	usz count;                  // how many ancestors turn, nearest first
 	usz[IK_MAX_CHAIN] joints;
-	bool slides;                // no ancestors and nothing above: the joint itself moves
-	<*
-	 A trunk joint (its parent forks) grabbed while an anchor is set: nothing above
-	 it can bend to carry it, so the root translates under it instead. A root
-	 translation moves every descendant by the same world vector whatever the
-	 joints between turn by, so sliding the root by the grab's delta lands the
-	 grabbed joint on the pointer and carries the whole figure with it — and the
-	 anchored feet are then bent back into place. Off without a lock: a trunk joint
-	 is still "R turns it" then, since moving the whole body from a shoulder with
-	 nothing pinned is a surprise, not a pose.
-	*>
-	bool carries_root;
-	usz root;                   // which joint the slide is written to, for carries_root
 }
 
 faultdef NO_DRAG_DIRECTION;
@@ -548,44 +538,13 @@ fn Quaternionf? AppState.joint_axes(&self, uint dot, bool posed)
 *>
 const float IK_TOLERANCE = 0.002;
 
-// A pin's weight against the grab's in the whole-body solve: far above, so when
-// both cannot hold it is the grab that gives way and the feet stay planted.
-const float PIN_WEIGHT = 50.0;
-
-// A planted foot the clip's ground solve is about to hold on the floor, and that
-// nobody pinned: held firmly against the grab's 1, but well under a pin, so a
-// pin the user set wins where the two cannot both hold.
-const float CONTACT_WEIGHT = 10.0;
-
-// A body is held out along the ground, and sits by pitching, when a planted foot
-// is further from the hips horizontally than this share of the hips' height.
-const float SPREAD_BODY = 0.5;
-
-// How much of a joint's drift from the pose the gesture began with the whole-body
-// solve undoes each iteration, where the goals allow.
-const float POSTURE_PULL = 0.3;
-
-// How many times dearer a turn off the body's flex axis is, for such a body: a
-// spine bends and a leg swings in its own plane before it twists or splays.
-const float LATERAL_COST = 400.0; // a spine does not splay: effectively never
-
-// How much stiffer a trunk joint is than a leg or the root's slide when a waist
-// pull is shared between them: the hips drop and the legs fold before the back
-// bends, the way a person sits.
-const float SPINE_STIFFNESS = 4.0;
-
-// A pin further than this share of the height from its point when a gesture
-// begins was set where its limb cannot reach: it reports its miss but does not
-// steer the solve.
-const float PIN_LOOSE = 0.02;
-
-// How much stiffer the root's slide is under a turn: turning the hips with the
-// feet pinned bends the legs to follow rather than sliding the body.
-const float TURN_ROOT_STIFFNESS = 8.0;
-
-// How much stiffer the hips' tilt is than a leg when the body leans to keep its
-// weight over the pinned feet: the lean settles in, it does not lead the pull.
-const float BALANCE_TILT_STIFFNESS = 8.0;
+<*
+ How much of a trunk joint's drift from where the gesture began the body solve
+ draws back each iteration (`PointPoseSettings.posture_pull`): enough to keep a
+ spine from wandering sideways while a pinned dog crouches, little enough that a
+ pull which needs the back to bend bends it.
+*>
+const float POSTURE_PULL = 0.05;
 const uint POSE_IK_PASSES = 12;
 
 <*
@@ -604,90 +563,60 @@ const uint CURL_PASS_FACTOR = 4;
 const float POSE_IK_MAX_STEP = 0.5;
 
 <*
- What a drag on this dot may move.
-
- Three answers, and the rig's own shape picks between them. A joint with an
- unbranched run above it bends that run — the limb. A joint with nothing above it
- at all slides, because sliding a root is how the whole figure travels, rises or
- falls. A joint whose parent forks has neither: turning the fork would swing
- every other limb hanging off it, so nothing here can move it, and the caller
- says so rather than doing something surprising.
+ The run above a dot: the joint, and the ancestors `ancestor_run` walks up to the
+ first fork — the limb as the rig's own shape draws it.
 *>
 fn PoseChain AppState.pose_chain(&self, RigView* view, uint dot)
 {
 	PoseChain chain;
 	sz joint = view.joint_of(dot);
 	if (joint < 0) return chain;
-
 	chain.effector = (usz)joint;
 	chain.count = view.skeleton.ancestor_run((usz)joint, chain.joints[..]);
-	chain.slides = chain.count == 0 && view.skeleton.parents[(usz)joint] < 0;
-	if (chain.count == 0 && !chain.slides
-		&& (self.any_position_anchor() || on_trunk(&view.skeleton, (usz)joint)))
-	{
-		// A joint nothing above can bend: the root carries it instead. On the trunk
-		// that is how the body moves, pinned or not; off it (a thigh under the hips)
-		// only once a foot's position is held. Walk to the root — this joint is not
-		// itself a root, and joints are ordered parents-before-children, so the
-		// climb ends.
-		usz walk = (usz)joint;
-		while (view.skeleton.parents[walk] >= 0) walk = (usz)view.skeleton.parents[walk];
-		chain.carries_root = true;
-		chain.root = walk;
-	}
 	return chain;
 }
 
-// A branch whose far end is mostly below the root hangs: a leg.
-fn bool hangs(Vec3 away) @local => away.y < -0.5f * away.length();
-
 <*
- Whether `joint` starts the body's trunk: of the root's children whose branch does
- not hang down from it, the one carrying the most joints. A spine under the hips
- carries the chest, the arms, the neck and the head and rises; a thigh carries
- only its leg and hangs — so the spine is trunk and the thigh is a limb, whatever
- either is named. A dog's tail rises too, but carries less than its spine. Joints
- further up (a shoulder, the neck) are not: a grab there moving the whole body
- would be a surprise.
+ Whether a grab on this chain's joint curls it as a digit instead of moving the
+ body: a run at least one joint long that, with everything hanging below the
+ grabbed joint, is no longer end to end than `CURL_CHAIN_SHARE` of the figure's
+ height — a finger, a toe's tip. Its knuckle is the fork it hangs from, and a
+ finger closing does not lean the body. A short run with the chest and the arms
+ below it is no digit.
 *>
-fn bool on_trunk(rig::Skeleton* skeleton, usz joint) @local
+fn bool digit_chain(RigView* view, PoseChain chain) @local
 {
-	int root = skeleton.parents[joint];
-	if (root < 0) return false;
-	usz count = skeleton.len();
-	Vec3 base = skeleton.joints[(usz)root];
-	// Per joint, the root's child it descends from; per such child, how many
-	// joints it carries and the one furthest from the root. Parents come first,
-	// so one forward sweep sees each joint's branch already set.
-	usz[] branch = alloc::new_array(tmem, usz, (sz)count);
-	usz[] carried = alloc::new_array(tmem, usz, (sz)count);
-	Vec3[] reach = alloc::new_array(tmem, Vec3, (sz)count);
-	for (usz j = 0; j < count; j++)
+	if (chain.count == 0) return false;
+	rig::Skeleton* skeleton = &view.skeleton;
+	float length = 0.0f;
+	usz below = chain.effector;
+	foreach (above : chain.joints[:chain.count])
 	{
+		length += (skeleton.joints[below] - skeleton.joints[above]).length();
+		below = above;
+	}
+	// And the longest way down from the grabbed joint. Parents come first, so one
+	// pass backwards sees every child before its parent.
+	usz n = skeleton.len();
+	float[] reach = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, reach);
+	for (usz i = n; i > chain.effector + 1; i--)
+	{
+		usz j = i - 1;
 		int parent = skeleton.parents[j];
-		if (parent < 0) continue;
-		branch[j] = parent == root ? j : branch[(usz)parent];
-		if (parent != root && skeleton.parents[branch[j]] != root) continue; // another tree
-		usz b = branch[j];
-		carried[b]++;
-		Vec3 away = skeleton.joints[j] - base;
-		if (away.length_sq() > reach[b].length_sq()) reach[b] = away;
+		if (parent < (int)chain.effector) continue;
+		float down = reach[j] + (skeleton.joints[j] - skeleton.joints[(usz)parent]).length();
+		reach[(usz)parent] = math::max(reach[(usz)parent], down);
 	}
-	if (hangs(reach[joint])) return false;
-	for (usz j = 0; j < count; j++)
-	{
-		if (j == joint || skeleton.parents[j] != root || hangs(reach[j])) continue;
-		if (carried[j] > carried[joint]) return false;
-	}
-	return true;
+	return length + reach[chain.effector] <= skeleton.height() * CURL_CHAIN_SHARE;
 }
 
 <*
  Begins a pose move on the selected joint (G).
 
- The chain is worked out here, before any state is set, so a joint nothing can
- move is refused at the door — there is then nothing in flight to escape out of,
- and the message can name the key that *will* work.
+ Any joint: a limb's end reaches, a fork or the root carries the body, and a
+ finger curls (`pose_toward`). The whole figure is snapshotted, since the body
+ solve may move any of it, and escape and the release then have it all.
 
  `depth` is latched from the joint's posed position now, for the reason on the
  field: a depth re-read each frame would follow the solve's own output.
@@ -710,14 +639,8 @@ fn bool AppState.begin_pose(&self, bool held = false)
 	RigView view = opened;
 	defer view.free(mem);
 
+	if (view.joint_of(self.selected) < 0) return false;
 	PoseChain chain = self.pose_chain(&view, self.selected);
-	if (chain.count == 0 && !chain.slides && !chain.carries_root)
-	{
-		Dot* dot = self.doc.find(self.selected);
-		String named = dot && dot.name.len > 0 ? dot.name : "this joint";
-		self.@notice("nothing above %s can move it without moving its neighbours — R turns it, or pin a foot to move the body from here", named);
-		return false;
-	}
 
 	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
@@ -731,16 +654,9 @@ fn bool AppState.begin_pose(&self, bool held = false)
 	if (self.pose_edit_active) at = self.dot_position(*self.doc.find(self.selected));
 
 	self.snapshot_chain(&view, chain);
-	// The root the trunk-carry slides is neither the effector nor an ancestor of
-	// it, so it is not in the chain snapshot — but its offset is what the gesture
-	// writes, so escape and the release need it here too.
-	if (chain.carries_root && self.pose_before_count < POSE_SNAPSHOT)
-	{
-		self.pose_before[self.pose_before_count++] = self.working_pose(view.dot_ids[chain.root]);
-	}
-	self.snapshot_locks(&view, self.selected);
+	self.locked_before_count = 0;
 	self.gather_pose_mates(&view, chain, palette);
-	self.snapshot_gesture(chain.slides || chain.carries_root);
+	self.snapshot_gesture();
 	// The whole surface refitted once, and a start already in contact learned
 	// now: what a pull moves is the anchor's subtree, the run and everything
 	// hanging off it, and what it carries as one piece is the nearest pivot's.
@@ -763,8 +679,8 @@ fn bool AppState.begin_pose(&self, bool held = false)
  dials).
 
  Needs no chain: a joint turns about its own position whatever is above it, and
- what it carries is everything below. That is why R is the answer G gives on a
- joint whose parent forks.
+ what it carries is everything below. A pin or a planted foot down there is held
+ as the sweep goes (`land_turn`).
 
  The sweep is anchored on the first mouse move rather than here. A key arrives at
  the tree's root, which has no pointer — and the pixels the sweep is measured in
@@ -814,7 +730,8 @@ fn bool AppState.begin_turn(&self, bool held = false, DragAxis axis = FREE)
 
 	PoseChain only = { .effector = (usz)joint };
 	self.snapshot_chain(&view, only);
-	self.snapshot_locks(&view, self.selected);
+	self.locked_before_count = 0;
+	self.pose_mate_count = 0;
 	self.snapshot_gesture();
 	// The surface is refitted whole here, once, so every request during the
 	// sweep needs only the subtree's rows — and a start already in contact is
@@ -850,35 +767,6 @@ fn void AppState.snapshot_chain(&self, RigView* view, PoseChain chain)
 	for (usz i = 0; i < chain.count && self.pose_before_count < POSE_SNAPSHOT; i++)
 	{
 		self.pose_before[self.pose_before_count++] = self.working_pose(view.dot_ids[chain.joints[i]]);
-	}
-}
-
-<*
- Records what every anchored limb holds, so escape restores them and the release
- banks the sit as one edit.
-
- Kept apart from `pose_before`: the grabbed chain has a fixed bound of its own and
- must not be crowded out by pins, and the two are restored by separate loops in
- `cancel_drag`/`end_drag`. Resets the count unconditionally, so a gesture with no
- anchors clears the last one's snapshot rather than inheriting it.
-
- The grabbed joint is skipped — its own anchor is not solved against it, so it has
- nothing to put back here. A joint reached by two anchors is snapshotted once, or
- the fixed-order restore would let the second write win.
-*>
-fn void AppState.snapshot_locks(&self, RigView* view, uint moving_dot)
-{
-	self.locked_before_count = 0;
-	foreach (lock : self.position_locks)
-	{
-		if (lock.dot_id == moving_dot) continue;
-		PoseChain chain = self.pose_chain(view, lock.dot_id);
-		// Position bends the limb's ancestor run; rotation turns the joint itself.
-		if (lock.position)
-		{
-			for (usz i = 0; i < chain.count; i++) self.push_locked_before(view.dot_ids[chain.joints[i]]);
-		}
-		if (lock.rotation) self.push_locked_before(view.dot_ids[chain.effector]);
 	}
 }
 
@@ -947,15 +835,15 @@ fn void AppState.carry_pose_mates(&self, RigView* view, rig::Pose* pose, Vec3 mo
 
 <*
  Snapshot every joint of the draft as the gesture begins — see `gesture_before`.
- Only when a pin is set, or the grab moves the whole body (`whole_body`), whose
- planted feet then hold the way pins do: otherwise the gesture's fixed chain
- snapshot is all a plain drag touches.
+ Every gesture takes the whole figure: the body solve may move any joint of it,
+ the pins' and the planted feet's limbs included, and escape and the release
+ compare and restore the lot.
 *>
-fn void AppState.snapshot_gesture(&self, bool whole_body = false)
+fn void AppState.snapshot_gesture(&self)
 {
 	self.drop_gesture_before();
-	if (self.position_locks.len == 0 && !whole_body) return;
 	usz count = (usz)self.doc.dots.len();
+	if (count == 0) return;
 	self.gesture_before = alloc::new_array(mem, PosedJoint, (sz)count);
 	foreach (usz i, dot : self.doc.dots.array_view()) self.gesture_before[i] = self.working_pose(dot.id);
 }
@@ -964,28 +852,7 @@ fn void AppState.drop_gesture_before(&self)
 {
 	if (self.gesture_before.len > 0) alloc::free(mem, self.gesture_before);
 	self.gesture_before = {};
-	self.body_joints = 0;
-	self.body_moves_root = false;
 }
-
-<*
- The offset a joint held when the gesture began, out of the snapshot, or zero for
- one that was not snapshotted. What the root slide measures from, so the gesture
- is idempotent and the escape exact — the rule the `slides` branch already keeps.
-*>
-fn Vec3 AppState.snapshot_offset_of(&self, uint dot_id)
-{
-	for (usz i = 0; i < self.pose_before_count; i++)
-	{
-		if (self.pose_before[i].dot_id == dot_id) return self.pose_before[i].offset;
-	}
-	return {};
-}
-
-// Whether anchor a is placed before anchor b: the longer ancestor run first, the
-// lower dot id breaking a tie. A strict total order, since dot ids are unique.
-fn bool lock_precedes(usz run_a, uint id_a, usz run_b, uint id_b) @local
-	=> run_a > run_b || (run_a == run_b && id_a < id_b);
 
 // Whether any joint of `chain`'s ancestor run is already claimed — the conflict
 // test that stands a lower-priority anchor down.
@@ -1010,163 +877,52 @@ fn usz claim_joint(uint[] buf, usz count, uint joint) @local
 }
 
 <*
- Bend and turn every anchored limb back toward what it is held at, in a fixed
- order, and read back how near each one landed.
+ Read back how near each pin is to what it holds, for `lock_position_residual`
+ and `lock_rotation_residual`.
 
- 	`app.resolve_position_locks(&view, &pose, app.drag.dot);`
+ 	`app.measure_position_locks(&view, pose, app.drag.dot);`
 
- Run after a gesture has moved the grabbed joint — the root slid, a limb bent, or
- the joint turned. For each anchor other than the one being grabbed:
-
-   position   its ancestor run is solved toward the held point through
-              `solve_limited_pose_chain`, so a foot the hips just dropped away
-              from is lifted back to the floor by folding the knee.
-   rotation   the joint is turned back to the held world orientation through
-              `hold_world_rotation`, so a planted foot stays flat as the leg bends.
-
- Position runs before rotation within an anchor: it moves the joint's parent, the
- frame the orientation hold reads, so holding after placing keeps the foot flat
- wherever the limb put it. The two halves are settled one after the other on
- purpose — a single coupled position-and-orientation solve is not what this is —
- but both are done in the one pass and both misses are reported.
-
- **The order is fixed and independent of how the anchors were added.** The anchor
- whose limb reaches higher — the longer ancestor run — is placed first, its dot id
- breaking a tie; an anchor whose run then wants a joint one already placed has
- claimed stands down rather than fighting for it, and is marked `yielded`. So a
- foot and a knee pinned on one leg resolve the same way whichever was locked
- first: the foot holds, the knee yields, its residual reports the miss. Feet on
- separate legs share no joint, so nothing is reordered or stood down for the
- ordinary sit — the common case is left exactly as it was.
-
- **Every anchor's miss is measured from the one settled pose** and left on the lock
- for `lock_position_residual` / `lock_rotation_residual` / `lock_yielded` to read:
- the model-space gap the position half ended from its point, the angle the rotation
- half ended from its orientation. Measured after all the placing, so a later anchor
- that disturbed an earlier one is reported honestly, not by each solve's own gap.
-
- `shift` — the ground correction between the frame the pose is solved in and the
- one the pins were read in (see `body_pose`): the targets are carried back by it.
-
- `report: false` — the pinned solves honor joint limits but leave the collision
- report to the gesture the hand is on. A position anchor whose joint has no
- ancestor run (a root, or a trunk joint) bends nothing: nothing above it can lift
- it into place, and its residual reports the distance.
-
- Written into `pose`; the caller's `write_pose` puts the results on screen.
+ The pins are held inside the body solve itself (`pose_body`), so what is left
+ here is the honest reading: the model-space gap each position pin ended from
+ its point, and the angle each rotation pin ended from its orientation — a pin
+ out of its limb's reach, or one a limit or another pin would not let hold, says
+ by how much. Read off `pose` as the screen will show it: a grounded clip is
+ shown after the ground solve has lifted or dropped it whole, and a foot that
+ could not stay flat is exactly what makes that solve move the pins, so the miss
+ it causes is reported rather than hidden. The grabbed joint's own pin reads zero
+ while it is carried on purpose.
 *>
-fn void AppState.resolve_position_locks(&self, RigView* view, rig::Pose* pose, uint moving_dot, Vec3 shift = {})
+fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, uint moving_dot)
 {
 	if (self.position_locks.len == 0) return;
-
-	float height = view.skeleton.height();
-	float tolerance = height > 0.0f ? height * IK_TOLERANCE : 0.0f;
-
-	// Gather the anchors to resolve — every one but the grabbed joint, whose own
-	// anchor is not solved against it — with each one's run length, then sort so the
-	// longest run is placed first. Capped like the snapshot: a rig pinned at more
-	// joints than this resolves the first `LOCK_SNAPSHOT` in order.
-	usz[LOCK_SNAPSHOT] order;
-	usz[LOCK_SNAPSHOT] runs;
-	usz picked = 0;
-	foreach (usz i, lock : self.position_locks)
+	rig::Pose shown = pose.copy(mem);
+	defer shown.free(mem);
+	if (self.pose_edit_active)
 	{
-		if (lock.dot_id == moving_dot)
+		AnimTemplate* clip = self.clip(self.editing);
+		if (clip && clip.ground.solves())
 		{
-			// The grabbed anchor's readout is cleared, so a stale miss does not linger
-			// while the user is carrying it on purpose.
-			self.position_locks[i].residual = 0.0f;
-			self.position_locks[i].turn_residual = 0.0f;
-			self.position_locks[i].yielded = false;
-			continue;
+			ground_pose(mem, &view.skeleton, self.names_for(view, self.editing), clip.ground, &shown,
+				clip.phase_at(self.edit_time));
 		}
-		if (picked >= LOCK_SNAPSHOT) break;
-		order[picked] = i;
-		runs[picked] = self.pose_chain(view, lock.dot_id).count;
-		picked++;
 	}
-	for (usz a = 1; a < picked; a++)
-	{
-		usz save = order[a];
-		usz run = runs[a];
-		uint id = self.position_locks[save].dot_id;
-		usz b = a;
-		while (b > 0 && !lock_precedes(runs[b - 1], self.position_locks[order[b - 1]].dot_id, run, id))
-		{
-			order[b] = order[b - 1];
-			runs[b] = runs[b - 1];
-			b--;
-		}
-		order[b] = save;
-		runs[b] = run;
-	}
-
-	// Place each anchor in that order, standing one down when its run wants a joint
-	// a higher-priority anchor has already claimed.
-	uint[LOCK_SNAPSHOT] held_joints;
-	usz held_count = 0;
-	for (usz k = 0; k < picked; k++)
-	{
-		usz i = order[k];
-		PositionLock lock = self.position_locks[i];
-		PoseChain chain = self.pose_chain(view, lock.dot_id);
-		bool yielded = false;
-
-		if (lock.position && chain.count > 0)
-		{
-			if (run_wants_claimed(chain, held_joints[:held_count]))
-			{
-				yielded = true;
-			}
-			else
-			{
-				Vec3[IK_MAX_CHAIN + 1] points;
-				self.chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
-				(void)self.solve_limited_pose_chain(view, chain, pose,
-					points[:chain.count + 1], lock.target - shift, tolerance, {}, false);
-				for (usz t = 0; t < chain.count; t++)
-				{
-					held_count = claim_joint(held_joints[..], held_count, (uint)chain.joints[t]);
-				}
-			}
-		}
-
-		if (lock.rotation)
-		{
-			if (array::contains(held_joints[:held_count], (uint)chain.effector))
-			{
-				yielded = true;
-			}
-			else
-			{
-				self.hold_world_rotation(view, pose, lock.dot_id, lock.orient);
-				held_count = claim_joint(held_joints[..], held_count, (uint)chain.effector);
-			}
-		}
-
-		self.position_locks[i].yielded = yielded;
-	}
-
-	// Read back how near each anchor landed, off the one settled pose so a later
-	// anchor that moved an earlier one is reported honestly rather than optimistically.
-	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, *pose);
+	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, shown);
 	if (catch built) return;
 	Matrix4f[] palette = built;
 	defer alloc::free(mem, palette);
-	Quaternionf[]? spun = pose.world_rotations(mem, &view.skeleton);
+	Quaternionf[]? spun = shown.world_rotations(mem, &view.skeleton);
 	if (catch spun) return;
 	Quaternionf[] world = spun;
 	defer alloc::free(mem, world);
-	for (usz k = 0; k < picked; k++)
+	foreach (usz i, lock : self.position_locks)
 	{
-		usz i = order[k];
-		PositionLock lock = self.position_locks[i];
 		sz j = view.joint_of(lock.dot_id);
 		if (j < 0) continue;
-		self.position_locks[i].residual = lock.position
-			? (view.skeleton.joints[(usz)j].transform(palette[(usz)j]) - (lock.target - shift)).length()
+		bool carried = lock.dot_id == moving_dot;
+		self.position_locks[i].residual = lock.position && !carried
+			? (view.skeleton.joints[(usz)j].transform(palette[(usz)j]) - lock.target).length()
 			: 0.0f;
-		self.position_locks[i].turn_residual = lock.rotation
+		self.position_locks[i].turn_residual = lock.rotation && !carried
 			? rotation_angle_between(world[(usz)j], lock.orient)
 			: 0.0f;
 	}
@@ -1692,31 +1448,24 @@ fn void AppState.chain_points(&self, RigView* view, PoseChain chain, rig::Pose p
 }
 
 <*
- Carries the grabbed joint toward `target`, turning the run above it.
+ Carries the grabbed joint toward `target`, and the body with it.
 
  	`float gap = app.pose_toward(where_the_pointer_is);`
 
- This is the only place crig crosses into `collision::ik`: it uses the generic
- shortest-arc step over world-space points, then converts each proposed step
- into the parent-relative rotation `rig::Pose` stores before applying crig's
- bone-local limits.
+ Two answers, and the rig's shape picks between them. A digit — a finger, a toe's
+ tip, any run up to its knuckle no longer than `CURL_CHAIN_SHARE` of the figure —
+ curls along its own run (`solve_limited_pose_chain`), and the other selected
+ digits with it. Anything else moves the body: every joint of the figure solved
+ at once against every pin and every planted foot (`pose_body`), so a hand that
+ cannot reach brings the chest, a thigh pulled moves the hips, and a waist pulled
+ down sits the body on its feet.
 
- **The conversion, and why it needs the parent's world rotation.** A joint's
- world rotation is its parent's composed with its own — see `Pose.world_rotations`
- — so asking the world to turn by `dR` about the joint's position means
+ The pointer is in the frame the screen shows; the solve is in the draft's, which
+ for a clip shown grounded differs by the ground solve's shift. The target is
+ carried back by it (`gesture_shift`).
 
-     Rw' = dR * Rw   and   Rw = Rw_parent * R
-
- which rearranges to `R' = Rw_parent^-1 * dR * Rw`. Constraining `R'` may make
- the actual world step smaller or point it elsewhere, so that permitted step is
- what carries the points below it through the rest of the solve.
-
- Nothing above the run is touched, and nothing below is written: a subtree
- follows its ancestors through `joint_palette` on its own, which is what makes a
- chain worth having.
-
- @param target : `Where the grabbed joint should end up, in world space.`
- @return `How far it still is from the target — the gap when the target is out of the limb's reach, and zero when nothing was solved.`
+ @param target : `Where the grabbed joint should end up, as shown.`
+ @return `How far it still is from the target — what the reach, the limits, the pins or the mesh left; the same number the collision report's residual holds.`
 *>
 fn float AppState.pose_toward(&self, Vec3 target)
 {
@@ -1727,79 +1476,67 @@ fn float AppState.pose_toward(&self, Vec3 target)
 	RigView view = opened;
 	defer view.free(mem);
 
+	sz found = view.joint_of(self.drag.dot);
+	if (found < 0) return 0.0f;
 	PoseChain chain = self.pose_chain(&view, self.drag.dot);
-	if (chain.count == 0 && !chain.slides && !chain.carries_root) return 0.0f;
 
 	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
-
-	// Pinned joints the grab can move: the whole body is solved at once, so the
-	// pins pull the hips down and fold the legs rather than being patched after.
-	if (self.body_pose(&view, &pose, chain, target, false))
-	{
-		self.write_body(&view, pose);
-		float h = view.skeleton.height();
-		return self.body_grab_miss > h * IK_TOLERANCE ? self.body_grab_miss : 0.0f;
-	}
-
 	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
 	if (catch built) return 0.0f;
 	Matrix4f[] palette = built;
 	defer alloc::free(mem, palette);
 
-	float gap = 0.0f;
 	self.last_block = { .fraction = 1.0f };
-
-	if (chain.slides || chain.carries_root)
-	{
-		// A root has no parent to divide by, so the world delta *is* the local one,
-		// and a root translation carries every descendant by it whatever the joints
-		// between turn by — which is what lets a grab on a trunk joint move the whole
-		// figure by sliding the root under it. `slides` writes the grabbed root
-		// itself; `carries_root` writes the root the grabbed trunk joint hangs from.
-		// Measured from the grab rather than accumulated per move, which is what
-		// makes the gesture idempotent and the escape exact.
-		usz slid = chain.carries_root ? chain.root : chain.effector;
-		Vec3 was = self.snapshot_offset_of(view.dot_ids[slid]);
-		pose.offsets[slid] = was + (target - self.drag.from);
-	}
-	else
+	float height = view.skeleton.height();
+	float tolerance = height > 0.0f ? height * IK_TOLERANCE : 0.0f;
+	Vec3 shift = self.gesture_shift(&view, palette, (usz)found);
+	float gap;
+	if (digit_chain(&view, chain))
 	{
 		// Anchor first, effector last — the order the solver reads a chain in, and
 		// the reverse of `ancestor_run`'s nearest-first.
 		Vec3[IK_MAX_CHAIN + 1] points;
-		Vec3 ground_shift = {};
-		if (self.pose_edit_active)
-		{
-			Vec3 authored_effector = view.skeleton.joints[chain.effector].transform(palette[chain.effector]);
-			ground_shift = self.dot_position(*self.doc.find(self.drag.dot)) - authored_effector;
-		}
-
-		for (usz t = 0; t < chain.count; t++)
-		{
-			usz j = chain.joints[chain.count - 1 - t];
-			points[t] = view.skeleton.joints[j].transform(palette[j]) + ground_shift;
-		}
-		points[chain.count] = view.skeleton.joints[chain.effector].transform(palette[chain.effector]) + ground_shift;
-
-		float height = view.skeleton.height();
-		float tolerance = height > 0.0f ? height * IK_TOLERANCE : 0.0f;
-		gap = self.solve_limited_pose_chain(&view, chain, &pose,
-			points[:chain.count + 1], target, tolerance, ground_shift);
+		self.chain_points(&view, chain, pose, shift, points[:chain.count + 1]);
+		gap = self.solve_limited_pose_chain(&view, chain, &pose, points[:chain.count + 1], target, tolerance, shift);
 		self.carry_pose_mates(&view, &pose, target - self.drag.from, tolerance);
-		// What the target asked for and did not get, whatever stood in the way:
-		// the limits, the reach of the limb, or the mesh the report names.
-		self.last_block.residual = gap;
-		self.last_block.unreached = gap > tolerance;
-		self.judge_collision_cost();
 	}
-
-	// Anchors the grab cannot move (a pinned hand while a foot is dragged) are
-	// still held — rotation halves included.
-	self.resolve_position_locks(&view, &pose, self.drag.dot);
-
-	self.write_pose(&view, pose);
+	else
+	{
+		PointGoal[POSE_MATES + 1] gesture;
+		usz goals = 0;
+		gesture[goals++] = { .joint = (usz)found, .position = true, .soft = true, .target = target - shift };
+		// The other selected joints follow by the same move, as far as they can.
+		foreach (mate : self.pose_mates[:self.pose_mate_count])
+		{
+			sz j = view.joint_of(mate.dot);
+			if (j < 0 || j == found) continue;
+			gesture[goals++] = { .joint = (usz)j, .position = true, .soft = true, .target = mate.from + (target - self.drag.from) };
+		}
+		gap = self.pose_body(&view, &pose, gesture[:goals], shift, true);
+	}
+	// What the target asked for and did not get, whatever stood in the way: the
+	// limits, the reach, the pins, or the mesh the report names.
+	self.last_block.residual = gap;
+	self.last_block.unreached = gap > tolerance;
+	self.judge_collision_cost();
+	self.measure_position_locks(&view, pose, self.drag.dot);
+	self.write_body(&view, pose);
 	return gap;
+}
+
+<*
+ The ground correction between the frame a gesture solves in — the draft — and
+ the one the screen shows: a clip shown grounded is shifted whole by the ground
+ solve. Read off `joint`, whose shown position and drafted one differ by exactly
+ that. Zero when nothing is being edited.
+*>
+fn Vec3 AppState.gesture_shift(&self, RigView* view, Matrix4f[] palette, usz joint)
+{
+	if (!self.pose_edit_active) return {};
+	Dot* dot = self.doc.find(view.dot_ids[joint]);
+	if (!dot) return {};
+	return self.dot_position(*dot) - view.skeleton.joints[joint].transform(palette[joint]);
 }
 
 // The tree root above `joint`. Joints are ordered parents first, so the climb ends.
@@ -1810,563 +1547,206 @@ fn usz tree_root_of(rig::Skeleton* skeleton, usz joint) @local
 	return walk;
 }
 
-<*
- The whole-body solve for a gesture that pinned joints are part of.
-
- 	`if (app.body_pose(&view, &pose, chain, target, false)) app.write_body(&view, pose);`
-
- What moves:
-
-   the grab   a trunk joint (the root, or one whose run reaches just below the
-              root, like `upper_spine` or `chest`) carries its whole path to the
-              root *and* the root's slide, so pulling the waist lowers the body;
-              a limb joint (a wrist, a knee) turns only its own run, as a plain
-              drag does
-   each pin   its path up to its root, legs mostly, so a pinned foot folds its
-              knee and thigh to stay where it was
-   each planted contact   on a clip shown grounded (a ground spec), the feet it has
-              down at this moment, unpinned ones included: the ground solve
-              would otherwise lift the whole figure — pins with it — to put
-              them back on the floor, so they are held too, at `CONTACT_WEIGHT`
-              under a pin's. A contact left below the floor by the settled pose
-              is then held on it and the solve goes again
-
- A body held out along the ground (a planted foot further from the hips than
- `SPREAD_BODY` of their height) sits by *pitching*: the root may turn about the
- lateral X axis, the trunk is left rigid (`body_keep_trunk_rigid`), any other
- axis costs `LATERAL_COST` times that, the balance is fore-and-aft only, and the
- joints are drawn back toward the pose the gesture began with once the goals are
- reached. Limbs not on a goal ride their parent, unsolved.
-
- all in one `body_ik` solve with the pins weighted far over the grab. A turn
- (`turning`) has no grab goal — the turned joint's rotation is already in `pose`
- and is left alone — and solves only the pins, so turning the hips bends the legs
- to keep the feet down. Rotation pins are held afterwards with
- `hold_world_rotation`, which keeps a planted foot flat.
-
- @return `False when no pin is affected by this gesture — the caller's single-chain path then runs unchanged.`
-*>
-fn bool AppState.body_pose(&self, RigView* view, rig::Pose* pose, PoseChain chain, Vec3 target, bool turning)
+// Whether `a` is `b` or one of its ancestors. Joints are ordered parents first.
+fn bool at_or_above(rig::Skeleton* skeleton, usz a, usz b) @local
 {
-	rig::Skeleton* skeleton = &view.skeleton;
-	usz grabbed = chain.effector;
-	usz root = tree_root_of(skeleton, grabbed);
-
-	// The grab's own columns.
-	bool trunk = grabbed == root || chain.count == 0
-		|| skeleton.parents[chain.joints[chain.count - 1]] == (int)root;
-	// With nothing pinned, only a trunk pull on a grounded clip needs the whole
-	// body: its planted feet hold (below) where the ground solve would otherwise
-	// lift the lowered body straight back up.
-	bool contacts_only = self.position_locks.len == 0;
-	bool slides_body = chain.slides || chain.carries_root;
-	if (contacts_only && (turning || !slides_body || !self.pose_edit_active)) return false;
-	BodyJoint[BODY_IK_MAX_DOF] joints;
-	usz joint_count = 0;
-	bool moves_root = false;
-	if (!turning)
+	for (int walk = (int)b; walk >= 0; walk = skeleton.parents[(usz)walk])
 	{
-		if (trunk)
-		{
-			moves_root = true;
-			for (int walk = skeleton.parents[grabbed]; walk >= 0 && (usz)walk != root; walk = skeleton.parents[(usz)walk])
-			{
-				joint_count = self.add_body_joint(view, joints[..], joint_count, (usz)walk, SPINE_STIFFNESS, false);
-			}
-		}
-		else
-		{
-			for (usz t = 0; t < chain.count; t++)
-			{
-				joint_count = self.add_body_joint(view, joints[..], joint_count, chain.joints[t], 1.0f, false);
-			}
-		}
-	}
-	else
-	{
-		// Turning the root, or a trunk joint, swings everything hanging from it: the
-		// pins then need the root's slide as well as their own legs.
-		moves_root = trunk;
-	}
-
-	// The pins this gesture can disturb: under a moving root, or below a joint the
-	// grab turns — or, for a turn, below the turned joint.
-	// A clip with a ground spec is shown grounded — shifted as a whole so its
-	// planted feet touch the floor — and the pointer and every pin were read off
-	// that shown body. The solve works on the pose before the shift, so they are
-	// carried back by it, the same `ground_shift` the single-chain path adds.
-	Vec3 shift = {};
-	if (self.pose_edit_active)
-	{
-		Matrix4f[]? drawn = rig::joint_palette(mem, skeleton, *pose);
-		if (try palette = drawn)
-		{
-			shift = self.dot_position(*self.doc.find(view.dot_ids[grabbed]))
-				- skeleton.joints[grabbed].transform(palette[grabbed]);
-			alloc::free(mem, palette);
-		}
-	}
-
-	BodyGoal[BODY_IK_MAX_GOALS] goals;
-	usz goal_count = 0;
-	if (!turning) goals[goal_count++] = { .joint = grabbed, .target = target - shift, .weight = 1.0f };
-	float h = skeleton.height();
-
-	// Once per gesture, before anything moves: which pins already miss (set where
-	// their limb cannot reach — they report, they do not yank the body toward
-	// them), and which sit on another pin's own limb run (a knee pinned under a
-	// pinned foot) — those stand down so the foot, the longer run, holds.
-	if (!self.drag.body_primed)
-	{
-		Matrix4f[]? start = rig::joint_palette(mem, skeleton, *pose);
-		foreach (usz i, &lock : self.position_locks)
-		{
-			lock.loose = false;
-			lock.yielded = false;
-			sz j = view.joint_of(lock.dot_id);
-			if (j < 0 || !lock.position) continue;
-			if (try palette = start)
-			{
-				lock.loose = !pin_in_reach(skeleton, self.pose_chain(view, lock.dot_id), palette, lock.target - shift);
-			}
-			foreach (other : self.position_locks)
-			{
-				if (other.dot_id == lock.dot_id || !other.position) continue;
-				PoseChain run = self.pose_chain(view, other.dot_id);
-				if (array::contains(run.joints[:run.count], (usz)j)) lock.yielded = true;
-			}
-		}
-		if (try palette = start) alloc::free(mem, palette);
-	}
-
-	bool any_pin = false;
-	Vec3 support = {};
-	usz supports = 0;
-	float root_height = -1.0e30f; // unread: nothing counts as underfoot
-	Matrix4f[] start = {};
-	Matrix4f[]? now = rig::joint_palette(mem, skeleton, *pose);
-	if (try palette = now)
-	{
-		start = palette;
-		root_height = skeleton.joints[root].transform(palette[root]).y;
-	}
-	defer if (start.len > 0) alloc::free(mem, start);
-	foreach (lock : self.position_locks)
-	{
-		if (!lock.position || lock.dot_id == self.drag.dot || goal_count >= BODY_IK_MAX_GOALS) continue;
-		if (lock.loose || lock.yielded) continue;
-		sz found = view.joint_of(lock.dot_id);
-		if (found < 0) continue;
-		usz pinned = (usz)found;
-		if (!self.gesture_moves(skeleton, root, grabbed, pinned, moves_root, turning, joints[:joint_count])) continue;
-		any_pin = true;
-		self.add_body_pin(view, joints[..], &joint_count, goals[..], &goal_count, pinned, lock.target - shift,
-			PIN_WEIGHT, root_height, &support, &supports, grabbed, turning);
-	}
-	if (!any_pin && !(slides_body && !turning)) return false;
-
-	// A grounded clip is shown with the ground solve applied, and that solve moves
-	// the *whole* figure to put the lowest foot on the floor — pins and all. So a
-	// gesture that sinks a planted foot it was not told about (the front paws as
-	// the hips drop) gets the body lifted back off its pins the moment it is
-	// shown, which is the "pins not respected, hips went up" failure. The planted
-	// contacts therefore stand as pins of their own for the gesture, where they
-	// are now, and what the solve then leaves below the floor is held on it below.
-	usz first_pin = turning ? 0 : 1; // past the grab's own goal
-	usz[GROUND_CONTACT_MAX] contact;
-	bool[GROUND_CONTACT_MAX] planted;
-	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
-	bool[GROUND_CONTACT_MAX] toe_held;
-	for (usz i = 0; i < floor_spec.count && start.len > 0; i++)
-	{
-		usz foot = contact[i];
-		if (!planted[i] || goal_count >= BODY_IK_MAX_GOALS || foot == grabbed) continue;
-		if (body_goal_index(goals[:goal_count], foot) >= 0) continue;
-		// A toe under a pinned ankle rides on it: the pin, and its angle if held,
-		// already say where the toe is, and a second pin there would only fight them.
-		if (body_rides_a_pin(skeleton, goals[first_pin:goal_count - first_pin], foot)) continue;
-		if (!self.gesture_moves(skeleton, root, grabbed, foot, moves_root, turning, joints[:joint_count])) continue;
-		// With nothing pinned, a toe is held through its ankle, the way a pinned
-		// ankle holds it: a goal on the toe alone leaves the solve no good way to
-		// fold the leg above it, and the body will not sit. The toe is turned back
-		// onto its point after.
-		usz held = foot;
-		int above = skeleton.parents[foot];
-		if (!any_pin && above >= 0 && (usz)above != grabbed && skeleton.parents[(usz)above] >= 0
-			&& (usz)skeleton.parents[(usz)above] != root && body_goal_index(goals[:goal_count], (usz)above) < 0)
-		{
-			held = (usz)above;
-			toe_held[i] = true;
-		}
-		self.add_body_pin(view, joints[..], &joint_count, goals[..], &goal_count, held,
-			skeleton.joints[held].transform(start[held]), CONTACT_WEIGHT, root_height, &support, &supports,
-			grabbed, turning);
-	}
-	// Neither a pin nor a planted foot is in reach of the pull: the plain slide.
-	if (!any_pin && goal_count == first_pin) return false;
-
-	// A straight limb has no way to fold: start its one-sided joints a little bent,
-	// once, when the gesture begins.
-	if (!self.drag.body_primed)
-	{
-		self.drag.body_primed = true;
-		body_unfold(skeleton, pose, joints[:joint_count]);
-	}
-
-	// Standing on pinned feet and pulled by the trunk, the body keeps its weight
-	// over them: the hips going back lean the chest forward.
-	BodyIkSettings settings = {
-		.root = root,
-		.moves_root = moves_root,
-		.root_stiffness = turning ? TURN_ROOT_STIFFNESS : 1.0f,
-		.height = h,
-		.balance = !self.balance_off && !turning && trunk && supports > 0,
-		.support = supports > 0 ? support / (float)supports : (Vec3){},
-		.tilt_stiffness = BALANCE_TILT_STIFFNESS,
-		.tilt_from = pose.rotations[root],
-	};
-	foreach (held : self.gesture_before)
-	{
-		if (held.dot_id == view.dot_ids[root]) settings.tilt_from = held.rotation;
-	}
-	// A body held out along the ground — a dog's, whose feet are further from the
-	// hips than the hips are high — sits by *pitching*: the rear goes down and the
-	// chest stays up. Left to a minimum-effort solve it reaches a planted front paw
-	// by bending the spine sideways instead. So the root may turn for the goals,
-	// and a turn about the model's lateral axis (X, it faces +Z) is what folding
-	// costs; any other axis costs `LATERAL_COST` times that, which also keeps a
-	// symmetric pull symmetric.
-	if (!turning && trunk && start.len > 0)
-	{
-		Vec3 hips = skeleton.joints[root].transform(start[root]);
-		for (usz g = first_pin; g < goal_count; g++)
-		{
-			Vec3 away = goals[g].target - hips;
-			away.y = 0.0f;
-			if (away.length() > root_height * SPREAD_BODY) settings.pitch = true;
-		}
-		if (settings.pitch)
-		{
-			settings.flex_axis = { 1, 0, 0 };
-			settings.lateral_cost = LATERAL_COST;
-			body_keep_trunk_rigid(skeleton, joints[..], &joint_count, goals[first_pin:goal_count - first_pin]);
-		}
-	}
-	// Where every joint stood when the gesture began, for the solve to keep the body
-	// near — see `BodyIkSettings.posture`. Only for a body that pitches, where the
-	// spine's spare freedom is large.
-	Quaternionf[] began = {};
-	if (settings.pitch && self.gesture_before.len > 0)
-	{
-		began = alloc::new_array(tmem, Quaternionf, (sz)skeleton.len());
-		foreach (usz j, id : view.dot_ids)
-		{
-			began[j] = pose.rotations[j];
-			foreach (held : self.gesture_before) if (held.dot_id == id) began[j] = held.rotation;
-		}
-		settings.posture = began;
-		settings.posture_pull = POSTURE_PULL;
-	}
-	rig::Pose before = pose.copy(mem);
-	defer before.free(mem);
-	for (usz round = 0;; round++)
-	{
-		if (round > 0)
-		{
-			pose.rotations[..] = before.rotations[..];
-			pose.offsets[..] = before.offsets[..];
-			body_unfold(skeleton, pose, joints[:joint_count]);
-		}
-		body_ik(skeleton, pose, joints[:joint_count], goals[:goal_count], &settings);
-
-		// Pins win. The solve above only weighs them against the grab and the
-		// floor, so what it leaves is close, not exact: each limb is now solved to
-		// its point through the same pass the plain path runs, rotation holds
-		// included, and the grab is what gives way (`body_grab_miss`).
-		self.resolve_position_locks(view, pose, self.drag.dot, shift);
-		if (start.len > 0)
-		{
-			self.hold_riding_contacts(view, pose, grabbed, start, contact[:floor_spec.count], planted[:floor_spec.count]);
-			self.hold_toes(view, pose, start, contact[:floor_spec.count], toe_held[:floor_spec.count]);
-		}
-
-		// What the settled body leaves below the floor is held on it, and the solve
-		// goes again from the same start — a foot held up may bring another down,
-		// so twice. Read after the angles are held, which is how it will be shown.
-		if (round >= 2 || floor_spec.count == 0) break;
-		Matrix4f[]? settled = rig::joint_palette(mem, skeleton, *pose);
-		if (catch settled) break;
-		bool sunk = false;
-		foreach (usz i, foot : contact[:floor_spec.count])
-		{
-			if (goal_count >= BODY_IK_MAX_GOALS || foot == grabbed) continue;
-			if (body_goal_index(goals[:goal_count], foot) >= 0) continue;
-			if (body_rides_a_pin(skeleton, goals[first_pin:goal_count - first_pin], foot)) continue;
-			Vec3 at = skeleton.joints[foot].transform(settled[foot]);
-			if (at.y + shift.y >= floor_spec.floor - h * BODY_IK_TOLERANCE) continue;
-			sunk = true;
-			self.add_body_pin(view, joints[..], &joint_count, goals[..], &goal_count, foot,
-				{ at.x, floor_spec.floor - shift.y, at.z }, CONTACT_WEIGHT, root_height, &support, &supports,
-				grabbed, turning);
-		}
-		alloc::free(mem, settled);
-		if (!sunk) break;
-		if (settings.pitch) body_keep_trunk_rigid(skeleton, joints[..], &joint_count, goals[first_pin:goal_count - first_pin]);
-	}
-	self.body_grab_miss = turning ? 0.0f : goals[0].residual;
-	self.body_joints = joint_count;
-	for (usz i = 0; i < joint_count; i++) self.body_joint_ids[i] = view.dot_ids[joints[i].joint];
-	self.body_root = view.dot_ids[root];
-	// The lean turns the root as well as sliding it: written back the same way.
-	self.body_moves_root = moves_root || settings.balance || settings.pitch;
-
-	// The readouts: each pin's miss off the settled pose *as it will be shown*. A
-	// grounded clip is shown after the ground solve has lifted or dropped it whole,
-	// and a foot that could not stay flat is exactly what makes that solve move the
-	// pins — so the honest miss is measured against what is on screen, not against
-	// the frame the solve worked in.
-	rig::Pose shown = pose.copy(mem);
-	defer shown.free(mem);
-	Vec3 shown_shift = shift;
-	if (floor_spec.count > 0)
-	{
-		AnimTemplate* clip = self.clip(self.editing);
-		ground_pose(mem, skeleton, self.names_for(view, self.editing), clip.ground, &shown, clip.phase_at(self.edit_time));
-		shown_shift = shown.offsets[root] - pose.offsets[root];
-	}
-	Matrix4f[]? built = rig::joint_palette(mem, skeleton, *pose);
-	if (catch built) return true;
-	Matrix4f[] palette = built;
-	defer alloc::free(mem, palette);
-	Quaternionf[]? spun = pose.world_rotations(mem, skeleton);
-	if (catch spun) return true;
-	Quaternionf[] world = spun;
-	defer alloc::free(mem, world);
-	foreach (usz i, lock : self.position_locks)
-	{
-		sz j = view.joint_of(lock.dot_id);
-		if (j < 0 || lock.dot_id == self.drag.dot) continue;
-		self.position_locks[i].residual = lock.position
-			? (skeleton.joints[(usz)j].transform(palette[(usz)j]) + shown_shift - lock.target).length() : 0.0f;
-		self.position_locks[i].turn_residual = lock.rotation
-			? rotation_angle_between(world[(usz)j], lock.orient) : 0.0f;
-	}
-
-	// Said once the pins, not the pointer, are deciding where the body stops.
-	if (!turning && self.body_grab_miss > h * 0.02f)
-	{
-		self.@notice("the pinned joints hold the body here · unlock one to pull further");
-	}
-	return true;
-}
-
-// Add a joint to the solve once, with its limits and frame. @return the new count.
-fn usz AppState.add_body_joint(&self, RigView* view, BodyJoint[] joints, usz count, usz joint, float stiffness,
-	bool bend_hint, usz child = ~(usz)0)
-{
-	for (usz i = 0; i < count; i++)
-	{
-		if (joints[i].joint != joint) continue;
-		// On both a pin's path and the grab's: the cheaper, and a leg's bend hint.
-		joints[i].stiffness = math::min(joints[i].stiffness, stiffness);
-		if (bend_hint && !joints[i].bend_hint) joints[i].child = child;
-		joints[i].bend_hint = joints[i].bend_hint || bend_hint;
-		return count;
-	}
-	if (count >= joints.len) return count;
-	JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[joint]);
-	joints[count] = {
-		.joint = joint,
-		.limits = limits,
-		.frame = limits.constrained ? joint_limit_frame(&view.skeleton, view.dot_ids, limits) : (JointLimitFrame){},
-		.stiffness = stiffness,
-		.bend_hint = bend_hint,
-		.child = child,
-	};
-	return count + 1;
-}
-
-<*
- Takes the trunk out of a pitching body's solve: every joint on a path to a goal
- that is not one of the goal's own limb (its unbranched run — a leg, a foreleg).
-
- The body sits by the root turning and the limbs folding, not by curling the spine
- into a question mark: left in, the solve finds it cheaper to bend the back two
- radians than to turn the pelvis, since turning the pelvis also moves the pinned
- hind legs. A joint left out keeps the rotation it has and its subtree rides it.
-*>
-fn void body_keep_trunk_rigid(rig::Skeleton* skeleton, BodyJoint[] joints, usz* count, BodyGoal[] goals) @local
-{
-	usz kept = 0;
-	for (usz i = 0; i < *count; i++)
-	{
-		bool limb = false;
-		foreach (goal : goals)
-		{
-			usz[IK_MAX_CHAIN] run;
-			usz n = skeleton.ancestor_run(goal.joint, run[..]);
-			if (array::contains(run[:n], joints[i].joint)) { limb = true; break; }
-		}
-		if (limb) joints[kept++] = joints[i];
-	}
-	*count = kept;
-}
-
-<*
- Whether `joint` is on the same limb as one of these pinned joints: it hangs below
- one, and rides on it, or one hangs below it and is part of its run. Either way
- the pin already says where the joint is, and a second goal there would only fight it.
-*>
-fn bool body_rides_a_pin(rig::Skeleton* skeleton, BodyGoal[] pins, usz joint) @local
-{
-	foreach (pin : pins)
-	{
-		if (body_above(skeleton, pin.joint, joint) || body_above(skeleton, joint, pin.joint)) return true;
+		if ((usz)walk == a) return true;
 	}
 	return false;
 }
 
 <*
- Whether a position pin's point is within its own limb's reach: no further from
- the top of its run than the run's bones are long, summed from the effector up.
- A pin set beyond that cannot hold, so it reports its miss without steering the
- solve; any other pin is the solve's to hold, however far the grab then pulls.
+ The body's answer to a gesture: every joint of the figure the gesture's joint
+ belongs to solved at once by `point_pose`, toward the gesture's own goals and
+ against every pin and every foot the clip has planted.
 
- @param palette : `The pose's palette, in the same frame as the target.`
+ 	`float miss = app.pose_body(&view, &pose, gesture[..], shift, true);`
+
+ What it asks of the body besides the gesture:
+
+   each pin       held, hard: its position, its orientation, or both, where it
+                  was set — carried back into the solve's frame by `shift`. The
+                  grabbed joint's own pin is not: it is being carried on purpose.
+   each planted contact   on a clip shown grounded, the feet it has down at this
+                  moment hold where they are, hard, and so does the end of a short
+                  foot bone above a planted toe, so the foot stays flat: the
+                  ground solve would otherwise lift the whole figure, pins and
+                  all, to put a foot back. Every contact stays on or above the
+                  floor.
+   the balance    the centre of mass held over the planted and pinned feet,
+                  unless Balance is off
+   the posture    the trunk drawn back toward where the gesture began
+
+ Aimed joints are frozen: what a look-at target turns stays its own, and
+ `unaim_pose` hands it back untouched. A pull is then cut by the mesh when
+ blocking is on (`blocked_body_pass`); a turn has had its own check.
+
+ Written into `pose`; the caller writes it back.
+
+ @param gesture : `The gesture's own goals, in the solve's frame. The first is the one the user holds.`
+ @param shift : `The ground correction from the solve's frame to the one shown; see gesture_shift.`
+ @param pull : `A G: the grab's miss says the pins are holding, and the mesh cuts the solve.`
+ @return `How far the first goal's joint ended from its target.`
 *>
-fn bool pin_in_reach(rig::Skeleton* skeleton, PoseChain chain, Matrix4f[] palette, Vec3 target) @local
-{
-	// No run to reach with: a trunk joint is carried by the root's slide, which has
-	// no limit but the grab's own, so the pin is the solve's to hold.
-	if (chain.count == 0) return true;
-	float reach = 0.0f;
-	usz below = chain.effector;
-	foreach (above : chain.joints[:chain.count])
-	{
-		reach += (skeleton.joints[below].transform(palette[below]) - skeleton.joints[above].transform(palette[above])).length();
-		below = above;
-	}
-	Vec3 top = skeleton.joints[below].transform(palette[below]);
-	return (target - top).length() <= reach + skeleton.height() * IK_TOLERANCE;
-}
-
-<*
- Keeps a planted foot flat on its floor point while its ankle is pinned.
-
- A pinned ankle placed exactly (`resolve_position_locks`) leaves the foot to tilt
- with the shin, so the toe sinks and the ground solve lifts the whole figure, pin
- and all. A contact that rides a pinned position joint is therefore turned back to
- where it stood, by the joints between it and the pin — the pin itself does not
- move. A pin that also holds its angle already says where its foot is, and is left.
-
- @param start : `The palette the gesture's goals were read from, in the solve's frame.`
-*>
-fn void AppState.hold_riding_contacts(&self, RigView* view, rig::Pose* pose, usz grabbed, Matrix4f[] start,
-	usz[] contact, bool[] planted)
+fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] gesture, Vec3 shift, bool pull)
 {
 	rig::Skeleton* skeleton = &view.skeleton;
-	float tolerance = skeleton.height() * IK_TOLERANCE;
-	foreach (usz i, foot : contact)
+	usz n = skeleton.len();
+	if (gesture.len == 0 || n == 0) return 0.0f;
+	usz root = tree_root_of(skeleton, gesture[0].joint);
+	float h = skeleton.height();
+
+	Matrix4f[]? built = rig::joint_palette(mem, skeleton, *pose);
+	if (catch built) return 0.0f;
+	Matrix4f[] palette = built;
+	defer alloc::free(mem, palette);
+
+	// Every joint of the figure, with its mass, its limits and what holds it.
+	float[] inv_mass = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, inv_mass);
+	bool[] trunk = alloc::new_array(mem, bool, (sz)n);
+	defer alloc::free(mem, trunk);
+	point_pose_masses(skeleton, h, inv_mass, trunk);
+	usz[GROUND_CONTACT_MAX] contact;
+	bool[GROUND_CONTACT_MAX] planted;
+	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
+	List{PointJoint} joints;
+	joints.init(mem);
+	defer joints.free();
+	for (usz j = 0; j < n; j++)
 	{
-		if (!planted[i] || foot == grabbed) continue;
-		foreach (lock : self.position_locks)
+		if (tree_root_of(skeleton, j) != root) continue;
+		JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[j]);
+		joints.push({
+			.joint = j,
+			.inv_mass = inv_mass[j],
+			.trunk = trunk[j],
+			.frozen = self.gesture_aim.has(j),
+			.floored = array::contains(contact[:floor_spec.count], j),
+			.limits = limits,
+			.frame = limits.constrained ? joint_limit_frame(skeleton, view.dot_ids, limits) : (JointLimitFrame){},
+		});
+	}
+
+	// The gesture's goals, then the pins, then the planted feet.
+	List{PointGoal} goals;
+	goals.init(mem);
+	defer goals.free();
+	foreach (goal : gesture) goals.push(goal);
+	// In the rig's own order, so the answer does not depend on which pin was set
+	// first.
+	for (usz j = 0; j < n; j++)
+	{
+		sz i = self.lock_index(view.dot_ids[j]);
+		if (i < 0 || view.dot_ids[j] == self.drag.dot) continue;
+		PositionLock lock = self.position_locks[(usz)i];
+		if (tree_root_of(skeleton, j) != root || body_goal_of(goals.array_view(), j) >= 0) continue;
+		goals.push({
+			.joint = j,
+			.position = lock.position,
+			.target = lock.target - shift,
+			.rotation = lock.rotation,
+			.orient = lock.orient,
+		});
+	}
+	for (usz i = 0; i < floor_spec.count; i++)
+	{
+		usz foot = contact[i];
+		if (!planted[i] || tree_root_of(skeleton, foot) != root || body_goal_of(goals.array_view(), foot) >= 0) continue;
+		// A foot the gesture itself takes hold of is being lifted, not stood on.
+		if (under_the_gesture(skeleton, gesture, foot)) continue;
+		// A toe under a pinned ankle rides on it: the pin already says where it is.
+		if (rides_a_pin(skeleton, goals.array_view(), foot)) continue;
+		goals.push({ .joint = foot, .position = true, .target = skeleton.joints[foot].transform(palette[foot]) });
+		// And the end of a short foot bone above a planted toe, so the foot stays
+		// flat rather than pivoting on its toe as the leg folds.
+		int heel = skeleton.parents[foot];
+		if (heel < 0 || (usz)heel == root || body_goal_of(goals.array_view(), (usz)heel) >= 0) continue;
+		if ((skeleton.joints[foot] - skeleton.joints[(usz)heel]).length() > h * CURL_CHAIN_SHARE) continue;
+		goals.push({ .joint = (usz)heel, .position = true, .target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]) });
+	}
+
+	Quaternionf[] began = alloc::new_array(mem, Quaternionf, (sz)n);
+	defer alloc::free(mem, began);
+	foreach (usz j, id : view.dot_ids)
+	{
+		began[j] = pose.rotations[j];
+		foreach (held : self.gesture_before) if (held.dot_id == id) began[j] = held.rotation;
+	}
+	PointPoseSettings settings = {
+		.height = h,
+		.has_floor = floor_spec.count > 0,
+		.floor = floor_spec.floor - shift.y,
+		.balance = !self.balance_off,
+		.posture = began,
+		.posture_pull = POSTURE_PULL,
+	};
+
+	rig::Pose before = pose.copy(mem);
+	defer before.free(mem);
+	point_pose(skeleton, pose, joints.array_view(), goals.array_view(), &settings);
+
+	if (pull)
+	{
+		// The mesh, tested with the root where the gesture found it.
+		Quaternionf held_rotation = before.rotations[root];
+		Vec3 held_offset = before.offsets[root];
+		foreach (held : self.gesture_before)
 		{
-			sz found = view.joint_of(lock.dot_id);
-			if (found < 0 || !lock.position || lock.rotation || lock.dot_id == self.drag.dot || lock.loose || lock.yielded) continue;
-			if (!body_above(skeleton, (usz)found, foot)) continue;
-			PoseChain chain;
-			chain.effector = foot;
-			usz[IK_MAX_CHAIN] run;
-			usz n = skeleton.ancestor_run(foot, run[..]);
-			// From the foot up to and including the pinned joint.
-			foreach (usz t, joint : run[:n])
+			if (held.dot_id != view.dot_ids[root]) continue;
+			held_rotation = held.rotation;
+			held_offset = held.offset;
+		}
+		if (!self.blocked_body_pass(view, pose, before, root, held_rotation, held_offset, &self.last_block))
+		{
+			// The cut answer is a different pose: the grab's miss is read off it.
+			Matrix4f[]? cut = rig::joint_palette(mem, skeleton, *pose);
+			if (try landed = cut)
 			{
-				chain.joints[t] = joint;
-				if (joint == (usz)found) { chain.count = t + 1; break; }
+				goals[0].residual = (skeleton.joints[gesture[0].joint].transform(landed[gesture[0].joint]) - gesture[0].target).length();
+				alloc::free(mem, landed);
 			}
-			if (chain.count == 0) continue;
-			Vec3[IK_MAX_CHAIN + 1] points;
-			self.chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
-			(void)self.solve_limited_pose_chain(view, chain, pose, points[:chain.count + 1],
-				skeleton.joints[foot].transform(start[foot]), tolerance, {}, false);
-			break;
 		}
 	}
+
+	// Said once the pins, not the pointer, are deciding where the body stops.
+	float miss = goals[0].residual;
+	if (pull && goals.len() > gesture.len && miss > h * 0.02f && !self.last_block.blocked)
+	{
+		self.@notice("the pinned joints hold the body here · unlock one to pull further");
+	}
+	return miss;
 }
 
-<*
- Turns each toe held through its ankle (`toe_held`) back onto the point it
- stood on, by the ankle alone — the leg above was solved to the ankle's goal.
-
- @param start : `The palette the gesture's goals were read from, in the solve's frame.`
-*>
-fn void AppState.hold_toes(&self, RigView* view, rig::Pose* pose, Matrix4f[] start, usz[] contact, bool[] toe_held)
+// Whether `joint` is at or below a joint the gesture holds.
+fn bool under_the_gesture(rig::Skeleton* skeleton, PointGoal[] gesture, usz joint) @local
 {
-	rig::Skeleton* skeleton = &view.skeleton;
-	float tolerance = skeleton.height() * IK_TOLERANCE;
-	foreach (usz i, toe : contact)
-	{
-		if (!toe_held[i]) continue;
-		PoseChain chain = { .effector = toe, .count = 1 };
-		chain.joints[0] = (usz)skeleton.parents[toe];
-		Vec3[2] points;
-		self.chain_points(view, chain, *pose, {}, points[..]);
-		(void)self.solve_limited_pose_chain(view, chain, pose, points[..],
-			skeleton.joints[toe].transform(start[toe]), tolerance, {}, false);
-	}
+	foreach (goal : gesture) if (at_or_above(skeleton, goal.joint, joint)) return true;
+	return false;
 }
 
 // Which goal holds `joint`, or -1.
-fn sz body_goal_index(BodyGoal[] goals, usz joint) @local
+fn sz body_goal_of(PointGoal[] goals, usz joint) @local
 {
 	foreach (usz g, goal : goals) if (goal.joint == joint) return (sz)g;
 	return -1;
 }
 
 <*
- Whether this gesture can carry `pinned` off where it stands: the root it hangs
- from slides, a joint the grab turns is above it, or — for a turn — it is at or
- below the turned joint.
+ Whether `joint` is on the same limb as a held position: it hangs below one, or
+ one hangs below it. Either way that hold already says where the joint is, and a
+ second one there would only fight it.
 *>
-fn bool AppState.gesture_moves(&self, rig::Skeleton* skeleton, usz root, usz grabbed, usz pinned,
-	bool moves_root, bool turning, BodyJoint[] joints)
+fn bool rides_a_pin(rig::Skeleton* skeleton, PointGoal[] goals, usz joint) @local
 {
-	bool moved = (moves_root && tree_root_of(skeleton, pinned) == root)
-		|| (turning && (pinned == grabbed || body_above(skeleton, grabbed, pinned)));
-	for (usz i = 0; i < joints.len && !moved; i++)
+	foreach (goal : goals)
 	{
-		moved = body_above(skeleton, joints[i].joint, pinned);
+		if (!goal.position || goal.soft) continue;
+		if (at_or_above(skeleton, goal.joint, joint) || at_or_above(skeleton, joint, goal.joint)) return true;
 	}
-	return moved;
-}
-
-<*
- Adds one position goal to a whole-body solve, with the joints between it and its
- root as columns. `target` is in the solve's own frame (before any ground shift).
-*>
-fn void AppState.add_body_pin(&self, RigView* view, BodyJoint[] joints, usz* joint_count, BodyGoal[] goals,
-	usz* goal_count, usz pinned, Vec3 target, float weight, float root_height, Vec3* support, usz* supports,
-	usz grabbed, bool turning)
-{
-	rig::Skeleton* skeleton = &view.skeleton;
-	goals[*goal_count] = { .joint = pinned, .target = target, .weight = weight };
-	// A pin below the root is something the body stands on.
-	if (target.y < root_height)
-	{
-		*support = *support + target;
-		(*supports)++;
-		goals[*goal_count].stands = true;
-	}
-	(*goal_count)++;
-	usz pin_root = tree_root_of(skeleton, pinned);
-	usz below = pinned;
-	for (int walk = skeleton.parents[pinned]; walk >= 0 && (usz)walk != pin_root; walk = skeleton.parents[(usz)walk])
-	{
-		// The turned joint's own rotation is the gesture; it is not re-solved.
-		if (turning && (usz)walk == grabbed) break;
-		*joint_count = self.add_body_joint(view, joints, *joint_count, (usz)walk, 1.0f, true, below);
-		below = (usz)walk;
-	}
+	return false;
 }
 
 // Contacts a ground spec can name for one gesture; a spec longer than this is cut.
@@ -2387,35 +1767,18 @@ fn GroundContacts AppState.gesture_contacts(&self, RigView* view, usz[] contact,
 }
 
 <*
- Writes a whole-body solve back: every joint it turned, the root's slide, the
- rotation pins, and the grabbed joint — then puts it on screen the way
- `write_pose` does.
+ Writes a gesture's pose back: every joint of the figure the gesture snapshotted —
+ any of them the body solve may have turned, the root's slide with them — then
+ puts it on screen the way `write_pose` does. A joint that did not change is
+ refused by `set_working_pose`, so this records only what moved.
 *>
 fn void AppState.write_body(&self, RigView* view, rig::Pose pose)
 {
 	self.unaim_pose(&pose);
-	// Every joint the exact pin pass may have turned, not only the solve's own
-	// columns: the gesture's snapshot holds them all, so undo and escape cover them.
 	foreach (was : self.gesture_before)
 	{
 		sz j = view.joint_of(was.dot_id);
 		if (j >= 0) self.set_working_pose(was.dot_id, pose.rotations[(usz)j], pose.offsets[(usz)j]);
-	}
-	for (usz i = 0; i < self.body_joints; i++)
-	{
-		sz j = view.joint_of(self.body_joint_ids[i]);
-		if (j >= 0) self.set_working_pose(self.body_joint_ids[i], pose.rotations[(usz)j], pose.offsets[(usz)j]);
-	}
-	if (self.body_moves_root)
-	{
-		sz j = view.joint_of(self.body_root);
-		if (j >= 0) self.set_working_pose(self.body_root, pose.rotations[(usz)j], pose.offsets[(usz)j]);
-	}
-	foreach (lock : self.position_locks)
-	{
-		if (!lock.rotation) continue;
-		sz j = view.joint_of(lock.dot_id);
-		if (j >= 0) self.set_working_pose(lock.dot_id, pose.rotations[(usz)j], pose.offsets[(usz)j]);
 	}
 	self.write_pose(view, pose);
 }
@@ -2537,6 +1900,12 @@ fn float? AppState.turn_start_angle(&self, JointRotationAxis axis)
  Where a turn ends up once the table has had its say: the mesh, after the
  limits. The draft still holds the rotation the last write found clear, and the
  request lands on it or short of it.
+
+ Then the pins. Turning the hips or the spine carries the feet as surely as
+ pulling them does, so when a pin or a planted foot hangs at or below the turned
+ joint, the body solve takes the turn as a held world rotation — the joint's
+ own point held too, softly — and bends the rest to keep them (`pose_body`). A
+ turn nothing held hangs from is the plain turn.
 *>
 fn void AppState.land_turn(
 	&self,
@@ -2549,16 +1918,51 @@ fn void AppState.land_turn(
 {
 	self.blocked_joint_rotation(view, pose, joint, requested, frame, limits, &self.last_block);
 	self.judge_collision_cost();
-	// Turning the hips or the spine drops the feet as surely as pulling them does,
-	// so the pins are honored here too: the legs bend to keep them.
-	PoseChain turned = { .effector = joint };
-	if (self.body_pose(view, pose, turned, {}, true))
+	if (self.turn_carries_a_hold(view, joint))
 	{
-		self.write_body(view, *pose);
-		return;
+		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, *pose);
+		Quaternionf[]? spun = pose.world_rotations(mem, &view.skeleton);
+		if (try palette = built)
+		{
+			defer alloc::free(mem, palette);
+			if (try world = spun)
+			{
+				defer alloc::free(mem, world);
+				PointGoal[1] gesture = {{
+					.joint = joint,
+					.position = true,
+					.soft = true,
+					.target = view.skeleton.joints[joint].transform(palette[joint]),
+					.rotation = true,
+					.orient = world[joint],
+				}};
+				(void)self.pose_body(view, pose, gesture[..], self.gesture_shift(view, palette, joint), false);
+			}
+		}
 	}
-	self.resolve_position_locks(view, pose, self.drag.dot);
-	self.write_pose(view, *pose);
+	self.measure_position_locks(view, *pose, self.drag.dot);
+	self.write_body(view, *pose);
+}
+
+<*
+ Whether a turn of `joint` moves anything the body is holding: a pin, or a foot
+ the clip has planted, at or below it.
+*>
+fn bool AppState.turn_carries_a_hold(&self, RigView* view, usz joint)
+{
+	foreach (lock : self.position_locks)
+	{
+		sz j = view.joint_of(lock.dot_id);
+		if (j >= 0 && lock.dot_id != self.drag.dot && at_or_above(&view.skeleton, joint, (usz)j)) return true;
+	}
+	usz[GROUND_CONTACT_MAX] contact;
+	bool[GROUND_CONTACT_MAX] planted;
+	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
+	for (usz i = 0; i < floor_spec.count; i++)
+	{
+		if (planted[i] && at_or_above(&view.skeleton, joint, contact[i])) return true;
+	}
+	return false;
 }
 
 <*
@@ -2584,8 +1988,8 @@ fn void AppState.write_pose(&self, RigView* view, rig::Pose pose)
 		self.set_working_pose(id, pose.rotations[(usz)j], pose.offsets[(usz)j]);
 	}
 
-	// The anchored limbs the re-solve bent, written by the same rule: a pin turns
-	// its knee and thigh, and those are the joints `snapshot_locks` recorded.
+	// The selected mates' runs a curl carried along, written by the same rule:
+	// those are the joints `gather_pose_mates` recorded.
 	for (usz i = 0; i < self.locked_before_count; i++)
 	{
 		uint id = self.locked_before[i].dot_id;

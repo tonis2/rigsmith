@@ -5,8 +5,7 @@
  The recommendation this answers (animation_plan.md, MCP1) is that authoring a
  clip should not mean guessing shoulder and elbow quaternions until the hand lands
  where it was wanted. crig already has the solver for it — the limit-aware CCD loop
- `solve_limited_pose_chain`, the one `resolve_position_locks` bends a pinned foot
- back to the floor with — so this exposes it: give it a joint and a point, and it
+ `solve_limited_pose_chain`, the one a finger curls along — so this exposes it: give it a joint and a point, and it
  turns that joint's own run of ancestors (wrist through elbow through shoulder,
  ankle through knee through thigh) until the joint reaches the point, honouring the
  joint limits every step. An optional orientation holds the effector flat once it
