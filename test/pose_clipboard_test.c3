@@ -383,3 +383,57 @@ fn void an_empty_clipboard_and_a_missing_clip_are_refused_without_history() @tes
 		"an operation ran with no clip to edit");
 	test::@check(f.app.undo_stack.cursor == cursor, "a refused operation created history");
 }
+
+<*
+ A leg turned by a look-at target is turned on screen and not in its keys; the
+ mirror hands the twin what is shown, so the two legs stand reflected.
+*>
+fn void mirroring_an_aimed_side_reflects_what_is_shown() @test
+{
+	Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+	io::printn("Mirror pose of a leg turned by a look-at target reflects the aimed leg");
+
+	crig::AppState* app = &f.app;
+	test::@check(app.add_aim(f.left), "the target was not added");
+	// The thigh alone: a spread would turn the hips too, which are not selected
+	// and would swing both legs.
+	test::@check(app.set_aim_spread(f.left, 1), "the spread would not narrow");
+	app.auto_key = true;
+	test::@check(app.begin_aim_drag(0, true), "the drag did not begin");
+	app.aim_target_toward(app.posed_aims[0].at + (Vec3){ 0.4f, 0.3f, 0.2f });
+	app.end_drag();
+	app.stop_animation();
+	app.edit_time = 0.0f;
+	app.select(f.left);
+
+	test::@check(app.mirror_pose(), "the mirror was refused");
+	test::@check(app.pose_from_clip(app.editing, 0.0f), "the clip would not show");
+	// Measured from each thigh, below it: the rest of the fixture is not quite
+	// symmetric about any one plane, and only the legs are mirrored here.
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	usz thigh = (usz)view.joint_of(f.left);
+	Vec3 left_root = app.dot_position(*app.doc.find(f.left));
+	Vec3 right_root = app.dot_position(*app.doc.find(f.right));
+	usz pairs;
+	foreach (usz joint, parent : view.skeleton.parents)
+	{
+		bool below;
+		for (int up = parent; up >= 0; up = view.skeleton.parents[up]) if ((usz)up == thigh) below = true;
+		if (!below) continue;
+		crig::Dot* dot = app.doc.find(view.dot_ids[joint]);
+		uint twin = dot_named(app, crig::mirror_name(tmem, dot.name));
+		if (twin == 0) continue;
+		Vec3 left = app.dot_position(*dot) - left_root;
+		Vec3 right = app.dot_position(*app.doc.find(twin)) - right_root;
+		Vec3 want = { -left.x, left.y, left.z };
+		test::@check(left.x != 0.0f || left.z != 0.0f, "the target did not turn %s", dot.name);
+		test::@check((right - want).length() < 1.0e-3f, "%s does not hang as the aimed %s, reflected: %s against %s",
+			crig::mirror_name(tmem, dot.name), dot.name, right, want);
+		pairs++;
+	}
+	test::@check(pairs > 0, "the biped has no twins to compare");
+}

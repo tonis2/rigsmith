@@ -230,6 +230,7 @@ fn bool AppState.pose_in_hand(&self, RigView* view, AnimKeyframe* out, bool* who
 		? self.draft_pose(mem, view)
 		: self.evaluated_clip_pose(mem, view, *clip, self.editing, self.edit_time, false);
 	defer pose.free(mem);
+	self.lay_clip_holds_over(view, *clip, &pose);
 	Vec3[] bones = view.skeleton.bone_directions(mem);
 	defer if (bones.len > 0) alloc::free(mem, bones);
 	AnimKeyframe every = keyframe_of_pose(mem, pose, view.names, bones,
@@ -260,6 +261,33 @@ fn bool AppState.pose_in_hand(&self, RigView* view, AnimKeyframe* out, bool* who
 	if (every.dots.len > 0) alloc::free(mem, every.dots);
 	*out = { .time = self.edit_time, .dots = kept.to_array(mem) };
 	return out.dots.len > 0;
+}
+
+<*
+ The clip's pins and look-at targets laid over `pose`, as the viewport shows it.
+
+ A hand turned by a target is turned on screen and nowhere in its keys, so what
+ is in hand has to be read after the targets or a mirror hands the twin the
+ unaimed keys — a hand at rest — instead of what the user posed. The floor is
+ solved first because the targets are aimed from where the grounded body stands,
+ and its shift is then taken out of the offsets again: the entries keep the
+ clip's own, and the floor is solved afresh wherever they land.
+
+ Keying the aimed rotation onto a joint that is itself still aimed costs nothing:
+ the target finds it already turned and adds no more.
+*>
+fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, rig::Pose* pose) @private
+{
+	if (clip.aims.len == 0 && clip.pins.len == 0) return;
+	Vec3[] offsets = alloc::new_array(mem, Vec3, pose.offsets.len);
+	defer alloc::free(mem, offsets);
+	foreach (i, o : pose.offsets) offsets[i] = o;
+
+	String[] names = self.names_for(view, self.editing);
+	ground_pose(mem, &view.skeleton, names, clip.ground, pose, clip.phase_at(self.edit_time));
+	self.apply_clip_pins(view, clip, self.editing, self.edit_time, pose);
+	self.apply_clip_aims(view, clip, self.editing, self.edit_time, pose);
+	foreach (i, o : offsets) pose.offsets[i] = o;
 }
 
 <*
