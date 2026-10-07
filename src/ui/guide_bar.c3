@@ -75,7 +75,7 @@ fn void guide_words(AppState* app, GuideStatus g, GuideStep step, GuideText* out
 			*detail = g.has_mesh
 				? format_into(out.detail[..], "%s · %d vertices · click to frame it",
 					app.source_path.len > 0 ? base_name(app.source_path) : "Model", app.geometry.positions.len)
-				: "No model yet · click to open one (File › Open model)";
+				: "No character yet · click to import one (File › Import .glb)";
 		case SKELETON:
 			if (!g.has_mesh) { *detail = "Open a model first"; break; }
 			if (state == NOT_YET) { *detail = "No skeleton yet · click to fit one (Rig › Apply body plan)"; break; }
@@ -129,7 +129,7 @@ fn String guide_next_line(AppState* app)
 	switch (step)
 	{
 		case MODEL:
-			return "Next: open a model — File › Open model";
+			return "Next: import a character — File › Import .glb";
 		case SKELETON:
 			if (state == ATTENTION)
 			{
@@ -306,7 +306,7 @@ fn void guide_step_clicked(Ui* ui, usz index)
 	GuideStep step = (GuideStep)index;
 	if (step != EXPORT && !g.has_mesh)
 	{
-		menu_open(ui);
+		menu_import(ui);
 		return;
 	}
 	switch (step)
@@ -346,7 +346,7 @@ fn void guide_step_clicked(Ui* ui, usz index)
 		case EXPORT:
 			if (!g.has_mesh)
 			{
-				app.@notice("Open a model first — File › Open model");
+				app.@notice("Import a character first — File › Import .glb");
 				break;
 			}
 			open_export_dialog(ui);

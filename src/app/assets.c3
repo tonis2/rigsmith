@@ -92,6 +92,8 @@ fn void AppState.mark_current_entries(&self)
 	foreach (&entry : self.assets.entries)
 	{
 		entry.current = self.source_path.len > 0 && entry.file == self.source_path;
+		// Every model in the scene, not only the one being edited, is open.
+		if (entry.kind == AssetKind.MODEL && !entry.current) entry.current = self.character_from(entry.file) >= 0;
 	}
 }
 
@@ -472,6 +474,7 @@ fn String AssetKind.gltf_collection(self)
 {
 	switch (self)
 	{
+		case MODEL: return "";
 		case SKIN: return "skins";
 		case ANIMATION: return "animations";
 		case JOINTS: return "";
@@ -597,6 +600,8 @@ fn MenuItemFlags AppState.asset_flags(&self, usz row)
 	AssetEntry* entry = self.visible_asset(row);
 	if (!entry) return { .disabled = true };
 
+	// A model can always be brought in: beside the open one, or as the first.
+	if (entry.kind == AssetKind.MODEL) return { };
 	// A rig is fitted to the model's own box, so there is nothing to fit one to
 	// until a model is open.
 	if (entry.kind != AssetKind.ANIMATION) return { .disabled = self.geometry.positions.len == 0 };
@@ -641,6 +646,21 @@ fn bool AppState.activate_asset(&self, usz row)
 	if (self.asset_flags(row).disabled) return false;
 
 	usz which = self.visible_assets[row];
+
+	// A model's body only chooses the cell, as a clip's does — the + is what adds
+	// it — except with nothing open, where there is no scene to add to and the
+	// click opens it.
+	if (entry.kind == AssetKind.MODEL)
+	{
+		if (!self.has_mesh() && self.character_count() == 1)
+		{
+			self.request_open(entry.file);
+			return true;
+		}
+		if (self.selected_asset == (int)which) return false;
+		self.selected_asset = (int)which;
+		return true;
+	}
 
 	if (entry.kind == AssetKind.ANIMATION)
 	{

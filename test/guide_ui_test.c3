@@ -50,8 +50,8 @@ fn void the_guide_starts_at_open_a_model() @test
 	test::@check(f.in_tree(crig::GUIDE_STEPS_ID), "the 3D view has no workflow guide");
 	foreach (i, step : guide_steps(&f).steps) test::@check(step.state == TODO, "step %d is not 'not yet' with no model", i);
 	test::eq(guide_steps(&f).current, (sz)0);
-	test::@check(crig::bar_line(&f.app).starts_with("Next: open a model"),
-		"the hint bar does not say to open a model: \"%s\"", crig::bar_line(&f.app));
+	test::@check(crig::bar_line(&f.app).starts_with("Next: import a character"),
+		"the hint bar does not say to import a character: \"%s\"", crig::bar_line(&f.app));
 
 	// It sits in the header, clear of the view's own overlays.
 	Element* strip = f.ui.find_id(crig::GUIDE_STEPS_ID)!!;

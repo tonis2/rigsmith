@@ -2,7 +2,7 @@
  Choosing what goes into an exported .glb: the rig, which clips, and where it is
  written.
 
- 	File > Export .glb  (Ctrl+E)
+ 	File > Export .glb…  (Ctrl+E), with one character in the scene
 
  **There is no picker here any more, and that is the point.** This panel used to
  hold a second grid of every animation in every library, with its own search and

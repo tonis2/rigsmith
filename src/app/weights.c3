@@ -136,7 +136,7 @@ fn void AppState.mark_rig_stale(&self)
 	// none. The generation moves so a watcher can tell one edit from a stream of
 	// them; see `AppState.refresh_shell_riders` for who is waiting.
 	self.riders_stale = true;
-	self.rig_generation++;
+	self.rig_generation = next_generation();
 
 	// The skin, on the same timer as the tints — see `tick_skin`. A running
 	// clip rebinds on its next tick regardless, since the player asks for the
@@ -340,7 +340,7 @@ fn void AppState.rebind_tints(&self)
 {
 	self.weights_stale = false;
 	self.weights_due = 0.0f;
-	self.tint_generation++;
+	self.tint_generation = next_generation();
 
 	if (self.tints.len > 0)
 	{

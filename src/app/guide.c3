@@ -145,7 +145,7 @@ fn bool[] skinless_joints(Allocator allocator, float[] skin, usz vertices, usz j
  nothing in it is clean; after a save the revision is remembered. Undoing back
  to the saved state still reads as unsaved.
 *>
-fn bool AppState.unsaved(&self)
+fn bool Character.unsaved(&self)
 {
 	if (self.authored_dirty) return true;
 	if (self.undo_stack.edits.len() == 0) return false;

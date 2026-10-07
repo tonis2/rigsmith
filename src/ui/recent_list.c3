@@ -1,11 +1,11 @@
 <*
  The recent projects, as rows at the top of the file chooser.
 
- A project in crig is a model: the session lives beside the mesh and is found
- from it, so the mesh path is the one name that reopens everything. The rows
- therefore carry mesh paths, and choosing one goes through the same
- `AppState.request_open` a click in the browser below does — a shortcut to a
- file, not a second way of opening one.
+ A project is a scene file, or a model on its own: a model's session lives
+ beside the mesh and is found from it, so its path is the one name that reopens
+ it. A scene row goes through `AppState.request_open_scene` and a model row
+ through `AppState.request_open` — a shortcut to a file, not a second way of
+ opening one.
 
  A widget painting rows rather than a Column of Labels, the same trade `AnimList`
  makes and for the same two reasons: the file name and its folder are one row
@@ -198,7 +198,21 @@ fn bool RecentList.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			defer path.free(mem);
 
 			close_file_dialog(elem.ui);
-			app.request_open(path);
+			// A scene reopens as itself; a model on its own opens as a new scene
+			// with it the only character. Either replaces what is on stage.
+			bool scene = path.ends_with(SCENE_SUFFIX);
+			if (app.any_character_unsaved())
+			{
+				ask_before_replacing_scene(elem.ui, path, scene);
+			}
+			else if (scene)
+			{
+				app.request_open_scene(path);
+			}
+			else
+			{
+				app.request_open(path);
+			}
 			app.refresh_ui();
 			return true;
 

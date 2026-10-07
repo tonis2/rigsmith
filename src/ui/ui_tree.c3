@@ -43,30 +43,84 @@ const String FONT_PATH = "assets/DejaVuSans.ttf";
 // bridge back to crig. Each one is the same operation the keyboard reaches;
 // two paths into one implementation, so the menus cannot drift from the keys.
 
-fn void menu_open(Ui* ui)
+// The File menu is about the scene: the characters on stage and where each
+// stands. A scene starts empty (New) or from a file (Open), characters come
+// into it from .glb files (Import), and Save writes it all — each character
+// into its own model and sidecar, and the scene file that points at them.
+
+fn void menu_new_scene(Ui* ui)
 {
-	open_file_dialog(ui, FilePurpose.OPEN_MESH);
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.any_character_unsaved())
+	{
+		ask_before_new_scene(ui);
+		return;
+	}
+	(void)app.new_scene();
+	app.refresh_ui();
 }
+
+fn void menu_open_scene(Ui* ui)
+{
+	open_file_dialog(ui, FilePurpose.OPEN_SCENE);
+}
+
+// A model into the scene as another character, with its own rig, clips and
+// history. Into an empty scene it is simply the first.
+fn void menu_import(Ui* ui)
+{
+	open_file_dialog(ui, FilePurpose.ADD_CHARACTER);
+}
+
+// Into the scene file it came from, or asking where the first time. A lone
+// character with no scene file saves into its own model and sidecar, which is
+// all a scene of one needs: the model reopens it from the recent list.
+fn void menu_save(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.has_mesh()) return;
+	if (app.scene_path.len == 0 && app.character_count() == 1)
+	{
+		app.save_session();
+		app.refresh_ui();
+		return;
+	}
+	if (app.scene_path.len == 0)
+	{
+		open_file_dialog(ui, FilePurpose.SAVE_SCENE);
+		return;
+	}
+	String path = app.scene_path.copy(mem);
+	defer path.free(mem);
+	(void)app.save_scene(path);
+	app.refresh_ui();
+}
+
+fn void menu_save_as(Ui* ui)
+{
+	if (!ui.inherit(AppState)!!.has_mesh()) return;
+	open_file_dialog(ui, FilePurpose.SAVE_SCENE);
+}
+
+// One character: the export panel, which picks the clips and keeps UVs and
+// materials. More than one: all of them in one file, with one shared animation.
+fn void menu_export(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.has_mesh()) return;
+	if (app.character_count() > 1)
+	{
+		open_file_dialog(ui, FilePurpose.EXPORT_SCENE);
+		return;
+	}
+	open_export_dialog(ui);
+}
+
+fn MenuItemFlags query_scene_has_characters(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_mesh() };
 
 fn void menu_settings(Ui* ui)
 {
 	open_settings_dialog(ui);
-}
-
-// One item rather than the two there used to be. The panel opens with the rig
-// ticked and nothing else chosen, which is the export the plain command used to
-// perform — so the common case is still one click, and it now says where it is
-// about to write rather than deriving a path silently.
-fn void menu_export(Ui* ui)
-{
-	open_export_dialog(ui);
-}
-
-fn void menu_save(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.save_session();
-	app.refresh_ui();
 }
 
 fn void menu_quit(Ui* ui)
@@ -981,8 +1035,6 @@ fn MenuItemFlags query_any_dots(Ui* ui) => { .disabled = ui.inherit(AppState)!!.
 fn MenuItemFlags query_any_mesh(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_mesh() };
 fn MenuItemFlags query_undo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_undo() };
 fn MenuItemFlags query_redo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_redo() };
-fn MenuItemFlags query_saveable(Ui* ui) => { .disabled = ui.inherit(AppState)!!.source_path.len == 0 };
-
 <*
  The two tint views, whose greying rule is the same in shape: entering needs
  something to colour by, leaving is always allowed. A view left on while its
@@ -1058,8 +1110,6 @@ fn MenuItemFlags query_controls_shown(Ui* ui)
  With no model there is nothing to hint about: the view already says so in the
  middle of the screen.
 *>
-fn MenuItemFlags query_exportable(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_mesh() };
-
 // Never greyed, unlike the tint views: drawing the surface as lines needs
 // no rig, no selection and nothing bound — there is always a mesh to draw.
 fn MenuItemFlags query_wireframe(Ui* ui) => { .checked = ui.inherit(AppState)!!.wireframe() };
@@ -1116,15 +1166,19 @@ fn MenuItemFlags query_joint_names(Ui* ui)
 // `menu_toggle_controls`.
 const String CONTROLS_DIALOG_ID = "controls-dialog";
 
-MenuItem[8] file_items = {
-	{ .label = "Open model", .shortcut = "Ctrl+O", .on_select = &menu_open },
+MenuItem[12] file_items = {
+	{ .label = "New scene", .shortcut = "Ctrl+N", .on_select = &menu_new_scene },
+	{ .label = "Open scene…", .shortcut = "Ctrl+O", .on_select = &menu_open_scene },
 	{ .separator = true },
-	{ .label = "Export .glb", .shortcut = "Ctrl+E", .on_select = &menu_export, .state = &query_exportable },
-	{ .label = "Save", .shortcut = "Ctrl+S", .on_select = &menu_save, .state = &query_saveable },
+	{ .label = "Import .glb…", .shortcut = "Ctrl+I", .on_select = &menu_import },
+	{ .separator = true },
+	{ .label = "Save", .shortcut = "Ctrl+S", .on_select = &menu_save, .state = &query_scene_has_characters },
+	{ .label = "Save as…", .shortcut = "Ctrl+Shift+S", .on_select = &menu_save_as, .state = &query_scene_has_characters },
+	{ .label = "Export .glb…", .shortcut = "Ctrl+E", .on_select = &menu_export, .state = &query_scene_has_characters },
 	{ .separator = true },
 	// Above Quit rather than in a menu of its own: one panel of settings does not
 	// earn a top-level title, and the asset libraries it holds are the same kind
-	// of thing as the recent projects the File menu already remembers.
+	// of thing as the recent scenes the File menu already remembers.
 	{ .label = "Settings", .on_select = &menu_settings },
 	{ .separator = true },
 	{ .label = "Quit", .on_select = &menu_quit },
@@ -1586,6 +1640,8 @@ fn void AppRoot.update(&self, Element* elem, float dt) @dynamic
 	// The animation player, if active. A timeline draft has already stopped its
 	// clock and taken over the same palette, so only one of them runs at a time.
 	app.tick_animation(dt);
+	// Every other loaded character, to the instant the one being edited shows.
+	bool cast_moved = app.sync_cast(dt);
 
 	// One step of the overlay's occlusion refresh cycle per frame, so a running
 	// clip re-tests a rotating slice of the dots and bones rather than all of them
@@ -1617,7 +1673,7 @@ fn void AppRoot.update(&self, Element* elem, float dt) @dynamic
 	// The viewport only, not its subtree: the HUD and the gizmo below it are
 	// driven by their own update, and neither reads the pose. A paused clip's
 	// pose only changes through an edit or a scrub, which repaint on their own.
-	if (app.animating && !app.anim_paused)
+	if ((app.animating && !app.anim_paused) || cast_moved)
 	{
 		elem.ui.@each(Viewport; viewport) { viewport.request_paint(); };
 	}
@@ -1665,15 +1721,21 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 				menu_redo(elem.ui);
 				return true;
 			case Key.S:
-				menu_save(elem.ui);
+				if (shift) { menu_save_as(elem.ui); } else { menu_save(elem.ui); }
+				return true;
+			case Key.N:
+				menu_new_scene(elem.ui);
 				return true;
 			case Key.O:
-				menu_open(elem.ui);
+				menu_open_scene(elem.ui);
+				return true;
+			case Key.I:
+				menu_import(elem.ui);
 				return true;
 			case Key.E:
 				// Mirrors the menu item, greying and all: nothing to choose
 				// clips or a destination for when there is no model to write.
-				if (app.has_mesh()) menu_export(elem.ui);
+				menu_export(elem.ui);
 				return true;
 			case Key.A:
 				// Reached only with Ctrl down, so plain A still toggles

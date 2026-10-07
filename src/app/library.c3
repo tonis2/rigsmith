@@ -212,6 +212,7 @@ fn usz AppState.clip_total(&self)
 *>
 fn usz AppState.load_packs(&self, String directory)
 {
+	LibraryRefs[] parked = self.remember_cast_refs();
 	LibraryRefs refs = self.remember_library_refs();
 	defer refs.free();
 	self.stop_animation();
@@ -232,6 +233,7 @@ fn usz AppState.load_packs(&self, String directory)
 	self.set_library_path(directory);
 	self.restore_authored(authored);
 	self.restore_library_refs(&refs);
+	self.restore_cast_refs(parked, true);
 
 	// The library is where body plans come from, so plan targets fitted before
 	// this ran were fitted against nothing. Startup does exactly that: a session
@@ -263,6 +265,7 @@ fn usz AppState.load_packs(&self, String directory)
 *>
 fn usz AppState.scan_libraries(&self)
 {
+	LibraryRefs[] parked = self.remember_cast_refs();
 	LibraryRefs refs = self.remember_library_refs();
 	defer refs.free();
 	self.stop_animation();
@@ -301,6 +304,7 @@ fn usz AppState.scan_libraries(&self)
 	self.set_library_path(libraries.len > 0 ? libraries[0].path : "");
 	self.restore_authored(authored);
 	self.restore_library_refs(&refs);
+	self.restore_cast_refs(parked, true);
 
 	self.rebuild_reference_plans();
 
@@ -409,6 +413,7 @@ fn bool AppState.reload_pack(&self, String file)
 		: read_pack(mem, file, plans: self.reference_plans);
 	if (catch fresh) return false;
 
+	LibraryRefs[] parked = self.remember_cast_refs(which);
 	if (self.animating && self.current_ref.pack == which) self.stop_animation();
 	self.packs[(usz)which].free(mem);
 	self.packs[(usz)which] = fresh;
@@ -423,6 +428,7 @@ fn bool AppState.reload_pack(&self, String file)
 	self.rebuild_reference_plans();
 	self.plan_targets_stale = true;
 	if (affected) self.restore_library_refs(&refs);
+	self.restore_cast_refs(parked, false);
 	return true;
 }
 

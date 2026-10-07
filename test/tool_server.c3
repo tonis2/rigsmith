@@ -34,7 +34,12 @@ fn mcp::Server serve_table(ToolTable* table, AppState* app)
 	mcp::Server server = mcp::new_server({ .name = "crig", .version = "0.1.0" });
 	for (usz i = 0; i < table.tools_len; i++)
 	{
-		server.add_tool(table.tools[i]);
+		// As `install_tools` hands them over, routed — but on the schema as it was,
+		// so a fixture leaves nothing allocated behind it.
+		ToolDef routed = table.tools[i];
+		routed.handler = &routed_tool;
+		routed.user_data = &table.tools[i];
+		server.add_tool(routed);
 	}
 	server.add_resource({
 		.uri = API_DOCS_URI,

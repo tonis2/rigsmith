@@ -69,17 +69,17 @@ fn Matrix4f ProjectTransform.matrix(self)
 	return matrix::IDENTITY4{float}.translate(self.location).mul(self.orientation().to_matrix());
 }
 
-fn Matrix4f AppState.model_view_projection(&self, OrbitCamera* camera, float aspect)
+fn Matrix4f Character.model_view_projection(&self, OrbitCamera* camera, float aspect)
 {
 	return camera.view_projection(aspect).mul(self.doc.model_transform.matrix());
 }
 
-fn Vec3 AppState.model_eye(&self, OrbitCamera* camera)
+fn Vec3 Character.model_eye(&self, OrbitCamera* camera)
 {
 	return self.doc.model_transform.inverse_point(camera.eye());
 }
 
-fn Vec3 AppState.model_direction(&self, Vec3 world_direction)
+fn Vec3 Character.model_direction(&self, Vec3 world_direction)
 {
 	return self.doc.model_transform.inverse_direction(world_direction);
 }

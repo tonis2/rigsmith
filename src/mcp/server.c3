@@ -588,6 +588,8 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	// Last: the cast, and the tools that are about more than one character.
+	add_cast_tools(&server, app);
 	return server;
 }
 
@@ -909,7 +911,10 @@ fn String scene_json(AppState* app)
 	{
 		out.append_string("null");
 	}
-	out.append_string(`}}`);
+	// Every loaded character, the one all of the above is about among them.
+	out.append_string(`},`);
+	append_cast_json(&out, app);
+	out.append_char('}');
 
 	return out.copy_str(mem);
 }

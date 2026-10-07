@@ -488,9 +488,12 @@ fn int run_loop(
 		long elapsed_ns = (long)since_start.to_now();
 		runtime.tick((double)elapsed_ns / 1_000_000.0, poll.input);
 
-		// File > Open model. Serviced between frames because it replaces the arrays
-		// the picker and the scene are built from.
+		// A model opened as a new scene (a recent row, an asset), a model
+		// imported into this one, a scene. Serviced between frames because
+		// each replaces the arrays the picker and the scene are built from.
 		if (app.pending_open.len > 0) service_open(&app);
+		if (app.pending_add.len > 0) app.service_pending_add();
+		if (app.pending_scene.len > 0) app.service_pending_scene();
 
 		// A compare on all but the handful of frames where the display's density
 		// actually changed under the window. `ui/ui_scale.c3` has the two cases
@@ -558,7 +561,11 @@ fn void service_open(AppState* self) @local
 		return;
 	}
 
+	// Open replaces the scene, not one character in it: a new one, with this
+	// model the only character and no scene file until it is saved as one.
+	self.drop_other_characters();
 	self.load_mesh(loaded, path);
+	self.set_scene_path("");
 	// A model that loaded is a project whether or not the GPU takes it: the
 	// document is real either way, and the recent list is how it is reached again.
 	self.remember_project(path);

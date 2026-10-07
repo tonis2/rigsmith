@@ -38,17 +38,18 @@ import std::sort;
 <*
  Which of the things a glTF file can hold an entry stands for.
 
- **Only the three the browser can act on.** A file also holds meshes and
- materials, and both were indexed here once: they came back as cells that could
- be looked at and not clicked, under headings a person had to learn were dead.
- Neither is a thing crig can do anything with while it only rigs and animates — a
- body arrives through File > Open, and the reader does not keep a material's name
- at all — so a heading for either is an offer the application cannot honour. The
- cases go with them; the day crig builds a scene, adding one back is a case here,
- a case in `label`, and a loop in `read_file`.
+ **Only the kinds the browser can act on.** A file also holds materials, and they
+ were indexed here once: cells that could be looked at and not clicked, under a
+ heading a person had to learn was dead. Meshes were the same until a scene could
+ hold more than one character; now a model is a thing to add to it, so it is a
+ kind again — one entry per file that draws a body, not one per mesh, since a
+ character is what the click brings in.
+
+ First, so the shelf of things to add sits above the things to put on them.
 *>
 enum AssetKind : char
 {
+	MODEL,
 	SKIN,
 	JOINTS,
 	ANIMATION,
@@ -72,6 +73,7 @@ fn String AssetKind.label(self)
 {
 	switch (self)
 	{
+		case MODEL: return "Models";
 		case SKIN: return "Body plans";
 		case JOINTS: return "Skeletons";
 		case ANIMATION: return "Animations";
@@ -106,8 +108,9 @@ struct AssetEntry
 	// file carries the same one.
 	String tags;
 
-	uint joints;    // SKIN, JOINTS
+	uint joints;    // SKIN, JOINTS; a MODEL's own skin, 0 for an unrigged body
 	float duration; // ANIMATION, in seconds
+	uint vertices;  // MODEL
 
 	// Whether this entry came from the loaded model's own file. Set by the app, not
 	// read from disk — see `AppState.mark_current_entries`, refreshed after every
@@ -291,6 +294,41 @@ fn void read_file(Allocator allocator, AssetEntryList* found, String file, int l
 	defer if (plan.len > 0) alloc::free(allocator, plan.ptr);
 	defer if (tags.len > 0) alloc::free(allocator, tags.ptr);
 
+	// The body, once per file. A library pack draws one too — a stand-in, so its
+	// clips have something to play on — and that one is not a character. It is
+	// told apart by shape, the one thing a copy of the file cannot inherit wrong:
+	// the pack writer hangs its body beside the skeleton unskinned, and a
+	// character's body is the thing its skin binds.
+	bool draws;
+	bool skinned;
+	uint vertices;
+	foreach (node : stream.gltf.nodes)
+	{
+		if (node.mesh < 0 || node.mesh >= stream.gltf.meshes.len()) continue;
+		draws = true;
+		if (node.skin >= 0) skinned = true;
+		foreach (primitive : stream.gltf.meshes[node.mesh].primitives)
+		{
+			sz? at = primitive.attributes.get("POSITION");
+			if (try at && at < stream.gltf.accessors.len()) vertices += stream.gltf.accessors[at].count;
+		}
+	}
+	bool stand_in = stream.gltf.skins.len() > 0 && !skinned;
+	if (draws && !stand_in)
+	{
+		found.push({
+			.kind = MODEL,
+			.name = stem.copy(allocator),
+			.file = file.copy(allocator),
+			.index = 0,
+			.plan = plan.len > 0 ? plan.copy(allocator) : "",
+			.tags = tags.len > 0 ? tags.copy(allocator) : "",
+			.library = library,
+			.joints = stream.gltf.skins.len() > 0 ? (uint)stream.gltf.skins[0].joints.len() : 0,
+			.vertices = vertices,
+		});
+	}
+
 	foreach (usz i, skin : stream.gltf.skins)
 	{
 		found.push({
@@ -345,9 +383,8 @@ fn void read_file(Allocator allocator, AssetEntryList* found, String file, int l
 		});
 	}
 
-	// The file's meshes and materials are deliberately not entries. See the note
-	// on `AssetKind`: a cell for either could only be looked at, and the heading
-	// over the column would be an offer crig cannot honour.
+	// The file's materials are deliberately not entries, and its meshes are one
+	// MODEL entry above rather than one each. See the note on `AssetKind`.
 }
 
 // The `library` an entry carries when it is the loaded model's own, indexed so the

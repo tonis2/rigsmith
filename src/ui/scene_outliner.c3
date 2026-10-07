@@ -2,8 +2,10 @@
  The spatial contents of crig's current document.
 
  The source importer still flattens geometry into one `TriMesh`, so this is the
- honest logical hierarchy: one model, one mesh, one skeleton, and its joints.
- Animations belong to their existing views and are deliberately absent here.
+ honest logical hierarchy: a model per loaded character, and under the one being
+ edited its mesh, its skeleton and its joints. The others are a row each — a
+ click makes one the focus, and then it unfolds. Animations belong to their
+ existing views and are deliberately absent here.
 *>
 module crig;
 
@@ -43,6 +45,9 @@ enum SceneItemKind : int
 struct SceneOutlinerItem
 {
 	SceneItemKind kind;
+	// Which character the row is about, by its position in the cast. Every row
+	// under the focus carries the focus's.
+	usz character;
 	uint dot_id;
 	usz depth;
 	bool expandable;
@@ -69,40 +74,62 @@ fn void AppState.toggle_outliner_joint(&self, uint id)
 fn SceneOutlinerItem[] scene_outliner_items(AppState* app) @private
 {
 	usz dots = (usz)app.doc.dots.len();
-	SceneOutlinerItem[] items = alloc::new_array(mem, SceneOutlinerItem, (sz)dots + 4);
+	usz cast = app.character_count();
+	SceneOutlinerItem[] items = alloc::new_array(mem, SceneOutlinerItem, (sz)(dots + 4 + cast));
 	usz count = 0;
-	bool has_model = app.has_mesh() || dots > 0;
+	bool has_model = app.has_mesh() || dots > 0 || cast > 1;
 
 	items[count++] = {
 		.kind = SCENE_ITEM,
+		.character = app.active,
 		.depth = 0,
 		.expandable = has_model,
 		.expanded = !app.outliner_scene_collapsed,
 	};
 	if (!has_model || app.outliner_scene_collapsed) return items[:count];
 
+	// The characters before the focus, then the focus unfolded, then the rest —
+	// in cast order, so a row stays where it is when another is clicked.
+	for (usz i = 0; i < app.active && i < cast; i++)
+	{
+		items[count++] = { .kind = MODEL_ITEM, .character = i, .depth = 1 };
+	}
+	count = add_outliner_focus(app, items, count);
+	for (usz i = app.active + 1; i < cast; i++)
+	{
+		items[count++] = { .kind = MODEL_ITEM, .character = i, .depth = 1 };
+	}
+	return items[:count];
+}
+
+// The focus's model row and, when it is open, its mesh, skeleton and joints.
+fn usz add_outliner_focus(AppState* app, SceneOutlinerItem[] items, usz count) @private
+{
+	usz dots = (usz)app.doc.dots.len();
 	items[count++] = {
 		.kind = MODEL_ITEM,
+		.character = app.active,
 		.depth = 1,
 		.expandable = app.has_mesh() || dots > 0,
 		.expanded = !app.outliner_model_collapsed,
 	};
-	if (app.outliner_model_collapsed) return items[:count];
+	if (app.outliner_model_collapsed) return count;
 
-	if (app.has_mesh()) items[count++] = { .kind = MESH_ITEM, .depth = 2 };
-	if (dots == 0) return items[:count];
+	if (app.has_mesh()) items[count++] = { .kind = MESH_ITEM, .character = app.active, .depth = 2 };
+	if (dots == 0) return count;
 
 	items[count++] = {
 		.kind = SKELETON_ITEM,
+		.character = app.active,
 		.depth = 2,
 		.expandable = true,
 		.expanded = !app.outliner_skeleton_collapsed,
 	};
-	if (app.outliner_skeleton_collapsed) return items[:count];
+	if (app.outliner_skeleton_collapsed) return count;
 
 	uint[] dot_ids;
 	rig::Skeleton? built = build_skeleton(&app.doc, mem, &dot_ids);
-	if (catch built) return items[:count];
+	if (catch built) return count;
 	rig::Skeleton skeleton = built;
 	defer
 	{
@@ -119,7 +146,7 @@ fn SceneOutlinerItem[] scene_outliner_items(AppState* app) @private
 		if (parent < 0) count = add_outliner_joint(app, &skeleton, dot_ids, joint, 3, items, count);
 	}
 
-	return items[:count];
+	return count;
 }
 
 fn usz add_outliner_joint(AppState* app, rig::Skeleton* skeleton, uint[] dot_ids, usz joint, usz depth,
@@ -135,6 +162,7 @@ fn usz add_outliner_joint(AppState* app, rig::Skeleton* skeleton, uint[] dot_ids
 	bool expanded = has_child && !app.outliner_joint_collapsed(dot_ids[joint]);
 	items[count++] = {
 		.kind = JOINT_ITEM,
+		.character = app.active,
 		.dot_id = dot_ids[joint],
 		.depth = depth,
 		.expandable = has_child,
@@ -171,6 +199,7 @@ fn SceneSelection scene_selection_of(SceneItemKind kind) @private
 
 fn bool scene_item_selected(AppState* app, SceneOutlinerItem item) @private
 {
+	if (item.character != app.active) return false;
 	if (item.kind == JOINT_ITEM) return app.selected == item.dot_id;
 	if (app.selected != 0) return false;
 	return app.scene_selection == scene_selection_of(item.kind);
@@ -194,6 +223,12 @@ fn ushort scene_item_icon(AppState* app, SceneOutlinerItem item) @private
 *>
 fn TreeToggle scene_item_eye(AppState* app, SceneOutlinerItem item) @private
 {
+	// A waiting character's eye is its own: it leaves the viewport, and the shared
+	// clock stops moving it.
+	if (item.kind == MODEL_ITEM && item.character != app.active)
+	{
+		return { .icon = OUTLINER_ICON_EYE, .on = !app.character(item.character).hidden, .shown = true };
+	}
 	switch (item.kind)
 	{
 		case MODEL_ITEM: return { .icon = OUTLINER_ICON_EYE, .on = app.show_mesh || app.show_rig, .shown = true };
@@ -275,6 +310,13 @@ fn void scene_outliner_chosen(Ui* ui, usz row) @private
 	AppState* app = ui.inherit(AppState)!!;
 	SceneOutlinerItem item;
 	if (!scene_outliner_item_at(app, row, &item)) return;
+	if (item.character != app.active)
+	{
+		app.focus_character(item.character);
+		app.select_scene(MODEL);
+		app.refresh_ui();
+		return;
+	}
 
 	if (item.kind == JOINT_ITEM)
 	{
@@ -298,6 +340,7 @@ fn void scene_outliner_context(Ui* ui, usz row, Vec2 at) @private
 	AppState* app = ui.inherit(AppState)!!;
 	SceneOutlinerItem item;
 	if (!scene_outliner_item_at(app, row, &item)) return;
+	if (item.character != app.active) app.focus_character(item.character);
 
 	if (item.kind == JOINT_ITEM)
 	{
@@ -320,6 +363,13 @@ fn void scene_outliner_eye(Ui* ui, usz row, usz column) @private
 	AppState* app = ui.inherit(AppState)!!;
 	SceneOutlinerItem item;
 	if (!scene_outliner_item_at(app, row, &item)) return;
+	if (item.kind == MODEL_ITEM && item.character != app.active)
+	{
+		Character* c = app.character(item.character);
+		c.hidden = !c.hidden;
+		app.refresh_ui();
+		return;
+	}
 
 	switch (item.kind)
 	{
@@ -339,6 +389,7 @@ fn void scene_outliner_toggled(Ui* ui, usz row) @private
 	AppState* app = ui.inherit(AppState)!!;
 	SceneOutlinerItem item;
 	if (!scene_outliner_item_at(app, row, &item) || !item.expandable) return;
+	if (item.character != app.active) return;
 
 	switch (item.kind)
 	{
@@ -354,6 +405,9 @@ fn void scene_outliner_toggled(Ui* ui, usz row) @private
 
 struct SceneOutlinerSnapshot
 {
+	uint focus_generation;
+	// Which waiting characters are hidden, one bit each, beside how many there are.
+	ulong hidden_mask;
 	uint geometry_generation;
 	uint revision;
 	char* source_ptr;
@@ -384,7 +438,14 @@ fn ulong scene_selection_sum(AppState* app) @private
 
 fn SceneOutlinerSnapshot scene_outliner_snapshot(AppState* app) @private
 {
+	ulong hidden;
+	for (usz i = 0; i < app.character_count() && i < 64; i++)
+	{
+		if (app.character(i).hidden) hidden |= 1ul << i;
+	}
 	return {
+		.focus_generation = app.focus_generation,
+		.hidden_mask = hidden,
 		.geometry_generation = app.geometry_generation,
 		.revision = app.undo_stack.revision,
 		.source_ptr = app.source_path.ptr,
@@ -407,7 +468,9 @@ fn SceneOutlinerSnapshot scene_outliner_snapshot(AppState* app) @private
 
 fn bool SceneOutlinerSnapshot.differs(self, SceneOutlinerSnapshot other)
 {
-	return self.geometry_generation != other.geometry_generation
+	return self.focus_generation != other.focus_generation
+		|| self.hidden_mask != other.hidden_mask
+		|| self.geometry_generation != other.geometry_generation
 		|| self.revision != other.revision
 		|| self.source_ptr != other.source_ptr
 		|| self.source_len != other.source_len
@@ -477,7 +540,9 @@ fn Element* SceneOutliner.build(&self, Element* elem) @dynamic
 		{
 			case SCENE_ITEM: label = "Scene".copy(mem);
 			case MODEL_ITEM:
-				label = (app.source_path.len > 0 ? base_name(app.source_path) : "Model").copy(mem);
+				Character* c = app.character(item.character);
+				label = (c.source_path.len > 0 ? base_name(c.source_path) : "Model").copy(mem);
+				if (item.character != app.active) trailing = string::format(mem, "%d joints", c.doc.dots.len());
 			case MESH_ITEM:
 				label = "Mesh".copy(mem);
 				trailing = string::format(mem, "%d verts", app.geometry.positions.len);

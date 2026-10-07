@@ -396,6 +396,12 @@ fn String asset_detail(AssetEntry* entry)
 			return string::tformat("%d joints", entry.joints);
 		case ANIMATION:
 			return string::tformat("%.1fs", entry.duration);
+		case MODEL:
+			String size = entry.vertices >= 10000
+				? string::tformat("%dk verts", entry.vertices / 1000)
+				: string::tformat("%d verts", entry.vertices);
+			if (entry.joints == 0) return string::tformat("unrigged · %s", size);
+			return string::tformat("%d joints · %s", entry.joints, size);
 		default:
 			return "";
 	}
@@ -474,7 +480,7 @@ fn void AssetCell.paint(&self, Element* elem, Painter* painter) @dynamic
 	// Animations only. A body plan is applied rather than accumulated — there is
 	// one skeleton — so a bind mark on one would be offering something that does
 	// not exist.
-	if (entry.kind == AssetKind.ANIMATION)
+	if (entry.kind == AssetKind.ANIMATION || entry.kind == AssetKind.MODEL)
 	{
 		bool bound = app.is_bound_entry(entry);
 		if (bound || self.hovered)

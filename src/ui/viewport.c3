@@ -300,7 +300,7 @@ fn void Viewport.activate_camera(&self, Element* elem)
 // screen when it shows, and it is an instruction rather than a readout.
 const float PROMPT_TEXT_SIZE = 15.0;
 
-const String PROMPT_NO_MESH @private = "no model loaded · File > Open model  (Ctrl+O)";
+const String PROMPT_NO_MESH @private = "empty scene · File > Import .glb  (Ctrl+I)";
 const String PROMPT_NO_RIG @private = "no skeleton · Rig > Apply body plan";
 
 <*
@@ -464,6 +464,9 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 		self.paint_transform_gizmo(elem, painter);
 		return;
 	}
+
+	// Under everything of the focus's: the others are there to be read against.
+	self.paint_cast(elem, painter, camera);
 
 	RigDocument* doc = &app.doc;
 	if (doc.dots.len() == 0)
@@ -1210,7 +1213,7 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 *>
 fn String placement_refused(AppState* app) @private
 {
-	if (!app.has_mesh()) return "no model loaded — File > Open model opens one";
+	if (!app.has_mesh()) return "empty scene — File > Import .glb brings a character in";
 	if (!app.show_rig) return "the rig is hidden — View > Skeleton brings it back";
 	if (app.animating) return "stop the clip to place joints: the body on screen is posed";
 	if (app.pose_edit_active) return "save or discard the animation pose before editing the rig";
@@ -1317,6 +1320,18 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 
 					uint hit = self.pick_dot(elem, event.pos);
+
+					// Another character's joint or body under the pointer, in front of
+					// this one's: the click is about that character, so it becomes the
+					// one being edited and the press goes no further.
+					if (hit == 0 && !app.sketching && !app.brushing && !app.lassoing && !app.areaing
+						&& !input.shift_down() && self.pick_cast(elem, event.pos))
+					{
+						self.maybe_place = false;
+						app.refresh_ui();
+						elem.request_paint();
+						return true;
+					}
 
 					// Shift picks out a *set* to act on rather than one dot to
 					// work with, so it selects and stops there — no drag, no pin.

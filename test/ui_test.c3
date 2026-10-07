@@ -856,12 +856,12 @@ fn void an_empty_app_opens_and_says_so() @test
 }
 
 <*
- The file chooser: File > Open model brings it up, the listing walks, and
+ The file chooser: File > Import .glb brings it up, the listing walks, and
  picking a model asks for it rather than loading it.
 
  The last of those is the one that is easy to get wrong and impossible to see. A
  model cannot be loaded from inside a frame — the mesh pass holds buffers the GPU
- may still be reading — so the dialog raises `pending_open` and main's loop, which
+ may still be reading — so the dialog raises `pending_add` and main's loop, which
  is between frames by definition, does the work. A version that loaded it here
  would pass every visible test and crash on a real machine under load.
 *>
@@ -886,10 +886,10 @@ fn void the_file_dialog_opens_and_walks() @test
 	}
 	fixture.click(file_title);
 
-	Vec2? open_item = fixture.center_of("Open model");
+	Vec2? open_item = fixture.center_of("Import .glb…");
 	if (catch open_item)
 	{
-		test::@check(false, "SKIPPED — the Open item is not in the dropdown");
+		test::@check(false, "SKIPPED — the Import item is not in the dropdown");
 		return;
 	}
 	fixture.click(open_item);
@@ -900,8 +900,8 @@ fn void the_file_dialog_opens_and_walks() @test
 		test::@check(false, "SKIPPED — there is no file dialog in the tree");
 		return;
 	}
-	test::@check(dialog.open, "File > Open model brings up the chooser");
-	test::@check(dialog.title == "Open model", "titled for the question it is asking");
+	test::@check(dialog.open, "File > Import .glb brings up the chooser");
+	test::@check(dialog.title == "Import .glb into the scene", "titled for the question it is asking");
 
 	Element*? browser_elem = fixture.ui.find_id(crig::FILE_BROWSER_ID);
 	if (catch browser_elem)
@@ -959,15 +959,15 @@ fn void the_file_dialog_opens_and_walks() @test
 	fixture.browser_click(browser_elem, model);
 	fixture.ui.flush();
 
-	test::@check(fixture.app.pending_open.ends_with("humanoid.glb"), "choosing a model asks main to load it");
+	test::@check(fixture.app.pending_add.ends_with("humanoid.glb"), "choosing a model asks main to import it");
 	test::@check(!fixture.app.has_mesh() || fixture.app.geometry.positions.len == 8,
 		"and does not load it here: the mesh pass has to be rebuilt between frames");
 	test::@check(!dialog.open, "and the chooser closes behind it");
 
 	// Cleared, or the fixture's next check would inherit a load request that
 	// nothing in this test binary is going to service.
-	String taken = fixture.app.take_pending_open();
-	taken.free(mem);
+	alloc::free(mem, fixture.app.pending_add.ptr);
+	fixture.app.pending_add = "";
 }
 
 // A model that is genuinely on disk, for the row that has to be openable.
@@ -5225,7 +5225,7 @@ fn void export_button_writes_a_glb() @test
 	}
 	fixture.click(file_title);
 
-	Vec2? export_item = fixture.center_of("Export .glb");
+	Vec2? export_item = fixture.center_of("Export .glb…");
 	if (catch export_item)
 	{
 		test::@check(false, "SKIPPED — the Export item is not in the dropdown");
@@ -5262,7 +5262,7 @@ fn void export_button_writes_a_glb() @test
 	fixture.reset();
 	fixture.app.point_at("build/ui_test_cube.glb");
 	fixture.click(file_title);
-	Vec2? again = fixture.center_of("Export .glb");
+	Vec2? again = fixture.center_of("Export .glb…");
 	if (catch again)
 	{
 		test::@check(false, "SKIPPED — the Export item did not come back");

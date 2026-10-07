@@ -186,255 +186,29 @@ enum AnimPreviewLoop
 
 struct AppState
 {
-	Picker picker;
-	// Static topology shared by lazy rig-overlay rays and exact regional
-	// collision refits. It borrows the picker's BVH and is rebuilt with the skin
-	// binding, never per animation frame — see `core/posed_occlusion.c3`.
-	DeformedCollisionSurface deformed_surface;
-	// Which of that surface's broad-phase pairs a self-collision check may test,
-	// built beside it from the same binding — see `core/collision_policy.c3`.
-	CollisionPolicy collision_policy;
+	// The character being edited. Its fields read as the app's own — `self.doc`,
+	// `app.editing` — and every other loaded character waits in `cast`, see
+	// `src/app/cast.c3`. First, so an `AppState*` is a `Character*`.
+	inline Character focus;
+	// Every other loaded character, by value; `cast[active]` is a hollow slot
+	// where the focus stands. Empty while only one character has ever been
+	// loaded — see `character_count`.
+	List{Character} cast;
+	usz active;
+	// Moves on every change of focus, and on a character added or removed, for
+	// the panels that redraw when the character they show is someone else.
+	uint focus_generation;
+	// The shared clock: the instant every loaded character is shown at, and
+	// whether it is running. Read off the focus's clip — see `sync_cast`.
+	float scene_time;
+	bool scene_running;
+
 	OrbitCamera camera;
+
 	// `camera` belongs to this viewport while it is active; other visible
 	// viewports keep their camera on their widget.
 	Viewport* active_viewport;
 	uint camera_reset_generation;
-	RigDocument doc;
-
-	<*
-	 The mesh being rigged, and where it came from.
-
-	 Both may be empty, and that is a state crig runs in: it opens with no model
-	 until one is loaded — see `AppState.has_mesh`. An empty mesh leaves the
-	 picker, the voxels and the shells empty too, and every one of them answers
-	 "nothing there" rather than faulting.
-
-	 Ownership is `owns_geometry`, not a property of the type: the mesh handed to
-	 `new_app` is borrowed (it is `main`'s, or a test's static array), while one
-	 `load_mesh` read off disk belongs to this struct and is freed when it is
-	 replaced. The picker's BVH points into whichever array is current, so the
-	 two are always replaced together.
-
-	 **The path has a flag of its own**, because it outlives the arrangement that
-	 gave it: `retarget_source` moves the document onto a file crig wrote — the
-	 copy a save made, or the file an export produced — and that path is allocated
-	 whether or not the geometry beneath it ever was.
-
-	 The path is what `export_rig` writes beside and what **Save** writes into. It
-	 is empty in a test that built its mesh in memory, and both say so rather than
-	 guessing a directory.
-	*>
-	rig::TriMesh geometry;
-	<*
-	 Bumped whenever `geometry` is replaced by a different mesh.
-
-	 What a renderer that does not own the arrays watches. `MeshPass` never needed
-	 one — it is torn down and rebuilt by the same two calls that replace the mesh
-	 — but the plugin's renderer is three's, which crig reaches through a handle
-	 and cannot rebuild from the inside. Comparing pointers instead would be wrong
-	 the moment an allocator reused an address, which is exactly what freeing one
-	 mesh and reading another makes likely.
-	*>
-	uint geometry_generation;
-	String source_path;
-	bool owns_geometry;
-	bool owns_path;
-
-	<*
-	 Whether `source_path` is a file crig may write over.
-
-	 False for a model somebody else made — which is every model on its first
-	 open, and the whole of the protection: **Save** copies it to
-	 `<stem>_copy.glb` and works there instead, so the file the user opened is the
-	 file the user still has. See `AppState.save_session`.
-
-	 True once the document is pointed at a file crig produced: the copy a save
-	 made, the file an export wrote, or a model reopened that carries crig's own
-	 document in its `extras` — that last one is what makes the second save of a
-	 session write the same file as the first rather than a copy of a copy.
-	*>
-	bool saves_in_place;
-	bool source_has_model_transform;
-
-	<*
-	 The mesh was resized in crig (Scale model by…) and the file at `source_path`
-	 still holds it at the old size. Save writes the vertex positions too while
-	 this is up, and lowers it once they are in the file the document follows.
-	*>
-	bool mesh_resized;
-
-	<*
-	 The mesh's own inside, for measuring distance through it (M3).
-
-	 Built once beside the picker, because it depends on the mesh and nothing
-	 else — every rebind reads it and none of them rebuild it. A mesh with no
-	 inside to find leaves this unusable, and every binder falls back to
-	 straight lines rather than refusing to rig it.
-	*>
-	rig::MeshVoxels voxels;
-
-	<*
-	 The mesh's separate pieces, for the binder's prop rule.
-
-	 Built once beside the voxels and for the same reason: a shell is a property
-	 of the mesh, so no edit to the rig can change it. What the rig decides is
-	 only which bone each piece rides — `doc.attachments`, resolved to joint
-	 indices by `attachment_joints` at every bind.
-	*>
-	rig::MeshShells shells;
-
-	<*
-	 Whether `picker`, `voxels` and `shells` belong to a longer-lived geometry
-	 cache rather than to this editor state.
-
-	 Normal application states own all three.  Headless checks over the same
-	 static mesh can borrow one immutable cache for the test process, while the
-	 document, history and UI remain fresh for every check.  A mesh replacement
-	 drops the borrow and owns the structures it builds for the new mesh.
-	*>
-	bool borrows_geometry_cache;
-
-	<*
-	 Which points of the mesh touch which, for the ops that average over a
-	 neighbourhood.
-
-	 Not built beside the shells and the voxels, unlike everything else derived
-	 from the mesh: nothing on the binder's path wants it, and only Smooth
-	 boundaries ever asks — so a session that never runs that op never pays for
-	 the sort. `AppState.adjacency_for` is the door, and the two mesh-replace
-	 paths free it beside the shells.
-	*>
-	rig::MeshAdjacency adjacency;
-
-	<*
-	 The mesh's UV islands, for the Area tool's UV islands part. Read from the
-	 source file on first ask, like `adjacency`, and only kept while
-	 `uv_islands_geometry` is the geometry it was read for — see `islands_for`.
-	 Empty when the file has no texture coordinates or no longer fits the mesh.
-	*>
-	rig::MeshShells uv_islands;
-	uint uv_islands_geometry;
-	bool uv_islands_read;
-
-	<*
-	 Which joint the binder decided each piece rides, or -1 for a piece it left
-	 to the falloff. One entry per shell, owned.
-
-	 An output of the bind rather than a property of the mesh: `rig::rigid_shells`
-	 makes the choice for every piece the flood never reached and for every piece
-	 that turns out to be one bone's outright, and until this array existed it
-	 made it inside `bind_dense` and threw it away. What it buys is that
-	 `get_shells` can say *why* a piece is rigid without binding again to find
-	 out — and so could a Shells pane, which read them until it went for now.
-
-	 A user's own pin lands here too, since `bind_geodesic` reports what it obeyed
-	 as readily as what it decided — so a reader that wants the automatic half
-	 asks `doc.attachment_of` first.
-	*>
-	int[] shell_riders;
-
-	<*
-	 That the rig has moved since `shell_riders` was filled, so the indices in it
-	 name the wrong bones.
-
-	 Raised by `mark_rig_stale` and lowered by the bind. Joint indices are
-	 breadth-first output: adding a dot, deleting one or re-rooting renumbers
-	 every joint after it, and an index read across such an edit resolves to a
-	 real bone that is not the one the binder chose. Nothing may show a rider
-	 while this is up — see `AppState.shell_rider`.
-	*>
-	bool riders_stale;
-
-	<*
-	 Bumped by every `mark_rig_stale`, so a watcher can tell a rig that is still
-	 being edited from one that has stopped.
-
-	 A debounce is what wants it — the Joint card's snapshot reads it, and the
-	 Shells pane's riders refresh did: `riders_stale` says only that a refresh
-	 is owed, and a stream of edits leaves it up the whole time. This moving is
-	 what restarts the wait.
-	*>
-	uint rig_generation;
-
-	uint selected; // dot id, 0 = nothing selected
-	SceneSelection scene_selection;
-
-	// Disclosure state shared by every Scene pane. Branches start open; joint
-	// ids appear here only after their disclosure mark is closed.
-	bool outliner_scene_collapsed;
-	bool outliner_model_collapsed;
-	bool outliner_skeleton_collapsed;
-	DotIdList outliner_collapsed_joints;
-
-	<*
-	 The rest of the selection, when more than one dot is selected.
-
-	 `selected` stays the anchor and this holds the others, rather than one list
-	 with a designated first entry. Nearly everything that acts on "the
-	 selection" acts on exactly one dot — a pin hands vertices to it, the
-	 falloff view is a picture of it, a drag moves it — and a flat list would
-	 leave each of those choosing an element, and choosing it differently.
-	 Deleting and bonding are the operations that genuinely take all of them.
-
-	 The order matters to one of them: `connect_selection` chains the dots in the
-	 order they were shift-clicked, anchor first, so this is a list rather than a
-	 set.
-
-	 Two invariants, both kept by `forget_stale_ids`: this never holds
-	 `selected`, and it is empty whenever `selected` is 0.
-	*>
-	DotIdList also_selected;
-
-	<*
-	 The move the pointer is in the middle of, if any — which dot, where it
-	 started, and the axis it has been locked to. See `core/dragging.c3`.
-
-	 Here rather than on the viewport because the keys that steer a move arrive
-	 at the tree's root: capturing the pointer does not move keyboard focus, so
-	 the widget holding the dot is not the one that hears X pressed.
-	*>
-	DragState drag;
-
-	<*
-	 The other selected dots a rest move is carrying, and where each began.
-
-	 Filled by `begin_drag` when more than one dot is selected and the grabbed one
-	 is among them; empty for a lone drag and for every pose or turn, which move one
-	 joint only. `drag.dot` leads and these follow it — see `follow_drag_mates`. Held
-	 here beside `drag` for the same reason `drag` is on the AppState at all: the
-	 keys that steer and end a move arrive at the tree's root, and one copy of the
-	 state lets a headless test assert what the whole group did.
-	*>
-	DragMateList drag_mates;
-
-	<*
-	 The Area tool (W): the selected joint's pending part of the mesh, shown on
-	 the mesh until Apply writes it as pins or Esc drops it.
-
-	 `area_mask` is one flag per vertex, empty while nothing is picked;
-	 `area_twin_mask` is the same part on `area_twin`, the joint across the
-	 plane, empty when there is none or mirroring is off. Both are what Apply
-	 writes, so the picture and the result cannot disagree. `area_base` is the
-	 part a grow or shrink drag started from. `area_solo` is "Also mirror" off,
-	 so the zero value mirrors.
-	*>
-	bool areaing;
-	AreaPart area_part;
-	AreaPart area_origin; // the ladder part the pending one started as, for the card's dropdown
-	uint area_dot;
-	uint area_twin;
-	sz area_seed;
-	bool[] area_mask;
-	bool[] area_twin_mask;
-	bool[] area_base;
-	float area_soft; // fraction of the joint's own bone
-	bool area_solo;
-	bool area_by_card; // opened by showing the Weights card, so hiding it closes it
-	bool area_islands; // the part is whole UV islands, and grows, shrinks and clicks by island
-	int area_hover_island; // the island under the pointer while picking islands, or -1
-	bool area_paint_adds; // an island paint drag puts islands in, rather than taking them out
-	TintMode area_tint;
-	uint area_generation; // moves whenever the pending part does, for the card to follow
 
 	<*
 	 Whether the weight brush is open (shift+W).
@@ -512,41 +286,6 @@ struct AppState
 	bool lasso_xray;
 	bool lasso_adds;
 
-	<*
-	 The current rig's bind with no hand corrections on it, kept so a stroke can
-	 redraw the view without rebinding.
-
-	 A bind is the expensive thing in crig and a correction is the cheap one, so
-	 caching the half that a stroke does not change is what lets the falloff
-	 repaint on every mouse move. Dropped by `mark_rig_stale` — see
-	 `painted_bind`, which is the only thing that fills it.
-	*>
-	float[] base_bind;
-
-	<*
-	 How far the stroke in flight has already carried each vertex, 0 to 1.
-
-	 What makes the brush depend on where the circle went rather than on how long
-	 it was held there — see `begin_stroke`, which is the only thing that clears
-	 it, and `stroke_pull`, which is the only thing that reads it.
-	*>
-	float[] stroke_seen;
-
-	<*
-	 Whether a stroke is between its press and its release, and whether the
-	 posed surface fell behind the binding while one was.
-
-	 A stroke over a parked clip reskins the mesh on every move, and the
-	 accelerator over it — the mirrored tree, the joint tables, the collision
-	 policy — costs more to rebuild than the rest of the frame put together.
-	 So `rebind_skin` leaves it standing while the button is down and raises
-	 `surface_stale`; `end_stroke` is where the rebuild is paid, once.
-	*>
-	bool stroke_open;
-	bool surface_stale;
-
-	UndoStack undo_stack;
-
 	// Shared by gizmos, shortcuts and numeric fields. The presentation layers
 	// only feed deltas into this transaction; it owns preview, cancel and undo.
 	TransformSpace transform_space;
@@ -571,21 +310,6 @@ struct AppState
 	 mid-drag. Nothing recomputes until the user has held still.
 	*>
 	TintMode tint_mode;
-	bool weights_stale;
-	float weights_due;
-	uint[] tints;
-	uint tint_generation;
-
-	<*
-	 How many vertices the falloff view's joint holds at least `BLEND_FLOOR` of,
-	 counted in the same pass that paints the ramp.
-
-	 How many vertices the falloff view's joint holds: the count `get_weights`
-	 reports over the wire, so the screen and the tool agree.
-
-	 Only meaningful while `tint_mode` is FALLOFF; stale otherwise.
-	*>
-	usz falloff_held;
 
 	<*
 	 What Z goes back to from Wireframe: the fill the user was looking at.
@@ -662,6 +386,7 @@ struct AppState
 	bool joint_info_collapsed;
 	bool align_info_collapsed;
 	bool weights_info_collapsed;
+
 	// The Pose tab's three sections and the layer form's three: folded states,
 	// remembered across runs with the rest (`ui_memory.c3`).
 	bool pose_info_collapsed;
@@ -670,106 +395,6 @@ struct AppState
 	bool layer_blend_collapsed;
 	bool layer_motion_collapsed;
 	bool layer_mask_collapsed;
-
-	<*
-	 The document's body plan re-fitted onto this mesh: where the plan wants each
-	 of its dots, as against where the dots actually are.
-
-	 A cache, and one that has to stay a cache: `fit_preset` searches the voxel
-	 grid around every dot it places, which is far too much to repeat per frame.
-	 Two things can move the answer and both are checked before it is read —
-	 `plan_fitted` records the plan tag it was built from, and `plan_targets_stale`
-	 covers the library arriving after the plan does, which is the order
-	 `main` loads them in. The mesh is not one of them: it is built once in
-	 `new_app` and borrowed for the life of the state.
-
-	 Both owned. Read through `plan_target`, never directly.
-	*>
-	FittedDot[] plan_targets;
-	String plan_fitted;
-	bool plan_targets_stale;
-
-	<*
-	 What a deformed mesh is made of, shared by every mode that deforms one.
-
-	 `skin` is the per-vertex influences the GPU skins with, rebound when the rig
-	 changes rather than every frame — the binder is the expensive part and the
-	 rig usually does not move while a mode runs. `pose_palette` is one matrix per
-	 joint and *is* refreshed every frame a clip plays; it is the cheap part,
-	 sized by joint count rather than by vertex count.
-
-	 Filled by the animation player or a transient timeline pose draft — see
-	 `skinned` in `pose_mode.c3`. The player hands ownership to the draft on the
-	 first edit. The
-	 renderer skins only while `pose_palette` is non-empty, so dropping it is what
-	 puts the body back at rest.
-	*>
-	bool skin_stale;
-	// The countdown `tick_skin` runs while a parked body waits on a rebind —
-	// `weights_due`'s twin, set by the same marks.
-	float skin_due;
-	gltf::SkinBinding skin;
-	<*
-	 How many joints the joint indices in `skin` name — the rig's joint count at
-	 the moment it was bound.
-
-	 Kept beside the binding because it cannot be recovered from one:
-	 `SkinBinding` holds four indices per vertex and the largest of them is the
-	 last joint anything is *weighted to*, which is not the same number as the
-	 last joint in the rig. `engine/scene.c3` sizes three's skin with it, and a
-	 skin one joint short is a palette the renderer refuses.
-	*>
-	uint skin_joints;
-	uint skin_generation;
-	Matrix4f[] pose_palette;
-	// Every replacement of `pose_palette` moves this stamp, and so does every
-	// candidate palette a collision check skins — see `next_pose_generation`.
-	// Posed occlusion and the collision refit use it to invalidate lazy
-	// node/vertex caches without walking either one.
-	uint pose_generation;
-
-	// The overlay's behind-the-mesh dimming, remembered per dot and per bone so a
-	// running clip does not cast a fresh ray through the deforming body for every
-	// one of them on every frame. Exact while the view is still; refreshed a
-	// rotating slice at a time while the clock runs — see `overlay_occluded`.
-	// `_ready` guards a zero-initialised state (a headless check) that never
-	// called `init`.
-	HashMap{uint, bool} occlusion_memo;
-	bool occlusion_memo_ready;
-	uint occlusion_phase;
-
-	// The pose the player built for the frame on screen. A panel that shows one
-	// joint's value reads it from here while a clip runs instead of sampling the
-	// whole clip a second time — grounding only shifts the root's height, so every
-	// other joint holds exactly what a fresh sample would give. `_live` is set the
-	// frames the clock is running and the buffer is sized to the rig; a paused,
-	// scrubbed or edited pose is sampled fresh.
-	rig::Pose player_pose;
-	bool player_pose_live;
-
-	// The skeleton and lookups the player builds from the document. Kept across
-	// frames while a clip runs and nothing edits the rig — `open_rig` is cheap but
-	// not free, and a clip that moves nothing but the clock has no reason to
-	// rebuild it. Held valid by `playback_rig_fresh`: any committed edit (the undo
-	// revision), any geometry mark (`rig_generation`) or any gesture in flight
-	// forces a rebuild, so a stale skeleton or a renamed joint can never be read.
-	RigView playback_rig;
-	bool playback_rig_built;
-	uint playback_rig_revision;
-	uint playback_rig_generation;
-
-	<*
-	 True for the length of a gesture that began with the skin already in
-	 contact. Nothing is blocked then — there is no clear fraction of a move to
-	 stop at, and the user is presumably moving *out* — and the report says so
-	 rather than the joint refusing to move at all.
-	*>
-	bool collision_suspended;
-
-	// What the latest checked write met, for the Advanced dialog, the tests
-	// and `get_scene`. Reset when a gesture begins. The pane says nothing of
-	// it by default; see `show_collision_contacts`.
-	CollisionBlock last_block;
 
 	<*
 	 How much of the check this mesh can afford at interactive rates — full,
@@ -783,89 +408,18 @@ struct AppState
 	// Seconds one checked write may take before the check is cut back; zero
 	// reads as `COLLISION_TIME_BUDGET`. A field so a test can set it.
 	float collision_budget;
+
 	// The bisection depth the Advanced dialog asked for; zero is the default.
 	usz collision_search_steps_override;
+
 	// Whether the view draws the contact that stopped the last gesture, as
 	// the two closest points joined, while that pose is on screen. Off by
 	// default: a stop is meant to be felt, not announced. The Advanced dialog
 	// turns it on for whoever wants to know which two regions met.
 	bool show_collision_contacts;
-
-	<*
-	 What the joints one pose gesture touches held when it began.
-
-	 Escape puts these back, and the release compares against them to record one
-	 edit per joint that actually moved. Fixed rather than allocated: a chain is
-	 bounded by the run above one joint, and a gesture that leaked would leak once
-	 per drag.
-
-	 By dot id, like everything else that outlives a single `RigView`.
-	*>
-	PosedJoint[POSE_SNAPSHOT] pose_before;
-	usz pose_before_count;
-	<*
-	 What the pinned limbs held when a lock-honoring gesture began.
-
-	 A pose gesture that honors position locks also turns each pinned limb's own
-	 chain to hold its foot in place; those joints are snapshotted here so escape
-	 restores them and the release banks the whole sit as one edit — the role
-	 `pose_before` plays for the grabbed chain, kept apart so the grabbed chain's
-	 fixed bound is not spent on pins. By dot id, like `pose_before`.
-	*>
-	PosedJoint[LOCK_SNAPSHOT] locked_before;
-	usz locked_before_count;
-	// The other selected joints a G is carrying, and where each began.
-	PoseMate[POSE_MATES] pose_mates;
-	usz pose_mate_count;
-	<*
-	 Every joint as the draft held it when a pose gesture began — the body solve
-	 (`pose_body`) may move any joint of the figure, the root's slide with them,
-	 so escape and the release compare and restore the lot rather than a fixed
-	 chain. Owned; freed when the gesture ends.
-	*>
-	PosedJoint[] gesture_before;
-	// Whether a gesture with the feet pinned or planted leaves the body where the
-	// pointer puts it rather than keeping its weight over them (`pose_body`). Off
-	// by default — balanced — so it is spelt as the exception.
-	bool balance_off;
-	<*
-	 Session-only IK anchors: joints whose posed world position the solver holds
-	 while another joint is moved. Locking the feet and pulling the hips is how the
-	 figure sits. Editor working memory, like `pose_edit_draft` below — never
-	 written to the model, cleared when a document is loaded. See `locks.c3`.
-	*>
-	PositionLock[] position_locks;
-	// Whether `position_locks` was last rebuilt from the editing clip's pins
-	// (`sync_clip_pins`), so closing the clip knows to drop them. See `clip_pins.c3`.
-	bool pins_from_clip;
-	PosedJoint[] pose_edit_draft;
-	// Look-at targets being moved, applied to the clip being edited like the pose
-	// draft; see `aim_edit.c3`. Owned, cleared with the pose draft.
-	AimDraft[] aim_draft;
-	// What a target drag began from, for Esc: whether the joint had a draft at the
-	// grab, and where the target was then (a fraction of rig height).
-	bool aim_drag_drafted;
-	Vec3 aim_drag_at;
-	<*
-	 What the look-at targets turned in the pose the last `gesture_pose` handed
-	 out: the joints (that build's indices), the authored rotation each held
-	 before the aims, and the aimed one the gesture solved from (`gesture_aimed`,
-	 parallel). `unaim_pose` reads them to take the aims back out of what the
-	 gesture wrote, and spends them. Owned; freed with the gesture.
-	*>
-	AimAppliedSet gesture_aim;
-	Quaternionf[] gesture_aimed;
-	// A turn on an aimed joint measures its sweep from the aimed rotation it began
-	// with, not the authored one the snapshot holds: the joint and that rotation.
-	uint turn_aimed_dot;
-	Quaternionf turn_aimed_was;
-	// Timeline-only state. A paused edited clip creates this on the first joint
-	// gesture; it deliberately does not touch the rest rig.
-	bool pose_edit_active;
-	bool pose_edit_pending;
-	EditStage stage;
 	bool auto_key;
 	bool anim_show_tracks;
+
 	// The sheet shows the selected joints' curves instead of key lanes, their
 	// position or rotation channel, and the curve view's vertical zoom and pan.
 	bool anim_show_curves;
@@ -874,51 +428,28 @@ struct AppState
 	float anim_graph_y_shift;
 	AnimTemplate anim_key_clipboard;
 	bool anim_key_clipboard_sparse;
-	// The layer of the edited clip that the Animations pane is working on, -1
-	// for the base keys. It belongs to `active_layer_ref`: pick another clip and
-	// the base is active again (see `AppState.active_layer_of`, layer_edit.c3).
-	sz active_layer;
-	AnimRef active_layer_ref;
-	// A borrowed view of the active keyed layer's keys dressed as a clip, for
-	// the key editors (`key_clip`). Never owned, never freed.
-	AnimTemplate layer_keys_view;
+
 	// The viewport's clipboard: a pose in rig names, separate from the saved
 	// keys above so copying one never discards the other. See pose_clipboard.c3.
 	AnimKeyframe anim_pose_clipboard;
-	// The pose library panel (pose_library.c3): the picked row, whether
-	// Apply writes only the selected joints, renaming the picked row, and the
-	// name being typed (owned).
-	usz pose_library_row;
 	bool pose_library_selected_only;
 	bool pose_library_renaming;
 	String pose_library_name;
+
 	// Sketching (sketch.c3): the tool, the stroke in flight (pixels), the ink or
 	// the eraser, and the marks drawn so far.
 	bool sketching;
 	bool sketch_active;
 	bool hide_annotations;
 	SketchInk sketch_ink;
+
 	// The eraser is on in place of an ink: a drag takes off the marks it passes.
 	bool sketch_erasing;
 	Vec2List sketch_points;
 	AnnotationList annotations;
 	uint annotation_serial;
-	// Whole saved-key columns selected in the dopesheet. Times are owned and
-	// scoped to the clip reference; see animation_key_selection.c3.
-	AnimRef anim_key_selection_ref;
-	List{float} anim_key_selection;
-	List{AnimChannelKey} anim_channel_key_selection;
-	// Look-at target keys picked in the sheet; never held beside the two above.
-	List{AimKeyRef} anim_aim_key_selection;
-	// The key a range extend measures from — the time of the last key clicked in
-	// this selection. A Ctrl+Shift press on another key selects the span between
-	// the two. Negative means no anchor yet; reset by `clear_animation_key_selection`.
-	float anim_key_anchor;
 	bool anim_tracks_selected_only;
 	int anim_fps;
-	// Ghost poses and the selected joint's motion path; see `app/onion.c3`.
-	GhostCache ghosts;
-	MotionPath motion_path;
 	bool anim_snap_off;
 	float anim_preview_speed;
 	AnimPreviewLoop anim_preview_loop;
@@ -928,169 +459,14 @@ struct AppState
 	int anim_pending_action;
 	float anim_pending_time;
 	usz anim_pending_row;
+
 	// The held move's gesture has ended, so the next move drops the pending pose.
 	bool anim_pending_armed;
-	// The Joint mapping dialog's rows while it is open; see joint_mapping.c3.
-	MappingDraft mapping_draft;
-	// The last Check of the edited clip; see clip_check.c3.
-	ClipCheck anim_check;
-	// What the contact lane menu is about: a window (-1 for the lane), the
-	// lane's first window, and the time pressed; see animation_contacts.c3.
-	sz anim_contact_window;
-	usz anim_contact_foot;
-	float anim_contact_time;
-
-	<*
-	 The weights the mesh's own file carried, when the rig came out of it — see
-	 `import_rig.c3`. Empty for a rig built here, which is most of them.
-
-	 Held rather than re-read because both the preview and the export ask for it,
-	 and it is the whole file's skin: re-parsing a .glb to answer one rebind would
-	 cost more than the binder it is standing in for. `doc.skin_from_file` is what
-	 says it should be used; this is only what it is.
-	*>
-	ImportedSkin imported_skin;
-
-	// Whether the imported weights have covered the rig since they were read,
-	// and whether the one warning that crig's own now replace them has been said.
-	bool imported_skin_covered;
-	bool imported_skin_warned;
-
-	<*
-	 The animation player: a template-driven full-body animation, running on the
-	 rig on screen.
-
-	 A timeline draft replaces the parked player while it is edited, then keying
-	 parks the rewritten clip again. Both write through the same `pose_palette`
-	 the renderer reads.
-	*>
-	bool animating;
-
-	<*
-	 Whether the running clip's *clock* is stopped, as against playback being off.
-
-	 What a timeline scrub is: the mesh keeps showing the clip, `skinned()` and
-	 `rig_locked()` keep answering as they do while it runs, and only
-	 `tick_animation` sits out. A scrub that turned `animating` off instead would
-	 put the mesh back at rest between drags, which is the one thing the playhead
-	 must not do.
-
-	 Cleared by `start_animation` and `stop_animation`, so nothing has to remember
-	 to un-pause: the two doors into and out of playback both settle it.
-	*>
-	bool anim_paused;
-
-	float anim_time;
-	AnimTemplate current_anim; // zero value = no animation; copy of the selected template
-	AnimRef current_ref; // which pack and clip that copy came from; `{-1,-1}` = neither
-
-	<*
-	 The clip being faded out of, while a crossfade is in flight — see
-	 `begin_blend`. Zero keyframes means no fade, which is what `blending()` asks.
-
-	 Shallow, exactly as `current_anim` is: the template belongs to the library
-	 and this borrows it for the length of the fade. Nothing here is freed.
-
-	 `fade_from_ref` is kept alongside because the two clips need not come from the
-	 same pack, and a pack is what says how its clip's joint names spell this rig's.
-	*>
-	AnimTemplate fade_from;
-	AnimRef fade_from_ref;
-	float fade_from_time;
-	// Seconds left, and how many there were. Both are needed: the fraction is
-	// what the blend takes, and a fade cannot report its own progress from a
-	// countdown alone.
-	float fade_left;
-	float fade_span;
-
-	<*
-	 The dynamic bones running under the clip, and whether they are running at
-	 all — see `app/sim.c3`.
-
-	 Owned and persistent, unlike everything else the player rebuilds each
-	 frame: a sim *is* its particle state, so one thrown away between frames
-	 would be thrown away before it could show the thing it exists for. Built
-	 lazily by `tick_jiggle`, on the first frame of playback that wants it, and
-	 released by `AppState.free`.
-
-	 `sim_stale` says the sim no longer describes the document, or that its
-	 history has been cut — a seek, a clip change, an edit to the physics. Either
-	 way the next frame of playback builds a fresh one, which is also how a chain
-	 is primed, so it is the only reset there is.
-
-	 `sim_enabled` is what MCP's `play` turns off for a caller that wants the
-	 keyed pose and nothing else. It outlives that one call, which is deliberate:
-	 nothing else in the app reads it yet, and a flag that reset itself would
-	 make "play it again without the physics" a thing that could not be said.
-	*>
-	JiggleSim jiggle_sim;
 	bool sim_enabled;
-	bool sim_stale;
 
-	<*
-	 The surface the chains are held off, as the sim's probe reads it: one
-	 flag per triangle of the bound skin for the triangles the chains
-	 themselves drive — left out of what a chain is pushed off — the palette
-	 the current step is aimed at, borrowed for the length of that step, and
-	 the pose generation that palette's posed vertices are cached under. See
-	 `AppState.rebuild_jiggle` and `jiggle_surface_probe`.
-	*>
-	bool[] jiggle_skip;
-	Matrix4f[] jiggle_palette;
-	uint jiggle_generation;
-
-	<*
-	 Which dots sit inside some chain's run, and which chain's — for the
-	 overlay's "is this bone dynamic" and the panel's "which chain is this dot
-	 part of", both asked per frame, both questions that need the skeleton to
-	 answer. Resolved once per change rather than once per ask: the two
-	 generations say which rig and which edit to the chains it was built for,
-	 and `AppState.is_dynamic` rebuilds it when either has moved.
-	 `secondary_generation` is bumped by `jiggle_reset`, which every chain and
-	 capsule setter already calls.
-	*>
-	uint[] dynamic_dots;
-	uint[] dynamic_dot_roots;
-	uint dynamic_dots_rig;
-	uint dynamic_dots_sim;
-	bool dynamic_dots_built;
-	uint secondary_generation;
-
-	<*
-	 Where the running clip has carried each dot, or empty when none is running.
-
-	 The overlay is drawn from this while it is filled, so the rig on screen
-	 travels with the body under it instead of standing in the rest pose the clip
-	 has left behind. Rebuilt by `refresh_animation` every frame, which already
-	 holds the skeleton and the palette — one matrix applied per joint, beside a
-	 per-vertex skinning pass on the GPU.
-
-	 Filled by timeline pose drafts as well as by the player, and for the same reason: both
-	 are modes the rig is watched in rather than edited in, so the dots are free
-	 to leave the positions the document stores. See `Viewport.on_mouse`.
-
-	 Owned. Read through `dot_position`, never directly.
-	*>
-	PosedDot[] posed_dots;
-
-	<*
-	 The look-at targets of the clip on show, built beside `posed_dots` by
-	 `refresh_animation` and `refresh_posed`: where each aimed joint stands and
-	 where its target is. Owned; freed with the palette in `drop_palette`.
-	*>
-	AimHandle[] posed_aims;
-
-	<*
-	 One entry per lock of that clip: the line from a locked joint to its target's
-	 handle in `posed_aims`. Built and freed with it.
-	*>
-	AimLink[] posed_aim_links;
-
-	// The look-at target whose ring is selected (its name, owned), empty when none.
-	// Cleared when a model loads and when the target is removed; see `aim_edit.c3`.
-	String aim_target_selected;
 	// The context menu was raised from that target's ring, so it offers the target's rows.
 	bool aim_menu_from_ring;
+
 	// The pointer rests on a target's ring; the hint bar says what it does.
 	bool aim_ring_hover;
 
@@ -1105,29 +481,6 @@ struct AppState
 	List{AnimPack} packs;
 
 	<*
-	 What each pack's clips can reach on the rig as it stands — one entry per
-	 pack, in the same order, and empty until something asks.
-
-	 The shape match behind it costs a few milliseconds per pack, which is nothing
-	 against a rig edit and far too much against a repaint: `clip_applies` is
-	 asked once per visible cell per frame. So it is derived once and held, and
-	 `reach_stale` is what says the rig has moved out from under it.
-
-	 Owned. Read through `AppState.pack_reach`, never directly — the field may be
-	 stale or the wrong length, and that method is where both are settled.
-	*>
-	PackReach[] pack_reaches;
-
-	<*
-	 Whether `pack_reaches` still describes the open rig.
-
-	 Raised by `mark_rig_stale`, which every edit that moves a joint comes through
-	 including an undo step, and by `rename_recorded`, which is the one change
-	 that leaves every joint where it was and still changes the answer.
-	*>
-	bool reach_stale;
-
-	<*
 	 The folder `packs` was last read from, owned and empty until the first read.
 
 	 Kept because writing a pack has to land where reading one looks, and the two
@@ -1135,28 +488,6 @@ struct AppState
 	 `save_authored_pack` writes here and re-reads here.
 	*>
 	String library_path;
-
-	<*
-	 Where clips authored through the MCP tools land: an index into `packs`, or
-	 -1 until something writes one.
-
-	 A pack like any other, so an authored clip is a clip like any other —
-	 `AnimRef`, `play_clip`, the library card and the exporter all reach it
-	 without knowing it was not read off a file. It is appended last and created
-	 on first write, which leaves every disk pack at the index it was read in.
-
-	 Nothing on disk backs it. It is built, played and dropped in memory, and
-	 dies with the process; `load_packs` carries it across a re-read because a
-	 library reload is about the folder, not about what an agent has written.
-	*>
-	int authored_pack;
-	bool authored_dirty;
-
-	// The workflow guide's inputs — see `app/guide.c3`. `saved_revision` is the
-	// history revision the last save wrote.
-	uint saved_revision;
-	SkinSurvey skin_survey;
-	BoundTally bound_tally;
 
 	<*
 	 Which pack's card is open in the library, or -1 for none.
@@ -1169,7 +500,6 @@ struct AppState
 	 rather than a column of closed rows saying nothing.
 	*>
 	int expanded_pack;
-
 
 	<*
 	 What every configured library holds, read from JSON alone — see `assets.c3`.
@@ -1249,53 +579,6 @@ struct AppState
 	*>
 	TreeRow[] plan_rows;
 	int[] plan_row_packs;
-
-	<*
-	 The Animations pane's rows: one per clip bound to this character. Owned, and
-	 here for the reason every other row list is.
-
-	 Labels are borrowed from `doc.animations`, and the trailing text is allocated
-	 per row — so anything that binds, unbinds or reorders has to rebuild these
-	 before the tree is drawn again, which the panel's own `update` does.
-	*>
-	TreeRow[] anim_rows;
-
-	<*
-	 Which of those rows the pane is acting on.
-
-	 On the state rather than inside the `Tree`, for `editing`'s reason one step
-	 further: the pane rebuilds when it splits or changes tab, and it *also*
-	 rebuilds whenever playback starts or stops, because `AnimSnapshot` watches
-	 which clip is running. A selection living in the widget was therefore thrown
-	 back to the first row by the Play button itself — press Play on the third clip
-	 and the third clip played while the first row lit up.
-
-	 Kept inside the list by `refresh_anim_rows`, so every button in the pane has a
-	 row to act on. Shared by every pane showing the list, which is right: there is
-	 one bound set and one clip being worked on, not one per pane.
-	*>
-	usz anim_selected;
-
-	<*
-	 The dopesheet's tracks for whichever clip is being edited. Owned.
-
-	 Here for the reason every other row list is, with one of its own: a track's
-	 key times are copied out of the clip rather than viewed into it, because
-	 every timeline edit replaces the whole `AnimTemplate` — a slice into the old
-	 one would point at freed keyframes the instant anything was dragged.
-	*>
-	TimelineTrack[] timeline_tracks;
-
-	<*
-	 Which clip the Animations pane is editing, and where its playhead is.
-
-	 On the state rather than in the pane for the workspace's usual reason: a pane
-	 rebuilds its widgets from nothing when it splits or changes tab, and a
-	 playhead that reset every time somebody looked at the 3D view would be
-	 useless. `NO_ANIM` means nothing is being edited and the dopesheet is empty.
-	*>
-	AnimRef editing;
-	float edit_time;
 
 	<*
 	 That a mesh arrived with nothing to pose it by, and nobody has been told yet.
@@ -1410,6 +693,17 @@ struct AppState
 	 Owned; `main` frees it as it takes it. Empty means nothing is pending.
 	*>
 	String pending_open;
+	// A model to bring in as another character, the same way: File > Add
+	// character and the browser's Models shelf set it, the loop services it.
+	String pending_add;
+	// A scene to open, serviced between frames the same way; and the file the
+	// scene on screen was last opened from or saved to, for Save scene.
+	String pending_scene;
+	String scene_path;
+	// A model or scene chosen to open while other characters hold unsaved work,
+	// waiting on the question that asks whether to drop it.
+	String open_waiting;
+	bool open_waiting_scene;
 
 	<*
 	 The pack whose rig is waiting on the user's answer, or -1 when none is.
@@ -1462,9 +756,11 @@ struct AppState
 	 look.
 	*>
 	FilePurpose file_purpose;
+
 	// Which model file a MOTION_FILE chooser answers: a `MotionGenerator`
 	// config key, static.
 	String motion_path_key;
+
 	// The Settings page showing: SETTINGS_TAB_GENERAL or SETTINGS_TAB_AI.
 	usz settings_tab;
 
@@ -1532,9 +828,11 @@ struct AppState
 	// Text to motion: the llm-runner job generating a clip, if one runs. See
 	// `app/generate.c3`.
 	MotionJob motion_job;
+
 	// The renderer the pipeline runs its kernels on: the window's, set by `main`.
 	// Null in a headless AppState, which cannot generate.
 	three::Renderer* motion_gpu;
+
 	// The Generate panel: what is typed in it.
 	MotionDraft motion_draft;
 }
@@ -1613,50 +911,23 @@ fn AppState new_app_with_geometry(
 		// edge, and N or a click on a rail tab opens it.
 		.show_joint_panel = false,
 
-		.picker = picker,
-		.voxels = voxels,
-		.shells = shells,
-		.borrows_geometry_cache = borrowed,
+		.focus = new_character(geometry, source_path, picker, voxels, shells, borrowed),
 		.camera = framed(geometry.bounds()),
-		.geometry = geometry,
-		.source_path = source_path,
-
-		// Nothing has been bound yet, so the first time the preview is switched
-		// on there is something to compute rather than an empty array to show.
-		.weights_stale = true,
-
-		// Same for the binder's rigid choices, which come out of that first bind.
-		.riders_stale = true,
-
-		// Zero is a real shell id, so "nothing is being pointed at" has to be said
-		// with a number that is not one.
 
 		// Secondary motion runs unless something asks it not to: a dynamic bone
 		// that had to be switched on is one nobody sees the effect of. Nothing is
 		// built here — `tick_jiggle` does that on the first frame of playback
 		// that wants it, and a rig with no dynamic bones never builds anything.
 		.sim_enabled = true,
-		.sim_stale = true,
 		.auto_key = true,
-		.active_layer = -1,
-		.active_layer_ref = NO_ANIM,
 		.anim_fps = 30,
 		.anim_preview_speed = 1.0f,
 
-		// Nothing is playing, and "nothing" is not the zero value: pack 0 is a
-		// real pack, so an unset reference would claim its first clip.
-		.current_ref = NO_ANIM,
-		.editing = NO_ANIM,
-
-		// Same trap one field along: pack 0 would be a standing request to
+		// Pack 0 is a real pack, so -1 says "none": pack 0 would be a standing request to
 		// replace the rig with the library's first body plan.
 		.pending_rig_pack = -1,
 
-		// And again: nothing has been authored, and pack 0 is a real pack whose
-		// clips must not be freed and replaced as if an agent had written them.
-		.authored_pack = -1,
-
-		// Once more, and the worst of the four: a zero `AssetFilter` selects the
+		// Once more, and the worst of them: a zero `AssetFilter` selects the
 		// first kind in the first library, so a browser left to the default would
 		// open showing the skins of one folder and nothing would say why.
 		.asset_filter = ALL_ASSETS,
@@ -1667,9 +938,6 @@ fn AppState new_app_with_geometry(
 		// A zero radius would open the brush unable to touch anything, which reads
 		// as the mode being broken rather than as a setting wanting a scroll.
 		.brush_radius = BRUSH_RADIUS_DEFAULT,
-		.area_soft = AREA_SOFT_DEFAULT,
-		.area_seed = -1,
-		.area_hover_island = -1,
 
 		// The config `main` hands over is the one with a file behind it — see
 		// there — and this is the one field of it that is read before that
@@ -1684,29 +952,13 @@ fn AppState new_app_with_geometry(
 			.ghost_step = 1,
 			.ghost_opacity = DEFAULT_GHOST_OPACITY,
 		},
-
-		.doc = {
-			// On by default: placing a chain of joints is the common case, and
-			// having to connect them afterwards doubles the clicks for it.
-			.auto_connect = true,
-
-			// The mesh's own middle, not x = 0. crig never normalizes, so a
-			// model authored off-origin would otherwise mirror to somewhere
-			// outside itself.
-			.sym_x = geometry.bounds().center().x,
-		},
 	};
 	// A List has to be given its allocator before anything is pushed, and doing
 	// it here rather than lazily means every toggle is a plain push — a lazy
 	// init has to ask "is this the first one", and "the list is empty" is also
 	// true of a list everything has been unticked from.
-	app.also_selected.init(mem);
-	app.outliner_collapsed_joints.init(mem);
-	app.drag_mates.init(mem);
 	app.annotations.init(mem);
 	app.sketch_points.init(mem);
-	app.occlusion_memo.init(mem);
-	app.occlusion_memo_ready = true;
 
 	return app;
 }
@@ -1775,7 +1027,7 @@ fn void AppState.drop_geometry_cache(&self)
  occlusion cue — has to ask, because with no mesh they have nothing to answer
  about rather than an empty answer to give.
 *>
-fn bool AppState.has_mesh(&self) => self.geometry.positions.len > 0;
+fn bool Character.has_mesh(&self) => self.geometry.positions.len > 0;
 
 <*
  The mesh's own edges, built if they are not already in hand.
@@ -1905,8 +1157,9 @@ fn void AppState.set_shading(&self, ShadingMode mode)
 
  @param geometry : `Taken over: freed by this state when it is replaced or the state goes.`
  @param path : `Where it came from. Export writes beside it and the session is looked for there.`
+ @param reframe : `Whether the camera moves to frame the new mesh.`
 *>
-fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path)
+fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool reframe = true)
 {
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
@@ -1931,8 +1184,13 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path)
 	self.source_path = path.len > 0 ? path.copy(mem) : "";
 	self.owns_path = path.len > 0;
 
-	self.camera = framed(geometry.bounds());
-	self.camera_reset_generation++;
+	// Not for a character added beside others: the view is on the scene, and
+	// jumping it to the newcomer would lose the one the user was looking at.
+	if (reframe)
+	{
+		self.camera = framed(geometry.bounds());
+		self.camera_reset_generation++;
+	}
 
 	self.doc.free();
 	self.doc = {
@@ -2055,7 +1313,7 @@ fn void AppState.swap_mesh(&self, rig::TriMesh geometry)
 	if (self.owns_geometry) self.geometry.free(mem);
 
 	self.geometry = geometry;
-	self.geometry_generation++;
+	self.geometry_generation = next_generation();
 	self.owns_geometry = true;
 
 	// Somebody else's file until something says otherwise — `adopt_source_rig` is
@@ -2102,6 +1360,13 @@ fn void AppState.swap_mesh(&self, rig::TriMesh geometry)
 enum FilePurpose
 {
 	OPEN_MESH,
+	// A model to load beside the open one, as another character.
+	ADD_CHARACTER,
+	// A scene file to open, and where to save the one on screen.
+	OPEN_SCENE,
+	SAVE_SCENE,
+	// Where the whole scene goes as one .glb.
+	EXPORT_SCENE,
 	EXPORT_TARGET,
 
 	// Picking a folder rather than a file, which is the one question here whose
@@ -2238,22 +1503,60 @@ fn void AppState.free(&self)
 	(void)self.stop_motion_generation();
 	self.motion_job.clear();
 	self.motion_draft.free();
-	self.drop_gesture_before();
-	self.drop_gesture_aim();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
+
+	// Every character, the one being edited last: each waiting one is brought in
+	// to be freed, so its authored pack lands in `packs` and goes with the rest.
+	self.free_cast();
+	self.free_character_state();
+
 	self.anim_key_clipboard.free(mem);
 	self.anim_pose_clipboard.free(mem);
 	self.pose_library_name.free(mem);
+	if (self.pending_open.len > 0) alloc::free(mem, self.pending_open.ptr);
+	if (self.pending_add.len > 0) alloc::free(mem, self.pending_add.ptr);
+	if (self.pending_scene.len > 0) alloc::free(mem, self.pending_scene.ptr);
+	if (self.scene_path.len > 0) alloc::free(mem, self.scene_path.ptr);
+	if (self.open_waiting.len > 0) alloc::free(mem, self.open_waiting.ptr);
+	self.config.free();
+	self.free_annotations();
+	// Not beside the stroke memory in the two mesh-replace paths, unlike that
+	// one: a stroke's memory is one float per vertex and dies with the mesh,
+	// while a lasso's points are pixels and belong to a gesture that cannot
+	// outlive the frame it is in.
+	self.drop_lasso_memory();
+	self.drop_packs();
+	if (self.library_path.len > 0) alloc::free(mem, self.library_path.ptr);
+	free_assets(mem, self.assets);
+	if (self.asset_categories.len > 0) alloc::free(mem, self.asset_categories);
+	if (self.visible_assets.len > 0) alloc::free(mem, self.visible_assets);
+	if (self.asset_filter.search.len > 0) alloc::free(mem, self.asset_filter.search.ptr);
+	self.free_library_labels();
+	self.free_reference_plans();
+	self.free_category_rows();
+	self.free_library_rows();
+	self.free_physics_menus();
+	self.free_plan_rows();
+	*self = {};
+}
+
+<*
+ Free everything the character being edited owns, and zero it.
+
+ The half of `free` that belongs to one character, so removing a character and
+ tearing the whole app down release exactly the same things. Its authored pack
+ stays in `packs` for `drop_packs`, or for the caller to take out.
+*>
+fn void AppState.free_character_state(&self)
+{
+	self.drop_gesture_before();
+	self.drop_gesture_aim();
 	self.clear_animation_key_selection();
 	if (self.source_path.len > 0 && self.owns_path) alloc::free(mem, self.source_path.ptr);
-
-	if (self.pending_open.len > 0) alloc::free(mem, self.pending_open.ptr);
-	self.config.free();
 	self.also_selected.free();
 	self.outliner_collapsed_joints.free();
 	self.drag_mates.free();
-	self.free_annotations();
 	if (self.occlusion_memo_ready) self.occlusion_memo.free();
 	self.player_pose.free(mem);
 	self.drop_playback_rig();
@@ -2267,11 +1570,6 @@ fn void AppState.free(&self)
 	if (self.owns_geometry) self.geometry.free(mem);
 	self.drop_base_bind();
 	self.drop_stroke_memory();
-	// Not beside the stroke memory in the two mesh-replace paths, unlike that
-	// one: a stroke's memory is one float per vertex and dies with the mesh,
-	// while a lasso's points are pixels and belong to a gesture that cannot
-	// outlive the frame it is in.
-	self.drop_lasso_memory();
 	self.drop_area_part();
 	self.drop_area_base();
 	self.adjacency.free(mem);
@@ -2296,23 +1594,17 @@ fn void AppState.free(&self)
 	if (self.dynamic_dots.len > 0) alloc::free(mem, self.dynamic_dots);
 	if (self.dynamic_dot_roots.len > 0) alloc::free(mem, self.dynamic_dot_roots);
 	self.free_pack_reaches();
-	self.drop_packs();
-	if (self.library_path.len > 0) alloc::free(mem, self.library_path.ptr);
-	free_assets(mem, self.assets);
-	if (self.asset_categories.len > 0) alloc::free(mem, self.asset_categories);
-	if (self.visible_assets.len > 0) alloc::free(mem, self.visible_assets);
-	if (self.asset_filter.search.len > 0) alloc::free(mem, self.asset_filter.search.ptr);
-	self.free_library_labels();
-	self.free_reference_plans();
-	self.free_category_rows();
-	self.free_library_rows();
-	self.free_physics_menus();
-	self.free_plan_rows();
 	self.free_anim_rows();
 	self.free_timeline_tracks();
 	self.mapping_draft.free();
 	self.anim_check.free();
-	*self = {};
+	self.authored_store.free(mem);
+	// Its authored pack is in `packs` while it is the focus; out with it, so a
+	// removed character takes its clips along rather than leaving them listed.
+	self.replace_authored_clips({});
+	self.focus = {};
+	// Zero is pack 0, a real pack — see `new_character`.
+	self.authored_pack = -1;
 }
 
 <*

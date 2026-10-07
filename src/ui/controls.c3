@@ -200,11 +200,14 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "File > Settings", .action = "which folders the browser reads" },
 
 	{ .heading = "Document" },
-	{ .binding = "ctrl+O", .action = "open a model" },
-	{ .binding = "ctrl+E", .action = "export the rig and the clips you tick as one .glb, keeping UVs and materials" },
+	{ .binding = "ctrl+N", .action = "a new, empty scene" },
+	{ .binding = "ctrl+O", .action = "open a scene" },
+	{ .binding = "ctrl+I", .action = "import a .glb into the scene as a character" },
+	{ .binding = "ctrl+E", .action = "export as .glb — the clips you tick, or the whole scene" },
 	{ .binding = "ctrl+Z", .action = "undo" },
 	{ .binding = "ctrl+Y", .action = "redo" },
-	{ .binding = "ctrl+S", .action = "save the rig and its skin into the model — into a copy of it, the first time" },
+	{ .binding = "ctrl+S", .action = "save each character into its model, and the scene file" },
+	{ .binding = "ctrl+shift+S", .action = "save the scene under another name" },
 };
 
 <*

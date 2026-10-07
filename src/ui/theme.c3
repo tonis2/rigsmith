@@ -500,6 +500,7 @@ const FileBrowserStyle FILE_BROWSER_STYLE = {
 // A module global rather than a local, because a FileBrowser borrows this list
 // for the lifetime of its element — the same rule the menu arrays follow.
 String[2] mesh_mask = { "*.glb", "*.gltf" };
+String[1] scene_mask = { "*.rigsmith-scene.json" };
 // Kimodo's weights: the text encoder's .gguf files, and the motion model as a
 // .gguf or as NVIDIA's model.safetensors (its folder is what is read).
 String[2] motion_file_mask = { "*.gguf", "*.safetensors" };

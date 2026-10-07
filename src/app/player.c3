@@ -786,7 +786,7 @@ fn PosedDot[] posed_overlay(
  that would replace it has to be rebuilt every frame of playback to answer the
  same question.
 *>
-fn Vec3 AppState.dot_position(&self, Dot dot)
+fn Vec3 Character.dot_position(&self, Dot dot)
 {
 	foreach (posed : self.posed_dots)
 	{

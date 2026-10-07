@@ -322,6 +322,8 @@ fn BoundClip owned_binding(String file, String clip) @private
 *>
 fn bool AppState.is_bound_entry(&self, AssetEntry* entry)
 {
+	// A model's mark says it is already in the scene.
+	if (entry && entry.kind == AssetKind.MODEL) return self.character_from(entry.file) >= 0;
 	if (!entry || entry.kind != AssetKind.ANIMATION) return false;
 	return self.doc.bound_index(entry.file, entry.name) >= 0;
 }
@@ -344,6 +346,13 @@ fn bool AppState.is_bound_entry(&self, AssetEntry* entry)
 fn bool AppState.toggle_bound_row(&self, usz row)
 {
 	AssetEntry* entry = self.visible_asset(row);
+	// A model's + brings it into the scene, or makes it the one being edited when
+	// it is in already.
+	if (entry && entry.kind == AssetKind.MODEL)
+	{
+		self.request_add_character(entry.file);
+		return true;
+	}
 	if (!entry || entry.kind != AssetKind.ANIMATION) return false;
 
 	sz at = self.doc.bound_index(entry.file, entry.name);

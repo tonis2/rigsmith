@@ -60,6 +60,68 @@ struct FileDialogWords
 	String confirm;
 }
 
+<*
+ Ask before an open that would drop characters holding unsaved work. The path
+ waits on the app, since the answer arrives through a bare callback.
+*>
+fn void ask_before_replacing_scene(Ui* ui, String path, bool scene) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	if (catch panel)
+	{
+		app.@notice("save the scene first — opening replaces it");
+		return;
+	}
+	if (app.open_waiting.len > 0) alloc::free(mem, app.open_waiting.ptr);
+	app.open_waiting = path.copy(mem);
+	app.open_waiting_scene = scene;
+	panel.widget_as(ConfirmDialog).ask(panel,
+		"The scene has unsaved changes. Opening replaces it — continue without saving them?",
+		&replace_scene_confirmed, &replace_scene_declined);
+}
+
+fn void replace_scene_confirmed(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.open_waiting.len == 0) return;
+	if (app.open_waiting_scene) { app.request_open_scene(app.open_waiting); }
+	else { app.request_open(app.open_waiting); }
+	replace_scene_declined(ui);
+}
+
+fn void replace_scene_declined(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.open_waiting.len > 0) alloc::free(mem, app.open_waiting.ptr);
+	app.open_waiting = "";
+}
+
+<*
+ File › New scene over unsaved work: the same question opening asks, since an
+ empty stage loses that work just as surely.
+*>
+fn void ask_before_new_scene(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	if (catch panel)
+	{
+		app.@notice("save the scene first — a new one replaces it");
+		return;
+	}
+	panel.widget_as(ConfirmDialog).ask(panel,
+		"The scene has unsaved changes. Start a new one without saving them?",
+		&new_scene_confirmed, null);
+}
+
+fn void new_scene_confirmed(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.new_scene();
+	app.refresh_ui();
+}
+
 fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 {
 	switch (purpose)
@@ -67,6 +129,10 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case EXPORT_TARGET: return { "Export to", "Select" }; // picks the path; the panel exports
 		case ASSET_LIBRARY: return { "Add asset library", "Add" };
 		case MOTION_FILE: return { "Choose a model file", "Select" };
+		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
+		case OPEN_SCENE: return { "Open scene", "Open" };
+		case SAVE_SCENE: return { "Save scene as", "Save" };
+		case EXPORT_SCENE: return { "Export the scene to", "Export" };
 		default: return { "Open model", "Open" };
 	}
 }
@@ -95,7 +161,7 @@ fn Element* build_file_dialog_body(Ui* ui)
 			// opened yet, rather than a heading over a blank strip. `RecentList`
 			// sizes itself to its rows, so the empty case costs no height; the
 			// heading has to be asked for separately.
-			if (app.file_purpose == FilePurpose.OPEN_MESH && app.config.recent.len() > 0)
+			if ((app.file_purpose == FilePurpose.OPEN_SCENE || app.file_purpose == FilePurpose.OPEN_MESH) && app.config.recent.len() > 0)
 			{
 				@node((Label) {
 					.text = "Recent",
@@ -153,7 +219,13 @@ fn Element* build_file_dialog_body(Ui* ui)
 *>
 fn String[] file_dialog_mask(AppState* app) @private
 {
-	return app.file_purpose == FilePurpose.MOTION_FILE ? motion_file_mask[..] : mesh_mask[..];
+	switch (app.file_purpose)
+	{
+		case MOTION_FILE: return motion_file_mask[..];
+		case OPEN_SCENE:
+		case SAVE_SCENE: return scene_mask[..];
+		default: return mesh_mask[..];
+	}
 }
 
 <*
@@ -306,7 +378,26 @@ fn void file_dialog_confirmed(Ui* ui) @private
 	switch (app.file_purpose)
 	{
 		case OPEN_MESH:
+			// Opening a model replaces the scene: the others' work goes with it.
+			if (app.any_character_unsaved())
+			{
+				ask_before_replacing_scene(ui, path, false);
+				return;
+			}
 			app.request_open(path);
+		case ADD_CHARACTER:
+			app.request_add_character(path);
+		case OPEN_SCENE:
+			if (app.any_character_unsaved())
+			{
+				ask_before_replacing_scene(ui, path, true);
+				return;
+			}
+			app.request_open_scene(path);
+		case SAVE_SCENE:
+			(void)app.save_scene(path);
+		case EXPORT_SCENE:
+			(void)app.export_scene(path.ends_with(".glb") ? path : string::tformat("%s.glb", path));
 		case EXPORT_TARGET:
 			// The chooser was opened from the export panel's Browse, and the
 			// panel is still up behind it: this answers where, and the panel's

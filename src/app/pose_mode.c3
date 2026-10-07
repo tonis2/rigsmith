@@ -73,7 +73,7 @@ struct PosedJoint
  Two states fill that palette — the player and a transient timeline pose draft.
  The draft replaces the parked player while the user edits it.
 *>
-fn bool AppState.skinned(&self) => self.animating || self.pose_edit_active;
+fn bool Character.skinned(&self) => self.animating || self.pose_edit_active;
 
 <*
  Whether structural/rest-mesh tools are off limits.

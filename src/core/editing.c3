@@ -203,7 +203,7 @@ fn void UndoStack.clear(&self)
 	// A cleared stack is a different document — a session loaded, a wholesale
 	// replacement — and that is the largest change there is, not the absence of
 	// one. See `UndoStack.revision`.
-	self.revision++;
+	self.revision = next_generation();
 
 	while (self.edits.len() > 0)
 	{
@@ -321,7 +321,7 @@ fn void UndoStack.record(&self, Edit edit)
 	edit.chained = true;
 	self.edits.push(edit);
 	self.cursor = self.edits.len();
-	self.revision++;
+	self.revision = next_generation();
 }
 
 <*

@@ -283,7 +283,7 @@ fn bool AppState.redo(&self)
 fn void AppState.stepped_history(&self, bool had_draft)
 {
 	// A step of history moves the document without recording anything.
-	self.undo_stack.revision++;
+	self.undo_stack.revision = next_generation();
 	// A step of history can restore a dot under an id something else is now
 	// holding, or take away the one it was pointing at. Neither is a state a
 	// handle taken before the step can be trusted in.

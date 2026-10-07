@@ -54,8 +54,7 @@ fn void AppState.drop_palette(&self)
 *>
 fn uint AppState.next_pose_generation(&self)
 {
-	self.pose_generation++;
-	if (self.pose_generation == 0) self.pose_generation = 1;
+	self.pose_generation = next_generation();
 	return self.pose_generation;
 }
 
@@ -169,7 +168,7 @@ fn bool AppState.rebind_skin(&self, RigView* view)
 		self.surface_stale = false;
 	}
 	self.skin_stale = false;
-	self.skin_generation++;
+	self.skin_generation = next_generation();
 	return true;
 }
 

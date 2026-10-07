@@ -105,6 +105,8 @@ fn String? ToolTable.invoke(&self, String name, String arguments, DString* detai
 	}
 	defer parsed.free();
 
+	// The character the call names, if it names one — see `mcp/cast_tools.c3`.
+	route_character((AppState*)tool.user_data, parsed, detail)!;
 	return tool.handler(parsed, tool.user_data, detail);
 }
 
@@ -160,7 +162,11 @@ fn void install_tools(AppState* self, mcp::Server* server)
 		// and `tools/list` would print both: three's `screenshot` and
 		// `get_api_docs` are the ones that win when the server comes with them.
 		if (server_has_tool(server, def.name)) continue;
-		server.add_tool(*def);
+		// Routed, so a call naming a character is about that character. The table
+		// is static, so the record the wrapper points at outlives the server; so
+		// does the widened schema, which lives as long as the run.
+		String schema;
+		server.add_tool(routed_def(def, mem, &schema));
 	}
 }
 

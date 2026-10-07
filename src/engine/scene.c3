@@ -69,10 +69,9 @@ import std::sort;
 import gltf;
 
 <*
- Where the mesh is, in three's terms. Both empty until the first sync.
+ Where the models are, in three's terms. Empty until the first sync.
 
- File-private and singular for `main.c3`'s reason: one process, one document,
- one model on screen.
+ File-private: one process, one scene, and a slot per loaded character in it.
 *>
 three::Scene* stage @local = null;
 
@@ -82,76 +81,102 @@ three::Scene* stage @local = null;
  three meshes over the same skin.
 *>
 const usz MAX_MODEL_DRAWS = 32;
-three::NodeId[MAX_MODEL_DRAWS] stage_nodes @local;
-usz stage_count @local = 0;
-// The shading the nodes on screen were built for, after the fall-backs: a model
-// with nothing to texture it with is built Solid whatever was asked.
-ShadingMode drawn_shading @local = ShadingMode.SOLID;
 
-<*
- The source file's uvs and material runs, read beside the merged mesh for the
- Textured view, and the textures its materials resolved to. Read on first need
- rather than on load: a rigger who never asks for textures never pays for the
- decode.
+// How many characters can be on screen at once. Past it, the extra ones are
+// edited and saved as ever and simply not drawn.
+const usz MAX_CAST_DRAWN = 8;
 
- The textures carry one reference each, held here for as long as the surface is
- — every mesh built with one takes its own on top, so rebuilding the draws
- never decodes a picture twice.
-*>
-rig::Surface surface @local;
-uint surface_geometry @local = 0;
-bool surface_read @local = false;
-int[MAX_MODEL_DRAWS] surface_textures @local;
-float[4][MAX_MODEL_DRAWS] surface_colors @local;
-int[MAX_MODEL_DRAWS] surface_materials @local;
-usz surface_groups @local = 0;
-bool surface_textured @local = false;
+// How much darker a character is drawn while another is being edited.
+const float PARKED_SHADE = 0.62f;
 
 // A line model reads against the dark background where the fill's grey would not.
 const Color WIRE_COLOR = { 0.78, 0.80, 0.86, 1.0 };
 
 <*
- What the asset on the device was built from, so `sync` can tell when it is
- behind the document.
+ One character's draws, and what they were built from.
 
- Three numbers rather than one because they move independently: the geometry is
- replaced by File > Open and by the body builder, the tints by a paint stroke
- settling, and the tint *mode* by a keypress that recomputes nothing. Any of the
- three means the vertices three is holding are not the ones to draw.
+ A slot per loaded character, found by `Character.id` rather than by position:
+ removing a character moves the others along the cast, and a slot keyed by
+ position would hand one character's nodes to the next.
 *>
-uint drawn_geometry @local = 0;
-uint drawn_tints @local = 0;
-bool drawn_tinted @local = false;
-<*
- Which binding the influence streams were filled from, and whether they were
- filled at all.
+struct ModelSlot
+{
+	// The character this slot draws; 0 is a free slot, since ids start at 1.
+	uint character;
 
- A fourth and fifth number rather than a fold into `drawn_geometry`, for that
- field's own reason: a rebind moves independently of everything else. Painting
- a weight or dragging a dot leaves the positions alone and `rebind_skin` bumps
- `skin_generation` — the vertices three holds are still the right ones and the
- joints riding them are not.
+	three::NodeId[MAX_MODEL_DRAWS] nodes;
+	usz count;
+	// The shading the nodes on screen were built for, after the fall-backs: a model
+	// with nothing to texture it with is built Solid whatever was asked.
+	ShadingMode drawn_shading;
 
- The bool is not redundant with the counter. `load_mesh` empties the binding
- without rebinding — there is no rig yet to bind to — so the generation does not
- move while the answer to "is there a skin" changes from yes to no.
-*>
-uint drawn_skin @local = 0;
-bool drawn_skinned @local = false;
-ProjectTransform drawn_transform @local;
-bool transform_placed @local = false;
-<*
- How many joints the attached skin has, which is what a palette must be as long
- as for three to take it.
+	<*
+	 The source file's uvs and material runs, read beside the merged mesh for the
+	 Textured view, and the textures its materials resolved to. Read on first need
+	 rather than on load: a rigger who never asks for textures never pays for the
+	 decode.
 
- `AppState.skin_joints` as it was at the last build rather than as it is now:
- the palette has to match the *asset*, and a rig that grew a joint since is a
- rebind away from a rebuild that will match it again.
-*>
-uint drawn_joints @local = 0;
-// False until the first successful build, which is what distinguishes "nothing
-// has been drawn yet" from "generation 0 is what is on screen".
-bool built @local = false;
+	 The textures carry one reference each, held here for as long as the surface is
+	 — every mesh built with one takes its own on top, so rebuilding the draws
+	 never decodes a picture twice.
+	*>
+	rig::Surface surface;
+	uint surface_geometry;
+	bool surface_read;
+	int[MAX_MODEL_DRAWS] surface_textures;
+	float[4][MAX_MODEL_DRAWS] surface_colors;
+	int[MAX_MODEL_DRAWS] surface_materials;
+	usz surface_groups;
+	bool surface_textured;
+
+	<*
+	 What the asset on the device was built from, so `sync` can tell when it is
+	 behind the document.
+
+	 Three numbers rather than one because they move independently: the geometry is
+	 replaced by File > Open and by the body builder, the tints by a paint stroke
+	 settling, and the tint *mode* by a keypress that recomputes nothing. Any of the
+	 three means the vertices three is holding are not the ones to draw.
+	*>
+	uint drawn_geometry;
+	uint drawn_tints;
+	bool drawn_tinted;
+	<*
+	 Which binding the influence streams were filled from, and whether they were
+	 filled at all.
+
+	 A fourth and fifth number rather than a fold into `drawn_geometry`, for that
+	 field's own reason: a rebind moves independently of everything else. Painting
+	 a weight or dragging a dot leaves the positions alone and `rebind_skin` bumps
+	 `skin_generation` — the vertices three holds are still the right ones and the
+	 joints riding them are not.
+
+	 The bool is not redundant with the counter. `load_mesh` empties the binding
+	 without rebinding — there is no rig yet to bind to — so the generation does not
+	 move while the answer to "is there a skin" changes from yes to no.
+	*>
+	uint drawn_skin;
+	bool drawn_skinned;
+	ProjectTransform drawn_transform;
+	bool transform_placed;
+	// Whether it was drawn as the character being edited, which is the only one
+	// drawn tinted and in full colour.
+	bool drawn_focus;
+	<*
+	 How many joints the attached skin has, which is what a palette must be as long
+	 as for three to take it.
+
+	 `Character.skin_joints` as it was at the last build rather than as it is now:
+	 the palette has to match the *asset*, and a rig that grew a joint since is a
+	 rebind away from a rebuild that will match it again.
+	*>
+	uint drawn_joints;
+	// False until the first successful build, which is what distinguishes "nothing
+	// has been drawn yet" from "generation 0 is what is on screen".
+	bool built;
+}
+
+ModelSlot[MAX_CAST_DRAWN] slots @local;
 
 <*
  Bumped for every asset built, and the only thing that varies the key.
@@ -201,9 +226,12 @@ fn void sync_scene(AppState* app)
 		// rather than merely elsewhere. Dropped rather than moved: `set_parent`
 		// refuses across scenes for exactly this reason.
 		stage = active;
-		stage_count = 0;
-		built = false;
-		transform_placed = false;
+		foreach (&slot : slots)
+		{
+			slot.count = 0;
+			slot.built = false;
+			slot.transform_placed = false;
+		}
 		floor_node = three::NO_NODE;
 		floor_built = false;
 	}
@@ -212,14 +240,93 @@ fn void sync_scene(AppState* app)
 	// The rect first, because the mesh's visibility depends on whether there is a
 	// pane to draw into and `place_model` is what writes it.
 	sync_views(app);
-	sync_mesh(app);
+	release_departed(app);
+	for (usz i = 0; i < app.character_count(); i++)
+	{
+		Character* c = app.character(i);
+		ModelSlot* s = slot_for(c.id);
+		if (!s) continue;
+		sync_mesh(app, s, c);
+		// After the mesh and not inside it, because it is owed on every frame and
+		// the rebuild is owed on almost none — and because the node it pushes at has
+		// to exist, which is the one thing `sync_mesh` decides.
+		sync_pose(s, c);
+	}
 	sync_floor(app);
-	// After the mesh and not inside it, because it is owed on every frame and the
-	// rebuild is owed on almost none — and because the node it pushes at has to
-	// exist, which is the one thing `sync_mesh` decides.
-	sync_pose(app);
 	// Last: a ghost is a copy of the model's own draws, so they have to exist.
 	sync_ghosts(app);
+}
+
+<*
+ The slot drawing the character with this id, claiming a free one the first time.
+ Null when every slot is taken, which leaves that character undrawn.
+*>
+fn ModelSlot* slot_for(uint character) @local
+{
+	foreach (&slot : slots)
+	{
+		if (slot.character == character) return slot;
+	}
+	foreach (&slot : slots)
+	{
+		if (slot.character != 0) continue;
+		*slot = { .character = character };
+		return slot;
+	}
+	return null;
+}
+
+// Whether a character with this id is still loaded.
+fn bool still_cast(AppState* app, uint character) @local
+{
+	for (usz i = 0; i < app.character_count(); i++)
+	{
+		if (app.character(i).id == character) return true;
+	}
+	return false;
+}
+
+<*
+ Take the draws of every character that has left the scene off the screen and
+ give their buffers back — a removed character, or the one File > Open replaced.
+*>
+fn void release_departed(AppState* app) @local
+{
+	bool released;
+	foreach (&slot : slots)
+	{
+		if (slot.character == 0 || still_cast(app, slot.character)) continue;
+		drop_slot_nodes(slot);
+		drop_surface(slot);
+		*slot = {};
+		released = true;
+	}
+	if (released) sweep_assets();
+}
+
+// The slot's nodes out of the scene, palettes first — see `sync_mesh`.
+fn void drop_slot_nodes(ModelSlot* s) @local
+{
+	for (usz i = 0; i < s.count; i++)
+	{
+		stage.clear_palette(s.nodes[i]);
+		stage.remove(s.nodes[i]);
+	}
+	s.count = 0;
+	s.transform_placed = false;
+	s.built = false;
+}
+
+<*
+ The slot drawing the character being edited, or null before it is drawn.
+*>
+fn ModelSlot* focus_slot(AppState* app) @local
+{
+	foreach (&slot : slots)
+	{
+		if (slot.character != 0 && slot.character == app.focus.id) return slot;
+	}
+	return null;
 }
 
 <*
@@ -243,21 +350,21 @@ fn void sync_scene(AppState* app)
  rest is what a disagreement means, rather than a pose read against the wrong
  joint count.
 *>
-fn void sync_pose(AppState* app) @local
+fn void sync_pose(ModelSlot* s, Character* c) @local
 {
-	if (!built || stage_count == 0) return;
+	if (!s.built || s.count == 0) return;
 	// An unskinned upload has no palette to be given one — no skin on the node,
 	// no influences on the mesh, nothing to index. The mesh is its own rest pose.
-	if (!drawn_skinned) return;
+	if (!s.drawn_skinned) return;
 
-	bool posed = app.skinned() && app.pose_palette.len == (usz)drawn_joints;
-	for (usz i = 0; i < stage_count; i++)
+	bool posed = c.skinned() && c.pose_palette.len == (usz)s.drawn_joints;
+	for (usz i = 0; i < s.count; i++)
 	{
-		if (posed && stage.set_palette(stage_nodes[i], app.pose_palette)) continue;
+		if (posed && stage.set_palette(s.nodes[i], c.pose_palette)) continue;
 		// Nothing is playing, or what is playing does not fit this asset. Either
 		// way the node goes back to the identity rest palette `attach_skin`
 		// uploaded, which draws the vertices where they were built.
-		stage.clear_palette(stage_nodes[i]);
+		stage.clear_palette(s.nodes[i]);
 	}
 }
 
@@ -379,8 +486,10 @@ fn void ensure_ghost_materials(AppState* app) @local
 fn void sync_ghosts(AppState* app) @local
 {
 	app.ghosts.meshed = false;
-	bool usable = built && drawn_skinned && stage_count > 0 && stage_count <= MAX_GHOST_DRAWS
-		&& drawn_shading != ShadingMode.WIREFRAME;
+	// The ghosts are the character being edited's, drawn over its own assets.
+	ModelSlot* s = focus_slot(app);
+	bool usable = s && s.built && s.drawn_skinned && s.count > 0 && s.count <= MAX_GHOST_DRAWS
+		&& s.drawn_shading != ShadingMode.WIREFRAME;
 	GhostPose[] ghosts = usable ? app.ghost_poses() : (GhostPose[]){};
 	if (ghosts.len == 0)
 	{
@@ -394,7 +503,7 @@ fn void sync_ghosts(AppState* app) @local
 	// The eye is one camera's: with a second viewport the pulled-forward ghosts
 	// would be wrong in it, so the future ghosts go back to sitting behind the body.
 	bool front = ghost_front_made && viewport_count == 1;
-	usz wanted = ghosts.len * stage_count;
+	usz wanted = ghosts.len * s.count;
 	// What the spread is made of: a ghost's node is the model's own transform plus
 	// its offset, so a change to either places the nodes again.
 	float spread_now = app.ghost_spread() <= 0 ? 0.0f : app.ghost_spread() * app.ghost_rig_height();
@@ -409,9 +518,9 @@ fn void sync_ghosts(AppState* app) @local
 		moved = true;
 		for (usz i = 0; i < ghosts.len; i++)
 		{
-			for (usz j = 0; j < stage_count; j++)
+			for (usz j = 0; j < s.count; j++)
 			{
-				three::NodeId model = stage_nodes[j];
+				three::NodeId model = s.nodes[j];
 				three::NodeId node = stage.add_mesh(stage.node(model).asset, 0, stage.root, "crig:ghost");
 				if (!node.is_set()) { drop_ghost_nodes(); return; }
 				stage.set_skin(node, 0);
@@ -430,10 +539,10 @@ fn void sync_ghosts(AppState* app) @local
 		GhostPose* ghost = &ghosts[i];
 		Color tint = ghost.before ? GHOST_PAST_TINT : GHOST_FUTURE_TINT;
 		float[4] color = { tint.r, tint.g, tint.b, strength * ghost.fade };
-		bool fits = ghost.palette.len == (usz)drawn_joints;
-		for (usz j = 0; j < stage_count; j++)
+		bool fits = ghost.palette.len == (usz)s.drawn_joints;
+		for (usz j = 0; j < s.count; j++)
 		{
-			three::NodeId node = ghost_nodes[i * stage_count + j];
+			three::NodeId node = ghost_nodes[i * s.count + j];
 			if (repose)
 			{
 				if (fits) stage.set_palette(node, ghost.palette);
@@ -487,13 +596,16 @@ fn void sync_ghosts(AppState* app) @local
  the shading: one filled mesh in Solid, one per material in Textured, one line
  mesh over every edge in Wireframe.
 *>
-fn void sync_mesh(AppState* app) @local
+fn void sync_mesh(AppState* app, ModelSlot* s, Character* c) @local
 {
-	rig::TriMesh geometry = app.geometry;
+	rig::TriMesh geometry = c.geometry;
+	bool focus = c == &app.focus;
 
-	bool tinted = app.tint_mode != TintMode.OFF
-		&& app.tints.len > 0
-		&& app.tints.len == geometry.positions.len;
+	// Only the character being edited shows its weights: the tint is a reading of
+	// the edit in hand, and every panel that explains it is about that one.
+	bool tinted = focus && app.tint_mode != TintMode.OFF
+		&& c.tints.len > 0
+		&& c.tints.len == geometry.positions.len;
 
 	// Optional by length here too, and for the renderer's reason: the shader
 	// indexes every stream with one vertex id, so a binding that does not cover
@@ -502,57 +614,51 @@ fn void sync_mesh(AppState* app) @local
 	// slots are the other two ways there is nothing to hand over; both are
 	// "upload it unskinned", which is the picture crig showed before any of this
 	// existed.
-	bool skinned = app.skin_joints > 0
-		&& app.skin.slots == SKIN_INFLUENCES
-		&& app.skin.vertices > 0
-		&& app.skin.vertices == (usz)geometry.positions.len;
+	bool skinned = c.skin_joints > 0
+		&& c.skin.slots == SKIN_INFLUENCES
+		&& c.skin.vertices > 0
+		&& c.skin.vertices == (usz)geometry.positions.len;
 
 	// Textured falls back to Solid while a tint says what the colours mean — a
 	// weight ramp multiplied into a skin texture is neither — and for a model
 	// whose file has no surface to read.
 	ShadingMode shading = app.config.viewport_shading;
-	if (shading == ShadingMode.TEXTURED && (tinted || !surface_for(app))) shading = ShadingMode.SOLID;
+	if (shading == ShadingMode.TEXTURED && (tinted || !surface_for(app, s, c))) shading = ShadingMode.SOLID;
 
-	if (built
-		&& drawn_geometry == app.geometry_generation
-		&& drawn_tints == app.tint_generation
-		&& drawn_tinted == tinted
-		&& drawn_skin == app.skin_generation
-		&& drawn_skinned == skinned
-		&& drawn_shading == shading)
+	if (s.built
+		&& s.drawn_geometry == c.geometry_generation
+		&& s.drawn_tints == c.tint_generation
+		&& s.drawn_tinted == tinted
+		&& s.drawn_skin == c.skin_generation
+		&& s.drawn_skinned == skinned
+		&& s.drawn_shading == shading)
 	{
 		// Up to date. The per-frame writes are still owed: `show_mesh` is a
 		// keypress away and touches no generation.
-		place_model(app);
+		place_model(app, s, c);
 		return;
 	}
 
-	drawn_geometry = app.geometry_generation;
-	drawn_tints = app.tint_generation;
-	drawn_tinted = tinted;
-	drawn_skin = app.skin_generation;
-	drawn_skinned = skinned;
-	drawn_joints = skinned ? app.skin_joints : 0;
-	drawn_shading = shading;
+	s.drawn_geometry = c.geometry_generation;
+	s.drawn_tints = c.tint_generation;
+	s.drawn_tinted = tinted;
+	s.drawn_skin = c.skin_generation;
+	s.drawn_skinned = skinned;
+	s.drawn_joints = skinned ? c.skin_joints : 0;
+	s.drawn_shading = shading;
 
 	// The old ones go first, whatever happens next. A build that fails leaves an
 	// empty view rather than the previous document's model under the current
 	// document's dots, which is the same choice `service_open` makes about a file
 	// that will not load.
-	// The ghosts are copies of these draws and hold the same assets; they go first.
-	drop_ghost_nodes();
-	for (usz i = 0; i < stage_count; i++)
-	{
-		// Before the node, not left to `sweep_palettes`. Nothing breaks either way
-		// — a palette is keyed by `NodeId` and a dead one cannot be resolved — but
-		// three sweeps at the next frame's write, and a document closed on the last
-		// frame of a session would carry the matrices until the scene went.
-		stage.clear_palette(stage_nodes[i]);
-		stage.remove(stage_nodes[i]);
-	}
-	stage_count = 0;
-	transform_placed = false;
-	built = false;
+	// The ghosts are copies of the focus's draws and hold the same assets; they
+	// go first.
+	if (focus || s.drawn_focus) drop_ghost_nodes();
+	// The palettes go before the nodes, not left to `sweep_palettes`. Nothing
+	// breaks either way — a palette is keyed by `NodeId` and a dead one cannot be
+	// resolved — but three sweeps at the next frame's write, and a document closed
+	// on the last frame of a session would carry the matrices until the scene went.
+	drop_slot_nodes(s);
 
 	if (geometry.positions.len == 0 || geometry.indices.len < 3)
 	{
@@ -564,15 +670,15 @@ fn void sync_mesh(AppState* app) @local
 
 	switch (shading)
 	{
-		case ShadingMode.SOLID: build_solid(app);
-		case ShadingMode.TEXTURED: build_textured(app);
-		case ShadingMode.WIREFRAME: build_wire(app);
+		case ShadingMode.SOLID: build_solid(app, s, c);
+		case ShadingMode.TEXTURED: build_textured(app, s, c);
+		case ShadingMode.WIREFRAME: build_wire(app, s, c);
 	}
 
-	if (stage_count > 0)
+	if (s.count > 0)
 	{
-		built = true;
-		place_model(app);
+		s.built = true;
+		place_model(app, s, c);
 	}
 
 	// After the new ones are in, so the sweep sees the old assets unreferenced and
@@ -586,16 +692,16 @@ fn void sync_mesh(AppState* app) @local
  influences, each only when the stream exists for every vertex — which is what
  `upload_built` asks of a stream before taking it.
 *>
-fn void push_vertex(AppState* app, three::GeometryBuilder* shape, usz v, bool with_normals) @local
+fn void push_vertex(ModelSlot* s, Character* c, three::GeometryBuilder* shape, usz v, bool with_normals) @local
 {
-	shape.positions.push(app.geometry.positions[v]);
-	if (with_normals) shape.normals.push(app.geometry.normals[v]);
+	shape.positions.push(c.geometry.positions[v]);
+	if (with_normals) shape.normals.push(c.geometry.normals[v]);
 	// Unpacked from the RGBA8 the document holds: three's colour stream is four
 	// floats, which is what a glTF COLOR_0 is and what three's shader reads, and
 	// the unpack stays on this side so the engine never learns crig's packing.
-	if (drawn_tinted)
+	if (s.drawn_tinted)
 	{
-		uint packed = app.tints[v];
+		uint packed = c.tints[v];
 		shape.colors.push({
 			(float)(packed & 0xFF) / 255.0f,
 			(float)((packed >> 8) & 0xFF) / 255.0f,
@@ -612,20 +718,20 @@ fn void push_vertex(AppState* app, three::GeometryBuilder* shape, usz v, bool wi
 	// spells influences in groups of four, and three's shader blends exactly four.
 	// A binder that ever packs more would fail the `slots` test in `sync_mesh` and
 	// arrive here unskinned rather than half-read.
-	if (drawn_skinned)
+	if (s.drawn_skinned)
 	{
-		usz base = v * (usz)app.skin.slots;
+		usz base = v * (usz)c.skin.slots;
 		shape.joints.push({
-			(uint)app.skin.joints[base],
-			(uint)app.skin.joints[base + 1],
-			(uint)app.skin.joints[base + 2],
-			(uint)app.skin.joints[base + 3]
+			(uint)c.skin.joints[base],
+			(uint)c.skin.joints[base + 1],
+			(uint)c.skin.joints[base + 2],
+			(uint)c.skin.joints[base + 3]
 		});
 		shape.weights.push({
-			app.skin.weights[base],
-			app.skin.weights[base + 1],
-			app.skin.weights[base + 2],
-			app.skin.weights[base + 3]
+			c.skin.weights[base],
+			c.skin.weights[base + 1],
+			c.skin.weights[base + 2],
+			c.skin.weights[base + 3]
 		});
 	}
 }
@@ -634,16 +740,16 @@ fn void push_vertex(AppState* app, three::GeometryBuilder* shape, usz v, bool wi
  The whole mesh, filled, in crig's grey or in the tints. Built straight out of
  the document: `GeometryBuilder` is three's own type and crig fills it directly.
 *>
-fn void build_solid(AppState* app) @local
+fn void build_solid(AppState* app, ModelSlot* s, Character* c) @local
 {
 	three::GeometryBuilder shape;
 	shape.init();
 	defer shape.free();
 
-	bool with_normals = app.geometry.has_normals();
-	for (usz v = 0; v < app.geometry.positions.len; v++) push_vertex(app, &shape, v, with_normals);
-	foreach (at : app.geometry.indices) shape.indices.push(at);
-	add_draw(app, &shape, false);
+	bool with_normals = c.geometry.has_normals();
+	for (usz v = 0; v < c.geometry.positions.len; v++) push_vertex(s, c, &shape, v, with_normals);
+	foreach (at : c.geometry.indices) shape.indices.push(at);
+	add_draw(app, s, &shape, false);
 }
 
 <*
@@ -654,9 +760,9 @@ fn void build_solid(AppState* app) @local
  back of the body shows through the front, and so do the dots inside it, which
  is the point of the mode in a rigger.
 *>
-fn void build_wire(AppState* app) @local
+fn void build_wire(AppState* app, ModelSlot* s, Character* c) @local
 {
-	uint[] indices = app.geometry.indices;
+	uint[] indices = c.geometry.indices;
 	usz triangles = indices.len / 3;
 	ulong[] edges = alloc::new_array(mem, ulong, (sz)triangles * 3);
 	defer alloc::free(mem, edges);
@@ -679,14 +785,14 @@ fn void build_wire(AppState* app) @local
 	shape.init();
 	defer shape.free();
 
-	for (usz v = 0; v < app.geometry.positions.len; v++) push_vertex(app, &shape, v, false);
+	for (usz v = 0; v < c.geometry.positions.len; v++) push_vertex(s, c, &shape, v, false);
 	for (usz i = 0; i < count; i++)
 	{
 		if (i > 0 && edges[i] == edges[i - 1]) continue;
 		shape.indices.push((uint)(edges[i] >> 32));
 		shape.indices.push((uint)(edges[i] & 0xFFFF_FFFF));
 	}
-	add_draw(app, &shape, true);
+	add_draw(app, s, &shape, true);
 }
 
 <*
@@ -694,14 +800,14 @@ fn void build_wire(AppState* app) @local
  only the vertices its triangles use, with the file's uvs and the material's
  base-colour picture and factor.
 *>
-fn void build_textured(AppState* app) @local
+fn void build_textured(AppState* app, ModelSlot* s, Character* c) @local
 {
-	usz vertices = app.geometry.positions.len;
+	usz vertices = c.geometry.positions.len;
 	int[] remap = alloc::new_array(mem, int, (sz)vertices);
 	defer alloc::free(mem, remap);
-	bool with_normals = app.geometry.has_normals();
+	bool with_normals = c.geometry.has_normals();
 
-	for (usz g = 0; g < surface_groups; g++)
+	for (usz g = 0; g < s.surface_groups; g++)
 	{
 		foreach (&slot : remap) *slot = -1;
 
@@ -709,23 +815,23 @@ fn void build_textured(AppState* app) @local
 		shape.init();
 		defer shape.free();
 
-		foreach (run : surface.runs)
+		foreach (run : s.surface.runs)
 		{
-			if (surface_group_of(run.material) != g) continue;
+			if (surface_group_of(s, run.material) != g) continue;
 			for (usz i = run.index_start; i < run.index_start + run.index_count; i++)
 			{
-				uint v = app.geometry.indices[i];
+				uint v = c.geometry.indices[i];
 				if (remap[v] < 0)
 				{
 					remap[v] = (int)shape.positions.len();
-					push_vertex(app, &shape, v, with_normals);
-					shape.uvs.push(surface.uvs[v]);
+					push_vertex(s, c, &shape, v, with_normals);
+					shape.uvs.push(s.surface.uvs[v]);
 				}
 				shape.indices.push((uint)remap[v]);
 			}
 		}
 		if (shape.indices.len() < 3) continue;
-		add_draw(app, &shape, false, surface_textures[g], surface_colors[g]);
+		add_draw(app, s, &shape, false, s.surface_textures[g], s.surface_colors[g]);
 	}
 }
 
@@ -735,10 +841,10 @@ fn void build_textured(AppState* app) @local
 
  @param texture : `A surface texture index, or -1 for none.`
 *>
-fn void add_draw(AppState* app, three::GeometryBuilder* shape, bool lines, int texture = -1,
+fn void add_draw(AppState* app, ModelSlot* s, three::GeometryBuilder* shape, bool lines, int texture = -1,
 	float[4] base_color = { 1.0f, 1.0f, 1.0f, 1.0f }) @local
 {
-	if (stage_count >= MAX_MODEL_DRAWS) return;
+	if (s.count >= MAX_MODEL_DRAWS) return;
 
 	// Bumped for every asset: three dedups by key, so a rebuild under a key that
 	// did not move would hand back the previous mesh.
@@ -757,19 +863,19 @@ fn void add_draw(AppState* app, three::GeometryBuilder* shape, bool lines, int t
 	// not fatal to the picture: the mesh keeps its influences, nothing indexes
 	// them, and the model draws at rest — which is the same answer crig gave
 	// before it could pose at all, rather than an empty viewport.
-	if (drawn_skinned)
+	if (s.drawn_skinned)
 	{
-		int? attached = stage_pass().assets.attach_skin(&stage_renderer().gpu, made, drawn_joints);
+		int? attached = stage_pass().assets.attach_skin(&stage_renderer().gpu, made, s.drawn_joints);
 		if (catch attached)
 		{
 			app.@notice("three would not take the skin — the model will stand at rest");
-			drawn_skinned = false;
-			drawn_joints = 0;
+			s.drawn_skinned = false;
+			s.drawn_joints = 0;
 		}
 		else if (attached < 0)
 		{
-			drawn_skinned = false;
-			drawn_joints = 0;
+			s.drawn_skinned = false;
+			s.drawn_joints = 0;
 		}
 	}
 
@@ -795,21 +901,21 @@ fn void add_draw(AppState* app, three::GeometryBuilder* shape, bool lines, int t
 	// Skin 0: `attach_skin` files one per asset, the way `upload_built` files one
 	// mesh. Until this the node is a prop — three decides a *node* is a character
 	// on `Node.skin`, and a palette pushed at one without it is refused.
-	if (drawn_skinned) stage.set_skin(node, 0);
-	stage_nodes[stage_count++] = node;
+	if (s.drawn_skinned) stage.set_skin(node, 0);
+	s.nodes[s.count++] = node;
 }
 
 <*
  Which draw a material's triangles go into: its own, or the last one when the
  file has more materials than there are draws.
 *>
-fn usz surface_group_of(int material) @local
+fn usz surface_group_of(ModelSlot* s, int material) @local
 {
-	for (usz g = 0; g < surface_groups; g++)
+	for (usz g = 0; g < s.surface_groups; g++)
 	{
-		if (surface_materials[g] == material) return g;
+		if (s.surface_materials[g] == material) return g;
 	}
-	return surface_groups - 1;
+	return s.surface_groups - 1;
 }
 
 <*
@@ -820,16 +926,16 @@ fn usz surface_group_of(int material) @local
  A body built in crig, a mesh swapped under the rig, or a file whose walk no
  longer lines up with the mesh crig holds all answer no, and draw Solid.
 *>
-fn bool surface_for(AppState* app) @local
+fn bool surface_for(AppState* app, ModelSlot* s, Character* c) @local
 {
-	if (surface_read && surface_geometry == app.geometry_generation) return surface.runs.len > 0;
+	if (s.surface_read && s.surface_geometry == c.geometry_generation) return s.surface.runs.len > 0;
 
-	drop_surface();
-	surface_read = true;
-	surface_geometry = app.geometry_generation;
-	if (app.source_path.len == 0 || !hosted()) return false;
+	drop_surface(s);
+	s.surface_read = true;
+	s.surface_geometry = c.geometry_generation;
+	if (c.source_path.len == 0 || !hosted()) return false;
 
-	gltf::GltfStream? opened = gltf::open(app.source_path, mem);
+	gltf::GltfStream? opened = gltf::open(c.source_path, mem);
 	if (catch opened) return false;
 	gltf::GltfStream stream = opened;
 	defer stream.close();
@@ -839,10 +945,10 @@ fn bool surface_for(AppState* app) @local
 
 	rig::Surface? read = rig::read_surface(mem, &stream);
 	if (catch read) return false;
-	surface = read;
-	if (!surface.fits(&app.geometry))
+	s.surface = read;
+	if (!s.surface.fits(&c.geometry))
 	{
-		surface.free(mem);
+		s.surface.free(mem);
 		return false;
 	}
 
@@ -851,33 +957,33 @@ fn bool surface_for(AppState* app) @local
 	images.blocks.init(mem);
 	defer images.free();
 
-	foreach (run : surface.runs)
+	foreach (run : s.surface.runs)
 	{
 		bool known = false;
-		for (usz g = 0; g < surface_groups; g++) known = known || surface_materials[g] == run.material;
-		if (known || surface_groups >= MAX_MODEL_DRAWS) continue;
+		for (usz g = 0; g < s.surface_groups; g++) known = known || s.surface_materials[g] == run.material;
+		if (known || s.surface_groups >= MAX_MODEL_DRAWS) continue;
 
-		usz g = surface_groups++;
-		surface_materials[g] = run.material;
-		surface_textures[g] = -1;
-		surface_colors[g] = { MESH_COLOR.r, MESH_COLOR.g, MESH_COLOR.b, 1.0f };
+		usz g = s.surface_groups++;
+		s.surface_materials[g] = run.material;
+		s.surface_textures[g] = -1;
+		s.surface_colors[g] = { MESH_COLOR.r, MESH_COLOR.g, MESH_COLOR.b, 1.0f };
 		if (run.material < 0) continue;
 
 		gltf::Material material = stream.gltf.materials[run.material];
-		surface_colors[g] = {
+		s.surface_colors[g] = {
 			material.baseColorFactor[0],
 			material.baseColorFactor[1],
 			material.baseColorFactor[2],
 			material.baseColorFactor[3],
 		};
-		if (!surface.has_uvs) continue;
+		if (!s.surface.has_uvs) continue;
 		int? texture = stage_pass().assets.load_material_texture(
 			&stage_renderer().gpu, &stream, &images, material.baseColorTexture);
-		if (try texture) surface_textures[g] = texture;
-		if (surface_textures[g] >= 0) surface_textured = true;
+		if (try texture) s.surface_textures[g] = texture;
+		if (s.surface_textures[g] >= 0) s.surface_textured = true;
 	}
 
-	if (!surface_textured) app.@notice("%s has no textures — Textured shows its material colours", base_name(app.source_path));
+	if (!s.surface_textured) app.@notice("%s has no textures — Textured shows its material colours", base_name(c.source_path));
 	return true;
 }
 
@@ -886,18 +992,18 @@ fn bool surface_for(AppState* app) @local
  with them keep their own until the sweep unloads them, which is what waits
  for the device before the last one frees a picture.
 *>
-fn void drop_surface() @local
+fn void drop_surface(ModelSlot* s) @local
 {
-	for (usz g = 0; g < surface_groups; g++)
+	for (usz g = 0; g < s.surface_groups; g++)
 	{
-		if (surface_textures[g] >= 0 && hosted())
+		if (s.surface_textures[g] >= 0 && hosted())
 		{
-			stage_pass().assets.release_texture(&stage_renderer().gpu, surface_textures[g]);
+			stage_pass().assets.release_texture(&stage_renderer().gpu, s.surface_textures[g]);
 		}
 	}
-	surface_groups = 0;
-	surface_textured = false;
-	surface.free(mem);
+	s.surface_groups = 0;
+	s.surface_textured = false;
+	s.surface.free(mem);
 }
 
 <*
@@ -926,30 +1032,38 @@ fn void sweep_assets() @local
  grey while nothing is tinted and gets out of the way when something is, because
  a weight ramp seen through a blue-grey filter is not the ramp.
 *>
-fn void place_model(AppState* app) @local
+fn void place_model(AppState* app, ModelSlot* s, Character* c) @local
 {
-	bool moved = !transform_placed || !drawn_transform.same(app.doc.model_transform);
-	drawn_transform = app.doc.model_transform;
-	transform_placed = true;
+	bool moved = !s.transform_placed || !s.drawn_transform.same(c.doc.model_transform);
+	s.drawn_transform = c.doc.model_transform;
+	s.transform_placed = true;
+	bool focus = c == &app.focus;
+	s.drawn_focus = focus;
 
 	float[4] color = { MESH_COLOR.r, MESH_COLOR.g, MESH_COLOR.b, 1.0f };
-	if (drawn_tinted || drawn_shading == ShadingMode.TEXTURED)
+	if (s.drawn_tinted || s.drawn_shading == ShadingMode.TEXTURED)
 	{
 		color = { 1.0f, 1.0f, 1.0f, 1.0f };
 	}
-	else if (drawn_shading == ShadingMode.WIREFRAME)
+	else if (s.drawn_shading == ShadingMode.WIREFRAME)
 	{
 		color = { WIRE_COLOR.r, WIRE_COLOR.g, WIRE_COLOR.b, 1.0f };
 	}
-
-	for (usz i = 0; i < stage_count; i++)
+	// A character waiting while another is edited is drawn a step darker, so the
+	// one the dots and the gizmo belong to is the one that reads as lit.
+	if (!focus)
 	{
-		three::NodeId node = stage_nodes[i];
-		stage.set_visible(node, app.show_mesh && pane_on_screen);
+		for (usz k = 0; k < 3; k++) color[k] *= PARKED_SHADE;
+	}
+
+	for (usz i = 0; i < s.count; i++)
+	{
+		three::NodeId node = s.nodes[i];
+		stage.set_visible(node, app.show_mesh && pane_on_screen && !c.hidden);
 		if (moved)
 		{
-			stage.set_position(node, drawn_transform.location);
-			stage.set_quaternion(node, drawn_transform.orientation());
+			stage.set_position(node, s.drawn_transform.location);
+			stage.set_quaternion(node, s.drawn_transform.orientation());
 		}
 		stage.set_color(node, color);
 	}
@@ -1074,8 +1188,9 @@ fn void sync_views(AppState* app) @local
 *>
 three::NodeId floor_node @local = three::NO_NODE;
 bool floor_built @local = false;
-uint floor_geometry @local = 0;
-Quaternionf floor_turn @local = quaternion::IDENTITY;
+// What the floor was built under: a hash of every character's mesh, turn and
+// footprint on the ground, so any of them changing builds it again.
+ulong floor_key @local = 0;
 uint floor_serial @local = 0;
 
 // The fill and the lines, before three's lighting.
@@ -1094,11 +1209,13 @@ const usz FLOOR_MAX_CELLS = 64;
 
 fn void sync_floor(AppState* app) @local
 {
-	bool wanted = !app.config.hide_floor && built && app.geometry.positions.len > 0;
-	if (wanted && (!floor_built || floor_geometry != app.geometry_generation
-		|| floor_turn.v != app.doc.model_transform.orientation().v))
+	bool drawn;
+	foreach (&slot : slots) drawn = drawn || (slot.character != 0 && slot.built);
+	bool wanted = !app.config.hide_floor && drawn;
+	if (wanted)
 	{
-		build_floor(app);
+		ulong key = floor_key_of(app);
+		if (!floor_built || floor_key != key) build_floor(app, key);
 	}
 	if (floor_node.is_set()) stage.set_visible(floor_node, wanted && pane_on_screen);
 }
@@ -1131,26 +1248,66 @@ fn void floor_quad(three::GeometryBuilder* shape, float x0, float z0, float x1, 
 	foreach (at : (uint[6]) { 0, 1, 3, 3, 1, 2 }) shape.indices.push(base + at);
 }
 
-fn void build_floor(AppState* app) @local
+<*
+ Everything the floor is measured from, folded into one number: each shown
+ character's mesh generation, its turn, and where it stands on the ground.
+*>
+fn ulong floor_key_of(AppState* app) @local
+{
+	ulong key = 14695981039346656037ul;
+	for (usz i = 0; i < app.character_count(); i++)
+	{
+		Character* c = app.character(i);
+		if (!c.has_mesh() || c.hidden) continue;
+		Quaternionf turn = c.doc.model_transform.orientation();
+		float[6] parts = { turn.v[0], turn.v[1], turn.v[2], turn.v[3],
+			c.doc.model_transform.location.x, c.doc.model_transform.location.z };
+		key = (key ^ c.geometry_generation) * 1099511628211ul;
+		foreach (part : parts) key = (key ^ bitcast(part, uint)) * 1099511628211ul;
+	}
+	return key;
+}
+
+fn void build_floor(AppState* app, ulong measured) @local
 {
 	floor_built = true;
-	floor_geometry = app.geometry_generation;
-	floor_turn = app.doc.model_transform.orientation();
+	floor_key = measured;
 	if (floor_node.is_set())
 	{
 		stage.remove(floor_node);
 		floor_node = three::NO_NODE;
 	}
 
-	// The model turned the way it stands in the world but not moved: moving it
-	// lifts it off the floor rather than carrying the floor along.
-	Vec3 low = floor_turn.rotate_vec3(app.geometry.positions[0]);
-	Vec3 high = low;
-	foreach (at : app.geometry.positions)
+	// Every model turned the way it stands in the world and set where it stands
+	// on the ground, but not lifted: moving one up lifts it off the floor rather
+	// than carrying the floor along.
+	Vec3 low;
+	Vec3 high;
+	bool any_vertex;
+	for (usz i = 0; i < app.character_count(); i++)
 	{
-		Vec3 world = floor_turn.rotate_vec3(at);
-		low = { math::min(low.x, world.x), math::min(low.y, world.y), math::min(low.z, world.z) };
-		high = { math::max(high.x, world.x), math::max(high.y, world.y), math::max(high.z, world.z) };
+		Character* c = app.character(i);
+		if (!c.has_mesh() || c.hidden) continue;
+		Quaternionf turn = c.doc.model_transform.orientation();
+		Vec3 shift = { c.doc.model_transform.location.x, 0.0f, c.doc.model_transform.location.z };
+		foreach (at : c.geometry.positions)
+		{
+			Vec3 world = turn.rotate_vec3(at) + shift;
+			if (!any_vertex)
+			{
+				low = world;
+				high = world;
+				any_vertex = true;
+				continue;
+			}
+			low = { math::min(low.x, world.x), math::min(low.y, world.y), math::min(low.z, world.z) };
+			high = { math::max(high.x, world.x), math::max(high.y, world.y), math::max(high.z, world.z) };
+		}
+	}
+	if (!any_vertex)
+	{
+		sweep_assets();
+		return;
 	}
 	Vec3 size = high - low;
 	float span = math::max(size.y, math::max(size.x, size.z));

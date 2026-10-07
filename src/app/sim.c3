@@ -115,7 +115,7 @@ fn void AppState.jiggle_reset(&self)
 	self.sim_stale = true;
 	// And the overlay's answer to "which dots are dynamic", which is a reading of
 	// the same chains; see `AppState.is_dynamic`.
-	self.secondary_generation++;
+	self.secondary_generation = next_generation();
 }
 
 // Throws the sim away and builds the one this document currently describes.

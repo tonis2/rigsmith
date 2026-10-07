@@ -1193,6 +1193,8 @@ fn void write_pack_extras(Allocator allocator, gltf::GltfBuilder* builder, AnimP
  @param joint_nodes : `Which glTF node each joint became. Short or empty means node j is joint j.`
  @param baked : `Whether to resample the curve and run the ground solve. See bake_times for which reader wants which.`
  @param constraints : `Exact limits to evaluate into ordinary channels on a baked game export. Empty on a reusable pack keeps its authored curve.`
+ @param into : `An animation already begun to add these channels to, or -1 for one of its own named after the clip.`
+ @param timing : `A scene's clock to key on instead of the clip's own: see SceneTiming.`
 *>
 fn void write_animation(
 	Allocator allocator,
@@ -1205,34 +1207,51 @@ fn void write_animation(
 	bool baked = false,
 	ConstraintRig constraints = {},
 	ExportMotion motion = {},
-	ExportMotionReport* report = null) @local
+	ExportMotionReport* report = null,
+	int into = -1,
+	SceneTiming timing = {}) @local
 {
 	usz joints = skeleton.len();
 	bool aligned = rest.len >= joints;
-	if (!baked) motion = {};
+	if (!baked || timing.active) motion = {};
 
-	float[] times = export_bake_times(allocator, skeleton, names, template, baked,
-		constraints, motion.dense());
+	float[] times = timing.active
+		? timing.grid(allocator)
+		: export_bake_times(allocator, skeleton, names, template, baked, constraints, motion.dense());
 	defer alloc::free(allocator, times);
+
+	// On a scene's clock the file is keyed at the scene's instants and the clip is
+	// sampled at where it stands at each: wrapped when it loops, held at its ends
+	// when it does not.
+	float[] sampled = times;
+	if (timing.active)
+	{
+		sampled = alloc::new_array(allocator, float, (sz)times.len);
+		foreach (usz k, t : times) sampled[k] = timing.local(template, t);
+	}
+	defer if (timing.active) alloc::free(allocator, sampled);
 
 	// The ground solve runs on exactly the files that are baked. A pack keeps the
 	// authored keys because it is read back into a template that solves for
 	// itself, and solving on the way out would bake this rig's leg proportions
 	// into the library; a file for someone else's engine has neither the solver
 	// nor the curve, so both have to be resolved here.
-	rig::Pose[] posed = poses_at_times(allocator, skeleton, names, template, times,
+	rig::Pose[] posed = poses_at_times(allocator, skeleton, names, template, sampled,
 		baked, constraints);
 	defer free_poses(allocator, posed);
 	usz baked_keys = times.len;
-	shape_export_samples(allocator, skeleton, names, template, constraints, baked,
-		motion, &times, &posed, report);
+	if (!timing.active)
+	{
+		shape_export_samples(allocator, skeleton, names, template, constraints, baked,
+			motion, &times, &posed, report);
+	}
 	usz keys = times.len;
 	usz channels = 0;
 
 	// One input accessor for the whole clip: every joint is keyed at the same
 	// times, so every sampler below shares this one.
 	uint input = builder.add_times(times);
-	uint clip = builder.add_animation(template.name);
+	uint clip = into >= 0 ? (uint)into : builder.add_animation(template.name);
 
 	// A channel that holds one value the whole clip is written as that value at
 	// the first time, against a one-key input every such channel shares: a walk's
@@ -1331,6 +1350,184 @@ fn void write_animation(
 		}
 	}
 	if (report) report.count(baked_keys, keys, channels);
+}
+
+<*
+ A scene's clock, for keying every character of a cutscene on one timeline.
+
+ Every character's clip is sampled at the same instants, from 0 to the scene's
+ length, so the channels of two characters line up key for key in the one
+ animation they share — whatever each clip's own length.
+*>
+struct SceneTiming
+{
+	bool active;
+	float duration;
+	float fps;
+}
+
+// The instants a scene is keyed at, both ends included. The caller owns them.
+fn float[] SceneTiming.grid(self, Allocator allocator)
+{
+	float fps = self.fps > 0.0f ? self.fps : 30.0f;
+	usz steps = math::max((usz)math::ceil(self.duration * fps), (usz)1);
+	float[] times = alloc::new_array(allocator, float, (sz)steps + 1);
+	foreach (usz k, &t : times) *t = math::min((float)k / fps, self.duration);
+	return times;
+}
+
+// Where in its own clip a character stands at scene time `t`.
+fn float SceneTiming.local(self, AnimTemplate template, float t)
+{
+	if (template.duration <= 0.0f || t <= 0.0f) return 0.0f;
+	if (template.loop) return t - math::floor(t / template.duration) * template.duration;
+	return math::min(t, template.duration);
+}
+
+<*
+ One character of a combined scene export: its body, its skeleton and the clip
+ it plays. Everything is borrowed for the call.
+*>
+struct SceneExportCharacter
+{
+	rig::TriMesh mesh;
+	rig::Skeleton* skeleton;
+	String[] names;
+	// [vertices, joints] weights; short or mismatched falls back to distance weights.
+	float[] skin;
+	// What its nodes are prefixed with, unique within the file.
+	String name;
+	ProjectTransform transform;
+	AnimTemplate clip;
+	bool animated;
+}
+
+<*
+ Write several rigged characters into one .glb, with one animation that moves
+ them all together — what a cutscene is handed to an engine as.
+
+ 	`crig::export_scene_glb(mem, "duel.glb", cast, "Duel", 4.0f)!;`
+
+ Each character is written the way `export_rigged_animated_glb` writes one —
+ bone-aligned joints, its own mesh and skin — under a node of its own name that
+ carries where it stands. Every node it owns is prefixed `name:`, so two
+ characters with a `hips` each are two different nodes a reader can tell apart,
+ and the one animation holds every character's channels, keyed on the scene's
+ clock rather than on any one clip's.
+
+ Physics and joint limits are left out: they are per-character data a scene file
+ has no place for yet, and each character's own export still carries them.
+
+ @param animation : `The shared animation's name.`
+ @param duration : `The scene's length in seconds; every clip is sampled across it.`
+ @return? ANIM_EXPORT_SHAPE_MISMATCH : `A character's skeleton is empty, or it has fewer names than joints.`
+ @return? ANIM_EXPORT_UNNAMED_JOINT : `A joint has no name, so no clip could ever address it.`
+ @return? gltf::WRITE_FAILED : `The file could not be opened, written or flushed.`
+*>
+fn void? export_scene_glb(
+	Allocator allocator,
+	String path,
+	SceneExportCharacter[] cast,
+	String animation,
+	float duration,
+	float fps = 30.0f)
+{
+	foreach (c : cast)
+	{
+		usz joints = c.skeleton.len();
+		if (joints == 0 || c.names.len < joints) return ANIM_EXPORT_SHAPE_MISMATCH~;
+		foreach (joint_name : c.names[:joints]) if (joint_name.len == 0) return ANIM_EXPORT_UNNAMED_JOINT~;
+	}
+
+	gltf::GltfBuilder builder = gltf::builder(allocator);
+	defer builder.free();
+	builder.generator = "rigsmith";
+
+	List{uint}[] nodes = alloc::new_array(allocator, List{uint}, (sz)cast.len);
+	Quaternionf[][] rests = alloc::new_array(allocator, Quaternionf[], (sz)cast.len);
+	defer
+	{
+		foreach (&list : nodes) list.free();
+		foreach (rest : rests) if (rest.len > 0) alloc::free(allocator, rest);
+		alloc::free(allocator, nodes);
+		alloc::free(allocator, rests);
+	}
+
+	foreach (usz i, c : cast)
+	{
+		usz joints = c.skeleton.len();
+		Vec3[] tails = c.skeleton.tails(allocator);
+		defer alloc::free(allocator, tails);
+		String[] prefixed = alloc::new_array(allocator, String, (sz)joints);
+		defer
+		{
+			foreach (s : prefixed) s.free(allocator);
+			alloc::free(allocator, prefixed);
+		}
+		gltf::Bone[] bones = alloc::new_array(allocator, gltf::Bone, (sz)joints);
+		defer alloc::free(allocator, bones);
+		for (usz j = 0; j < joints; j++)
+		{
+			prefixed[j] = string::format(allocator, "%s:%s", c.name, c.names[j]);
+			bones[j] = {
+				.name = prefixed[j],
+				.parent = c.skeleton.parents[j],
+				.position = c.skeleton.joints[j],
+				.direction = tails[j] - c.skeleton.joints[j],
+			};
+		}
+		rests[i] = gltf::bone_rotations(allocator, bones);
+
+		bool predicted = c.skin.len == c.mesh.positions.len * joints;
+		float[] weights = predicted
+			? c.skin
+			: rig::bind_geometric(allocator, c.mesh.positions, c.skeleton.joints, c.skeleton.parents);
+		defer if (!predicted) alloc::free(allocator, weights);
+		gltf::SkinBinding binding = gltf::sparsify_weights(allocator, weights, c.mesh.positions.len, joints, 4)!;
+		defer binding.free(allocator);
+
+		AttributeList attributes;
+		attributes.init(allocator);
+		defer attributes.free();
+		attributes.push({ .name = "POSITION", .accessor = builder.add_positions(c.mesh.positions) });
+		if (c.mesh.has_normals()) attributes.push({ .name = "NORMAL", .accessor = builder.add_vec3(c.mesh.normals) });
+		builder.add_skin_binding(binding, &attributes);
+		uint body = builder.add_mesh(c.name);
+		builder.add_primitive(body, attributes.array_view(),
+			indices: c.mesh.indices.len > 0 ? (int)builder.add_indices(c.mesh.indices) : -1);
+
+		nodes[i].init(allocator);
+		List{uint} roots;
+		roots.init(allocator);
+		defer roots.free();
+		uint inverse_bind = builder.add_skeleton(bones, &nodes[i], &roots);
+		int common = roots.len() == 1 ? (int)roots.get(0) : -1;
+		uint skin_index = builder.add_skin(c.name, nodes[i].array_view(),
+			inverse_bind: (int)inverse_bind, skeleton: common);
+
+		// One node per character carrying where it stands, holding its body and its
+		// skeleton — a skinned mesh ignores its own transform, so the placement has
+		// to sit above both, as `export_rigged_animated_glb` places one model.
+		String body_name = string::format(allocator, "%s:body", c.name);
+		defer body_name.free(allocator);
+		uint body_node = builder.add_node(body_name, mesh: (int)body, skin: (int)skin_index);
+		uint placed = builder.add_node(c.name,
+			translation: c.transform.location,
+			rotation: c.transform.orientation());
+		builder.add_child(placed, body_node);
+		foreach (root : roots) builder.add_child(placed, root);
+		builder.add_root(placed);
+	}
+
+	uint shared = builder.add_animation(animation);
+	SceneTiming timing = { .active = true, .duration = duration, .fps = fps };
+	foreach (usz i, c : cast)
+	{
+		if (!c.animated || c.clip.keyframes.len == 0) continue;
+		write_animation(allocator, &builder, c.skeleton, c.names, c.clip,
+			rests[i], nodes[i].array_view(), baked: true, into: (int)shared, timing: timing);
+	}
+	return builder.save_glb(path);
 }
 
 // Whether two rotations are the same turn, either sign of the quaternion. By

@@ -105,6 +105,11 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 				rows[n++] = { .label = "Select skeleton", .separator_before = true,
 					.on_select = &scene_context_select_skeleton, .id = "viewport-context-select-skeleton" };
 			}
+			if (app.character_count() > 1)
+			{
+				rows[n++] = { .label = "Remove from scene", .separator_before = true,
+					.on_select = &scene_context_remove_character, .id = "viewport-context-remove-character" };
+			}
 		case MESH:
 		case SCENE:
 		case JOINT:
@@ -593,4 +598,38 @@ fn void apply_scale_model(Ui* ui)
 			app.@notice("scale by a factor between %.4g and %.4g", SCALE_MODEL_MIN, SCALE_MODEL_MAX);
 	}
 	app.refresh_ui();
+}
+
+<*
+ Take the character being edited out of the scene, asking first when it holds
+ work no save has written — the removal frees it, and there is no undo across it.
+*>
+fn void scene_context_remove_character(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	close_scene_context(ui);
+	if (app.character_count() < 2) return;
+	if (!app.unsaved())
+	{
+		remove_focused_character(ui);
+		return;
+	}
+	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	if (catch panel) return;
+	panel.widget_as(ConfirmDialog).ask(panel,
+		string::tformat("%s has unsaved changes. Remove it from the scene anyway?", app.label()),
+		&remove_focused_character, &keep_focused_character);
+}
+
+fn void remove_focused_character(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	String name = app.label().copy(mem);
+	defer name.free(mem);
+	if (app.remove_character(app.active)) app.@notice("Removed %s from the scene", name);
+	app.refresh_ui();
+}
+
+fn void keep_focused_character(Ui* ui) @private
+{
 }
