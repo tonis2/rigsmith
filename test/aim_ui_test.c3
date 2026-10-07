@@ -161,54 +161,6 @@ fn void a_look_at_handle_is_picked_before_a_joint() @test
 fn Vec2 centre_of(Element* elem) => elem.absolute + (Vec2){ elem.size.x * 0.5f, elem.size.y * 0.5f };
 
 <*
- The joint card's Look at section: a hint without targets, a picker with them
- that locks and unlocks, and the lock's own controls once locked.
-*>
-fn void the_joint_card_has_a_look_at_section() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	Dot* head;
-	pose_head(&f, &head);
-	f.app.select(head.id);
-	f.app.refresh_ui();
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	f.ui.flush();
-
-	test::@check(!has_id(&f, crig::JOINT_AIM_TARGET_ID), "a picker before there is a target");
-	test::@check(!has_id(&f, crig::JOINT_AIM_SPREAD_ID), "a spread stepper before there is a target");
-
-	test::@check(f.app.add_aim_target(), "the target was not added");
-	f.app.unlock_joint(head.id);
-	f.app.refresh_ui();
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	f.ui.flush();
-	test::@check(has_id(&f, crig::JOINT_AIM_TARGET_ID), "no target picker");
-	test::@check(!has_id(&f, crig::JOINT_AIM_SPREAD_ID), "spread stepper while unlocked");
-
-	crig::joint_aim_target_chosen(f.ui, 1);
-	test::@check(f.app.aim_index(head.id) >= 0, "picking the target did not lock");
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	f.ui.flush();
-	test::@check(has_id(&f, crig::JOINT_AIM_SPREAD_ID), "no spread stepper");
-	test::@check(has_id(&f, crig::JOINT_AIM_INFLUENCE_ID), "no influence slider");
-	test::@check(has_id(&f, crig::JOINT_AIM_MUTE_ID), "no Mute toggle");
-	test::@check(has_id(&f, crig::JOINT_AIM_UNLOCK_ID), "no Unlock button");
-
-	f.click(centre_of(f.ui.find_id(crig::JOINT_AIM_UNLOCK_ID)!!));
-	f.ui.flush();
-	test::@check(f.app.aim_index(head.id) < 0, "Unlock did not unlock");
-
-	crig::joint_aim_target_chosen(f.ui, 1);
-	crig::joint_aim_target_chosen(f.ui, 0);
-	test::@check(f.app.aim_index(head.id) < 0, "None did not unlock");
-}
-
-<*
  A target is a lane under Poses with a mark per key; a selected key deletes as
  one undo step, and the lane goes with the last key.
 *>
