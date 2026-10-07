@@ -43,6 +43,8 @@ import std::core::string;
 import std::math;
 import std::math::quaternion;
 
+const String JOINT_POSE_WEIGHT_ID = "joint-pose-weight";
+const String JOINT_POSE_WEIGHT_AUTO_ID = "joint-pose-weight-auto";
 const String JOINT_PANEL_ID = "joint-panel";
 const String JOINT_PIN_FROM_ID = "joint-pin-from";
 const String JOINT_PIN_TO_ID = "joint-pin-to";
@@ -885,6 +887,31 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 										// pose that is held up by something else — a chair, a wall.
 										@node((ToggleButton) { .label = "Balance", .on = !app.balance_off,
 											.on_change = &anim_balance_toggled, .style = SEGMENTED_STYLE }).with_id(ANIM_BALANCE_ID);
+										// How much the selected joints' body parts hold their ground when a
+										// pose is pulled: weighed off the mesh, scaled here.
+										if (app.selected != 0)
+										{
+											@node((Slider) {
+												.label = "Weight",
+												.suffix = "×",
+												.value = app.selected_pose_weight(),
+												.min = POSE_WEIGHT_MIN,
+												.max = POSE_WEIGHT_MAX,
+												.step = 0.05f,
+												.curve = 2.0f,
+												.decimals = 2,
+												.on_commit = &joint_pose_weight_committed,
+												.style = PHYSICS_SLIDER_STYLE,
+											}).with_id(JOINT_POSE_WEIGHT_ID);
+											@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+											{
+												@node((Label) { .text = app.pose_weight_note(), .size = 12.0f, .color = TEXT_DIM });
+												if (app.selected_pose_weight() != 1.0f)
+												{
+													@node(panel_button("Auto", &joint_pose_weight_auto)).with_id(JOINT_POSE_WEIGHT_AUTO_ID);
+												}
+											};
+										}
 										@node((Label) { .text = "Pinned joints", .size = 12.0f, .color = TEXT_DIM });
 										@node((PosePinList) { }).with_id(POSE_PINS_ID);
 									};
@@ -1563,6 +1590,20 @@ fn void weights_soft_moved(Ui* ui, float value) @private
 
 // The readout names the edge width, so the card catches up once the handle is let go.
 fn void weights_soft_committed(Ui* ui, float value) @private => refresh_joint_panel(ui);
+
+fn void joint_pose_weight_committed(Ui* ui, float value)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.set_selection_pose_weight(value);
+	refresh_joint_panel(ui);
+}
+
+fn void joint_pose_weight_auto(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.set_selection_pose_weight(1.0f);
+	refresh_joint_panel(ui);
+}
 
 fn void weights_mirror_toggled(Ui* ui, bool checked) @private
 {

@@ -416,6 +416,11 @@ struct Character
 	*>
 	uint skin_joints;
 	uint skin_generation;
+
+	// Each joint's body part's size, measured off `skin` for `skin_generation`
+	// (`part_volume_skin`); see `AppState.body_part_masses`. Owned.
+	float[] part_volume;
+	uint part_volume_skin;
 	Matrix4f[] pose_palette;
 
 	// Every replacement of `pose_palette` moves this stamp, and so does every

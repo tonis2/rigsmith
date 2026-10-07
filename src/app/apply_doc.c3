@@ -100,6 +100,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 		// reach — see `RigDocument.apply_edit`. A redo that quietly unset a
 		// reach would be a slow leak of authored work.
 		if (dot.reach > 0.0f && self.set_reach_recorded(dot.id, dot.reach)) diff.reached++;
+		if (dot.pose_weight > 0.0f) (void)self.set_pose_weight_recorded(dot.id, dot.pose_weight);
 	}
 
 	// 2. The dots both hold.
@@ -118,6 +119,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 		}
 		if (self.rename_recorded(dot.id, dot.name)) diff.renamed++;
 		if (self.set_reach_recorded(dot.id, dot.reach)) diff.reached++;
+		(void)self.set_pose_weight_recorded(dot.id, dot.pose_weight);
 	}
 
 	// 3. Edges. Removals collected before any are dropped — `disconnect` shifts
@@ -181,6 +183,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 
 		Vec3 position = dot.position;
 		float reach = dot.reach;
+		float pose_weight = dot.pose_weight;
 		String dot_name = (String)@clone_slice((char[])dot.name);
 		uint previous_root = self.doc.root_id;
 
@@ -192,6 +195,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 			.other = previous_root,
 			.name = dot_name,
 			.reach_before = reach,
+			.pose_weight_before = pose_weight,
 		});
 		diff.removed++;
 	}

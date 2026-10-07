@@ -175,6 +175,17 @@ struct DragState
 	Vec3 grab;
 
 	<*
+	 POSE begun on G, with no button down: where the pointer was, at the grab's
+	 depth, on the first mouse move. Every target after is the joint's start
+	 plus how far the pointer has come since, put onto the lock's line or plane
+	 when there is one — so the joint never jumps to the pointer, and an axis
+	 locked part-way keeps the motion along it instead of starting over.
+	 `pointer_pending` until that first move.
+	*>
+	Vec3 pointer_from;
+	bool pointer_pending;
+
+	<*
 	 TURN: the pixel the sweep was last measured at, and how far it has come.
 
 	 Radians, unwrapped, so a full revolution is a full revolution rather than a

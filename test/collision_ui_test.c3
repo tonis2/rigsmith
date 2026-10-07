@@ -139,7 +139,7 @@ fn void prevent_intersections_is_one_checkbox_that_the_session_keeps() @test
 
 	String text = crig::session_text(mem, &f.app.doc, "posed.glb");
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 24`) && text.contains(`"allow_intersections": true`),
+	test::@check(text.contains(`"version": 25`) && text.contains(`"allow_intersections": true`),
 		"the session did not keep the setting");
 	crig::RigDocument? parsed = crig::parse_session(mem, text);
 	if (catch parsed)

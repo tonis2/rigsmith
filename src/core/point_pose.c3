@@ -227,8 +227,9 @@ fn bool PointJoint.limited(&self) => self.limits.constrained && self.frame.usabl
 
  @param inv_mass : `One per skeleton joint; filled.`
  @param trunk_out : `One per skeleton joint, or empty: filled with whether it is the trunk or the root.`
+ @param part_mass : `One per skeleton joint, or empty: each body part's mass off the mesh (AppState.body_part_masses), used for the limbs in place of the shape's 1.`
 *>
-fn void point_pose_masses(rig::Skeleton* skeleton, float height, float[] inv_mass, bool[] trunk_out = {})
+fn void point_pose_masses(rig::Skeleton* skeleton, float height, float[] inv_mass, bool[] trunk_out = {}, float[] part_mass = {})
 {
 	usz n = skeleton.len();
 	if (inv_mass.len < n) return;
@@ -294,7 +295,16 @@ fn void point_pose_masses(rig::Skeleton* skeleton, float height, float[] inv_mas
 	{
 		int parent = skeleton.parents[j];
 		float mass = 1.0f;
-		if (parent < 0)
+		// A limb off the trunk weighs what its body part does, up to the trunk's
+		// own weight: a fingertip next to nothing, a forearm more, a thigh as much as
+		// the trunk. The trunk and the root keep the shape's weights, which is what
+		// lets a pull on the waist sit the body down on its legs.
+		bool on_fork = parent >= 0 && (trunk[(usz)parent] || skeleton.parents[(usz)parent] < 0);
+		if (part_mass.len >= n && parent >= 0 && !trunk[j] && !on_fork)
+		{
+			mass = math::clamp(part_mass[j], 1.0f, (float)POINT_POSE_TRUNK_MASS);
+		}
+		else if (parent < 0)
 		{
 			mass = POINT_POSE_ROOT_MASS;
 		}
@@ -1077,7 +1087,14 @@ fn bool PointSolve.propose(&self, usz j, Vec3* at, float* said)
 	// wherever the cluster does. Those that are pulled say alike, a pinned leg as
 	// much as a grabbed spine: what a pin asks of the joints above it is only to
 	// stay within its reach, and `keep_reach` holds them to that.
+	//
+	// Not so a hand: a fork off the trunk that nothing below the trunk counts on is
+	// turned first, as far as its limits let it, and slid only by what that turn
+	// leaves. A finger pulled at its knuckle turns the hand at the wrist, the way a
+	// hand is, instead of carrying the wrist, the forearm and the shoulder along
+	// with it; a pull the turn cannot answer still slides the rest.
 	Quaternionf r = self.world[j];
+	if (!self.trunk(j) && self.skeleton.parents[j] >= 0) r = self.above(j).mul(self.cluster_turn(j, self.above(j))).normalize();
 	Vec3 sum = {};
 	float total = 0.0f;
 	for (usz k = first; k < first + count; k++)
@@ -1089,6 +1106,43 @@ fn bool PointSolve.propose(&self, usz j, Vec3* at, float* said)
 	}
 	*at = sum / total;
 	return true;
+}
+
+<*
+ The local rotation that turns fork `j`'s cluster best onto its children's wants,
+ about where `j` is now, clamped to its limits: what `turn` gives a fork, without
+ the posture or the balance.
+*>
+fn Quaternionf PointSolve.cluster_turn(&self, usz j, Quaternionf above)
+{
+	usz first = self.child_from[j];
+	usz count = self.child_from[j + 1] - first;
+	// Off the trunk, the children nothing pulls on ride the turn rather than hold
+	// it back: a hand's other fingers go where the hand goes.
+	bool pulled_only = false;
+	if (!self.trunk(j) && self.skeleton.parents[j] >= 0)
+	{
+		for (usz k = first; k < first + count; k++) if (self.say[self.child_list[k]] > 0.0f) pulled_only = true;
+	}
+	Quaternionf r = above.mul(self.local[j]).normalize();
+	for (int iteration = 0; iteration < 24; iteration++)
+	{
+		Vec3 torque = {};
+		float along = 0.0f;
+		for (usz k = first; k < first + count; k++)
+		{
+			usz c = self.child_list[k];
+			if (pulled_only && self.say[c] <= 0.0f) continue;
+			float w;
+			Vec3 aim = self.aim_of(c, &w);
+			Vec3 turned_rest = r.rotate_vec3(self.rest[c]);
+			Vec3 p = aim - self.x[j];
+			torque = torque + turned_rest.cross(p) * w;
+			along += turned_rest.dot(p) * w;
+		}
+		if (!point_turn_by(&r, torque, along)) break;
+	}
+	return self.limited(j, above.invert().mul(r).normalize());
 }
 
 // ---------------------------------------------------------------------------
@@ -1173,24 +1227,8 @@ fn void PointSolve.turn(&self, usz j, Quaternionf above, float settling)
 	}
 	else if (count > 1)
 	{
-		Quaternionf r = above.mul(self.local[j]).normalize();
-		for (int iteration = 0; iteration < 24; iteration++)
-		{
-			Vec3 torque = {};
-			float along = 0.0f;
-			for (usz k = first; k < first + count; k++)
-			{
-				usz c = self.child_list[k];
-				float w;
-				Vec3 aim = self.aim_of(c, &w);
-				Vec3 turned_rest = r.rotate_vec3(self.rest[c]);
-				Vec3 p = aim - self.x[j];
-				torque = torque + turned_rest.cross(p) * w;
-				along += turned_rest.dot(p) * w;
-			}
-			if (!point_turn_by(&r, torque, along)) break;
-		}
-		self.local[j] = above.invert().mul(r).normalize();
+		// Clamped again below with the posture; the limit is idempotent.
+		self.local[j] = self.cluster_turn(j, above);
 	}
 	// Along the trunk the posture fades as the solve goes on, as the inertia does:
 	// it chooses which way the trunk takes up a pull while there is a choice, and

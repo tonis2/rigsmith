@@ -670,6 +670,7 @@ fn bool AppState.begin_pose(&self, bool held = false)
 		.verb = DragVerb.POSE,
 		.depth = (at - self.model_eye(&self.camera)).length(),
 		.held = held,
+		.pointer_pending = !held,
 	};
 	return true;
 }
@@ -1085,6 +1086,33 @@ fn PoleAim AppState.aim_chain_pole(&self, RigView* view, rig::Pose* pose, PoseCh
 }
 
 <*
+ Whether `target` asks a digit to open: the pointer is nearer, in angle about
+ the anchor, to where the chain points when straight than the tip is now.
+
+ Straight is the rest chord carried by the anchor's parent, so it is the finger
+ laid out from the knuckle however the hand is turned. A finger at rest is
+ already straight, and a pointer anywhere off that line closes it.
+
+ @param points : `Anchor first and tip last, as the solver reads them.`
+*>
+fn bool digit_opening(RigView* view, PoseChain chain, Quaternionf[] world, Vec3[] points, Vec3 target) @local
+{
+	usz anchor = pose_chain_joint(chain, 0);
+	usz effector = pose_chain_joint(chain, points.len - 1);
+	int parent = view.skeleton.parents[anchor];
+	Vec3 rest = view.skeleton.joints[effector] - view.skeleton.joints[anchor];
+	Vec3 straight = parent >= 0 ? world[(usz)parent].rotate_vec3(rest) : rest;
+	Vec3 chord = points[points.len - 1] - points[0];
+	Vec3 want = target - points[0];
+	if (straight.length() <= 0.0f || chord.length() <= 0.0f || want.length() <= 0.0f) return false;
+	straight = straight.normalize();
+	float now = chord.normalize().dot(straight);
+	float asked = want.normalize().dot(straight);
+	// A hair of slack so a pointer held still is not read as opening by noise.
+	return asked > now + 1.0e-4f;
+}
+
+<*
  The skeleton joint represented by one point in an anchor-first pose chain.
 
  `ancestor_run` stores the pivots nearest-first, while CCD stores the same
@@ -1248,8 +1276,14 @@ fn float AppState.solve_limited_pose_chain(
 	{
 		share = 1.0f / (float)tip;
 		passes *= CURL_PASS_FACTOR;
-		target = curl_target(points[:tip + 1], target);
-		curl_start = true;
+		// Only a finger being closed is curled toward the pointer. One pulled back
+		// out toward straight has the shared passes alone, which open every
+		// pivot evenly; the curl's pull would bend it back in against the hand.
+		if (!digit_opening(view, chain, world, points[:tip + 1], target))
+		{
+			target = curl_target(points[:tip + 1], target);
+			curl_start = true;
+		}
 	}
 
 	// The curl itself, before any pass: every pivot turns the same step about the
@@ -1448,6 +1482,37 @@ fn void AppState.chain_points(&self, RigView* view, PoseChain chain, rig::Pose p
 }
 
 <*
+ A digit's runs put back as the gesture found them, so every move solves from
+ the same start: where the finger ends up is then a function of the pointer
+ alone, and dragging back to where the grab began brings it back to what it
+ was. Solved on from the last move's answer instead, a finger keeps whatever a
+ limit or a pass left it holding on the way and creeps. The grabbed run comes
+ from `pose_before`, each mate's from `locked_before`; a joint a look-at target
+ turns is left as `gesture_pose` aimed it.
+*>
+fn void AppState.restore_digit_start(&self, RigView* view, rig::Pose* pose, PoseChain chain)
+{
+	foreach (held : self.pose_before[:self.pose_before_count])
+	{
+		sz j = view.joint_of(held.dot_id);
+		if (j >= 0 && !self.gesture_aim.has((usz)j)) pose.rotations[(usz)j] = held.rotation;
+	}
+	foreach (mate : self.pose_mates[:self.pose_mate_count])
+	{
+		PoseChain run = self.pose_chain(view, mate.dot);
+		for (usz t = 0; t < run.count; t++)
+		{
+			usz j = run.joints[t];
+			if (self.gesture_aim.has(j)) continue;
+			foreach (held : self.locked_before[:self.locked_before_count])
+			{
+				if (held.dot_id == view.dot_ids[j]) pose.rotations[j] = held.rotation;
+			}
+		}
+	}
+}
+
+<*
  Carries the grabbed joint toward `target`, and the body with it.
 
  	`float gap = app.pose_toward(where_the_pointer_is);`
@@ -1496,6 +1561,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 	{
 		// Anchor first, effector last — the order the solver reads a chain in, and
 		// the reverse of `ancestor_run`'s nearest-first.
+		self.restore_digit_start(&view, &pose, chain);
 		Vec3[IK_MAX_CHAIN + 1] points;
 		self.chain_points(&view, chain, pose, shift, points[:chain.count + 1]);
 		gap = self.solve_limited_pose_chain(&view, chain, &pose, points[:chain.count + 1], target, tolerance, shift);
@@ -1608,7 +1674,9 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 	defer alloc::free(mem, inv_mass);
 	bool[] trunk = alloc::new_array(mem, bool, (sz)n);
 	defer alloc::free(mem, trunk);
-	point_pose_masses(skeleton, h, inv_mass, trunk);
+	float[] part_mass = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, part_mass);
+	point_pose_masses(skeleton, h, inv_mass, trunk, self.body_part_masses(view, part_mass) ? part_mass : {});
 	usz[GROUND_CONTACT_MAX] contact;
 	bool[GROUND_CONTACT_MAX] planted;
 	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
@@ -1666,6 +1734,24 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 		if (heel < 0 || (usz)heel == root || body_goal_of(goals.array_view(), (usz)heel) >= 0) continue;
 		if ((skeleton.joints[foot] - skeleton.joints[(usz)heel]).length() > h * CURL_CHAIN_SHARE) continue;
 		goals.push({ .joint = (usz)heel, .position = true, .target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]) });
+	}
+
+	// A limb holding a pin or a planted foot is what the body stands on, and a
+	// pull on the trunk has to fold it, whatever it weighs: it keeps the shape's
+	// limb weight rather than its body part's.
+	float[] shape_mass = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, shape_mass);
+	point_pose_masses(skeleton, h, shape_mass);
+	foreach (goal : goals.array_view())
+	{
+		if (goal.soft) continue;
+		for (int walk = (int)goal.joint; walk >= 0; walk = skeleton.parents[(usz)walk])
+		{
+			foreach (&joint : joints.array_view())
+			{
+				if (joint.joint == (usz)walk && !joint.trunk) joint.inv_mass = shape_mass[(usz)walk];
+			}
+		}
 	}
 
 	Quaternionf[] began = alloc::new_array(mem, Quaternionf, (sz)n);

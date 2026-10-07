@@ -186,6 +186,11 @@ struct Viewport (Widget)
 	// the ring reappears on the next mouse move, which is the only time it can
 	// be wrong and also the next thing that happens.
 	Vec2 pointer;
+	// Where the pointer was before the move being handled, and whether this pane
+	// has seen one: a G arrives at the tree's root with no pointer, and its first
+	// move anchors on where the pointer stood when the key went down.
+	Vec2 pointer_was;
+	bool pointer_seen;
 
 	// The auto-connect preview: where a click would place the next joint, probed
 	// on hover (only after the pointer travels CHAIN_PROBE_STEP) so it costs one
@@ -1553,7 +1558,9 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 		case MOVE:
 			// Recorded before anything is decided, so the turn ring has a radius
 			// to draw at on the very frame the sweep begins.
+			self.pointer_was = self.pointer_seen ? self.pointer : event.pos;
 			self.pointer = event.pos;
+			self.pointer_seen = true;
 
 			if (app.transform_interaction.active)
 			{
@@ -1683,7 +1690,12 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				}
 				else if (app.animation_pose_ready())
 				{
-					(void)app.begin_pose(true);
+					// The press was beside the joint, not on its centre: the joint moves
+					// by what the pointer moves from there, rather than jumping to it.
+					if (app.begin_pose(true))
+					{
+						if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
+					}
 				}
 				else
 				{
@@ -2355,6 +2367,35 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 	// An axis pointing at the eye is one nothing can be dragged along, so the
 	// joint holds still until the view or the lock changes.
 	if (catch target) return;
+
+	// G: the joint moves by what the pointer moves from wherever it was when the
+	// key went down, not to the pointer. See `DragState.pointer_from`.
+	if (app.drag.verb == DragVerb.POSE && !app.drag.held)
+	{
+		if (app.drag.pointer_pending)
+		{
+			collision::Ray? first = self.ray(elem, pixel == self.pointer ? self.pointer_was : pixel);
+			if (catch first) return;
+			app.drag.pointer_from = first.origin + first.direction * app.drag.depth;
+			app.drag.pointer_pending = false;
+		}
+		collision::Ray? ray = self.ray(elem, pixel);
+		if (catch ray) return;
+		Vec3 free = ray.origin + ray.direction * app.drag.depth;
+		Vec3 moved = free - app.drag.pointer_from;
+		if (app.drag.axis.is_direction())
+		{
+			moved = app.drag.lock_direction * moved.dot(app.drag.lock_direction);
+		}
+		else if (app.drag.axis.is_plane())
+		{
+			int component = app.drag.axis.plane_normal_component();
+			if (component >= 0) moved[component] = 0.0f;
+		}
+		app.pose_toward(app.drag.from + moved);
+		elem.request_paint();
+		return;
+	}
 
 	if (app.drag.verb == DragVerb.AIM)
 	{

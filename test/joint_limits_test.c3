@@ -522,7 +522,7 @@ fn void limits_round_trip_through_the_project_session() @test
 
 	String bare = crig::session_text(mem, &fixture.doc, "limited.glb");
 	defer bare.free(mem);
-	test::@check(bare.contains(`"version": 24`) && !bare.contains(`"rotation_limits"`),
+	test::@check(bare.contains(`"version": 25`) && !bare.contains(`"rotation_limits"`),
 		"a session written for a model that carries the limits wrote them too");
 
 	String text = crig::session_text(mem, &fixture.doc, "limited.glb", limits: true);

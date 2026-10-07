@@ -276,3 +276,41 @@ fn void dock_check_results_open_in_a_dialog() @test
 	f.ui.flush();
 	test::@check(!f.ui.find_id(crig::ANIM_CHECK_DIALOG_ID)!!.widget_as(Dialog).open, "Hide left the results up");
 }
+
+<*
+ Posing options carries the selected joint's Weight: no slider with nothing
+ selected, a commit that sets it, and Auto that puts it back on the mesh's own.
+*>
+fn void the_pose_tab_sets_a_joints_weight() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	dock_pose_workspace(&f);
+
+	f.app.select(0);
+	f.app.refresh_ui();
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(!f.in_tree(crig::JOINT_POSE_WEIGHT_ID), "a Weight slider with nothing selected (selected %d)", f.app.selected);
+
+	uint hips;
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == "hips") hips = dot.id;
+	f.app.select(hips);
+	f.app.refresh_ui();
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(f.in_tree(crig::JOINT_POSE_WEIGHT_ID), "no Weight slider for the selected joint");
+	test::@check(!f.in_tree(crig::JOINT_POSE_WEIGHT_AUTO_ID), "Auto offered for a joint at its own weight");
+
+	crig::joint_pose_weight_committed(f.ui, 2.0f);
+	f.ui.flush();
+	test::@check(f.app.doc.find(hips).pose_weight == 2.0f, "the commit did not set the weight");
+	test::@check(f.in_tree(crig::JOINT_POSE_WEIGHT_AUTO_ID), "no Auto for a weight that was set");
+
+	crig::joint_pose_weight_auto(f.ui);
+	f.ui.flush();
+	test::@check(f.app.doc.find(hips).pose_weight == 0.0f, "Auto did not put the weight back");
+}

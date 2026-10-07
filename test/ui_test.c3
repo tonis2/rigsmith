@@ -7292,6 +7292,58 @@ struct PosedLimb
 }
 
 <*
+ G moves the joint by what the pointer moves, not to the pointer: pressed with
+ the pointer beside the joint, the first move leaves it where it is, and the
+ next carries it by the pointer's change.
+*>
+fn void g_moves_the_joint_by_the_pointer_not_to_it() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("G anchors on the pointer, so the joint does not jump to it");
+	fixture.reset();
+
+	PosedLimb limb = build_limb(fixture);
+	AnimRef clip = fixture.app.new_clip("G anchor", 1.0f, from_rest: true);
+	fixture.app.editing = clip;
+	fixture.app.auto_key = false;
+	test::@check(fixture.app.park_clip(clip, 0.0f), "the clip would not park");
+	fixture.app.stop_animation();
+	fixture.app.select(limb.ankle);
+
+	Vec2? projected = fixture.pixel_of(limb.ankle);
+	if (catch projected)
+	{
+		test::@check(false, "SKIPPED — the rig did not project");
+		return;
+	}
+	Vec2 beside = { projected.x + 40.0f, projected.y };
+	Vec3 ankle_was = fixture.app.dot_position(*fixture.doc().find(limb.ankle));
+	fixture.tap(beside, Key.G);
+	if (fixture.app.drag.dot != limb.ankle || fixture.app.drag.verb != DragVerb.POSE)
+	{
+		test::@check(false, "SKIPPED — G did not start a pose gesture (%s)", fixture.notice_text());
+		return;
+	}
+	fixture.feed(beside);
+	fixture.feed({ beside.x + 1.0f, beside.y });
+	Vec3 after_small = fixture.app.dot_position(*fixture.doc().find(limb.ankle));
+	test::@check((after_small - ankle_was).length() < 0.02f,
+		"a one-pixel move carried the ankle %.3f — it jumped to the pointer", (after_small - ankle_was).length());
+
+	for (usz i = 0; i < 6; i++) fixture.feed({ beside.x + 1.0f, beside.y - 30.0f });
+	Vec3 after = fixture.app.dot_position(*fixture.doc().find(limb.ankle));
+	test::@check(after.y > ankle_was.y + 0.01f, "moving the pointer up did not carry the ankle up");
+	(void)fixture.app.cancel_drag();
+}
+
+<*
  G bends the limb, and the fork above it barely moves.
 
  The claim the whole feature rests on: grabbing a foot turns the knee and the
@@ -7411,7 +7463,7 @@ fn void posing_bends_the_limb_and_barely_moves_the_fork() @test
 	}
 	test::@check((single - again).length() < 8.0f,
 		"one solve on a bent limb put the joint at %s with the pointer at %s", single, again);
-	fixture.app.cancel_drag();
+	(void)fixture.app.cancel_drag();
 
 	// --- and the mesh went with it ----------------------------------------
 

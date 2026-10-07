@@ -293,7 +293,7 @@ fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
 	AnimTemplate[1] source = { *p.app.clip(p.ref) };
 	String text = crig::session_text(mem, &p.app.doc, "hero.glb", source[..]);
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 24`) && text.contains(`"pins"`), "the session did not write version 24 pins");
+	test::@check(text.contains(`"version": 25`) && text.contains(`"pins"`), "the session did not write version 25 pins");
 
 	AnimTemplate[]? read = crig::parse_session_clips(mem, text);
 	if (catch fault error = read)
@@ -313,7 +313,7 @@ fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
 	}
 
 	// A version 23 file has no pins and reads as a clip with none.
-	String old = bare.replace(mem, `"version": 24`, `"version": 23`);
+	String old = bare.replace(mem, `"version": 25`, `"version": 23`);
 	defer old.free(mem);
 	AnimTemplate[]? older = crig::parse_session_clips(mem, old);
 	if (catch fault error = older)

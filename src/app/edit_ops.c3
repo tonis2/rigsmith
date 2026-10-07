@@ -646,6 +646,7 @@ fn bool AppState.remove_recorded(&self, uint id)
 	if (!dot) return false;
 	Vec3 position = dot.position;
 	float reach = dot.reach;
+	float pose_weight = dot.pose_weight;
 	String dot_name = (String)@clone_slice((char[])dot.name);
 
 	foreach (edge : self.doc.edges.array_view())
@@ -665,6 +666,7 @@ fn bool AppState.remove_recorded(&self, uint id)
 		.other = previous_root,
 		.name = dot_name,
 		.reach_before = reach,
+		.pose_weight_before = pose_weight,
 	});
 	return true;
 }
@@ -1193,6 +1195,7 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
 		Dot* dot = self.doc.find(pair.source);
 		if (!dot) continue;
 		float reach = dot.reach;
+		float pose_weight = dot.pose_weight;
 
 		if (pair.twin == 0)
 		{
@@ -1218,9 +1221,11 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
 			// the group backwards: this reverts first and the add deletes the dot
 			// after it, which is also the order a redo needs.
 			if (reach > 0.0f) self.set_reach_recorded(pair.twin, reach);
+			if (pose_weight > 0.0f) (void)self.set_pose_weight_recorded(pair.twin, pose_weight);
 			continue;
 		}
 
+		(void)self.set_pose_weight_recorded(pair.twin, pose_weight);
 		if (self.square_twin(pair, reach)) pair.squared = true;
 		if (pair.squared) rig_touched = true;
 	}

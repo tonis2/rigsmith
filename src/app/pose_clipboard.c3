@@ -276,7 +276,7 @@ fn bool AppState.pose_in_hand(&self, RigView* view, AnimKeyframe* out, bool* who
  Keying the aimed rotation onto a joint that is itself still aimed costs nothing:
  the target finds it already turned and adds no more.
 *>
-fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, rig::Pose* pose) @private
+fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, rig::Pose* pose)
 {
 	if (clip.aims.len == 0 && clip.pins.len == 0) return;
 	Vec3[] offsets = alloc::new_array(mem, Vec3, pose.offsets.len);

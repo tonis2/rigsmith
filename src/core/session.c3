@@ -206,7 +206,11 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // `orient`), a window (`from`, `to`, `blend`) and what is held. They are optional
 // and sidecar-only — a glb carries the held foot as ordinary keys when exported —
 // so a version 23 file reads as a clip with none.
-const uint SESSION_VERSION = 24;
+//
+// 25 added a joint's pose weight (`dots[i].pose_weight`), a multiplier on how
+// much the joint's body part holds its ground when a pose is pulled. Written only
+// when set; a version 24 file reads as every joint at the mesh's own weight.
+const uint SESSION_VERSION = 25;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -378,6 +382,8 @@ fn String session_text(
 		// says otherwise, and writing the zero would put the word in every entry
 		// of every rig that has never used it.
 		if (dot.reach > 0.0f) text.appendf(",\"reach\":%s", (JsonFloat)dot.reach)!!;
+		// Only when set, on the same reasoning: the mesh's own weight is the default.
+		if (dot.pose_weight > 0.0f) text.appendf(",\"pose_weight\":%s", (JsonFloat)dot.pose_weight)!!;
 
 		text.append_char('}');
 	}
@@ -1418,10 +1424,13 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		// the unlimited one those rigs were bound with.
 		float reach = 0.0f;
 		if (try double r = entry.get_float("reach")) reach = (float)r;
+		// Absent before version 25 and for every joint at the mesh's own weight.
+		float pose_weight = 0.0f;
+		if (try double w = entry.get_float("pose_weight")) pose_weight = (float)w;
 
 		// insert_dot refuses the duplicate and the null id, which is the
 		// validation above said out loud; and it keeps next_id honest.
-		if (!doc.insert_dot(id, position, name, reach)) return SESSION_SHAPE~;
+		if (!doc.insert_dot(id, position, name, reach, pose_weight)) return SESSION_SHAPE~;
 
 	}
 

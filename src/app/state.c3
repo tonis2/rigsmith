@@ -1550,6 +1550,7 @@ fn void AppState.free(&self)
 *>
 fn void AppState.free_character_state(&self)
 {
+	self.drop_part_volumes();
 	self.drop_gesture_before();
 	self.drop_gesture_aim();
 	self.clear_animation_key_selection();

@@ -266,6 +266,26 @@ fn bool AppState.set_reach_recorded(&self, uint id, float reach)
 }
 
 <*
+ Sets how much a joint holds its ground when a pose is pulled, leaving the group
+ open; see `Dot.pose_weight`. A weight that is already held is no edit.
+
+ @return `True when the weight changed.`
+*>
+fn bool AppState.set_pose_weight_recorded(&self, uint id, float weight)
+{
+	Dot* dot = self.doc.find(id);
+	if (!dot) return false;
+
+	float had = dot.pose_weight;
+	float want = pose_weight_stored(weight);
+	if (had == want) return false;
+
+	self.doc.set_pose_weight(id, want);
+	self.undo_stack.record({ .kind = SET_POSE_WEIGHT, .id = id, .pose_weight_before = had, .pose_weight_after = want });
+	return true;
+}
+
+<*
  Sets how crisp this model's blends are, leaving the group open.
 
 	The previous value is read here rather than passed: nothing writes the

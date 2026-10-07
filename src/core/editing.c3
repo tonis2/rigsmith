@@ -484,6 +484,7 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case MOVE_DOT: self.move_dot(edit.id, edit.after);
 		case RENAME_DOT: self.rename_dot(edit.id, edit.name);
 		case SET_REACH: self.set_reach(edit.id, edit.reach_after);
+		case SET_POSE_WEIGHT: self.set_pose_weight(edit.id, edit.pose_weight_after);
 		case SET_SHARPNESS: self.set_sharpness(edit.sharp_after);
 		case ADD_EDGE: self.connect(edit.id, edit.other);
 		case DELETE_EDGE: self.disconnect(edit.id, edit.other);
@@ -519,7 +520,7 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 		case ADD_DOT:
 			self.remove_dot(edit.id);
 		case DELETE_DOT:
-			self.insert_dot(edit.id, edit.before, edit.name, edit.reach_before);
+			self.insert_dot(edit.id, edit.before, edit.name, edit.reach_before, edit.pose_weight_before);
 			// `remove_dot` hands the root to whatever was left, so putting the
 			// dot back is not enough to put the root back. Restored from the
 			// edit rather than re-derived, because the guess it made on the way
@@ -531,6 +532,8 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.rename_dot(edit.id, edit.prior_name);
 		case SET_REACH:
 			self.set_reach(edit.id, edit.reach_before);
+		case SET_POSE_WEIGHT:
+			self.set_pose_weight(edit.id, edit.pose_weight_before);
 		case SET_SHARPNESS:
 			// Zero is a real previous value here — it is the unset state, read as
 			// the binder's own blend — and `set_sharpness` stores it as such, so

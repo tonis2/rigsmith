@@ -106,6 +106,14 @@ struct Dot
 	 should carry into a chest is not written anywhere in the geometry.
 	*>
 	float reach;
+
+	<*
+	 How much this joint holds its ground when a pose is pulled, as a multiplier
+	 on the weight its body part has (`AppState.body_part_masses`): above 1 it
+	 is moved later and less, below 1 sooner. Zero means 1, the weight read off
+	 the mesh, which is what every joint has until someone says otherwise.
+	*>
+	float pose_weight;
 }
 
 <*
@@ -886,6 +894,34 @@ fn bool RigDocument.set_reach(&self, uint id, float reach)
 	return true;
 }
 
+// The band a joint's pose weight is held to; see `Dot.pose_weight`.
+const float POSE_WEIGHT_MIN = 0.1;
+const float POSE_WEIGHT_MAX = 5.0;
+
+<*
+ Sets how much a joint holds its ground when a pose is pulled.
+
+ @param weight : `A multiplier, clamped to POSE_WEIGHT_MIN..POSE_WEIGHT_MAX; zero, or 1, is the mesh's own weight and is stored as zero.`
+ @return `True if the dot existed.`
+*>
+fn bool RigDocument.set_pose_weight(&self, uint id, float weight)
+{
+	Dot* dot = self.find(id);
+	if (!dot) return false;
+	dot.pose_weight = pose_weight_stored(weight);
+	return true;
+}
+
+// What `set_pose_weight` keeps for `weight`: zero for the default, the clamp otherwise.
+fn float pose_weight_stored(float weight)
+{
+	if (weight <= 0.0f || math::abs(weight - 1.0f) < 1.0e-4f) return 0.0f;
+	return math::clamp(weight, POSE_WEIGHT_MIN, POSE_WEIGHT_MAX);
+}
+
+// The multiplier a dot's pose weight stands for: 1 when unset.
+fn float Dot.pose_weight_factor(&self) => self.pose_weight > 0.0f ? self.pose_weight : 1.0f;
+
 <*
  The narrowest and the widest blend the binder will be asked for.
 
@@ -1166,11 +1202,11 @@ fn bool RigDocument.remove_dot(&self, uint id)
 
  @return `False if that id is already present, or is the null id.`
 *>
-fn bool RigDocument.insert_dot(&self, uint id, Vec3 position, String name = "", float reach = 0.0f)
+fn bool RigDocument.insert_dot(&self, uint id, Vec3 position, String name = "", float reach = 0.0f, float pose_weight = 0.0f)
 {
 	if (id == 0 || self.find(id)) return false;
 	String owned = (String)@clone_slice((char[])name);
-	self.dots.push({ .id = id, .position = position, .name = owned, .reach = reach });
+	self.dots.push({ .id = id, .position = position, .name = owned, .reach = reach, .pose_weight = pose_weight_stored(pose_weight) });
 
 	// A restored id can be above the counter when the edits either side of it
 	// were undone too; letting it fall behind would hand the same id out twice.
@@ -1256,6 +1292,7 @@ enum EditKind
 	MOVE_DOT,
 	RENAME_DOT,
 	SET_REACH,
+	SET_POSE_WEIGHT,
 	SET_SHARPNESS,
 	ADD_EDGE,
 	DELETE_EDGE,
@@ -1339,6 +1376,11 @@ struct Edit
 	// carrying the reach it was deleted with rather than an unlimited one.
 	float reach_before;
 	float reach_after;
+
+	// SET_POSE_WEIGHT both ways, and DELETE_DOT's `pose_weight_before`, on the
+	// reach's reasoning: a deleted joint comes back holding as it did.
+	float pose_weight_before;
+	float pose_weight_after;
 
 	// SET_SHARPNESS either side. Its own pair rather than the reach's, by the rule
 	// the collider radius below is held to: a blend sharpness is not a distance,
