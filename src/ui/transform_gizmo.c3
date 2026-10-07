@@ -173,6 +173,12 @@ fn String transform_tool_hint(AppState* app)
 			: "Key or discard the pose before editing the rest skeleton";
 	}
 
+	if (target.kind == MODEL_TARGET)
+	{
+		return verb == "Move"
+			? "Move tool · the whole model · drag a colored arrow or plane, or the middle, to move it · click a joint to move that instead"
+			: "Rotate tool · the whole model · drag a colored ring to turn it · click a joint to turn that instead";
+	}
 	return verb == "Move"
 		? "Move tool · drag a joint to place it on the model · drag a colored arrow or plane to slide along it"
 		: "Rotate tool · drag a colored ring in the 3D view";

@@ -184,3 +184,47 @@ fn void a_click_on_the_body_gives_the_rotate_tool_the_model() @test
 	fixture.app.transform_tool = SELECT_TOOL;
 	fixture.reset();
 }
+
+<*
+ Move picked with nothing selected — a model just opened from its sidecar —
+ puts its gizmo on the whole model at once, rather than a sentence about the
+ Scene outliner and no gizmo. A joint already selected keeps the tool.
+*>
+fn void a_tool_picked_with_nothing_selected_takes_the_model() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	fixture.reset();
+	fixture.app.select_scene(NONE);
+	fixture.app.refresh_ui();
+	fixture.ui.flush();
+
+	crig::menu_move_tool(fixture.ui);
+	fixture.feed(VIEWPORT_CENTER);
+	test::@check(fixture.app.scene_selection == MODEL, "Move with nothing selected did not take the model");
+	Element* view = fixture.ui.find(crig::Viewport)!!;
+	crig::TransformGizmoFrame? framed = view.widget_as(crig::Viewport).transform_gizmo_frame(view);
+	if (catch framed)
+	{
+		test::@check(false, "Move with nothing selected drew no gizmo");
+		return;
+	}
+	test::@check(framed.target.kind == MODEL_TARGET, "the Move gizmo is not on the model");
+	test::@check(crig::hint_line(&fixture.app).contains("the whole model"), "the hint does not say the model moves: %s",
+		crig::hint_line(&fixture.app));
+
+	fixture.app.transform_tool = SELECT_TOOL;
+	fixture.click(SPOT_A);
+	uint joint = fixture.app.selected;
+	test::@check(joint != 0, "placing a joint did not select it");
+	crig::menu_rotate_tool(fixture.ui);
+	test::@check(fixture.app.selected == joint, "picking Rotate took the selected joint away");
+	fixture.app.transform_tool = SELECT_TOOL;
+	fixture.reset();
+}

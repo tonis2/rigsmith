@@ -2378,6 +2378,49 @@ fn void symmetry_plane_reads_the_rig_not_the_mesh() @test
 }
 
 <*
+ A tail curling to one side is side-less joints off the midline. They must not
+ drag the plane after them: averaged in, four tail joints moved it 4 cm on a
+ 1 m figure and M put a pinky's twin inside the palm. The plane is the median of
+ the centre joints and the pairs, so the twin lands at the exact reflection.
+
+ *Re-introduce:* take `MirrorSurvey.centre_point` (the mean) for the plane and
+ pinky_r lands near -0.33 rather than at -0.42.
+*>
+fn void a_curled_tail_does_not_move_the_mirror_plane() @test
+{
+	crig::AppState app = crig::new_app({});
+	defer app.free();
+
+	uint hips = app.doc.add_dot({ 0.0f, 0.5f, 0.0f }, "hips");
+	app.doc.add_dot({ 0.0f, 0.6f, 0.0f }, "spine");
+	app.doc.add_dot({ 0.0f, 0.7f, 0.0f }, "chest");
+	app.doc.add_dot({ 0.0f, 0.9f, 0.0f }, "head");
+	// The tail curls off to +X, the way Zidane's does.
+	app.doc.add_dot({ 0.00f, 0.45f, -0.10f }, "tail_1");
+	app.doc.add_dot({ 0.06f, 0.45f, -0.20f }, "tail_2");
+	app.doc.add_dot({ 0.17f, 0.46f, -0.28f }, "tail_3");
+	app.doc.add_dot({ 0.25f, 0.47f, -0.33f }, "tail_4");
+	app.doc.add_dot({ 0.35f, 0.72f, 0.06f }, "wrist_l");
+	app.doc.add_dot({ -0.35f, 0.72f, 0.06f }, "wrist_r");
+	uint pinky_l = app.doc.add_dot({ 0.42f, 0.71f, 0.03f }, "pinky_l");
+	app.doc.add_dot({ -0.40f, 0.70f, 0.04f }, "pinky_r");
+	app.doc.root_id = hips;
+
+	Vec3 point;
+	Vec3 normal;
+	app.mirror_plane(&point, &normal, app.picker.scale * 0.01f);
+	test::@check(math::abs(point.x) < 1e-4f, "the tail dragged the plane to x=%.4f", point.x);
+
+	app.select(pinky_l);
+	(void)app.mirror_selection();
+	crig::Dot* twin = app.dot_named("pinky_r");
+	test::@check(twin != null, "no pinky_r");
+	if (twin == null) return;
+	test::@check((twin.position - (Vec3){ -0.42f, 0.71f, 0.03f }).length() < 1e-4f,
+		"pinky_r is not pinky_l's reflection: %s", twin.position);
+}
+
+<*
  Once the plane is corrected off the rig, the mirror reflects across it — not the
  mesh's centre — and the correction takes back with one undo.
 *>

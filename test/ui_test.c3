@@ -15658,17 +15658,13 @@ fn void the_lasso_walks_its_two_jobs() @test
 }
 
 <*
- The mode is refused while an animation deforms the body, and the item says so
- before the click.
-
- The region is gathered against the *rest* mesh — the bind is against it and so
- is the BVH the visibility test marches — so a lasso drawn over a posed body
- would catch vertices other than the ones under it. Greyed rather than left to
- refuse, so the reason is visible before the gesture.
+ The pinning job opens over an animated body — the region is gathered against
+ the body on screen (`lasso_vertices`) — and is still refused with no joint to
+ hand a region to, with the item greyed before the click.
 *>
-fn void the_lasso_is_refused_while_an_animation_is_shown() @test
+fn void the_lasso_pins_while_an_animation_is_shown() @test
 {
-	io::printn("the lasso will not open over an animated body");
+	io::printn("the lasso pins over an animated body, and needs a joint");
 
 	Fixture fixture;
 	if (catch fault error = fixture.open())
@@ -15683,22 +15679,23 @@ fn void the_lasso_is_refused_while_an_animation_is_shown() @test
 	AnimRef clip = fixture.app.new_clip("Lasso lock", 1.0f, from_rest: true);
 	fixture.app.editing = clip;
 	test::@check(fixture.app.park_clip(clip, 0.0f), "the lasso lock clip would not park");
+	test::@check(fixture.app.rig_locked(), "a parked clip should lock the rest rig");
 
-	test::@check(crig::query_lasso(fixture.ui).disabled, "the item is not greyed while the rig is locked");
-
+	test::@check(!crig::query_lasso(fixture.ui).disabled, "the item is greyed while an animation is shown");
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
-	test::@check(!fixture.app.lassoing, "the lasso opened over an animated body");
-	test::@check(fixture.app.notice().len > 0, "and said nothing about why");
+	test::@check(fixture.app.lassoing && fixture.app.lasso_job == crig::LassoJob.PIN,
+		"the lasso would not pin over an animated body");
+	fixture.app.end_lasso();
 
-	fixture.app.stop_animation();
-
-	// With nothing selected it is refused too, since there is nothing to hand a
+	// With nothing selected it is refused, since there is nothing to hand a
 	// region to.
 	fixture.app.select(0);
 	fixture.app.refresh_ui();
 	test::@check(crig::query_lasso(fixture.ui).disabled, "the item is not greyed with nothing selected");
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
 	test::@check(!fixture.app.lassoing, "the lasso opened with no dot to pin to");
+	test::@check(fixture.app.notice().len > 0, "and said nothing about why");
+	fixture.app.stop_animation();
 }
 
 <*

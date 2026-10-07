@@ -24,6 +24,7 @@ import std::math::quaternion;
 
 
 import std::collections::list;
+import std::sort;
 
 <*
  How far off the symmetry plane a dot has to be before it gets a mirror.
@@ -67,8 +68,12 @@ fn Vec3 reflect_across(Vec3 v, Vec3 point, Vec3 normal) @local
  than `MIRROR_SQUARE_COS` off world X, so a near-square rig stays exactly
  world-aligned and the pairs it squares up are not dragged by their own noise.
 
- The point comes from the centre joints — the ones with no side, which sit on
- the plane — or, with none, from the pair midpoints, or the stored `sym_x`. When
+ The point is the **median** of the centre joints — the ones with no side,
+ which sit on the plane (`MirrorSurvey.plane_point`) — or, with none, the pair
+ midpoints, or the stored `sym_x`. A median and not a mean, because a joint with
+ no side is not always on the midline: a tail that curls to one side is four
+ "centre" joints well off it, and averaged in they slid the whole plane over, so
+ every twin landed a hand's width wrong — a pinky mirrored into the palm. When
  the plane is world-aligned the point collapses to `{x,0,0}` and snaps to the
  stored `sym_x` when within `on_plane` of it, so a rig already mirrored reflects
  onto itself bit-for-bit and records nothing.
@@ -83,7 +88,7 @@ fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
 	{
 		// World-aligned: a bare x, snapped to the stored plane when the centre
 		// line all but agrees with it, so an already-square rig records nothing.
-		float px = survey.centres > 0 ? survey.centre_point().x : self.doc.sym_x;
+		float px = survey.centres > 0 ? survey.plane_point().x : self.doc.sym_x;
 		if (math::abs(px - self.doc.sym_x) <= on_plane) px = self.doc.sym_x;
 		*point = { px, 0, 0 };
 		*normal = { 1, 0, 0 };
@@ -92,7 +97,7 @@ fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
 
 	// Tilted: any point the plane passes through — the centre line, or the pairs'
 	// own midline when the rig carries no centre joint.
-	if (survey.centres > 0) { *point = survey.centre_point(); }
+	if (survey.centres > 0) { *point = survey.plane_point(); }
 	else if (survey.pairs > 0) { *point = survey.midpoint(); }
 	else { *point = { self.doc.sym_x, 0, 0 }; }
 	*normal = n;
@@ -112,11 +117,15 @@ struct MirrorSurvey
 	Vec3 midpoints;   // pair midpoints, summed
 	usz pairs;
 	usz centres;
+	// Every centre joint's position: what `plane_point` takes the median of.
+	// Temp-allocated.
+	List{Vec3} on_plane;
 }
 
 fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = {})
 {
 	MirrorSurvey out;
+	out.on_plane.init(tmem);
 	foreach (dot : self.doc.dots.array_view())
 	{
 		if (dot.name.len == 0 || array::contains(exclude, dot.id)) continue;
@@ -129,6 +138,7 @@ fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = {})
 			// A centre joint, on the plane.
 			out.centre = out.centre + dot.position;
 			out.centres++;
+			out.on_plane.push(dot.position);
 			continue;
 		}
 
@@ -153,6 +163,34 @@ fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = {})
 // against the stored `sym_x` bit for bit, and `x / n` is what that was written as.
 fn Vec3 MirrorSurvey.centre_point(self) => self.centre / (float)self.centres;
 fn Vec3 MirrorSurvey.midpoint(self) => self.midpoints * (1.0f / (float)self.pairs);
+
+<*
+ Where the centre line passes, robustly: the median, axis by axis, of the
+ centre joints. A curled tail of side-less joints is outvoted by the spine
+ rather than averaged in — the mean let a tail four joints long pull the plane
+ 4 cm off a body 1 m tall.
+
+ The pairs stay out, as they always have: a crooked pair is what Mirror is
+ there to fix, and on a rig with one centre joint and one pair its midpoint
+ would be half the vote. With an even count the two middle values are averaged,
+ so neither side of a split wins by its sign; two equal middles — an
+ already-square spine — give that value back exactly, and the plane still
+ compares bit for bit.
+*>
+fn Vec3 MirrorSurvey.plane_point(self)
+{
+	usz n = (usz)self.on_plane.len();
+	if (n == 0) return {};
+	float[] axis = alloc::new_array(tmem, float, (sz)n);
+	Vec3 out;
+	for (usz c = 0; c < 3; c++)
+	{
+		foreach (usz i, p : self.on_plane) axis[i] = p[c];
+		sort::quicksort(axis);
+		out[c] = n % 2 == 1 ? axis[n / 2] : (axis[n / 2 - 1] + axis[n / 2]) * 0.5f;
+	}
+	return out;
+}
 
 <*
  The plane's normal: the pairs' averaged left-right axis when the rig is turned
@@ -1325,25 +1363,24 @@ fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal,
  The mesh's bounding-box centre is a poor guess at the midline — a tail, a wing
  or an off-centre export throws it off, and a hand-built rig on no mesh has none.
  The rig knows better: a centre joint, one whose name carries no side, sits on
- the midline whatever the mesh is shaped like, so the plane is the average of
- every centre joint's X.
+ the midline whatever the mesh is shaped like — mostly. A tail curling to one
+ side is side-less joints that are not, so the plane is their median
+ (`MirrorSurvey.plane_point`) rather than their average.
 
  The limb **pairs** are deliberately left out. A pair's midpoint is the plane
  only when the pair is already square — and a crooked pair, whose midpoint sits
  off to one side, is exactly what Mirror is there to fix. Deriving the plane
  from the pairs would move it to meet the crookedness instead of squaring the
- crookedness up to the plane. The centre line, which no limb can shift, is the
- one signal that stays put.
+ crookedness up to the plane.
 
  @param out : `Receives the plane's model-space X when one was found.`
  @return `False when the rig has no centre joint to read a plane from, out untouched.`
 *>
 fn bool AppState.symmetry_plane(&self, float* out)
 {
-	// The pairs the survey also reads are left out here — see above.
 	MirrorSurvey survey = self.mirror_survey();
 	if (survey.centres == 0) return false;
-	*out = survey.centre_point().x;
+	*out = survey.plane_point().x;
 	return true;
 }
 

@@ -228,9 +228,20 @@ fn void menu_weight_brush(Ui* ui)
 *>
 fn String lasso_pin_refusal(AppState* app) @private
 {
-	return app.rig_locked()
-		? "the lasso draws on the rest mesh — finish animation editing first"
-		: "select a joint to pin vertices to";
+	return "select a joint to pin vertices to";
+}
+
+// What the lasso does now, said as it opens or changes job: the cell lighting is
+// otherwise the only sign a click did anything.
+fn void lasso_opened_notice(AppState* app) @private
+{
+	if (!app.lassoing) return;
+	if (app.lasso_job == LassoJob.PIN)
+	{
+		app.@notice("Lasso pin · drag around vertices to pin them to the selected joint · T selects joints instead · esc closes");
+		return;
+	}
+	app.@notice("Lasso select · drag around joints to select them · ctrl-drag deselects · alt-drag adds · T pins vertices instead · esc closes");
 }
 
 <*
@@ -259,7 +270,11 @@ fn void menu_lasso_mode(Ui* ui)
 	}
 	else if (!app.begin_lasso(PIN))
 	{
-		app.@notice(lasso_pin_refusal(app));
+		app.@notice("%s", lasso_pin_refusal(app));
+	}
+	else
+	{
+		lasso_opened_notice(app);
 	}
 	app.refresh_ui();
 }
@@ -273,7 +288,7 @@ fn void menu_lasso_mode(Ui* ui)
 
  Which refusal it is depends on which step was attempted, and the two have
  nothing in common: opening from cold wants circles on screen to draw around,
- while the step onto pinning wants a dot to pin *to* and a body at rest. Asked
+ while the step onto pinning wants a dot to pin *to*. Asked
  before the call, since afterwards the tool is in the state that makes the
  question unanswerable.
 *>
@@ -292,8 +307,12 @@ fn void menu_lasso_select(Ui* ui)
 		}
 		else
 		{
-			app.@notice(lasso_pin_refusal(app));
+			app.@notice("%s", lasso_pin_refusal(app));
 		}
+	}
+	else
+	{
+		lasso_opened_notice(app);
 	}
 	app.refresh_ui();
 }
@@ -327,8 +346,67 @@ fn void menu_move_tool(Ui* ui)
 	app.end_area();
 	app.end_sketch();
 	app.transform_tool = MOVE_TOOL;
+	app.give_tool_the_model();
 	app.@notice("%s", transform_tool_hint(app));
 	app.refresh_ui();
+}
+
+<*
+ A transform tool picked with nothing selected works on the whole model, so its
+ gizmo is up the moment the tool is.
+
+ A model opened from its sidecar comes up with nothing selected, and the tool
+ used to answer with a sentence about the Scene outliner and no gizmo at all —
+ which reads as the tool not working on this model. A selection that is there
+ is left alone: a joint picked first is what the tool is for.
+*>
+fn void AppState.give_tool_the_model(&self)
+{
+	if (self.transform_target().kind != NO_TRANSFORM_TARGET) return;
+	if (!self.has_mesh() && self.doc.dots.len() == 0) return;
+	self.select_scene(MODEL);
+}
+
+<*
+ Rig › Use the model's own weights: switch between the weights the model file
+ carries and crig's automatic weights for the joints as they are now.
+
+ The file's weights are held as authored, so they do not follow a joint that
+ moves — which is right for weights an artist painted and wrong for weights that
+ were only some binder's answer for an older rig. Turning this off is how a rig
+ whose fingers were moved since gets weights for where the fingers are.
+*>
+fn void menu_model_weights(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.doc.skin_from_file)
+	{
+		app.doc.skin_from_file = false;
+		app.@notice("using crig's automatic weights for the joints as they are · the model's own are back with this item again");
+	}
+	else if (app.imported_skin.present())
+	{
+		app.doc.skin_from_file = true;
+		app.@notice("using the model's own weights again");
+	}
+	else
+	{
+		app.@notice("this model carries no weights of its own to use");
+		app.refresh_ui();
+		return;
+	}
+	// Neither choice is a document edit the ledger records, so the bind is
+	// rebuilt here and the next save writes whichever is chosen.
+	app.authored_dirty = true;
+	app.mark_rig_stale();
+	app.refresh_pose_display();
+	app.refresh_ui();
+}
+
+fn MenuItemFlags query_model_weights(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	return { .checked = app.doc.skin_from_file, .disabled = !app.doc.skin_from_file && !app.imported_skin.present() };
 }
 
 <*
@@ -357,6 +435,7 @@ fn void menu_rotate_tool(Ui* ui)
 	app.end_area();
 	app.end_sketch();
 	app.transform_tool = ROTATE_TOOL;
+	app.give_tool_the_model();
 	app.@notice("%s", transform_tool_hint(app));
 	app.refresh_ui();
 }
@@ -908,10 +987,10 @@ fn MenuItemFlags query_brushing(Ui* ui)
 	return { .checked = app.brushing, .disabled = app.selected == 0 };
 }
 
-// Greyed without a dot, like the brush, and while the rig is locked besides: a
-// region has to be handed to some dot, and it is still gathered against the
-// rest mesh. Lit for the pinning job alone — the lasso being open is not the
-// question this item asks.
+// Greyed without a dot, like the brush: a region has to be handed to some dot.
+// Not while the rig is locked — the region is gathered against the body on
+// screen, posed or not. Lit for the pinning job alone — the lasso being open is
+// not the question this item asks.
 <*
  The tool column's Sketch cell: draw on the viewport to show the agent what is
  wrong. Red marks a fault, green a keeper, blue a note, and the eraser takes a
@@ -958,7 +1037,7 @@ fn MenuItemFlags query_lasso(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 	return {
 		.checked = app.lassoing && app.lasso_job == LassoJob.PIN,
-		.disabled = app.selected == 0 || app.rig_locked(),
+		.disabled = app.selected == 0,
 	};
 }
 
@@ -1232,7 +1311,7 @@ MenuItem[6] edit_items = {
 // cell in the Assets pane is the answer. So the item is here and it opens the
 // same panel a skinless import raises, which still gets its list from the packs.
 // The Assets route is unchanged.
-MenuItem[19] rig_items = {
+MenuItem[20] rig_items = {
 	{ .label = "Apply body plan…", .on_select = &menu_apply_body_plan, .state = &query_any_mesh },
 	{ .label = "Rotate skeleton…", .on_select = &open_skeleton_rotation_dialog, .state = &query_any_dots },
 	{ .label = "Re-apply plan limits", .on_select = &menu_reapply_plan_limits, .state = &query_any_dots },
@@ -1255,6 +1334,11 @@ MenuItem[19] rig_items = {
 	// change what the bind says without moving a dot, and these are the pair that
 	// says it about the whole model at once. Greyed on an empty document, since a
 	// sharpness is a power applied to weights and there are none.
+	// Whether the skin is the model file's own weights or crig's, from the joints.
+	// Off puts the binder on the rig as it stands now — the way out of weights a
+	// file brought in that no longer fit joints moved since — and on takes the
+	// file's back, so the choice can be tried both ways.
+	{ .label = "Use the model's own weights", .on_select = &menu_model_weights, .state = &query_model_weights },
 	{ .label = "Sharpen blending", .shortcut = "]", .on_select = &menu_sharpen_blend, .state = &query_any_dots },
 	{ .label = "Soften blending", .shortcut = "[", .on_select = &menu_soften_blend, .state = &query_any_dots },
 	// Under the pair above, since all four change what the bind says without

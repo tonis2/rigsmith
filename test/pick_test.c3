@@ -733,3 +733,62 @@ fn void a_segment_wholly_behind_the_camera_is_refused() @test
 	Vec2[2]? drawn = crig::project_segment(view_projection, back, further, VIEWPORT);
 	if (try drawn) test::@check(false, "a segment behind the camera came back with an image");
 }
+
+<*
+ The lasso gathers the body that is on screen. A cube posed five units along X
+ by its one joint is caught by a loop drawn around where it is drawn, and not by
+ one drawn around where it rests — with and without reaching through.
+
+ *Re-introduce:* project `self.geometry.positions` in `lasso_vertices` and the
+ loop around the posed cube catches nothing, while the one around empty space
+ at rest catches all of it.
+*>
+fn void the_lasso_gathers_the_posed_body() @test
+{
+	Vec3[8] rest;
+	corners(rest[..], { -1, -1, -1 }, { 1, 1, 1 });
+	uint[36] indices = BOX_FACES;
+	rig::TriMesh mesh = { .positions = rest[..], .indices = indices[..] };
+
+	ushort[32] joints;
+	float[32] weights;
+	for (usz vertex = 0; vertex < rest.len; vertex++) weights[vertex * 4] = 1.0f;
+	gltf::SkinBinding binding = { .joints = joints[..], .weights = weights[..], .slots = 4, .vertices = rest.len };
+
+	crig::Picker rest_picker = crig::build_picker(mesh);
+	defer rest_picker.free();
+	crig::DeformedCollisionSurface posed = crig::build_deformed_collision_surface(&rest_picker, binding, 1);
+	defer posed.free();
+
+	Matrix4f[1] palette = { matrix::IDENTITY4 };
+	palette[0].m[12] = 5.0f;
+
+	crig::AppState app = {
+		.geometry = mesh,
+		.picker = rest_picker,
+		.deformed_surface = posed,
+		.skin = binding,
+		.pose_palette = palette[..],
+		.pose_generation = 1,
+		.show_mesh = true,
+	};
+	defer app.adjacency.free(mem);
+
+	// A tenth of model space onto the clip volume, looking down -Z: the posed cube
+	// lands on pixels 70..80 of a 100-pixel view, the rest one on 45..55.
+	Matrix4f view_projection = matrix::IDENTITY4{float}.scale({ 0.1f, 0.1f, 0.1f });
+	Vec2 viewport = { 100, 100 };
+	Vec3 eye = { 5, 0, 20 };
+	Vec2[4] around_posed = { { 65, 40 }, { 85, 40 }, { 85, 60 }, { 65, 60 } };
+	Vec2[4] around_rest = { { 40, 40 }, { 60, 40 }, { 60, 60 }, { 40, 60 } };
+	uint[8] caught;
+
+	test::eq(app.lasso_vertices(caught[..], view_projection, viewport, eye, around_posed[..], true), (usz)8);
+	test::eq(app.lasso_vertices(caught[..], view_projection, viewport, eye, around_rest[..], true), (usz)0);
+
+	// Without reaching through: the near face is seen and the walk carries the
+	// loop over the rest of the cube, against the posed surface.
+	usz seen = app.lasso_vertices(caught[..], view_projection, viewport, eye, around_posed[..], false);
+	test::@check(seen > 0, "a loop around the posed cube caught nothing that could be seen");
+	test::eq(app.lasso_vertices(caught[..], view_projection, viewport, eye, around_rest[..], false), (usz)0);
+}

@@ -132,3 +132,63 @@ fn void a_rename_keeps_the_imported_weights() @test
 	defer if (back.len > 0) alloc::free(mem, back);
 	test::eq(back.len, before.len);
 }
+
+<*
+ A model crig exported carries crig's own weights, and says so: opened again
+ without its sidecar, they are rebuilt from the joints rather than adopted as the
+ file's — so moving a joint afterwards takes its vertices with it. Adopted as
+ authored, they stayed put, and a finger joint moved to the next finger left its
+ vertices behind (a thumb whose weights were the middle finger's).
+
+ The Rig menu's "Use the model's own weights" turns the file's weights back on,
+ and off again, for a model that carries some.
+
+ *Re-introduce:* drop the `PACK_KEY_WEIGHTS` check in `import_rig_from_source`
+ and the reopened export comes back with `skin_from_file` set.
+*>
+fn void crig_weights_reopen_as_crig_weights() @test
+{
+	io::printn("a model crig wrote reopens with weights bound from its joints");
+	String source = "build/trust-weights-source.glb";
+	String exported = "build/trust-weights-exported.glb";
+	copy_humanoid(source);
+	remove_with_sidecar(exported);
+	defer
+	{
+		remove_with_sidecar(source);
+		remove_with_sidecar(exported);
+	}
+
+	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, source);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	test::@check(app.doc.skin_from_file, "the humanoid arrives with weights of its own");
+
+	// Off: crig's weights for the joints, which the export then writes and marks.
+	app.doc.skin_from_file = false;
+	app.mark_rig_stale();
+	app.export_rig(exported);
+	test::@check(file::is_file(exported), "the export wrote nothing: %s", app.notice());
+	{
+		gltf::GltfStream stream = gltf::open(exported, mem)!!;
+		defer stream.close();
+		String said = stream.gltf.extras.get(crig::PACK_KEY_WEIGHTS) ?? "";
+		test::@check(said == crig::PACK_WEIGHTS_AUTOMATIC, "the export did not mark its weights as crig's: '%s'", said);
+	}
+
+	remove_with_sidecar(exported);
+	app.export_rig(exported);
+	String sidecar = crig::session_path(mem, exported);
+	defer sidecar.free(mem);
+	(void)file::delete(sidecar);
+
+	rig::TriMesh again = rig::load_gltf(mem, exported)!!;
+	defer again.free(mem);
+	crig::AppState reopened = crig::new_app(again, exported);
+	defer reopened.free();
+	test::@check(reopened.import_rig_from_source(), "the exported rig must import");
+	test::@check(!reopened.doc.skin_from_file, "crig's own weights came back held as the file's");
+	test::@check(reopened.imported_skin.present(), "the file's weights should still be read, for the menu to offer");
+}

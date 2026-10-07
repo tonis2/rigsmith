@@ -366,8 +366,15 @@ fn bool AppState.import_rig_from_source(&self)
 
 	// Whatever the file painted, because this path is only reached for a file that
 	// carries no crig document — see `adopt_source_rig`. Its weights are the only
-	// account of this mesh anyone has given, so they are the one to use.
-	self.doc.skin_from_file = taken.present();
+	// account of this mesh anyone has given, so they are the one to use — unless
+	// crig wrote them itself (`PACK_KEY_WEIGHTS`), when they are only its binder's
+	// answer for the joints as they stood. Adopted as authored, those would stay
+	// put while the joints moved on, and the next joint dragged would leave its
+	// vertices behind on a neighbour. They are rebuilt from the rig instead, which
+	// for an unmoved rig is the same answer.
+	bool automatic = false;
+	if (try String said = stream.gltf.extras.get(PACK_KEY_WEIGHTS)) automatic = said == PACK_WEIGHTS_AUTOMATIC;
+	self.doc.skin_from_file = taken.present() && !automatic;
 
 	self.mark_rig_stale();
 	self.select(ids[0]);
@@ -376,7 +383,14 @@ fn bool AppState.import_rig_from_source(&self)
 	String clips_note = bound_clips > 0
 		? string::tformat(" · bound %d clip%s", bound_clips, bound_clips == 1 ? "" : "s")
 		: "";
-	if (taken.present())
+	if (taken.present() && automatic)
+	{
+		self.@notice("imported %d joints and %d bones · weights bound from the joints, as crig wrote them%s%s%s%s",
+			joints, bones,
+			dynamic > 0 ? " · and its physics" : "", limits, clips_note,
+			replaced > 0 ? " · replaced the rig that was here" : "");
+	}
+	else if (taken.present())
 	{
 		self.@notice("imported %d joints, %d bones and the file's own weights%s%s%s%s",
 			joints, bones,
@@ -965,7 +979,8 @@ fn float[] AppState.imported_dense(&self, Allocator allocator, RigView* view)
  @param clips_replaced : `The file's animations were just rewritten to exactly clips, so their settings are rewritten too — none then removes a stale member rather than keeping it.`
  @return `False when the file could not be read or written; the caller reports it.`
 *>
-fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips = {}, bool clips_replaced = false)
+fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips = {}, bool clips_replaced = false,
+	bool skin_written = false)
 {
 	// An authored clip's keys are in the sidecar, which `save_rig_beside` writes
 	// for every file this stamps; the model carries only its settings.
@@ -980,17 +995,22 @@ fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips =
 	// not be freed.
 	defer if (clip_settings.len > 0) clip_settings.free(mem);
 
-	if (clip_settings.len == 0 && self.doc.plan.len == 0 && !clips_replaced) return true;
+	if (clip_settings.len == 0 && self.doc.plan.len == 0 && !clips_replaced && !skin_written) return true;
 
 	// One read and one write for both, rather than one apiece: `patch_gltf` takes
 	// a list, and a second pass over a three-megabyte file to add forty bytes is a
 	// second pass for nothing.
 	gltf_edit::JsonStep[2] clip_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_CLIPS } };
 	gltf_edit::JsonStep[2] plan_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_PLAN } };
+	gltf_edit::JsonStep[2] weights_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_WEIGHTS } };
 
-	gltf_edit::JsonEdit[2] edits = {
+	// Whose weights went in, said only when crig just wrote them: the binder's own
+	// answer is "automatic", a file's adopted weights clear the member. A save that
+	// left the model's skin alone says nothing, since the skin is not crig's.
+	gltf_edit::JsonEdit[3] edits = {
 		{ .path = clip_path[..], .value = clip_settings },
 		{ .path = plan_path[..], .value = self.doc.plan },
+		{ .path = weights_path[..], .value = self.doc.skin_from_file ? "" : PACK_WEIGHTS_AUTOMATIC },
 	};
 
 	// No clips handed over is "nothing to say about them", not "they have no
@@ -1000,7 +1020,8 @@ fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips =
 	// had its animations replaced, may rewrite the member — the latter so deleting
 	// the last clip does not leave its settings (keys and all) behind in the file.
 	usz skip = clips.len == 0 && !clips_replaced ? 1 : 0;
-	if (catch gltf_edit::patch_gltf(mem, path, edits[skip..])) return false;
+	usz end = skin_written ? 3 : 2;
+	if (catch gltf_edit::patch_gltf(mem, path, edits[skip:end - skip])) return false;
 	return true;
 }
 
@@ -1047,7 +1068,8 @@ fn bool AppState.save_rig_beside(
 	bool limits = false,
 	bool model_transform_in_mesh = false,
 	AnimTemplate[] stamped_clips = {},
-	bool clips_replaced = false)
+	bool clips_replaced = false,
+	bool skin_written = false)
 {
 	if (path.len == 0 || self.doc.dots.len() == 0) return false;
 
@@ -1061,7 +1083,7 @@ fn bool AppState.save_rig_beside(
 	// Best effort, and deliberately not fatal: `plan` and `clips` are how a
 	// library reader describes this file, and losing them costs a browser category
 	// rather than the rig.
-	(void)self.stamp_asset_metadata(path, stamped_clips, clips_replaced);
+	(void)self.stamp_asset_metadata(path, stamped_clips, clips_replaced, skin_written);
 
 	self.remember_project(path);
 	io::printfn("saved the rig beside %s (%d joints, %d bones)",

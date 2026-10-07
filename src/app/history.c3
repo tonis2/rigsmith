@@ -485,7 +485,8 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// write and not part of it — see `AppState.stamp_asset_metadata` for why the
 	// writers are left alone. A failure costs a browser category and the clips'
 	// blend settings, not the rig, so it is reported and the export still counts.
-	if (!self.stamp_asset_metadata(path, animated ? clips : (AnimTemplate[]){}, clips_replaced: true))
+	if (!self.stamp_asset_metadata(path, animated ? clips : (AnimTemplate[]){}, clips_replaced: true,
+		skin_written: true))
 	{
 		self.@notice("wrote %s, but its metadata could not be stamped on", base_name(path));
 	}
@@ -496,7 +497,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// what makes `retarget_source` below true on the *next* run rather than only
 	// on this one, since a sidecar beside a model is what raises `saves_in_place`.
 	if (!self.save_rig_beside(path, model_transform_in_mesh: placed_model,
-		stamped_clips: animated ? clips : (AnimTemplate[]){}, clips_replaced: true))
+		stamped_clips: animated ? clips : (AnimTemplate[]){}, clips_replaced: true, skin_written: true))
 	{
 		self.@notice("wrote %s, but its rig document could not be written beside it", base_name(path));
 	}
@@ -835,7 +836,8 @@ fn void AppState.save_session(&self)
 	defer alloc::free(mem, bound);
 	bool beside = self.save_rig_beside(target, limits: !into_model,
 		model_transform_in_mesh: self.source_has_model_transform,
-		stamped_clips: into_model ? bound : (AnimTemplate[]){}, clips_replaced: into_model);
+		stamped_clips: into_model ? bound : (AnimTemplate[]){}, clips_replaced: into_model,
+		skin_written: into_model);
 
 	if (beside)
 	{

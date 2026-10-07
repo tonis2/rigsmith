@@ -180,6 +180,20 @@ const String PACK_KEY_OPTIONAL = "optional";
 *>
 const String PACK_KEY_CLIPS = "clips";
 
+<*
+ Whose skin weights the file carries. "automatic" says crig wrote its own
+ binder's answer — weights derived from the joints, not painted by anyone — so a
+ reader rebuilds them from the rig rather than adopting them as authored. Absent
+ means somebody else's, or not known, and they are adopted as they are.
+
+ What keeps a model crig saved from turning its own weights into "the file's"
+ the next time it opens without its sidecar, and then holding them fixed while
+ the joints move away from them — a finger's vertices left behind on the finger
+ next to it.
+*>
+const String PACK_KEY_WEIGHTS = "weights";
+const String PACK_WEIGHTS_AUTOMATIC = "automatic";
+
 // Supplemental authoring intent for KHR constraint frames. The actual limits
 // remain real `KHR_physics_rigid_bodies` joints; this string only preserves
 // which child defined a fork and whether the artist adjusted that derived frame.

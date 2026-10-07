@@ -263,6 +263,10 @@ fn usz AppState.pin_dabs(&self, VertexPin[] batch, bool commit = true)
 	// press-to-release is one undo step however many moves it took.
 	if (commit) self.undo_stack.commit();
 	self.mark_paint_stale();
+	// Under a parked clip or a pose draft nothing else rebinds the skin, so the
+	// posed body would keep the old weights until the playhead moved — the same
+	// door `paint_dabs` takes.
+	if (self.skinned()) self.refresh_pose_display();
 	return changed;
 }
 
@@ -1076,8 +1080,9 @@ fn bool AppState.begin_lasso(&self, LassoJob job)
 	switch (job)
 	{
 		case PIN:
+			// Not refused on a locked rig: the region is gathered against the body on
+			// screen (`lasso_vertices`), posed or not, as the brush's circle is.
 			if (!self.doc.find(self.selected)) return false;
-			if (self.rig_locked()) return false;
 		case SELECT:
 			if (!self.show_rig) return false;
 			if (self.doc.dots.len() == 0) return false;
@@ -1245,8 +1250,11 @@ fn bool inside_polygon(Vec2[] points, Vec2 p)
  verdict by construction, and the visibility raycast is one per class rather than
  one per copy.
 
- **Rest positions, not posed ones**, which is why `begin_lasso` refuses while
- the rig is locked.
+ **The body on screen**: each vertex where it is drawn (`shown_position`) and
+ the visibility cast against that same body (`mesh_hidden_surface`), so under a
+ parked clip or a pose draft the loop catches what it was drawn around, exactly
+ as the brush does. The walk is over the mesh's edges, which a pose does not
+ change.
 
  @param out : `Filled with the vertices caught, in mesh order. Must be at least as long as the mesh.`
  @param view_projection : `From OrbitCamera.view_projection, for this viewport's aspect.`
@@ -1279,9 +1287,9 @@ fn usz AppState.lasso_vertices(&self, uint[] out, Matrix4f view_projection,
 	defer alloc::free(mem, within);
 
 	usz enclosed = 0;
-	foreach (usz v, position : self.geometry.positions)
+	for (usz v = 0; v < count; v++)
 	{
-		Vec2? where = project(view_projection, position, viewport);
+		Vec2? where = project(view_projection, self.shown_position(v), viewport);
 		if (catch where) continue;
 
 		if (where.x < low.x || where.x > high.x || where.y < low.y || where.y > high.y) continue;
@@ -1314,10 +1322,10 @@ fn usz AppState.lasso_vertices(&self, uint[] out, Matrix4f view_projection,
 	// what can be seen of it, rather than the gesture being refused.
 	if (!around.usable() || around.vertices() != count)
 	{
-		foreach (usz v, position : self.geometry.positions)
+		for (usz v = 0; v < count; v++)
 		{
 			if (!within[v]) continue;
-			if (self.picker.hidden_surface(eye, position)) continue;
+			if (self.mesh_hidden_surface(eye, self.shown_position(v))) continue;
 			out[kept++] = (uint)v;
 		}
 		return kept;
@@ -1340,7 +1348,7 @@ fn usz AppState.lasso_vertices(&self, uint[] out, Matrix4f view_projection,
 	defer alloc::free(mem, queue);
 
 	usz tail = 0;
-	foreach (usz v, position : self.geometry.positions)
+	for (usz v = 0; v < count; v++)
 	{
 		if (!within[v]) continue;
 
@@ -1350,7 +1358,7 @@ fn usz AppState.lasso_vertices(&self, uint[] out, Matrix4f view_projection,
 		if (asked[group]) continue;
 		asked[group] = true;
 
-		if (self.picker.hidden_surface(eye, position)) continue;
+		if (self.mesh_hidden_surface(eye, self.shown_position(v))) continue;
 		reached[group] = true;
 		queue[tail++] = (uint)group;
 	}
