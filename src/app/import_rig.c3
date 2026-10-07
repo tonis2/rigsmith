@@ -285,6 +285,13 @@ fn bool AppState.import_rig_from_source(&self)
 	usz joints = rest.len();
 	if (joints == 0) return false;
 
+	// A figure facing −Z had its skeleton read turned half round to face +Z
+	// (`source_origin`), and its mesh has to turn with it. Left as it stood, the
+	// rig would stand inside the body backwards — the left arm's joints in the
+	// right arm, the tail through the chest — and every vertex the file weighted
+	// to a joint would be dragged across the body after it the moment it moved.
+	if (faces_back(&stream)) self.turn_geometry_half_round();
+
 	// Read before the document is touched, so a skin that will not convert costs
 	// the rig nothing — and so the failure notice below can say which half failed.
 	ImportedSkin taken = self.read_imported_skin(&stream, names, joint_nodes);
@@ -382,6 +389,41 @@ fn bool AppState.import_rig_from_source(&self)
 			joints, bones, dynamic > 0 ? " and its physics" : "", limits, clips_note);
 	}
 	return true;
+}
+
+<*
+ Turn the open mesh half way round about Y, so a figure that faced −Z faces +Z.
+
+ The same model, stood the other way: the file's positions are not what changed,
+ so whether crig may save over it and how it is placed both stay, and nothing is
+ marked resized. The writer puts the turn into the skin's bind instead
+ (`source_turn`), which reproduces it exactly at rest. The camera's target turns
+ with the mesh, so it still looks at the same part of the body — from the front
+ now, where crig's camera starts.
+*>
+fn void AppState.turn_geometry_half_round(&self)
+{
+	if (self.geometry.positions.len == 0) return;
+
+	Vec3[] positions = alloc::new_array(mem, Vec3, (sz)self.geometry.positions.len);
+	foreach (usz i, p : self.geometry.positions) positions[i] = { -p.x, p.y, -p.z };
+	Vec3[] normals;
+	if (self.geometry.normals.len > 0)
+	{
+		normals = alloc::new_array(mem, Vec3, (sz)self.geometry.normals.len);
+		foreach (usz i, n : self.geometry.normals) normals[i] = { -n.x, n.y, -n.z };
+	}
+	uint[] indices = alloc::new_array(mem, uint, (sz)self.geometry.indices.len);
+	indices[..] = self.geometry.indices[..];
+
+	bool in_place = self.saves_in_place;
+	bool placed = self.source_has_model_transform;
+	self.replace_geometry({ .positions = positions, .normals = normals, .indices = indices });
+	self.saves_in_place = in_place;
+	self.source_has_model_transform = placed;
+
+	Vec3 target = self.camera.target;
+	self.camera.target = { -target.x, target.y, -target.z };
 }
 
 // Whether any of a clip's channels drives one of the imported joints. The test

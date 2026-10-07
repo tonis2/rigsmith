@@ -371,7 +371,10 @@ fn bool AppState.read_mesh_parts(&self, String path, rig::MeshParts* out, Matrix
 	if (walked.skin >= 0)
 	{
 		if (catch stream.load_all_buffers()) return false;
-		found = rig::skin_bind_matrix(&stream, walked.skin);
+		// And the half turn a figure facing −Z took on its way in
+		// (`import_rig_from_source`), which the bind is what keeps: the file's
+		// positions still face −Z, the rig written over them faces +Z.
+		found = source_turn(&stream).mul(rig::skin_bind_matrix(&stream, walked.skin));
 	}
 
 	*out = walked;

@@ -906,6 +906,26 @@ fn NodeWorld source_origin(gltf::GltfStream* stream)
 }
 
 <*
+ `source_origin`'s turn as a matrix, for what is read or written outside the
+ node walk: the identity for a figure facing +Z, half way round about Y for one
+ facing −Z.
+
+ A model's mesh has to stand where its skeleton was read standing. The rig comes
+ out of `read_rest_skeleton` through the turn, so the mesh it was skinned to is
+ turned by the same matrix as it arrives (`import_rig_from_source`), and the
+ writer folds the same matrix into the skin's bind (`read_mesh_parts`). The
+ file's own positions stay as they are, the way an up-axis conversion's do.
+*>
+fn Matrix4f source_turn(gltf::GltfStream* stream)
+{
+	Matrix4f turn = matrix::IDENTITY4;
+	if (!faces_back(stream)) return turn;
+	turn.m[0] = -1.0f;
+	turn.m[10] = -1.0f;
+	return turn;
+}
+
+<*
  Whether a file's figure faces −Z: its joints named for the left side sit on −X.
 
  The same reading `reapply_plan_limits` takes of a rig: a name says which side
