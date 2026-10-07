@@ -35,6 +35,12 @@ struct Character
 	// Stable for the session and never reused, so a renderer keying its draw
 	// state on it cannot mistake a new character for the one it replaced.
 	uint id;
+	// The size a live Scale drag shows the model at, about its origin, before
+	// anything is baked; zero when no drag is running. Drawn only — the mesh,
+	// the dots and every cache keep their real size until the release bakes it
+	// once through `scale_model_by`, so a drag costs a matrix, not a rebuild per
+	// frame.
+	float preview_scale;
 	<*
 	 Where clips authored through the MCP tools land: an index into `packs`, or
 	 -1 until something writes one.

@@ -11,6 +11,9 @@ enum TransformTool : int
 	SELECT_TOOL,
 	MOVE_TOOL,
 	ROTATE_TOOL,
+	// Always the whole model, whatever is selected: there is one size a
+	// character is, and a joint has none of its own.
+	SCALE_TOOL,
 }
 
 struct TransformInteraction
@@ -32,6 +35,10 @@ struct TransformInteraction
 	bool free_move;
 	float raw_angle;
 	float applied_angle;
+	// A scale's factor from the pointer's distance to the pivot, against the
+	// distance it started at.
+	float raw_scale;
+	float applied_scale;
 	float last_pointer_angle;
 	bool angle_ready;
 	char[32] numeric_storage;
@@ -108,7 +115,8 @@ fn bool transform_tool_claims_pointer(AppState* app) @private
 *>
 fn bool transform_tool_poses(AppState* app) @private
 {
-	if (app.transform_tool == SELECT_TOOL || app.transform_interaction.active) return false;
+	if (app.transform_tool == SELECT_TOOL || app.transform_tool == SCALE_TOOL
+		|| app.transform_interaction.active) return false;
 	if (app.selected == 0 || app.selection_count() != 1) return false;
 	return app.animation_pose_ready();
 }
@@ -132,6 +140,13 @@ fn DragAxis transform_active_axis(AppState* app) @private
 fn String transform_tool_hint(AppState* app)
 {
 	if (app.transform_tool == SELECT_TOOL || app.transform_interaction.active) return "";
+	if (app.transform_tool == SCALE_TOOL)
+	{
+		if (!app.has_mesh() && app.doc.dots.len() == 0) return "Scale tool · open a model to scale";
+		return app.pose_edit_active
+			? "Scale tool · key or discard the pose before resizing the model"
+			: "Scale tool · drag the ring to resize the whole model and its rig · type a factor · Enter or release confirms, Esc cancels";
+	}
 
 	TransformTarget target = app.transform_target();
 	String verb = app.transform_tool == MOVE_TOOL ? "Move" : "Rotate";
@@ -178,6 +193,7 @@ faultdef NO_TRANSFORM_NUMBER;
 
 fn String transform_axis_label(TransformInteraction* interaction) @private
 {
+	if (interaction.operation == SCALE_TRANSFORM) return "Uniform";
 	if (interaction.axis != DragAxis.FREE) return interaction.axis.label();
 	return interaction.operation == ROTATE_TRANSFORM ? "View" : "Free";
 }
@@ -206,6 +222,16 @@ fn void AppState.refresh_transform_status(&self)
 		return;
 	}
 
+	if (interaction.operation == SCALE_TRANSFORM)
+	{
+		float now = self.model_height() * interaction.applied_scale;
+		char[]? said = io::bprintf(interaction.status_storage[..],
+			"Scale Model · ×%.3g · %.3g tall     type a factor     Enter / click · confirm     Esc / right-click · cancel",
+			interaction.applied_scale, now);
+		interaction.status_length = 0;
+		if (try char[] line = said) interaction.status_length = line.len;
+		return;
+	}
 	String operation = interaction.operation == MOVE_TRANSFORM ? "Move" : "Rotate";
 	String target = transform_target_label(&self.transform_transaction);
 	String space = self.transform_transaction.space == LOCAL_SPACE ? "Local" : "Global";
@@ -415,7 +441,16 @@ fn void AppState.apply_transform_interaction(&self)
 	if (!interaction.active) return;
 
 	float? numeric = transform_numeric_value(interaction);
-	if (interaction.operation == MOVE_TRANSFORM)
+	if (interaction.operation == SCALE_TRANSFORM)
+	{
+		float factor = interaction.raw_scale;
+		if (try float entered = numeric) factor = entered;
+		if (factor <= 0.0f) factor = interaction.applied_scale > 0.0f ? interaction.applied_scale : 1.0f;
+		factor = math::clamp(factor, SCALE_MODEL_MIN, SCALE_MODEL_MAX);
+		interaction.applied_scale = factor;
+		(void)self.update_transform_scale(factor);
+	}
+	else if (interaction.operation == MOVE_TRANSFORM)
 	{
 		Vec3 delta = interaction.raw_translation;
 		if (try float entered = numeric) delta = numeric_translation(self, entered);
@@ -474,7 +509,15 @@ fn bool Viewport.begin_transform_interaction(
 	Vec2 pointer)
 {
 	AppState* app = elem.inherit(AppState)!!;
-	TransformTarget target = app.transform_target();
+	TransformTarget target = operation == SCALE_TRANSFORM
+		? (TransformTarget){ .kind = MODEL_TARGET }
+		: app.transform_target();
+	if (operation == SCALE_TRANSFORM && app.pose_edit_active)
+	{
+		app.@notice("key or discard the pose before resizing the model");
+		app.refresh_ui();
+		return false;
+	}
 	if (!target.supported())
 	{
 		app.@notice(target.kind == MESH_TARGET
@@ -530,10 +573,16 @@ fn bool Viewport.begin_transform_interaction(
 	Vec2 pivot = interaction_projected_pivot(app);
 	if (pointer.x < 0.0f || pointer.y < 0.0f
 		|| pointer.x > elem.size.x || pointer.y > elem.size.y
-		|| (operation == ROTATE_TRANSFORM && (pointer - pivot).length() < 8.0f))
+		|| (operation != MOVE_TRANSFORM && (pointer - pivot).length() < 8.0f))
 	{
 		app.transform_interaction.anchor = pivot + (Vec2){ TRANSFORM_KEY_ANCHOR, 0 };
 		app.transform_interaction.pointer = app.transform_interaction.anchor;
+	}
+	if (operation == SCALE_TRANSFORM)
+	{
+		app.transform_interaction.raw_scale = 1.0f;
+		app.transform_interaction.applied_scale = 1.0f;
+		(void)app.update_transform_scale(1.0f);
 	}
 	if (operation == ROTATE_TRANSFORM)
 	{
@@ -584,6 +633,14 @@ fn void AppState.update_transform_pointer(&self, Vec2 absolute)
 	{
 		interaction.raw_translation = snapped_translation(self, pointer_translation(self, pointer));
 	}
+	else if (interaction.operation == SCALE_TRANSFORM)
+	{
+		// Blender's rule: as far from the pivot as the pointer is, against where
+		// it was pressed — out to grow, in to shrink, past the pivot never.
+		Vec2 pivot = interaction_projected_pivot(self);
+		float start = (interaction.anchor - pivot).length();
+		if (start >= 1.0f) interaction.raw_scale = (pointer - pivot).length() / start;
+	}
 	else
 	{
 		Vec2 pivot = interaction_projected_pivot(self);
@@ -606,6 +663,7 @@ fn void AppState.set_transform_constraint(&self, DragAxis axis)
 {
 	TransformInteraction* interaction = &self.transform_interaction;
 	if (!interaction.active) return;
+	if (interaction.operation == SCALE_TRANSFORM) return;
 	if (interaction.operation == ROTATE_TRANSFORM && axis.is_plane()) return;
 	interaction.axis = interaction.axis == axis ? DragAxis.FREE : axis;
 	if (interaction.operation == MOVE_TRANSFORM)
@@ -772,13 +830,20 @@ fn TransformGizmoFrame? Viewport.transform_gizmo_frame(&self, Element* elem)
 		return NO_TRANSFORM_GIZMO~;
 	}
 
-	TransformTarget target = active ? app.transform_transaction.target : app.transform_target();
+	bool scaling = active ? interaction.operation == SCALE_TRANSFORM : app.transform_tool == SCALE_TOOL;
+	if (scaling && !active && (app.pose_edit_active || (!app.has_mesh() && app.doc.dots.len() == 0)))
+	{
+		return NO_TRANSFORM_GIZMO~;
+	}
+	TransformTarget target = active
+		? app.transform_transaction.target
+		: (scaling ? (TransformTarget){ .kind = MODEL_TARGET } : app.transform_target());
 	bool posing = transform_tool_poses(app);
 	if (!target.supported() || (!active && !posing && transform_target_locked(app, target))) return NO_TRANSFORM_GIZMO~;
 	TransformSpace space = active ? app.transform_transaction.space : app.transform_space;
 	TransformOperation operation = active
 		? interaction.operation
-		: (app.transform_tool == MOVE_TOOL ? MOVE_TRANSFORM : ROTATE_TRANSFORM);
+		: tool_operation(app.transform_tool);
 	OrbitCamera camera = active ? interaction.camera : *self.view_camera(elem);
 	ProjectTransform model = active ? app.transform_transaction.model_before : app.doc.model_transform;
 	Quaternionf basis = quaternion::IDENTITY;
@@ -807,7 +872,7 @@ fn TransformGizmoFrame? Viewport.transform_gizmo_frame(&self, Element* elem)
 	{
 		pivot = active
 			? app.transform_transaction.pivot + (operation == MOVE_TRANSFORM ? interaction.applied_translation : (Vec3){})
-			: app.transform_target_pivot(target, app.transform_pivot);
+			: (scaling ? app.doc.model_transform.location : app.transform_target_pivot(target, app.transform_pivot));
 	}
 	float aspect = elem.size.y > 0.0f ? elem.size.x / elem.size.y : 1.0f;
 	Matrix4f projection = camera.view_projection(aspect);
@@ -850,6 +915,30 @@ fn TransformGizmoFrame? Viewport.transform_gizmo_frame(&self, Element* elem)
 
 faultdef NO_TRANSFORM_GIZMO;
 
+<*
+ What a press on the tool's gizmo starts, for the tool that is up.
+*>
+fn TransformOperation tool_operation(TransformTool tool)
+{
+	switch (tool)
+	{
+		case MOVE_TOOL: return MOVE_TRANSFORM;
+		case SCALE_TOOL: return SCALE_TRANSFORM;
+		default: return ROTATE_TRANSFORM;
+	}
+}
+
+<*
+ How far out the scale ring is drawn: the ring itself while nothing is dragged,
+ and the pointer's distance once something is, so it follows the hand.
+*>
+fn float scale_ring_radius(AppState* app, TransformGizmoFrame* frame) @private
+{
+	TransformInteraction* interaction = &app.transform_interaction;
+	if (!interaction.active || interaction.operation != SCALE_TRANSFORM) return TRANSFORM_RING_RADIUS;
+	return math::max((interaction.pointer - frame.projected_pivot).length(), 4.0f);
+}
+
 fn float point_segment_distance(Vec2 point, Vec2 a, Vec2 b) @private
 {
 	Vec2 line = b - a;
@@ -871,6 +960,13 @@ fn TransformGizmoPart Viewport.hit_transform_gizmo(&self, Element* elem, Vec2 po
 	TransformGizmoFrame? built = self.transform_gizmo_frame(elem);
 	if (catch built) return NO_GIZMO_PART;
 	TransformGizmoFrame frame = built;
+
+	if (frame.operation == SCALE_TRANSFORM)
+	{
+		// The ring, or anywhere inside it: there is no axis to choose.
+		float out = (pointer - frame.projected_pivot).length();
+		return out <= TRANSFORM_RING_RADIUS + TRANSFORM_HIT_WIDTH ? GIZMO_FREE : NO_GIZMO_PART;
+	}
 
 	if (frame.operation == MOVE_TRANSFORM)
 	{
@@ -973,6 +1069,30 @@ fn void Viewport.paint_transform_gizmo(&self, Element* elem, Painter* painter)
 	if (catch built) return;
 	TransformGizmoFrame frame = built;
 	DragAxis active_axis = transform_active_axis(app);
+
+	if (frame.operation == SCALE_TRANSFORM)
+	{
+		// One ring, in no axis's colour, with a square handle on each diagonal —
+		// the resize handles of a box, which is what this does to the model.
+		bool dragging = app.transform_interaction.active;
+		float radius = scale_ring_radius(app, &frame);
+		Color ink = TEXT.dim(dragging ? 0.95f : 0.7f);
+		float width = dragging ? TRANSFORM_ACTIVE_WIDTH : TRANSFORM_LINE_WIDTH;
+		painter.circle(frame.projected_pivot, radius, { .border_color = ink, .border_width = width });
+		float corner = radius * 0.7071f;
+		float half = 3.5f;
+		Vec2[4] at = { { corner, corner }, { -corner, corner }, { corner, -corner }, { -corner, -corner } };
+		foreach (offset : at)
+		{
+			Vec2 c = frame.projected_pivot + offset;
+			painter.line(c + (Vec2){ -half, -half }, c + (Vec2){ half, -half }, width, ink);
+			painter.line(c + (Vec2){ half, -half }, c + (Vec2){ half, half }, width, ink);
+			painter.line(c + (Vec2){ half, half }, c + (Vec2){ -half, half }, width, ink);
+			painter.line(c + (Vec2){ -half, half }, c + (Vec2){ -half, -half }, width, ink);
+		}
+		painter.circle(frame.projected_pivot, 3.0f, { .color = TEXT });
+		return;
+	}
 
 	if (frame.operation == MOVE_TRANSFORM)
 	{

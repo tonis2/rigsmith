@@ -123,6 +123,9 @@ struct Viewport (Widget)
 	bool orbiting;
 	bool panning;
 	bool maybe_place; // a left press that has not yet travelled far enough to be a drag
+	// A press off the joints with Move, Rotate or Scale up: a click on the mesh
+	// selects the model, so the tool's gizmo moves onto it; a drag still orbits.
+	bool maybe_pick_model;
 	usz maybe_drag_aim; // 1 + the handle index of the target ring pressed; a drag past CLICK_SLOP moves the target
 	uint maybe_drag_dot; // selected on press; becomes a pose (or, on Joints, a rest) drag past CLICK_SLOP
 	Vec2 press_at;
@@ -1259,7 +1262,10 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						TransformGizmoPart part = self.hit_transform_gizmo(elem, event.pos);
 						// The middle over a joint is that joint's own drag below, which
 						// lands it on the model; over nothing it is a free move.
-						if (part == GIZMO_FREE && self.pick_dot(elem, event.pos) != 0) part = NO_GIZMO_PART;
+						// Not for the Scale tool, whose ring has no joint of its own to yield to:
+						// a press inside it is always the whole model's.
+						if (part == GIZMO_FREE && app.transform_tool != SCALE_TOOL
+							&& self.pick_dot(elem, event.pos) != 0) part = NO_GIZMO_PART;
 						if (part != NO_GIZMO_PART && transform_tool_poses(app))
 						{
 							// Posing: the arrow is G held to its axis, the ring R held to its
@@ -1284,8 +1290,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						}
 						if (part != NO_GIZMO_PART)
 						{
-							TransformOperation operation = app.transform_tool == MOVE_TOOL
-								? MOVE_TRANSFORM : ROTATE_TRANSFORM;
+							TransformOperation operation = tool_operation(app.transform_tool);
 							(void)self.begin_transform_interaction(
 								elem, operation, gizmo_axis(part), true, event.pos);
 							return true;
@@ -1416,6 +1421,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					{
 						self.press_at = event.pos;
 						self.maybe_place = false;
+						self.maybe_pick_model = true;
 						bool shift = input.shift_down();
 						self.orbiting = !shift;
 						self.panning = shift;
@@ -1841,6 +1847,22 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						// must not end it — the click above is its ending.
 						app.end_drag();
 					}
+					else if (self.maybe_pick_model)
+					{
+						// The tool works on what is selected, and a model just opened has
+						// its root joint selected — so without this, Rotate turned that
+						// joint's branch inside the body and nothing on screen offered the
+						// mesh. Clicking the body is how a user says "this", in every
+						// editor with a transform tool.
+						if ((event.pos - self.press_at).length() <= CLICK_SLOP
+							&& app.show_mesh && self.on_body(elem, self.press_at)
+							&& app.scene_selection != MODEL)
+						{
+							app.select_scene(MODEL);
+							app.@notice("%s", transform_tool_hint(app));
+							app.refresh_ui();
+						}
+					}
 					else if (self.maybe_place && app.areaing)
 					{
 						// A click in the Area tool picks a part rather than placing
@@ -1877,6 +1899,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						}
 					}
 					self.maybe_place = false;
+					self.maybe_pick_model = false;
 					self.orbiting = false;
 					self.panning = false;
 					elem.request_paint();
@@ -2178,6 +2201,19 @@ fn collision::Ray? Viewport.ray(&self, Element* elem, Vec2 pixel)
 		.origin = app.model_eye(camera),
 		.direction = app.model_direction(direction).normalize(),
 	};
+}
+
+<*
+ Whether the ray through `pixel` meets the open model's mesh at all.
+*>
+fn bool Viewport.on_body(&self, Element* elem, Vec2 pixel)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	if (!app.has_mesh()) return false;
+	collision::Ray? ray = self.ray(elem, pixel);
+	if (catch ray) return false;
+	if (try app.picker.snap_inside(ray)) return true;
+	return false;
 }
 
 fn void Viewport.place_dot(&self, Element* elem, Vec2 pixel)

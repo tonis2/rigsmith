@@ -468,7 +468,10 @@ fn usz AppState.adopt_model_limits(&self, bool recorded)
 {
 	if (self.source_path.len == 0 || self.doc.dots.len() == 0) return 0;
 
-	AnimPack? read = read_pack(mem, self.source_path);
+	// Clips deferred: only the skeleton and its constraints are wanted here, and
+	// converting every clip a model carries just to drop them cost seconds on
+	// every open of a model with a few hundred.
+	AnimPack? read = read_pack(mem, self.source_path, defer_clips: true);
 	if (catch read) return 0;
 	AnimPack pack = read;
 	defer pack.free(mem);

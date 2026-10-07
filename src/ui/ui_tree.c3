@@ -331,6 +331,23 @@ fn void menu_move_tool(Ui* ui)
 	app.refresh_ui();
 }
 
+<*
+ The Scale tool: a ring around the model's origin that resizes the whole model
+ and its rig while it is dragged, baked once on release.
+*>
+fn void menu_scale_tool(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.transform_interaction.active) (void)app.finish_transform_interaction(false);
+	app.end_brush();
+	app.end_lasso();
+	app.end_area();
+	app.end_sketch();
+	app.transform_tool = SCALE_TOOL;
+	app.@notice("%s", transform_tool_hint(app));
+	app.refresh_ui();
+}
+
 fn void menu_rotate_tool(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -977,6 +994,13 @@ fn MenuItemFlags query_move_tool(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 	return { .checked = !app.lassoing && !app.brushing && !app.areaing && !app.sketching
 		&& app.transform_tool == MOVE_TOOL };
+}
+
+fn MenuItemFlags query_scale_tool(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	return { .checked = !app.lassoing && !app.brushing && !app.areaing && !app.sketching
+		&& app.transform_tool == SCALE_TOOL };
 }
 
 fn MenuItemFlags query_rotate_tool(Ui* ui)

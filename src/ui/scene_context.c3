@@ -492,6 +492,15 @@ fn void apply_move_by(Ui* ui)
 fn void scene_context_scale_model(Ui* ui)
 {
 	close_scene_context(ui);
+	open_scale_model_dialog(ui);
+}
+
+<*
+ Raise the Scale model dialog, from the model's right-click menu: the exact
+ height, where the Scale tool is the hand.
+*>
+fn void open_scale_model_dialog(Ui* ui)
+{
 	AppState* app = ui.inherit(AppState)!!;
 	if (app.model_height() <= 0.0f)
 	{

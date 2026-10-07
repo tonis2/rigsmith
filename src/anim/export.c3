@@ -959,8 +959,10 @@ fn Vec3 rest_offset(rig::Skeleton* skeleton, usz joint) @local
  and get the settings without the `sparse` member. A library pack has no sidecar
  and passes nothing, so its clips keep their schedule.
 
- A key that keys every joint the clip keys, both channels and nothing else said,
- is written `"dots":"all"` rather than as the list — see `apply_clip_extras`.
+ A key that keys every joint the clip keys, each on the channels it is keyed on
+ throughout and nothing else said, is written `"dots":"all"` rather than as the
+ list — see `apply_clip_extras`. Those channels are `"keyed_channels"`, beside
+ `"keyed"`, left out when every joint is keyed on both.
 
  @param scheduled_elsewhere : `Clips, by name, whose key schedule lives in a sidecar and is left out here.`
 *>
@@ -1019,10 +1021,15 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 		if (template.keyframes.len > 0 && !flattened && !elsewhere)
 		{
 			if (fields++ > 0) out.append_char(',');
-			// The joints `"dots":"all"` stands for, named once for the clip.
-			List{String} keyed = keyed_joints(template);
+			// The joints `"dots":"all"` stands for, named once for the clip, and the
+			// channels each is keyed on.
+			List{AnimChannels} kinds;
+			List{String} keyed = keyed_joints(template, &kinds);
 			bool shorthand = false;
-			foreach (key : template.keyframes) if (keys_every_joint_plainly(key, (usz)keyed.len())) shorthand = true;
+			foreach (key : template.keyframes)
+			{
+				if (keys_every_joint_plainly(key, keyed.array_view(), kinds.array_view())) shorthand = true;
+			}
 			if (shorthand)
 			{
 				out.append_string(`"keyed":[`);
@@ -1034,15 +1041,30 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 					out.append_char('"');
 				}
 				out.append_string("],");
+				// Only when some joint is keyed on one channel: a clip keyed on both
+				// everywhere reads the same without it, and so does every file
+				// written before it existed.
+				bool all_both = true;
+				foreach (kind : kinds) if (kind != BOTH) all_both = false;
+				if (!all_both)
+				{
+					out.append_string(`"keyed_channels":[`);
+					foreach (usz n, kind : kinds)
+					{
+						if (n > 0) out.append_char(',');
+						out.appendf(`"%s"`, channels_word(kind))!!;
+					}
+					out.append_string("],");
+				}
 			}
-			usz joints = shorthand ? (usz)keyed.len() : 0;
+			String[] joints = shorthand ? keyed.array_view() : (String[]){};
 			out.append_string(`"sparse":[`);
 			usz scheduled = 0;
 			foreach (usz k, key : template.keyframes)
 			{
 				if (key.dots.len == 0) continue;
 				if (scheduled++ > 0) out.append_char(',');
-				if (keys_every_joint_plainly(key, joints))
+				if (keys_every_joint_plainly(key, joints, kinds.array_view()))
 				{
 					out.appendf(`{"time":%s,"dots":"all"}`, (JsonFloat)key.time)!!;
 					continue;
@@ -1053,8 +1075,7 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 					if (d > 0) out.append_char(',');
 					out.append_string(`{"joint":"`);
 					json_escape_into(&out, dot.joint_name);
-					out.appendf(`","channels":"%s"`, dot.channels == ROTATION
-						? "rotation" : (dot.channels == TRANSLATION ? "translation" : "both"))!!;
+					out.appendf(`","channels":"%s"`, channels_word(dot.channels))!!;
 					if (dot.rotation_interpolation != INHERIT)
 					{
 						out.appendf(`,"rotation_interpolation":"%s"`, dot.rotation_interpolation.serialized())!!;
@@ -1081,32 +1102,50 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 	return out.copy_str(allocator);
 }
 
-// The distinct joints the clip keys anywhere, in the order they are first keyed.
-// Temp-allocated.
-fn List{String} keyed_joints(AnimTemplate template) @local
+fn String channels_word(AnimChannels channels) @local
+{
+	switch (channels)
+	{
+		case ROTATION: return "rotation";
+		case TRANSLATION: return "translation";
+		default: return "both";
+	}
+}
+
+// The distinct joints the clip keys anywhere, in the order they are first keyed,
+// and in `kinds` the channels each is first keyed on. Temp-allocated.
+fn List{String} keyed_joints(AnimTemplate template, List{AnimChannels}* kinds) @local
 {
 	List{String} seen;
 	seen.init(tmem);
+	kinds.init(tmem);
 	foreach (key : template.keyframes)
 	{
 		foreach (dot : key.dots)
 		{
 			bool known = false;
 			foreach (name : seen) if (name == dot.joint_name) { known = true; break; }
-			if (!known) seen.push(dot.joint_name);
+			if (known) continue;
+			seen.push(dot.joint_name);
+			kinds.push(dot.channels);
 		}
 	}
 	return seen;
 }
 
-// Whether `key` keys all `joints` of its clip, each once, on both channels, with
-// no interpolation or ease of its own: the key `"dots":"all"` stands for.
-fn bool keys_every_joint_plainly(AnimKeyframe key, usz joints) @local
+// Whether `key` keys every one of `joints`, each once, on the channels `kinds`
+// gives it, with no interpolation or ease of its own: the key `"dots":"all"`
+// stands for. A clip keyed on rotations alone is the common case — most files
+// translate the root and nothing else — and spelled out, its schedule was most
+// of the model's JSON.
+fn bool keys_every_joint_plainly(AnimKeyframe key, String[] joints, AnimChannels[] kinds) @local
 {
-	if (joints == 0 || key.dots.len != joints) return false;
+	if (joints.len == 0 || key.dots.len != joints.len || kinds.len != joints.len) return false;
 	foreach (usz d, dot : key.dots)
 	{
-		if (dot.channels != BOTH) return false;
+		usz at = joints.len;
+		foreach (usz n, name : joints) if (name == dot.joint_name) { at = n; break; }
+		if (at == joints.len || dot.channels != kinds[at]) return false;
 		if (dot.rotation_interpolation != INHERIT || dot.translation_interpolation != INHERIT) return false;
 		if (!dot.rotation_ease.none() || !dot.translation_ease.none()) return false;
 		for (usz e = 0; e < d; e++) if (key.dots[e].joint_name == dot.joint_name) return false;

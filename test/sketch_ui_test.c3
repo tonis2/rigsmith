@@ -13,7 +13,7 @@ import cui::widgets;
 import std::core::test;
 import std::math;
 
-const usz SKETCH_CELL = 4;
+const usz SKETCH_CELL = 5;
 
 fn Vec2 sketch_strip_cell(Fixture* f, crig::SketchCell cell)
 {

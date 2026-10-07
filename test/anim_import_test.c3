@@ -1435,6 +1435,67 @@ fn void a_whole_pose_key_writes_short_and_a_held_joint_one_key() @test
 	}
 }
 
+<*
+ The same shorthand for a clip that keys most joints on rotation alone — the
+ shape nearly every imported clip has, the root translating and nothing else.
+ Each key is `"dots":"all"`, `"keyed_channels"` says which channels each joint
+ is keyed on, and the schedule reads back joint for joint, channel for channel.
+
+ *Re-introduce:* require `BOTH` in `keys_every_joint_plainly` and every key is
+ spelled out again. (Reading `"all"` as both channels is not caught here: the
+ schedule then fails its own check and the keys are rebuilt from the glTF
+ channels, which for this clip say the same thing.)
+*>
+fn void a_rotation_only_key_writes_short_and_keeps_its_channels() @test
+{
+	rig::Skeleton skeleton = fixture_skeleton();
+	defer skeleton.free(mem);
+	const usz KEYS = 4;
+	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, KEYS);
+	for (usz k = 0; k < KEYS; k++)
+	{
+		float f = (float)k / (float)(KEYS - 1);
+		crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 3);
+		dots[0] = { .joint_name = "hips".copy(mem), .axis = { 0, 1, 0 }, .angle = 0.5f * f, .move = { 0, 0.05f * f, 0 } };
+		dots[1] = { .joint_name = "knee".copy(mem), .axis = { 1, 0, 0 }, .angle = 0.3f * f, .channels = ROTATION };
+		dots[2] = { .joint_name = "ankle".copy(mem), .axis = { 1, 0, 0 }, .angle = k % 2 == 0 ? 0.0f : 0.2f, .channels = ROTATION };
+		frames[k] = { .time = f, .dots = dots };
+	}
+	crig::AnimTemplate sent = { .name = "Turns".copy(mem), .duration = 1.0f, .keyframes = frames, .owned = true };
+	defer sent.free(mem);
+	crig::AnimTemplate[1] clips = { sent };
+
+	String text = crig::clip_extras_text(mem, clips[..]);
+	defer if (text.len > 0) text.free(mem);
+	test::@check(text.contains(`"dots":"all"`) && text.contains(`"keyed_channels":["both","rotation","rotation"]`),
+		"the rotation-only keys were not written short: %s", text);
+	test::@check(!text.contains(`"joint":"knee"`), "a rotation-only key still lists its joints: %s", text);
+
+	String path = "build/anim-rotation-only.glb";
+	if (catch crig::export_animations_glb(mem, path, &skeleton, JOINT_NAMES[..], clips[..]))
+	{
+		test::@check(false, "rotation-only clip export failed");
+		return;
+	}
+	defer (void)file::delete(path);
+
+	crig::AnimPack? read = crig::read_pack(mem, path);
+	if (catch read) { test::@check(false, "rotation-only pack re-import failed"); return; }
+	crig::AnimPack pack = read;
+	defer pack.free(mem);
+	crig::AnimTemplate back = pack.clips[0];
+	test::@check(back.keyframes.len == KEYS, "re-import has %d keys", back.keyframes.len);
+	foreach (frame : back.keyframes)
+	{
+		test::@check(frame.dots.len == 3, "a key came back with %d joints", frame.dots.len);
+		foreach (dot : frame.dots)
+		{
+			crig::AnimChannels want = dot.joint_name == "hips" ? crig::AnimChannels.BOTH : crig::AnimChannels.ROTATION;
+			test::@check(dot.channels == want, "%s came back keyed on %s", dot.joint_name, dot.channels);
+		}
+	}
+}
+
 fn void malformed_sparse_pack_metadata_keeps_gltf_channels() @test
 {
 	crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 1);

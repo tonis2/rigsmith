@@ -883,11 +883,17 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 			if (blend == "smooth") clip.blend = SMOOTH;
 		}
 		if (try bool loop = settings.get_bool("loop")) clip.loop = loop;
-		if (try Object* sparse = settings.get("sparse"))
+		// Not for a deferred clip's stub, which has no keys to schedule: expanding
+		// a few hundred schedules only to find nothing they fit cost most of a
+		// model's open. Its template gets the schedule when it is imported
+		// (`ensure_clip_imported`).
+		Object* sparse = clip.keyframes.len > 0 ? settings.get("sparse") ?? null : null;
+		if (sparse)
 		{
 			bool valid_sparse = sparse.is_array() && sparse.get_len() > 0;
-			// `"dots":"all"` is a key that keys every joint in `keyed`, both
-			// channels — spelled out here so the checks below read one form.
+			// `"dots":"all"` is a key that keys every joint in `keyed`, each on its
+			// entry in `keyed_channels`, or on both where there is none — spelled
+			// out here so the checks below read one form.
 			if (valid_sparse) for (sz k = 0; k < sparse.get_len(); k++)
 			{
 				Object* scheduled = sparse.get_at(k);
@@ -900,12 +906,20 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 					valid_sparse = false;
 					break;
 				}
+				Object* kinds = settings.get("keyed_channels") ?? null;
+				if (kinds && (!kinds.is_array() || kinds.get_len() != keyed.get_len()))
+				{
+					valid_sparse = false;
+					break;
+				}
 				Object* listed = object::new_array(tmem);
 				for (sz n = 0; n < keyed.get_len(); n++)
 				{
 					Object* dot = object::new_obj(tmem);
 					dot.set("joint", keyed.get_at(n).is_string() ? keyed.get_at(n).s : "");
-					dot.set("channels", "both");
+					String kind = "both";
+					if (kinds) kind = kinds.get_at(n).is_string() ? kinds.get_at(n).s : "";
+					dot.set("channels", kind);
 					listed.push(dot);
 				}
 				scheduled.set("dots", listed);

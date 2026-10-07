@@ -6741,13 +6741,13 @@ fn void the_tool_column_picks_and_follows_a_tool() @test
 	Vec2 tweak = tool_cell(column, 0);
 	Vec2 move = tool_cell(column, 1);
 	Vec2 rotate = tool_cell(column, 2);
-	Vec2 lasso = tool_cell(column, 3);
+	Vec2 lasso = tool_cell(column, 4);
 
 	// Un-greyed before anything is clicked. The column was built when the document
 	// was empty and the cell had nothing to select, so this is already the poll
 	// working: a cell left as it was built would still be carrying no handler at
 	// all, and every click below would land on a dead button.
-	test::@check(!column.widget_as(crig::ToolColumn).shown[3].disabled,
+	test::@check(!column.widget_as(crig::ToolColumn).shown[4].disabled,
 		"the lasso cell is still greyed after two dots were placed");
 
 	fixture.click(move);
@@ -6797,7 +6797,7 @@ fn void the_tool_column_picks_and_follows_a_tool() @test
 	// column, so the cell is lit here or the widget never noticed.
 	fixture.feed_key(Key.T);
 	fixture.feed(VIEWPORT_CENTER);
-	test::@check(column.widget_as(crig::ToolColumn).shown[3].checked,
+	test::@check(column.widget_as(crig::ToolColumn).shown[4].checked,
 		"a lasso opened from the keyboard did not light its cell");
 	test::@check(!column.widget_as(crig::ToolColumn).shown[0].checked,
 		"and the tweak cell stayed lit beside it");

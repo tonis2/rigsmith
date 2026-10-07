@@ -37,6 +37,8 @@ enum TransformOperation : int
 {
 	MOVE_TRANSFORM,
 	ROTATE_TRANSFORM,
+	// The whole model, uniformly, about its origin: `scale_model_by` on release.
+	SCALE_TRANSFORM,
 }
 
 struct TransformPoint
@@ -60,6 +62,8 @@ struct TransformTransaction
 	Vec3 pivot;
 	Quaternionf basis;
 	ProjectTransform model_before;
+	// What a SCALE_TRANSFORM has reached, as a factor of the size it began at.
+	float scale;
 	TransformPoint[] points;
 	TransformLimit[] limits;
 }
@@ -71,13 +75,22 @@ fn Matrix4f ProjectTransform.matrix(self)
 
 fn Matrix4f Character.model_view_projection(&self, OrbitCamera* camera, float aspect)
 {
-	return camera.view_projection(aspect).mul(self.doc.model_transform.matrix());
+	Matrix4f placed = camera.view_projection(aspect).mul(self.doc.model_transform.matrix());
+	if (self.preview_scale <= 0.0f) return placed;
+	float s = self.preview_scale;
+	return placed.mul(matrix::IDENTITY4{float}.scale({ s, s, s }));
 }
 
 fn Vec3 Character.model_eye(&self, OrbitCamera* camera)
 {
-	return self.doc.model_transform.inverse_point(camera.eye());
+	Vec3 eye = self.doc.model_transform.inverse_point(camera.eye());
+	return self.preview_scale > 0.0f ? eye / self.preview_scale : eye;
 }
+
+<*
+ The size the model is drawn at: its own, or what a live Scale drag has it at.
+*>
+fn float Character.shown_scale(&self) => self.preview_scale > 0.0f ? self.preview_scale : 1.0f;
 
 fn Vec3 Character.model_direction(&self, Vec3 world_direction)
 {
@@ -225,6 +238,9 @@ fn bool AppState.begin_transform_target(
 	Vec3* explicit_pivot = null)
 {
 	if (self.transform_transaction.active || !target.supported()) return false;
+	// A scale is the whole model's, and refused where `scale_model_by` would
+	// refuse it, so the release never lands on a no.
+	if (operation == SCALE_TRANSFORM && (target.kind != MODEL_TARGET || self.pose_edit_active)) return false;
 	if (target.kind == MODEL_TARGET
 		&& self.geometry.positions.len == 0 && self.doc.dots.len() == 0) return false;
 	if (target.kind == SKELETON_TARGET && self.doc.dots.len() == 0) return false;
@@ -276,6 +292,8 @@ fn bool AppState.begin_transform_target(
 	Vec3 pivot = explicit_pivot
 		? *explicit_pivot
 		: self.transform_target_pivot(target, pivot_mode);
+	// About the model's origin, as the bake is, so the feet stay on the floor.
+	if (operation == SCALE_TRANSFORM) pivot = self.doc.model_transform.location;
 	self.transform_transaction = {
 		.active = true,
 		.operation = operation,
@@ -285,6 +303,7 @@ fn bool AppState.begin_transform_target(
 		.pivot = pivot,
 		.basis = basis,
 		.model_before = self.doc.model_transform,
+		.scale = 1.0f,
 		.points = points,
 		.limits = limit_snapshots,
 	};
@@ -297,6 +316,7 @@ fn void AppState.restore_transform_start(&self)
 	if (transaction.target.kind == MODEL_TARGET)
 	{
 		self.doc.model_transform = transaction.model_before;
+		self.preview_scale = 0.0f;
 		return;
 	}
 	foreach (point : transaction.points)
@@ -390,6 +410,19 @@ fn bool AppState.update_transform_rotation(&self, Quaternionf delta)
 	return true;
 }
 
+<*
+ Show the model at `factor` times the size the scale began at. Nothing is baked
+ until `commit_transform`.
+*>
+fn bool AppState.update_transform_scale(&self, float factor)
+{
+	TransformTransaction* transaction = &self.transform_transaction;
+	if (!transaction.active || transaction.operation != SCALE_TRANSFORM || !math::is_finite(factor)) return false;
+	transaction.scale = math::clamp(factor, SCALE_MODEL_MIN, SCALE_MODEL_MAX);
+	self.preview_scale = transaction.scale;
+	return true;
+}
+
 fn bool AppState.update_transform_rotation_axis(&self, Vec3 axis, float radians)
 {
 	if (!finite_vec3(axis) || !math::is_finite(radians) || axis.length_sq() <= 1.0e-12f) return false;
@@ -403,6 +436,14 @@ fn bool AppState.commit_transform(&self)
 	if (!transaction.active) return false;
 
 	bool changed = false;
+	if (transaction.operation == SCALE_TRANSFORM)
+	{
+		// The drag was a picture; this is the one bake, and its one undo step.
+		float factor = transaction.scale;
+		self.preview_scale = 0.0f;
+		self.discard_transform_transaction();
+		return self.scale_model_by(factor) == SCALED;
+	}
 	if (transaction.target.kind == MODEL_TARGET)
 	{
 		ProjectTransform after = self.doc.model_transform;

@@ -69,7 +69,7 @@ fn void tooltip_on_a_greyed_tool_says_why() @test
 	defer f.close();
 
 	// No joints: the lasso is greyed.
-	tip_hover(&f, tip_centre(tip_cell(&f, 3)));
+	tip_hover(&f, tip_centre(tip_cell(&f, 4)));
 	test::@check(widgets::tooltip_shown(f.ui).contains("unavailable: place a joint"), "the greyed lasso did not explain itself");
 
 	// With a joint it is live again, and says what it does.
@@ -77,7 +77,7 @@ fn void tooltip_on_a_greyed_tool_says_why() @test
 	f.app.select(f.app.doc.dots[0].id);
 	f.feed(VIEWPORT_CENTER);
 	f.ui.flush();
-	tip_hover(&f, tip_centre(tip_cell(&f, 3)));
+	tip_hover(&f, tip_centre(tip_cell(&f, 4)));
 	test::@check(!widgets::tooltip_shown(f.ui).contains("unavailable"), "a live lasso still says it is unavailable");
 }
 

@@ -158,6 +158,7 @@ struct ModelSlot
 	uint drawn_skin;
 	bool drawn_skinned;
 	ProjectTransform drawn_transform;
+	float drawn_scale;
 	bool transform_placed;
 	// Whether it was drawn as the character being edited, which is the only one
 	// drawn tinted and in full colour.
@@ -1034,8 +1035,10 @@ fn void sweep_assets() @local
 *>
 fn void place_model(AppState* app, ModelSlot* s, Character* c) @local
 {
-	bool moved = !s.transform_placed || !s.drawn_transform.same(c.doc.model_transform);
+	bool moved = !s.transform_placed || !s.drawn_transform.same(c.doc.model_transform)
+		|| s.drawn_scale != c.shown_scale();
 	s.drawn_transform = c.doc.model_transform;
+	s.drawn_scale = c.shown_scale();
 	s.transform_placed = true;
 	bool focus = c == &app.focus;
 	s.drawn_focus = focus;
@@ -1064,6 +1067,8 @@ fn void place_model(AppState* app, ModelSlot* s, Character* c) @local
 		{
 			stage.set_position(node, s.drawn_transform.location);
 			stage.set_quaternion(node, s.drawn_transform.orientation());
+			// A live Scale drag's preview, about the model's origin — the node's own.
+			stage.set_scale(node, { s.drawn_scale, s.drawn_scale, s.drawn_scale });
 		}
 		stage.set_color(node, color);
 	}

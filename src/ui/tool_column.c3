@@ -17,8 +17,8 @@
  opened from the keyboard reaches the screen by `update` noticing and asking for
  another build.
 
- **Seven cells.** Select/Tweak, Move, Rotate, Lasso, Area, the weight brush and
- Sketch. While the brush is open its options strip (`BrushOptions`) shows beside
+ **Seven cells.** Select/Tweak, Move, Rotate, Scale, Lasso, Area, the weight
+ brush and Sketch. Scale always resizes the whole model, whatever is selected. While the brush is open its options strip (`BrushOptions`) shows beside
  the column, so painting needs no modifier; while sketching, the Sketch strip
  (`SketchToolbar`) offers the colours and the eraser. Sketch has no key at all —
  this cell is its one door.
@@ -81,6 +81,7 @@ enum ToolGlyph
 	TWEAK,
 	MOVE_GLYPH,
 	ROTATE_GLYPH,
+	SCALE_GLYPH,
 	LASSO,
 	SKETCH_GLYPH,
 }
@@ -103,7 +104,7 @@ struct ToolCell
 
 // A global rather than a const for the same reason the menus are: these
 // initialisers take function addresses.
-ToolCell[5] tool_cells = {
+ToolCell[6] tool_cells = {
 	{ .glyph = TWEAK, .state = &query_tweak, .on_select = &menu_tweak,
 		.tip = "Tweak (Esc) — put the running tool away: click to select, drag to move or pose a joint",
 		.hint = "Tweak · click a joint · select     drag a joint · move or pose it     drag off the model · orbit     esc · put a tool away" },
@@ -113,6 +114,11 @@ ToolCell[5] tool_cells = {
 	{ .glyph = ROTATE_GLYPH, .state = &query_rotate_tool, .on_select = &menu_rotate_tool,
 		.tip = "Rotate (R) — turn the selected joint about the pointer, or lock an axis with X / Y / Z",
 		.hint = "Rotate · R · sweep the pointer around the joint     X / Y / Z · lock a local axis     esc · cancel" },
+	// Always the whole model, whatever is selected — see `SCALE_TOOL`. An exact
+	// height is the model's right-click menu, Scale model….
+	{ .glyph = SCALE_GLYPH, .state = &query_scale_tool, .on_select = &menu_scale_tool,
+		.tip = "Scale — drag the ring to resize the whole model and its rig; type a factor while dragging",
+		.hint = "Scale · drag the ring out to grow, in to shrink     type a factor     release / enter · confirm     esc · cancel" },
 	{ .glyph = LASSO, .state = &query_lasso_tool, .on_select = &menu_lasso_select,
 		.tip = "Lasso (T) — circle joints to select them; shift+T pins mesh vertices to the selected joint instead",
 		.hint = "Lasso · T · drag to circle joints     ctrl-drag · deselect     alt-drag · add     shift+T · pin vertices instead" },
@@ -361,6 +367,26 @@ fn void ToolIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			};
 			painter.line(rotate_tip, rotate_tip + (Vec2){ -1.0f, 4.5f }, TOOL_STROKE, self.ink);
 			painter.line(rotate_tip, rotate_tip + (Vec2){ -4.5f, 0.5f }, TOOL_STROKE, self.ink);
+		case SCALE_GLYPH:
+			// A small box grown into a larger one, the arrow between their corners
+			// saying which way: the resize glyph every editor uses.
+			float outer = TOOL_ICON_R;
+			float inner = TOOL_ICON_R * 0.45f;
+			Vec2 low = centre + (Vec2){ -outer, outer };
+			painter.line(low, low + (Vec2){ inner * 2.0f, 0 }, TOOL_STROKE, self.ink);
+			painter.line(low, low - (Vec2){ 0, inner * 2.0f }, TOOL_STROKE, self.ink);
+			painter.line(low + (Vec2){ inner * 2.0f, 0 }, low + (Vec2){ inner * 2.0f, -inner * 2.0f }, TOOL_STROKE, self.ink);
+			painter.line(low - (Vec2){ 0, inner * 2.0f }, low + (Vec2){ inner * 2.0f, -inner * 2.0f }, TOOL_STROKE, self.ink);
+			Vec2 far = centre + (Vec2){ outer, -outer };
+			painter.line(low + (Vec2){ inner * 2.0f, 0 }, low + (Vec2){ outer * 2.0f, 0 }, TOOL_STROKE * 0.6f, self.ink);
+			painter.line(low + (Vec2){ outer * 2.0f, 0 }, far, TOOL_STROKE * 0.6f, self.ink);
+			painter.line(far, low - (Vec2){ 0, outer * 2.0f }, TOOL_STROKE * 0.6f, self.ink);
+			painter.line(low - (Vec2){ 0, outer * 2.0f }, low - (Vec2){ 0, inner * 2.0f }, TOOL_STROKE * 0.6f, self.ink);
+			Vec2 from = low + (Vec2){ inner * 2.0f + 1.5f, -inner * 2.0f - 1.5f };
+			Vec2 to = far + (Vec2){ -2.0f, 2.0f };
+			painter.line(from, to, TOOL_STROKE, self.ink);
+			painter.line(to, to + (Vec2){ -3.5f, 0 }, TOOL_STROKE, self.ink);
+			painter.line(to, to + (Vec2){ 0, 3.5f }, TOOL_STROKE, self.ink);
 		case LASSO:
 			// Marching ants — a dashed loop is what a selection boundary looks like
 			// in every program that has one, and it is what keeps this glyph from
