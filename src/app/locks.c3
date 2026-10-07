@@ -83,14 +83,6 @@ fn bool AppState.locks_rotation(&self, uint dot_id)
 	return i >= 0 && self.position_locks[(usz)i].rotation;
 }
 
-// Whether any anchor holds a position — the condition a trunk-carry grab needs,
-// since holding a foot's tilt alone does nothing to keep the body from sliding.
-fn bool AppState.any_position_anchor(&self)
-{
-	foreach (lock : self.position_locks) if (lock.position) return true;
-	return false;
-}
-
 <*
  How far this dot's position anchor ended from the point it holds, at the last
  gesture that ran the anchors — in model units, 0 for a dot with no position
