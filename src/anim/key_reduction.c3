@@ -388,14 +388,268 @@ fn bool clip_keys_reduced(Allocator allocator, AnimTemplate source, rig::Skeleto
 			kept[k] = true;
 		}
 	}
-	if (dropped == 0) return false;
-
 	AnimKeyframe[] frames = alloc::new_array(allocator, AnimKeyframe, (sz)(n - dropped));
 	usz at = 0;
 	for (usz i = 0; i < n; i++)
 	{
 		if (kept[i]) frames[at++] = keyframe_copy(allocator, source.keyframes[i]);
 	}
-	*out = clip_with_frames(allocator, source, frames, source.duration);
+	AnimTemplate reduced = clip_with_frames(allocator, source, frames, source.duration);
+
+	// Then the joints a kept key does not need. Half the tolerance per channel,
+	// since a chain's errors add up at its end, and the whole clip checked after;
+	// when that check fails, tighter, and failing that the whole keys alone.
+	usz thinned = 0;
+	foreach (factor : (float[]){ 0.5f, 0.25f })
+	{
+		ReductionTolerance per_channel = { .angle = tolerance.angle * factor, .move = tolerance.move * factor, .reach = tolerance.reach };
+		AnimKeyframe[] thin;
+		usz removed = thin_channels(allocator, source, reduced, skeleton, key_times, per_channel, &thin);
+		if (removed == 0) break;
+		AnimTemplate trial = reduced;
+		trial.keyframes = thin;
+		trial.owned = false;
+		trial.tracks = {};
+		trial.tracks_compiled = false;
+		trial.compile_tracks(mem);
+		bool holds = true;
+		for (usz c = 0; c < checks && holds; c++)
+		{
+			float t = c % 2 == 0 ? key_times[c / 2] : 0.5f * (key_times[c / 2] + key_times[c / 2 + 1]);
+			rig::Pose now = trial.pose(mem, skeleton, names, t, false, honor_solo: false);
+			holds = poses_agree(skeleton, ends, &truth[c], &now, tolerance, &left, &right);
+			now.free(mem);
+		}
+		free_tracks(trial);
+		if (!holds)
+		{
+			foreach (&frame : thin) frame.free(allocator);
+			alloc::free(allocator, thin);
+			continue;
+		}
+		foreach (&frame : reduced.keyframes) frame.free(allocator);
+		alloc::free(allocator, reduced.keyframes);
+		reduced.keyframes = thin;
+		thinned = removed;
+		break;
+	}
+
+	if (dropped == 0 && thinned == 0)
+	{
+		reduced.free(allocator);
+		return false;
+	}
+	*out = reduced;
 	return true;
+}
+
+// Frees tracks `compile_tracks(mem)` built on a borrowed template.
+fn void free_tracks(AnimTemplate clip) @local
+{
+	foreach (track : clip.tracks)
+	{
+		if (track.rotations.len > 0) alloc::free(mem, track.rotations);
+		if (track.translations.len > 0) alloc::free(mem, track.translations);
+	}
+	if (clip.tracks.len > 0) alloc::free(mem, clip.tracks);
+}
+
+// Whether `joint`'s `rotation` channel keyed in `frame` is one a neighbour may
+// stand in for: neither held nor eased, so the segments either side of it are
+// the clip's ordinary curve. Its interpolation goes in `mode`.
+fn bool plain_channel(AnimKeyframe frame, String joint, bool rotation, AnimBlend blend,
+	AnimInterpolation* mode) @local
+{
+	AnimKeyDot dot;
+	if (!frame.channel_dot(joint, rotation, &dot)) return false;
+	*mode = dot.interpolation(rotation, blend);
+	return *mode != HOLD && dot.ease(rotation).none();
+}
+
+<*
+ `reduced`'s keys with every channel key dropped that the curve through its
+ neighbours already reproduces: one joint, one channel at a time, against
+ `source` — the clip before any reduction — so the error of one drop is never
+ the baseline for the next.
+
+ A drop is checked over the stretch it can reach, two of the channel's keys
+ either side, since a smooth curve reads past its neighbours; and on a loop
+ near its ends, over the whole clip. A track's first and last keys stay, as do
+ protected keys, and held or eased ones, and one whose neighbour's segment
+ would take over with a different interpolation. A key left with no channel
+ goes.
+
+ @param key_times : `The source's key times, which the checks sample at and midway between.`
+ @param out : `The keys, owned, when this returns more than zero.`
+ @return `How many channel keys went.`
+*>
+fn usz thin_channels(Allocator allocator, AnimTemplate source, AnimTemplate reduced, rig::Skeleton* skeleton,
+	float[] key_times, ReductionTolerance tolerance, AnimKeyframe[]* out) @local
+{
+	usz n = reduced.keyframes.len;
+	if (n <= 2 || key_times.len == 0) return 0;
+	float height = skeleton.height() > 0.0f ? skeleton.height() : 1.0f;
+
+	usz checks = 2 * key_times.len - 1;
+	float[] check_at = alloc::new_array(mem, float, (sz)checks);
+	defer alloc::free(mem, check_at);
+	for (usz c = 0; c < checks; c++)
+	{
+		check_at[c] = c % 2 == 0 ? key_times[c / 2] : 0.5f * (key_times[c / 2] + key_times[c / 2 + 1]);
+	}
+
+	AnimTemplate truth = source;
+	truth.owned = false;
+	truth.tracks = {};
+	truth.tracks_compiled = false;
+	truth.compile_tracks(mem);
+	defer free_tracks(truth);
+
+	AnimTemplate probe = reduced;
+	probe.owned = false;
+	probe.tracks = {};
+	probe.tracks_compiled = false;
+	probe.compile_tracks(mem);
+	usz tracks = probe.tracks.len;
+	AnimTrack[] compiled = alloc::new_array(mem, AnimTrack, (sz)tracks);
+	defer alloc::free(mem, compiled);
+	compiled[..] = probe.tracks[..];
+	defer
+	{
+		probe.tracks[..] = compiled[..];
+		free_tracks(probe);
+	}
+
+	float[] times = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, times);
+	foreach (usz k, frame : reduced.keyframes) times[k] = frame.time;
+	bool[] protect = protected_samples(mem, reduced, times);
+	defer alloc::free(mem, protect);
+
+	// Which channel keys went, by key and track: [key * tracks * 2 + track * 2 + channel].
+	bool[] gone = alloc::new_array(mem, bool, (sz)(n * tracks * 2));
+	defer alloc::free(mem, gone);
+	bool cyclic = reduced.loop && reduced.duration > 0.0f;
+
+	usz removed = 0;
+	for (usz t = 0; t < tracks; t++)
+	{
+		String joint = compiled[t].joint_name;
+		for (usz ch = 0; ch < 2; ch++)
+		{
+			bool rotation = ch == 0;
+			usz[] keys = rotation ? compiled[t].rotations : compiled[t].translations;
+			usz m = keys.len;
+			if (m <= 2) continue;
+
+			bool[] alive = alloc::new_array(mem, bool, (sz)m);
+			usz[] live = alloc::new_array(mem, usz, (sz)m);
+			defer
+			{
+				alloc::free(mem, alive);
+				alloc::free(mem, live);
+				if (rotation) { probe.tracks[t].rotations = keys; } else { probe.tracks[t].translations = keys; }
+			}
+			foreach (&a : alive) *a = true;
+
+			for (usz r = 1; r + 1 < m; r++)
+			{
+				usz key = keys[r];
+				if (protect[key]) continue;
+				AnimInterpolation mode;
+				if (!plain_channel(reduced.keyframes[key], joint, rotation, reduced.blend, &mode)) continue;
+				usz before = r - 1;
+				while (!alive[before]) before--;
+				AnimInterpolation previous;
+				if (!plain_channel(reduced.keyframes[keys[before]], joint, rotation, reduced.blend, &previous)
+					|| previous != mode) continue;
+
+				// The stretch this drop can reach: two live keys either side.
+				usz lo = before;
+				usz reach = 1;
+				while (lo > 0 && reach < 2)
+				{
+					lo--;
+					if (alive[lo]) reach++;
+				}
+				usz hi = r + 1;
+				reach = 1;
+				while (hi + 1 < m && reach < 2)
+				{
+					hi++;
+					if (alive[hi]) reach++;
+				}
+				bool whole = cyclic && (lo == 0 || hi == m - 1);
+				float from = whole ? -1.0e30f : reduced.keyframes[keys[lo]].time;
+				float to = whole ? 1.0e30f : reduced.keyframes[keys[hi]].time;
+
+				alive[r] = false;
+				usz count = 0;
+				for (usz i = 0; i < m; i++) if (alive[i]) live[count++] = keys[i];
+				if (rotation) { probe.tracks[t].rotations = live[:count]; } else { probe.tracks[t].translations = live[:count]; }
+
+				bool holds = true;
+				for (usz c = 0; c < checks && holds; c++)
+				{
+					float at = check_at[c];
+					if (at < from || at > to) continue;
+					if (rotation)
+					{
+						holds = turn_gap(probe.rotation_at(joint, at), truth.rotation_at(joint, at)) <= tolerance.angle;
+					}
+					else
+					{
+						holds = (probe.translation_at(joint, at) - truth.translation_at(joint, at)).length() * height
+							<= tolerance.move;
+					}
+				}
+				if (holds)
+				{
+					gone[key * tracks * 2 + t * 2 + ch] = true;
+					removed++;
+				}
+				else
+				{
+					alive[r] = true;
+				}
+			}
+		}
+	}
+	if (removed == 0) return 0;
+
+	List{AnimKeyframe} kept;
+	kept.init(allocator);
+	defer kept.free();
+	foreach (usz k, frame : reduced.keyframes)
+	{
+		List{AnimKeyDot} dots;
+		dots.init(allocator);
+		defer dots.free();
+		foreach (dot : frame.dots)
+		{
+			usz t = 0;
+			while (t < tracks && compiled[t].joint_name != dot.joint_name) t++;
+			bool turns = dot.keys_rotation() && !(t < tracks && gone[k * tracks * 2 + t * 2]);
+			bool slides = dot.keys_translation() && !(t < tracks && gone[k * tracks * 2 + t * 2 + 1]);
+			if (!turns && !slides) continue;
+			AnimKeyDot copy = dot.copy(allocator);
+			if (!turns)
+			{
+				copy.channels = TRANSLATION;
+				copy.rotation_interpolation = INHERIT;
+				copy.rotation_ease = {};
+			}
+			else if (!slides)
+			{
+				copy.channels = ROTATION;
+				copy.translation_interpolation = INHERIT;
+				copy.translation_ease = {};
+			}
+			dots.push(copy);
+		}
+		if (dots.len() == 0) continue;
+		kept.push({ .time = frame.time, .dots = dots.to_array(allocator) });
+	}
+	*out = kept.to_array(allocator);
+	return removed;
 }

@@ -929,9 +929,12 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 			&& clip.keyframes[1].dots[0].angle == 1.0f,
 			"constraint export keeps the authored keys unchanged");
 		gltf::Animation written = stream.gltf.animations[0];
-		usz baked = written.samplers.len() > 0
-			? (usz)stream.gltf.accessors[written.samplers[0].input].count
-			: 0;
+		// The longest sampler: a channel that holds still is written as one key.
+		usz baked = 0;
+		foreach (sampler : written.samplers)
+		{
+			baked = math::max(baked, (usz)stream.gltf.accessors[sampler.input].count);
+		}
 		test::@check(baked > clip.keyframes.len,
 			"constraint export adds samples around limit boundaries");
 	}

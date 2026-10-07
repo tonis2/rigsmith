@@ -911,7 +911,8 @@ fn float[] AppState.imported_dense(&self, Allocator allocator, RigView* view)
  editing session: `plan`, so a rigged character shows up in the asset browser
  under its body plan on the same terms every library pack does, and `clips`, so a
  smooth clip does not come back linear — the motion is in the channels, but what
- the channels *mean* has no glTF slot. Together they are tens of bytes.
+ the channels *mean* has no glTF slot. Together they are tens of bytes: an
+ authored clip's key schedule is the sidecar's, and stays out of the model.
 
  Nothing is re-encoded — see `gltf_edit::patch_extra`. The binary chunk is copied
  through byte for byte, so this is safe on a file crig did not write.
@@ -921,7 +922,15 @@ fn float[] AppState.imported_dense(&self, Allocator allocator, RigView* view)
 *>
 fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips = {}, bool clips_replaced = false)
 {
-	String clip_settings = clip_extras_text(mem, clips);
+	// An authored clip's keys are in the sidecar, which `save_rig_beside` writes
+	// for every file this stamps; the model carries only its settings.
+	AnimTemplate[] authored = self.kept_authored_clips(mem);
+	defer if (authored.len > 0) alloc::free(mem, authored);
+	String[] elsewhere = alloc::new_array(mem, String, (sz)authored.len);
+	defer if (elsewhere.len > 0) alloc::free(mem, elsewhere);
+	foreach (usz i, clip : authored) elsewhere[i] = clip.name;
+
+	String clip_settings = clip_extras_text(mem, clips, elsewhere);
 	// Guarded: clips with nothing to declare come back as "", a literal that must
 	// not be freed.
 	defer if (clip_settings.len > 0) clip_settings.free(mem);

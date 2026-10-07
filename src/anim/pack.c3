@@ -846,7 +846,7 @@ fn bool AnimPack.has_tag(&self, String tag)
 <*
  Put the per-clip settings back on the clips they belong to.
 
- The counterpart to `write_clip_extras`. Everything here is optional and
+ The counterpart to `clip_extras_text`. Everything here is optional and
  everything malformed is skipped rather than raised: a pack whose settings a
  later crig wrote in a shape this one does not recognise still holds clips, and
  a clip that comes back linear plays — which is more than a refused pack does.
@@ -886,6 +886,30 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 		if (try Object* sparse = settings.get("sparse"))
 		{
 			bool valid_sparse = sparse.is_array() && sparse.get_len() > 0;
+			// `"dots":"all"` is a key that keys every joint in `keyed`, both
+			// channels — spelled out here so the checks below read one form.
+			if (valid_sparse) for (sz k = 0; k < sparse.get_len(); k++)
+			{
+				Object* scheduled = sparse.get_at(k);
+				if (!scheduled.is_keyable()) continue;
+				String every = scheduled.get_string("dots") ?? "";
+				if (every != "all") continue;
+				Object* keyed = settings.get("keyed") ?? null;
+				if (!keyed || !keyed.is_array() || keyed.get_len() == 0)
+				{
+					valid_sparse = false;
+					break;
+				}
+				Object* listed = object::new_array(tmem);
+				for (sz n = 0; n < keyed.get_len(); n++)
+				{
+					Object* dot = object::new_obj(tmem);
+					dot.set("joint", keyed.get_at(n).is_string() ? keyed.get_at(n).s : "");
+					dot.set("channels", "both");
+					listed.push(dot);
+				}
+				scheduled.set("dots", listed);
+			}
 			float previous_time = -1.0f;
 			if (valid_sparse) for (sz k = 0; k < sparse.get_len(); k++)
 			{

@@ -1350,6 +1350,91 @@ fn void sparse_channels_survive_gltf_roundtrip() @test
 	}
 }
 
+<*
+ A pack whose keys key every joint on both channels writes each such key as
+ `"dots":"all"` against one list of the clip's joints, and reads back the same
+ schedule. And a joint that holds one value the whole clip — the knee, turned
+ and left there — is one key in the file, while the moving hips keep theirs.
+*>
+fn void a_whole_pose_key_writes_short_and_a_held_joint_one_key() @test
+{
+	rig::Skeleton skeleton = fixture_skeleton();
+	defer skeleton.free(mem);
+	const usz KEYS = 4;
+	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, KEYS);
+	for (usz k = 0; k < KEYS; k++)
+	{
+		float f = (float)k / (float)(KEYS - 1);
+		crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 3);
+		dots[0] = { .joint_name = "hips".copy(mem), .axis = { 0, 1, 0 }, .angle = 0.5f * f, .move = { 0, k == 1 || k == 2 ? 0.05f : 0.0f, 0 } };
+		dots[1] = { .joint_name = "knee".copy(mem), .axis = { 1, 0, 0 }, .angle = 0.3f };
+		dots[2] = { .joint_name = "ankle".copy(mem), .axis = { 1, 0, 0 }, .angle = k % 2 == 0 ? 0.0f : 0.2f };
+		frames[k] = { .time = f, .dots = dots };
+	}
+	crig::AnimTemplate sent = { .name = "Whole".copy(mem), .duration = 1.0f, .keyframes = frames, .owned = true };
+	defer sent.free(mem);
+	crig::AnimTemplate[1] clips = { sent };
+
+	String text = crig::clip_extras_text(mem, clips[..]);
+	defer if (text.len > 0) text.free(mem);
+	test::@check(text.contains(`"dots":"all"`) && text.contains(`"keyed":[`), "the whole-pose keys were spelled out: %s", text);
+	test::@check(!text.contains(`"joint":"knee"`), "a whole-pose key still lists its joints: %s", text);
+
+	String elsewhere = crig::clip_extras_text(mem, clips[..], { "Whole" });
+	defer if (elsewhere.len > 0) elsewhere.free(mem);
+	test::@check(!elsewhere.contains(`"sparse"`) && elsewhere.contains(`"duration"`),
+		"a clip scheduled in the sidecar still wrote its keys: %s", elsewhere);
+
+	String path = "build/anim-whole-pose.glb";
+	if (catch crig::export_animations_glb(mem, path, &skeleton, JOINT_NAMES[..], clips[..]))
+	{
+		test::@check(false, "whole-pose clip export failed");
+		return;
+	}
+
+	gltf::GltfStream? opened = gltf::open(path, mem);
+	if (catch opened) { test::@check(false, "could not open the written pack"); return; }
+	gltf::GltfStream stream = opened;
+	defer stream.close();
+	gltf::Animation anim = stream.gltf.animations[0];
+	usz held = 0;
+	usz moving = 0;
+	foreach (channel : anim.channels)
+	{
+		usz keys = (usz)stream.gltf.accessors[anim.samplers[(sz)channel.sampler].input].count;
+		bool knee = channel.target.node == (uint)KNEE;
+		if (knee && channel.target.path == gltf::AnimationProperty.ROTATION) test::@check(keys == 1, "the held knee wrote %d keys", keys);
+		if (keys == 1) { held++; } else { moving++; }
+	}
+	test::@check(held >= 1 && moving >= 2, "%d held and %d moving channels", held, moving);
+
+	crig::AnimPack? read = crig::read_pack(mem, path);
+	if (catch read) { test::@check(false, "whole-pose pack re-import failed"); return; }
+	crig::AnimPack pack = read;
+	defer pack.free(mem);
+	crig::AnimTemplate back = pack.clips[0];
+	test::@check(back.keyframes.len == KEYS, "re-import has %d keys", back.keyframes.len);
+	foreach (frame : back.keyframes)
+	{
+		test::@check(frame.dots.len == 3, "a key came back with %d joints", frame.dots.len);
+		foreach (dot : frame.dots) test::@check(dot.channels == BOTH, "%s lost a channel", dot.joint_name);
+	}
+	for (usz step = 0; step <= 20; step++)
+	{
+		float time = (float)step / 20.0f;
+		rig::Pose expected = sent.pose(mem, &skeleton, JOINT_NAMES[..], time);
+		defer expected.free(mem);
+		rig::Pose actual = back.pose(mem, &skeleton, JOINT_NAMES[..], time);
+		defer actual.free(mem);
+		for (usz j = 0; j < 3; j++)
+		{
+			float turn_gap = 1.0f - math::abs(expected.rotations[j].v.dot(actual.rotations[j].v));
+			float move_gap = (expected.offsets[j] - actual.offsets[j]).length();
+			test::@check(turn_gap < 0.0001f && move_gap < 0.0001f, "joint %d changed at %.3f: turn %f move %f", j, time, turn_gap, move_gap);
+		}
+	}
+}
+
 fn void malformed_sparse_pack_metadata_keeps_gltf_channels() @test
 {
 	crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 1);

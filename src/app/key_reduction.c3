@@ -34,6 +34,7 @@ fn bool AppState.optimize_clip_keys(&self, AnimRef ref, KeyReduction level)
 	String[] names = self.names_for(&view, ref);
 
 	usz before = clip.keyframes.len;
+	usz channels_before = channel_keys(*clip);
 	AnimTemplate reduced;
 	if (!clip_keys_reduced(mem, *clip, &view.skeleton, names, level, &reduced))
 	{
@@ -41,6 +42,7 @@ fn bool AppState.optimize_clip_keys(&self, AnimRef ref, KeyReduction level)
 		return false;
 	}
 	usz after = reduced.keyframes.len;
+	usz channels_after = channel_keys(reduced);
 	String name = clip.name.copy(mem);
 	defer name.free(mem);
 	// The saved-key selection names times that may no longer hold a key.
@@ -49,6 +51,21 @@ fn bool AppState.optimize_clip_keys(&self, AnimRef ref, KeyReduction level)
 	AnimRef landed = self.land_clip(ref, reduced);
 	if (!landed.valid()) return false;
 	self.editing = landed;
-	if (!forked) self.@notice("%s: kept %d of %d keys · Ctrl+Z undoes it", name, after, before);
+	if (!forked)
+	{
+		self.@notice("%s: kept %d of %d keys, %d of %d joint keys · Ctrl+Z undoes it",
+			name, after, before, channels_after, channels_before);
+	}
 	return true;
+}
+
+// Every channel a clip keys, counting a joint keyed on both as two.
+fn usz channel_keys(AnimTemplate clip) @local
+{
+	usz count = 0;
+	foreach (frame : clip.keyframes)
+	{
+		foreach (dot : frame.dots) count += (usz)(dot.keys_rotation() ? 1 : 0) + (usz)(dot.keys_translation() ? 1 : 0);
+	}
+	return count;
 }

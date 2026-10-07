@@ -951,8 +951,20 @@ fn Vec3 rest_offset(rig::Skeleton* skeleton, usz joint) @local
  restate the first — loses that span on the way in and comes back a keyframe
  short. The reader then times the contact windows and the wrap tangent against a
  cycle that is not the authored one.
+
+ **The key schedule is left to whoever already holds it.** A model saved beside
+ its `<stem>.rigsmith.json` keeps every authored clip's keys there in full, so a
+ copy in the model's extras is only weight — for a walk optimized to whole
+ keys, hundreds of kilobytes of it. Those clips are named in `scheduled_elsewhere`
+ and get the settings without the `sparse` member. A library pack has no sidecar
+ and passes nothing, so its clips keep their schedule.
+
+ A key that keys every joint the clip keys, both channels and nothing else said,
+ is written `"dots":"all"` rather than as the list — see `apply_clip_extras`.
+
+ @param scheduled_elsewhere : `Clips, by name, whose key schedule lives in a sidecar and is left out here.`
 *>
-fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates)
+fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String[] scheduled_elsewhere = {})
 {
 	DString out = dstring::new(allocator);
 	defer out.free();
@@ -1002,15 +1014,39 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates)
 		}
 		// glTF's shared sample times cannot say which per-joint values were authored
 		// keys. Keep that schedule for every pack clip, including plain LINEAR ones.
-		if (template.keyframes.len > 0 && !flattened)
+		bool elsewhere = false;
+		foreach (name : scheduled_elsewhere) if (name == template.name) elsewhere = true;
+		if (template.keyframes.len > 0 && !flattened && !elsewhere)
 		{
 			if (fields++ > 0) out.append_char(',');
+			// The joints `"dots":"all"` stands for, named once for the clip.
+			List{String} keyed = keyed_joints(template);
+			bool shorthand = false;
+			foreach (key : template.keyframes) if (keys_every_joint_plainly(key, (usz)keyed.len())) shorthand = true;
+			if (shorthand)
+			{
+				out.append_string(`"keyed":[`);
+				foreach (usz n, name : keyed)
+				{
+					if (n > 0) out.append_char(',');
+					out.append_char('"');
+					json_escape_into(&out, name);
+					out.append_char('"');
+				}
+				out.append_string("],");
+			}
+			usz joints = shorthand ? (usz)keyed.len() : 0;
 			out.append_string(`"sparse":[`);
 			usz scheduled = 0;
 			foreach (usz k, key : template.keyframes)
 			{
 				if (key.dots.len == 0) continue;
 				if (scheduled++ > 0) out.append_char(',');
+				if (keys_every_joint_plainly(key, joints))
+				{
+					out.appendf(`{"time":%s,"dots":"all"}`, (JsonFloat)key.time)!!;
+					continue;
+				}
 				out.appendf(`{"time":%s,"dots":[`, (JsonFloat)key.time)!!;
 				foreach (usz d, dot : key.dots)
 				{
@@ -1043,6 +1079,39 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates)
 
 	out.append_char('}');
 	return out.copy_str(allocator);
+}
+
+// The distinct joints the clip keys anywhere, in the order they are first keyed.
+// Temp-allocated.
+fn List{String} keyed_joints(AnimTemplate template) @local
+{
+	List{String} seen;
+	seen.init(tmem);
+	foreach (key : template.keyframes)
+	{
+		foreach (dot : key.dots)
+		{
+			bool known = false;
+			foreach (name : seen) if (name == dot.joint_name) { known = true; break; }
+			if (!known) seen.push(dot.joint_name);
+		}
+	}
+	return seen;
+}
+
+// Whether `key` keys all `joints` of its clip, each once, on both channels, with
+// no interpolation or ease of its own: the key `"dots":"all"` stands for.
+fn bool keys_every_joint_plainly(AnimKeyframe key, usz joints) @local
+{
+	if (joints == 0 || key.dots.len != joints) return false;
+	foreach (usz d, dot : key.dots)
+	{
+		if (dot.channels != BOTH) return false;
+		if (dot.rotation_interpolation != INHERIT || dot.translation_interpolation != INHERIT) return false;
+		if (!dot.rotation_ease.none() || !dot.translation_ease.none()) return false;
+		for (usz e = 0; e < d; e++) if (key.dots[e].joint_name == dot.joint_name) return false;
+	}
+	return true;
 }
 
 // The pack's own `extras`, or nothing when it has nothing to say. A file with
@@ -1165,6 +1234,29 @@ fn void write_animation(
 	uint input = builder.add_times(times);
 	uint clip = builder.add_animation(template.name);
 
+	// A channel that holds one value the whole clip is written as that value at
+	// the first time, against a one-key input every such channel shares: a walk's
+	// still bones are most of its channels, and repeating each value at every
+	// sample was most of the file. A reader holds a one-key sampler at its value
+	// (glTF's clamp, and `sample_at`'s). Only when something in the clip moves —
+	// the moving channels are what carry its length, which a clip made of nothing
+	// but held channels would otherwise lose.
+	bool moves = false;
+	for (usz j = 0; j < joints && !moves; j++)
+	{
+		for (usz k = 1; k < keys; k++)
+		{
+			if (!same_turn(posed[k].rotations[j], posed[0].rotations[j])
+				|| (posed[k].offsets[j] - posed[0].offsets[j]).length() > ANIM_EXPORT_EPSILON)
+			{
+				moves = true;
+				break;
+			}
+		}
+	}
+	uint held_input;
+	bool held_input_written = false;
+
 	Quaternionf[] turns = alloc::new_array(allocator, Quaternionf, (sz)keys);
 	Vec3[] slides = alloc::new_array(allocator, Vec3, (sz)keys);
 	defer
@@ -1211,18 +1303,47 @@ fn void write_animation(
 		uint node = j < joint_nodes.len ? joint_nodes[j] : (uint)j;
 		if (turning) channels++;
 		if (sliding) channels++;
+		bool turn_held = moves;
+		bool slide_held = moves;
+		for (usz k = 1; k < keys; k++)
+		{
+			if (!same_turn(turns[k], turns[0])) turn_held = false;
+			if ((slides[k] - slides[0]).length() > ANIM_EXPORT_EPSILON) slide_held = false;
+		}
+		if ((turning && turn_held) || (sliding && slide_held))
+		{
+			if (!held_input_written) held_input = builder.add_times(times[:1]);
+			held_input_written = true;
+		}
 		if (turning)
 		{
-			uint sampler = builder.add_sampler(clip, input, builder.add_rotations(turns));
+			uint sampler = turn_held
+				? builder.add_sampler(clip, held_input, builder.add_rotations(turns[:1]))
+				: builder.add_sampler(clip, input, builder.add_rotations(turns));
 			builder.add_channel(clip, sampler, node, gltf::AnimationProperty.ROTATION);
 		}
 		if (sliding)
 		{
-			uint sampler = builder.add_sampler(clip, input, builder.add_vectors(slides));
+			uint sampler = slide_held
+				? builder.add_sampler(clip, held_input, builder.add_vectors(slides[:1]))
+				: builder.add_sampler(clip, input, builder.add_vectors(slides));
 			builder.add_channel(clip, sampler, node, gltf::AnimationProperty.TRANSLATION);
 		}
 	}
 	if (report) report.count(baked_keys, keys, channels);
+}
+
+// Whether two rotations are the same turn, either sign of the quaternion. By
+// component rather than by their dot product, which near 1 cannot tell apart
+// turns a tenth of a degree apart.
+fn bool same_turn(Quaternionf a, Quaternionf b) @local
+{
+	float dot = a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w;
+	float sign = dot < 0.0f ? -1.0f : 1.0f;
+	return math::abs(a.v.x - sign * b.v.x) <= ANIM_EXPORT_EPSILON
+		&& math::abs(a.v.y - sign * b.v.y) <= ANIM_EXPORT_EPSILON
+		&& math::abs(a.v.z - sign * b.v.z) <= ANIM_EXPORT_EPSILON
+		&& math::abs(a.v.w - sign * b.v.w) <= ANIM_EXPORT_EPSILON;
 }
 
 <*

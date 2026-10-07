@@ -664,6 +664,118 @@ fn void optimize_keys_drops_keys_and_keeps_the_motion() @test
 }
 
 <*
+ Optimize keys drops a joint's keys inside a key it still needs. Every key keys
+ every joint on both channels, but only the arm zigzags: the whole keys stay for
+ it, while the hips' straight run and the still joints lose their middle keys
+ and the clip plays as before.
+*>
+fn void optimize_keys_drops_joints_a_key_does_not_need() @test
+{
+	rig::Skeleton skeleton = rooted_skeleton();
+	defer skeleton.free(mem);
+	String[] names = alloc::new_array(mem, String, 8);
+	defer alloc::free(mem, names);
+	foreach (usz j, name : ROOTED_JOINTS) names[j] = name;
+
+	const usz KEYS = 9;
+	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, KEYS);
+	for (usz k = 0; k < KEYS; k++)
+	{
+		float f = (float)k / (float)(KEYS - 1);
+		crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 8);
+		foreach (usz j, name : ROOTED_JOINTS) dots[j] = dot(name, { 0, 1, 0 }, 0.0f);
+		dots[1] = dot("hips", { 0, 1, 0 }, 0.4f * f, { 0.2f * f, 0.0f, 0.3f * f });
+		dots[4] = dot("arm_L", { 0, 0, 1 }, k % 2 == 1 ? -0.7f : 0.2f);
+		frames[k] = { .time = f, .dots = dots };
+	}
+	crig::AnimTemplate clip = { .name = "every".copy(mem), .duration = 1.0f, .keyframes = frames, .owned = true };
+	defer clip.free(mem);
+	clip.compile_tracks(mem);
+
+	crig::AnimTemplate reduced;
+	test::@check(crig::clip_keys_reduced(mem, clip, &skeleton, names, STRONG, &reduced), "nothing was reduced");
+	defer reduced.free(mem);
+	reduced.compile_tracks(mem);
+
+	test::@check(reduced.keyframes.len == KEYS, "whole keys went: %d left", reduced.keyframes.len);
+	test::@check(reduced.channel_count("arm_L", true) == KEYS, "the zigzagging arm lost keys: %d left", reduced.channel_count("arm_L", true));
+	test::@check(reduced.channel_count("hips", true) == 2 && reduced.channel_count("hips", false) == 2,
+		"the hips' straight run kept %d turns and %d slides", reduced.channel_count("hips", true), reduced.channel_count("hips", false));
+	test::@check(reduced.channel_count("leg_L", true) == 2, "a still leg kept %d keys", reduced.channel_count("leg_L", true));
+
+	for (int i = 0; i <= 32; i++)
+	{
+		float t = (float)i / 32.0f;
+		rig::Pose a = clip.pose(mem, &skeleton, names, t, false);
+		rig::Pose b = reduced.pose(mem, &skeleton, names, t, false);
+		defer { a.free(mem); b.free(mem); }
+		for (usz j = 0; j < skeleton.len(); j++)
+		{
+			Vec3 gap = joint_at(&skeleton, a, j) - joint_at(&skeleton, b, j);
+			test::@check(gap.length() < 0.01f, "joint %d moved by %f at %f", j, gap.length(), t);
+		}
+	}
+}
+
+<*
+ A model written beside its sidecar keeps an authored clip's keys in the sidecar
+ alone: the model's `extras.clips` says how long the clip is and whether it
+ loops, and nothing about which joints each key keys.
+*>
+fn void an_exported_model_leaves_its_key_schedule_to_the_sidecar() @test
+{
+	String source = "build/schedule-source.glb";
+	String exported = "build/schedule-export.glb";
+	trust_fixes::copy_humanoid(source);
+	defer
+	{
+		trust_fixes::remove_with_sidecar(source);
+		trust_fixes::remove_with_sidecar(exported);
+	}
+	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, source);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	crig::AnimRef ref = app.resolve_bound(0);
+	test::@check(ref.valid(), "the humanoid has no bound clip");
+	if (!ref.valid()) return;
+	test::@check(app.optimize_clip_keys(ref, LIGHT), "Optimize keys did nothing: %s", app.notice());
+	crig::AnimTemplate* clip = app.clip(app.editing);
+	test::@check(app.editing.pack == app.authored_pack, "the optimized clip is not authored");
+	usz keys = clip.keyframes.len;
+	String name = clip.name.copy(mem);
+	defer name.free(mem);
+
+	app.export_rig(exported, (crig::AnimTemplate[]){ *clip });
+	test::@check(file::is_file(exported), "the export wrote nothing: %s", app.notice());
+
+	gltf::GltfStream? opened = gltf::open(exported, mem);
+	if (catch opened) { test::@check(false, "could not open the export"); return; }
+	gltf::GltfStream stream = opened;
+	defer stream.close();
+	String? settings = stream.gltf.extras.get(crig::PACK_KEY_CLIPS);
+	if (catch settings) { test::@check(false, "the export has no clip settings"); return; }
+	test::@check(settings.contains(name) && settings.contains(`"duration"`), "the clip settings lost the clip: %s", settings);
+	test::@check(!settings.contains(`"sparse"`), "the model still carries the key schedule (%d bytes)", settings.len);
+
+	String sidecar = crig::session_path(mem, exported);
+	defer sidecar.free(mem);
+	crig::ProjectSession? reading = crig::read_project_session(mem, sidecar);
+	if (catch reading) { test::@check(false, "could not read the sidecar"); return; }
+	crig::ProjectSession loaded = reading;
+	defer loaded.free(mem);
+	bool found = false;
+	foreach (kept : loaded.authored)
+	{
+		if (kept.name != name) continue;
+		found = true;
+		test::@check(kept.keyframes.len == keys, "the sidecar has %d keys of %d", kept.keyframes.len, keys);
+	}
+	test::@check(found, "the sidecar does not hold the authored clip");
+}
+
+<*
  The Export dialog's choices through the app: a whole-model export of the
  humanoid with its bound clip, in place and with Light reduction, says in its
  notice how many keys it wrote, and the project clip is unchanged.
