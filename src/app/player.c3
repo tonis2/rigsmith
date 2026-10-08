@@ -718,7 +718,7 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	rig::Pose out = mixed;
 	// Limits describe the pose that reaches the renderer, including the midpoint
 	// of a crossfade. Clamping the two endpoints only would not guarantee their
-	// quaternion blend remains inside independent Euler ranges.
+	// quaternion blend remains inside the independent swing and twist ranges.
 	constrain_pose_to_joint_limits(&self.doc, &view.skeleton, view.dot_ids, &out);
 	AnimGround floor = anim.ground.solves() ? anim.ground : from.ground;
 	ground_pose(allocator, &view.skeleton, names, floor, &out, anim.phase_at(self.anim_time));

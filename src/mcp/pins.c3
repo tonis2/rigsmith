@@ -29,8 +29,9 @@ import std::math::vector;
 faultdef PINS_REFUSED;
 
 // How many pointer moves a posed move or turn is broken into. One jump from the
-// start to the end is not what a hand does, and the solve is warm-started from
-// the previous move, so it reaches far-off targets the way a drag does.
+// start to the end is not what a hand does, and a grab carried a short way at a
+// time reaches far-off targets the way a drag does. Each move solves from the
+// pose the gesture began with, so the last one alone decides where the body ends.
 const usz POSE_JOINT_STEPS = 12;
 
 const String GET_PINS_SCHEMA = `{"type":"object","properties":{}}`;
@@ -38,8 +39,8 @@ const String GET_PINS_SCHEMA = `{"type":"object","properties":{}}`;
 const String SET_PINS_SCHEMA = `{"type":"object","properties":{
 	"pins":{"type":"array","description":"Pins to add or change. With a clip open they are the clip's pins: they hold during playback and export for their from..to window, and one call is one undo step per pin. Each holds the joint where it stands on screen right now, and a pin already holding that half keeps the point it has. A joint left out keeps whatever it had.","items":{"type":"object","properties":{
 		"joint":{"type":"string","description":"The joint's name."},
-		"position":{"type":"boolean","description":"Hold its world position (the Joint panel's Pin position). Default true unless rotation is given alone."},
-		"rotation":{"type":"boolean","description":"Hold its world orientation (Pin angle), so a foot stays flat. Default false."},
+		"position":{"type":"boolean","description":"Hold its world position (the Joint panel's Pin position), and its angle too while its joint limits allow: the part keeps the angle it had, softly. Default true unless rotation is given alone."},
+		"rotation":{"type":"boolean","description":"Hold its world angle (Pin angle) hard, even if the body has to stop, so a foot stays flat. Default false."},
 		"from":{"type":"number","description":"With a clip open: seconds into the clip where the pin starts holding. Default: the pin's own, or 0 for a new pin."},
 		"to":{"type":"number","description":"With a clip open: seconds where it stops holding. Default: the pin's own, or the clip's end for a new pin."},
 		"blend":{"type":"number","description":"With a clip open: seconds the pin eases in and out at the window ends (0 is a hard edge). Default: the pin's own, or 0.1 for a new pin."}
@@ -51,7 +52,7 @@ const String SET_PINS_SCHEMA = `{"type":"object","properties":{
 }}`;
 
 const String POSE_JOINT_SCHEMA = `{"type":"object","properties":{
-	"joint":{"type":"string","description":"The joint to pose."},
+	"joint":{"type":"string","description":"The joint to pose. A dragged joint goes to the point and keeps the angle it had, softly, so a hip pulled down drops the body with the chest still upright."},
 	"move":{"type":"array","items":{"type":"number"},"description":"[x,y,z] to move the joint by, in model units along the model's world axes: the drag of a joint by that much."},
 	"target":{"type":"array","items":{"type":"number"},"description":"[x,y,z] model-space point to drag the joint to. Use move or target, not both."},
 	"turn":{"type":"object","description":"Turn the joint in place. Applied after a move or target when both are given.","properties":{

@@ -711,19 +711,26 @@ fn bool AppState.blocked_chain_pass(
 <*
  Cut a whole-body solve to the largest fraction the mesh allows.
 
- 	`app.blocked_body_pass(&view, &pose, before, root, held_rotation, held_offset, &app.last_block);`
+ 	`app.blocked_body_pass(&view, &pose, before, root, held_rotation, held_offset, &app.last_block, &last);`
 
  `pose` arrives holding the solve's answer and `before` the pose the solve began
- from. A body solve moves the root, and the root carries every triangle alike, so
- it changes no distance between two of them: the test is made with the root held
- where the gesture found it (`held_rotation`, `held_offset`), and what is moving
- is every joint whose own turn changed and everything below it. Held there for
- every test of a gesture, the surface the earlier ones refitted still agrees with
- every row this one does not touch. Clear, and the solve stands. In contact, the
- whole answer — the root's slide and turn with it — is slerped back toward
- `before` as one, to the largest clear fraction, the way `blocked_chain_pass`
- cuts a chain.
+ from — the pose the gesture began with. A body solve moves the root, and the root
+ carries every triangle alike, so it changes no distance between two of them: the
+ test is made with the root held where the gesture found it (`held_rotation`,
+ `held_offset`), and what is moving is every joint whose own turn changed and
+ everything below it. Clear, and the solve stands. In contact, the whole answer —
+ the root's slide and turn with it — is slerped back toward `before` as one, to the
+ largest clear fraction, the way `blocked_chain_pass` cuts a chain: a cut is a
+ share of the way from where the gesture began.
 
+ The surface is refitted for the joints that moved, so it has to be right for all
+ the others. Held there for every test of a gesture, it agrees with every row a
+ test does not touch — as long as that row is where the surface last left it.
+ Solved from the start each move, a joint that has come back to the start is
+ where `before` has it and not where the last move's test left the surface; so
+ `surface`, the last answer, adds the joints it turned to those that move.
+
+ @param surface : `The pose the last move left the surface at, or null when that was the start.`
  @return `True when the solve was accepted whole.`
 *>
 fn bool AppState.blocked_body_pass(
@@ -734,7 +741,8 @@ fn bool AppState.blocked_body_pass(
 	usz root,
 	Quaternionf held_rotation,
 	Vec3 held_offset,
-	CollisionBlock* report)
+	CollisionBlock* report,
+	rig::Pose* surface = null)
 {
 	if (!self.collision_blocking_active() || self.collision_suspended) return true;
 	usz n = view.len();
@@ -751,7 +759,11 @@ fn bool AppState.blocked_body_pass(
 			turned = true;
 			sweep = math::max(sweep, rotation_angle_between(before.rotations[j], pose.rotations[j]));
 		}
-		inside[j] = bent || (parent >= 0 && inside[(usz)parent]);
+		// A joint the last move turned is still turned in the surface, whether or not
+		// this answer has it back where it began.
+		bool left = parent >= 0 && surface && surface.rotations[j].v != before.rotations[j].v;
+		if (left) turned = true;
+		inside[j] = bent || left || (parent >= 0 && inside[(usz)parent]);
 	}
 	if (!turned) return true;
 	List{uint} listed;

@@ -14,10 +14,10 @@
  playhead. Auto-key commits it on release; otherwise Save pose does.
 
  **Where the solving happens is not here.** A gesture on the body — a hand, a
- foot, the hips, any joint — is one `point_pose` solve (`core/point_pose.c3`) over
- the whole figure, with the pins, the planted feet, the floor and the balance as
- its goals; this file says what the gesture asks for and writes back what comes
- out (`pose_body`). A finger or a toe's tip curls along its own short run instead,
+ foot, the hips, any joint — is one `body_solve` (`core/body_solve.c3`) over the
+ whole figure, with the pins, the planted feet, the floor and the balance as its
+ goals, started from the pose the gesture began with on every move; this file says
+ what the gesture asks for and writes back what comes out (`pose_body`). A finger or a toe's tip curls along its own short run instead,
  through the limit-aware CCD below, whose step toward a point is
  `collision::ik`'s. Both meet the rig in world space and convert what comes back
  into `rig::Pose`'s local rotations themselves.
@@ -538,13 +538,6 @@ fn Quaternionf? AppState.joint_axes(&self, uint dot, bool posed)
 *>
 const float IK_TOLERANCE = 0.002;
 
-<*
- How much of a trunk joint's drift from where the gesture began the body solve
- draws back each iteration (`PointPoseSettings.posture_pull`): enough to keep a
- spine from wandering sideways while a pinned dog crouches, little enough that a
- pull which needs the back to bend bends it.
-*>
-const float POSTURE_PULL = 0.05;
 const uint POSE_IK_PASSES = 12;
 
 <*
@@ -1513,6 +1506,32 @@ fn void AppState.restore_digit_start(&self, RigView* view, rig::Pose* pose, Pose
 }
 
 <*
+ The whole figure put back as the gesture found it, joint by joint — turns and
+ offsets — so a body solve starts every move from the same pose.
+
+ This is what makes the pose a function of the pointer alone: where the body ends
+ up for a pull to this point is the same whichever way the pointer came, and
+ dragging back to where the grab began brings every joint back to what it was. Solved
+ on from the last move's answer instead, a limb keeps whatever a limit, a pin or
+ a cut left it holding on the way, and the same pointer gives another pose. The
+ same promise `restore_digit_start` makes for a finger.
+
+ Every joint in the tree of `root` is put back, the root's slide with it. A joint a
+ look-at target turns is left as `gesture_pose` aimed it: that is the pose on
+ screen, and it is frozen in the solve.
+*>
+fn void AppState.restore_body_start(&self, RigView* view, rig::Pose* pose, usz root)
+{
+	foreach (held : self.gesture_before)
+	{
+		sz j = view.joint_of(held.dot_id);
+		if (j < 0 || self.gesture_aim.has((usz)j) || tree_root_of(&view.skeleton, (usz)j) != root) continue;
+		pose.rotations[(usz)j] = held.rotation;
+		pose.offsets[(usz)j] = held.offset;
+	}
+}
+
+<*
  Carries the grabbed joint toward `target`, and the body with it.
 
  	`float gap = app.pose_toward(where_the_pointer_is);`
@@ -1524,6 +1543,15 @@ fn void AppState.restore_digit_start(&self, RigView* view, rig::Pose* pose, Pose
  at once against every pin and every planted foot (`pose_body`), so a hand that
  cannot reach brings the chest, a thigh pulled moves the hips, and a waist pulled
  down sits the body on its feet.
+
+ **The grab keeps its angle, softly.** The grabbed joint, and each selected mate
+ with it, is asked to go to the pointer and to keep the world rotation it began
+ with (`POINT_POSE_GRAB_HOLD`): a pulled waist drops the body with the chest
+ still upright, a pulled hand arrives as it faced. The hold is light, so a limb that
+ has to turn to reach turns.
+
+ Each move is solved from the pose the gesture began with, not from the last
+ move's answer, so the same pointer gives the same pose.
 
  The pointer is in the frame the screen shows; the solve is in the draft's, which
  for a clip shown grounded differs by the ground solve's shift. The target is
@@ -1569,15 +1597,38 @@ fn float AppState.pose_toward(&self, Vec3 target)
 	}
 	else
 	{
+		// The pose the gesture began with: what the grab keeps the angle of, and
+		// what the body solve starts from (`pose_body` puts it back as well).
+		self.restore_body_start(&view, &pose, tree_root_of(&view.skeleton, (usz)found));
+		Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
+		if (catch read) return 0.0f;
+		Quaternionf[] began = read;
+		defer alloc::free(mem, began);
 		PointGoal[POSE_MATES + 1] gesture;
 		usz goals = 0;
-		gesture[goals++] = { .joint = (usz)found, .position = true, .soft = true, .target = target - shift };
+		gesture[goals++] = {
+			.joint = (usz)found,
+			.position = true,
+			.soft = true,
+			.target = target - shift,
+			.rotation = true,
+			.orient = began[(usz)found],
+			.turn_weight = POINT_POSE_GRAB_HOLD,
+		};
 		// The other selected joints follow by the same move, as far as they can.
 		foreach (mate : self.pose_mates[:self.pose_mate_count])
 		{
 			sz j = view.joint_of(mate.dot);
 			if (j < 0 || j == found) continue;
-			gesture[goals++] = { .joint = (usz)j, .position = true, .soft = true, .target = mate.from + (target - self.drag.from) };
+			gesture[goals++] = {
+				.joint = (usz)j,
+				.position = true,
+				.soft = true,
+				.target = mate.from + (target - self.drag.from),
+				.rotation = true,
+				.orient = began[(usz)j],
+				.turn_weight = POINT_POSE_GRAB_HOLD,
+			};
 		}
 		gap = self.pose_body(&view, &pose, gesture[:goals], shift, true);
 	}
@@ -1625,29 +1676,44 @@ fn bool at_or_above(rig::Skeleton* skeleton, usz a, usz b) @local
 
 <*
  The body's answer to a gesture: every joint of the figure the gesture's joint
- belongs to solved at once by `point_pose`, toward the gesture's own goals and
+ belongs to solved at once by `body_solve`, toward the gesture's own goals and
  against every pin and every foot the clip has planted.
 
  	`float miss = app.pose_body(&view, &pose, gesture[..], shift, true);`
 
+ **From the start, every time.** The figure is first put back as the gesture found
+ it (`restore_body_start`), whatever the last move left, and the solve is made
+ from there: the pose is then a function of the gesture's goals alone. The same
+ pointer gives the same pose however it got there, a small step of the pointer is
+ a small change of the pose, and dragging away and back returns every joint
+ exactly. What a planted foot holds, what a pin keeps the angle of and what the
+ stiffness draws the joints back toward are all read off that start.
+
  What it asks of the body besides the gesture:
 
-   each pin       held, hard: its position, its orientation, or both, where it
-                  was set — carried back into the solve's frame by `shift`. The
-                  grabbed joint's own pin is not: it is being carried on purpose.
+   each pin       held hard, where it was set — carried back into the solve's
+                  frame by `shift`. A position pin holds the point, and the
+                  joint's angle softly (`POINT_POSE_PIN_SOFT_TURN`): a foot stays
+                  flat while its ankle's limits allow, and gives way as little as
+                  it must beyond. A pin on the angle holds that hard, and the
+                  body stops before it gives. The grabbed joint's own pin is not
+                  held: it is being carried on purpose.
    each planted contact   on a clip shown grounded, the feet it has down at this
                   moment hold where they are, hard, and so does the end of a short
                   foot bone above a planted toe, so the foot stays flat: the
                   ground solve would otherwise lift the whole figure, pins and
-                  all, to put a foot back. Every contact stays on or above the
-                  floor.
+                  all, to put a foot back. A toe under a pin that holds its
+                  position and its angle is not held twice. Every contact stays
+                  on or above the floor.
    the balance    the centre of mass held over the planted and pinned feet,
                   unless Balance is off
-   the posture    the trunk drawn back toward where the gesture began
+   the stiffness  every joint drawn back toward where the gesture began, by its
+                  mass: the light limbs answer a pull first, the pelvis last
 
  Aimed joints are frozen: what a look-at target turns stays its own, and
  `unaim_pose` hands it back untouched. A pull is then cut by the mesh when
- blocking is on (`blocked_body_pass`); a turn has had its own check.
+ blocking is on (`blocked_body_pass`), and the cut pose has its pins put back by
+ a second solve that asks nothing of the gesture; a turn has had its own check.
 
  Written into `pose`; the caller writes it back.
 
@@ -1664,19 +1730,32 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 	usz root = tree_root_of(skeleton, gesture[0].joint);
 	float h = skeleton.height();
 
+	// Where the last move left the figure is what the mesh's surface stands at;
+	// the solve begins from where the gesture did.
+	rig::Pose last = pose.copy(mem);
+	defer last.free(mem);
+	self.restore_body_start(view, pose, root);
+
 	Matrix4f[]? built = rig::joint_palette(mem, skeleton, *pose);
 	if (catch built) return 0.0f;
 	Matrix4f[] palette = built;
 	defer alloc::free(mem, palette);
+	Quaternionf[]? read = pose.world_rotations(mem, skeleton);
+	if (catch read) return 0.0f;
+	Quaternionf[] world = read;
+	defer alloc::free(mem, world);
 
-	// Every joint of the figure, with its mass, its limits and what holds it.
+	// Every joint of the figure, with its mass, its limits and what holds it. The
+	// masses are the shape's and the mesh's, with no joint made as heavy as the
+	// one it hangs from: the solve turns real joints, and a hip socket stays on its
+	// pelvis because the pelvis carries it.
 	float[] inv_mass = alloc::new_array(mem, float, (sz)n);
 	defer alloc::free(mem, inv_mass);
 	bool[] trunk = alloc::new_array(mem, bool, (sz)n);
 	defer alloc::free(mem, trunk);
 	float[] part_mass = alloc::new_array(mem, float, (sz)n);
 	defer alloc::free(mem, part_mass);
-	point_pose_masses(skeleton, h, inv_mass, trunk, self.body_part_masses(view, part_mass) ? part_mass : {});
+	point_pose_masses(skeleton, h, inv_mass, trunk, self.body_part_masses(view, part_mass) ? part_mass : {}, fork_carry: false);
 	usz[GROUND_CONTACT_MAX] contact;
 	bool[GROUND_CONTACT_MAX] planted;
 	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
@@ -1711,12 +1790,18 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 		if (i < 0 || view.dot_ids[j] == self.drag.dot) continue;
 		PositionLock lock = self.position_locks[(usz)i];
 		if (tree_root_of(skeleton, j) != root || body_goal_of(goals.array_view(), j) >= 0) continue;
+		// A pin on the position alone keeps the part's angle too, softly, as the
+		// gesture found it: not `lock.orient`, which is the angle it had when the
+		// pin was set and may be long stale. A pin on the angle holds `lock.orient`
+		// hard, and the body gives way before it does.
+		bool keeps_angle = lock.position && !lock.rotation;
 		goals.push({
 			.joint = j,
 			.position = lock.position,
 			.target = lock.target - shift,
-			.rotation = lock.rotation,
-			.orient = lock.orient,
+			.rotation = lock.rotation || keeps_angle,
+			.orient = keeps_angle ? world[j] : lock.orient,
+			.turn_weight = keeps_angle ? POINT_POSE_PIN_SOFT_TURN : 0.0f,
 		});
 	}
 	for (usz i = 0; i < floor_spec.count; i++)
@@ -1725,54 +1810,27 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 		if (!planted[i] || tree_root_of(skeleton, foot) != root || body_goal_of(goals.array_view(), foot) >= 0) continue;
 		// A foot the gesture itself takes hold of is being lifted, not stood on.
 		if (under_the_gesture(skeleton, gesture, foot)) continue;
-		// A toe under a pinned ankle rides on it: the pin already says where it is.
+		// A toe under a pinned ankle rides on it when the pin holds the angle too.
 		if (rides_a_pin(skeleton, goals.array_view(), foot)) continue;
 		goals.push({ .joint = foot, .position = true, .target = skeleton.joints[foot].transform(palette[foot]) });
-		// And the end of a short foot bone above a planted toe, so the foot stays
-		// flat rather than pivoting on its toe as the leg folds.
+		// And the end of a short foot bone above a planted toe, so the foot stays flat
+		// rather than pivoting on its toe as the leg folds.
 		int heel = skeleton.parents[foot];
 		if (heel < 0 || (usz)heel == root || body_goal_of(goals.array_view(), (usz)heel) >= 0) continue;
 		if ((skeleton.joints[foot] - skeleton.joints[(usz)heel]).length() > h * CURL_CHAIN_SHARE) continue;
 		goals.push({ .joint = (usz)heel, .position = true, .target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]) });
 	}
 
-	// A limb holding a pin or a planted foot is what the body stands on, and a
-	// pull on the trunk has to fold it, whatever it weighs: it keeps the shape's
-	// limb weight rather than its body part's.
-	float[] shape_mass = alloc::new_array(mem, float, (sz)n);
-	defer alloc::free(mem, shape_mass);
-	point_pose_masses(skeleton, h, shape_mass);
-	foreach (goal : goals.array_view())
-	{
-		if (goal.soft) continue;
-		for (int walk = (int)goal.joint; walk >= 0; walk = skeleton.parents[(usz)walk])
-		{
-			foreach (&joint : joints.array_view())
-			{
-				if (joint.joint == (usz)walk && !joint.trunk) joint.inv_mass = shape_mass[(usz)walk];
-			}
-		}
-	}
-
-	Quaternionf[] began = alloc::new_array(mem, Quaternionf, (sz)n);
-	defer alloc::free(mem, began);
-	foreach (usz j, id : view.dot_ids)
-	{
-		began[j] = pose.rotations[j];
-		foreach (held : self.gesture_before) if (held.dot_id == id) began[j] = held.rotation;
-	}
 	PointPoseSettings settings = {
 		.height = h,
 		.has_floor = floor_spec.count > 0,
 		.floor = floor_spec.floor - shift.y,
 		.balance = !self.balance_off,
-		.posture = began,
-		.posture_pull = POSTURE_PULL,
 	};
 
 	rig::Pose before = pose.copy(mem);
 	defer before.free(mem);
-	point_pose(skeleton, pose, joints.array_view(), goals.array_view(), &settings);
+	body_solve(skeleton, pose, joints.array_view(), goals.array_view(), &settings);
 
 	if (pull)
 	{
@@ -1785,8 +1843,16 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 			held_rotation = held.rotation;
 			held_offset = held.offset;
 		}
-		if (!self.blocked_body_pass(view, pose, before, root, held_rotation, held_offset, &self.last_block))
+		if (!self.blocked_body_pass(view, pose, before, root, held_rotation, held_offset, &self.last_block, &last))
 		{
+			// The cut is a blend of the start and the answer, and a blend takes every
+			// pin a little off its point. The pins and the planted feet alone, with
+			// the cut as the pose to stay near, put them back.
+			if (self.last_block.fraction > 0.0f)
+			{
+				PointGoal[] holds = goals.array_view()[gesture.len..];
+				if (holds.len > 0) body_solve(skeleton, pose, joints.array_view(), holds, &settings);
+			}
 			// The cut answer is a different pose: the grab's miss is read off it.
 			Matrix4f[]? cut = rig::joint_palette(mem, skeleton, *pose);
 			if (try landed = cut)
@@ -1821,16 +1887,23 @@ fn sz body_goal_of(PointGoal[] goals, usz joint) @local
 }
 
 <*
- Whether `joint` is on the same limb as a held position: it hangs below one, or
- one hangs below it. Either way that hold already says where the joint is, and a
- second one there would only fight it.
+ Whether `joint` is on the same limb as a hold that already says where it is: it
+ hangs below one, or one hangs below it.
+
+ A hold that is a position and a hard angle fixes everything below it — a toe
+ under a foot pinned flat — and a second one there would only fight it. A position
+ alone fixes the point and leaves the part free to turn (softly held, not fixed),
+ so the toe below it still needs its own hold, or the foot could roll off it. A
+ joint above a held position is on the limb either way.
 *>
 fn bool rides_a_pin(rig::Skeleton* skeleton, PointGoal[] goals, usz joint) @local
 {
 	foreach (goal : goals)
 	{
 		if (!goal.position || goal.soft) continue;
-		if (at_or_above(skeleton, goal.joint, joint) || at_or_above(skeleton, joint, goal.joint)) return true;
+		if (at_or_above(skeleton, joint, goal.joint)) return true;
+		bool angle_held = goal.rotation && goal.turn_weight <= 0.0f;
+		if (angle_held && at_or_above(skeleton, goal.joint, joint)) return true;
 	}
 	return false;
 }
@@ -1896,14 +1969,19 @@ fn void AppState.turn_joint(&self, Vec3 axis, float angle)
 	rig::Pose pose = self.gesture_pose(mem, &view);
 	defer pose.free(mem);
 
-	Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
+	// The parent's world rotation as the gesture found it. A turn that carries a
+	// hold is solved from the start (`land_turn`), and the sweep is measured in
+	// the parent's frame there: read off the last answer instead, a parent the
+	// body solve has since moved would turn the same sweep to another place. With
+	// nothing held nothing else moves, and the two are the same pose.
+	rig::Pose began = pose.copy(mem);
+	defer began.free(mem);
+	self.restore_body_start(&view, &began, tree_root_of(&view.skeleton, (usz)joint));
+	Quaternionf[]? read = began.world_rotations(mem, &view.skeleton);
 	if (catch read) return;
 	Quaternionf[] world = read;
 	defer alloc::free(mem, world);
 
-	// The parent's world rotation is unaffected by this joint's own, so reading
-	// it from the current pose is safe even though the current pose already holds
-	// part of this gesture.
 	int parent = view.skeleton.parents[(usz)joint];
 	Quaternionf rw_parent = parent >= 0 ? world[(usz)parent] : quaternion::IDENTITY;
 	Quaternionf was = self.turn_was();
@@ -1992,6 +2070,12 @@ fn float? AppState.turn_start_angle(&self, JointRotationAxis axis)
  joint, the body solve takes the turn as a held world rotation — the joint's
  own point held too, softly — and bends the rest to keep them (`pose_body`). A
  turn nothing held hangs from is the plain turn.
+
+ Like a pull, the solve is made from the pose the gesture began with, so the turn
+ is a function of the sweep alone and sweeping back returns the body exactly. The
+ joint's point is the one it began at, and the world rotation held is the landed
+ local one in its parent's frame at the start: the parent is among the joints the
+ solve may move, and the angle asked for is the one the sweep measured.
 *>
 fn void AppState.land_turn(
 	&self,
@@ -2006,23 +2090,35 @@ fn void AppState.land_turn(
 	self.judge_collision_cost();
 	if (self.turn_carries_a_hold(view, joint))
 	{
-		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, *pose);
-		Quaternionf[]? spun = pose.world_rotations(mem, &view.skeleton);
+		// The shift is that of the pose on screen; the point and the parent's
+		// angle are the start's.
+		rig::Pose began = pose.copy(mem);
+		defer began.free(mem);
+		self.restore_body_start(view, &began, tree_root_of(&view.skeleton, joint));
+		Matrix4f[]? shown = rig::joint_palette(mem, &view.skeleton, *pose);
+		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, began);
+		Quaternionf[]? spun = began.world_rotations(mem, &view.skeleton);
 		if (try palette = built)
 		{
 			defer alloc::free(mem, palette);
 			if (try world = spun)
 			{
 				defer alloc::free(mem, world);
-				PointGoal[1] gesture = {{
-					.joint = joint,
-					.position = true,
-					.soft = true,
-					.target = view.skeleton.joints[joint].transform(palette[joint]),
-					.rotation = true,
-					.orient = world[joint],
-				}};
-				(void)self.pose_body(view, pose, gesture[..], self.gesture_shift(view, palette, joint), false);
+				if (try on_screen = shown)
+				{
+					defer alloc::free(mem, on_screen);
+					int parent = view.skeleton.parents[joint];
+					Quaternionf above = parent >= 0 ? world[(usz)parent] : quaternion::IDENTITY;
+					PointGoal[1] gesture = {{
+						.joint = joint,
+						.position = true,
+						.soft = true,
+						.target = view.skeleton.joints[joint].transform(palette[joint]),
+						.rotation = true,
+						.orient = above.mul(pose.rotations[joint]).normalize(),
+					}};
+					(void)self.pose_body(view, pose, gesture[..], self.gesture_shift(view, on_screen, joint), false);
+				}
 			}
 		}
 	}

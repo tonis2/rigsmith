@@ -7409,8 +7409,11 @@ fn void posing_bends_the_limb_and_barely_moves_the_fork() @test
 
 	test::@check(fixture.app.working_pose(limb.thigh).rotation.v[3] != 1.0f, "the thigh did not turn");
 	test::@check(fixture.app.working_pose(limb.knee).rotation.v[3] != 1.0f, "the knee did not turn");
-	test::@check(fixture.app.working_pose(limb.ankle).rotation.v[3] == 1.0f,
-		"the grabbed joint turned — it is aimed, never turned");
+	// The grabbed joint keeps the angle it faced, softly, rather than being left to
+	// turn with the shin: its own turn is whatever cancels the leg's, so in the world
+	// it has not moved from the identity it began with (a degree or two at most).
+	test::@check(math::abs(fixture.app.dot_world_rotation(limb.ankle).v[3]) > 0.9998f,
+		"the grabbed joint did not keep its angle — it turned with the limb");
 
 	Vec3 hips_now = fixture.app.dot_position(*fixture.doc().find(limb.hips));
 	Vec3 ankle_now = fixture.app.dot_position(*fixture.doc().find(limb.ankle));

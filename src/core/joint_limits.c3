@@ -7,11 +7,15 @@
  frame is expressed in model space at rest; a posing caller carries it by the
  parent's world rotation before decomposing or constraining a local turn.
 
+ The three angles are a swing and a twist, not Euler angles: X and Z are the swing
+ across the bone (where the bone points) and Y is the twist about it. See
+ `joint_angles_from_rotation`.
+
  Limits are sparse and dot-keyed in `RigDocument`. An absent entry means the
- joint is entirely free, including rotations that cross an Euler wrap. Once
- limits are active, each axis either moves inside its range or stays at its
- locked value. Keeping that distinction explicit avoids pretending that
- `[-pi, pi]` is the same thing as unconstrained quaternion motion.
+ joint is entirely free, whatever angle it is turned to. Once limits are active,
+ each axis either moves inside its range or stays at its locked value. Keeping
+ that distinction explicit avoids pretending that an active table is the same
+ thing as unconstrained quaternion motion.
 *>
 module crig;
 
@@ -64,8 +68,8 @@ fn bool JointAxisLimit.valid(self) => math::is_finite(self.minimum)
  Everything authored for one joint's rotation constraints.
 
  `constrained` is separate from the axis values. Without it, all quaternion
- motion is free; this matters at the +/-pi wrap where a table filled with
- `[-pi, pi]` is not mathematically identical to no constraint.
+ motion is free and a rotation is handed back as given, not rebuilt from its
+ angles.
 
  A fork cannot infer which child defines the bone. `primary_child` records that
  choice by dot id. `saved_frame`, when present, is an explicit rest/model-space
@@ -264,15 +268,91 @@ fn Quaternionf carried_joint_limit_frame(
 	return above.mul(frame.rotation).normalize();
 }
 
+// When M.w and M.y are both under this, the swing is a half turn and has no twist to
+// read: the twist is taken as nothing and the swing as the whole rotation.
+const float SWING_TWIST_EDGE = 1.0e-6f;
+
+// Wrap an angle into [-pi, pi).
+fn float wrap_angle(float angle) @private
+{
+	float turns = (float)math::floor(angle / (float)math::TAU + 0.5f);
+	return angle - turns * (float)math::TAU;
+}
+
+// The distance round the circle between two angles, in [0, pi].
+fn float angle_gap(float a, float b) @private => math::abs(wrap_angle(a - b));
+
+// The turn whose rotation vector is (x, 0, z): about that direction, by that length.
+fn Quaternionf swing_from_vector(float x, float z) @private
+{
+	float angle = (float)math::sqrt(x * x + z * z);
+	if (angle < 1.0e-8f) return { x * 0.5f, 0.0f, z * 0.5f, 1.0f };
+	float k = (float)math::sin(angle * 0.5f) / angle;
+	return { x * k, 0.0f, z * k, (float)math::cos(angle * 0.5f) };
+}
+
 <*
- A pose rotation expressed as three angles in this joint's bone-local frame.
+ Where `angle` lands in a row's range, for a row that is allowed.
+
+ An angle inside [minimum, maximum] stays as it is. One outside goes to whichever
+ end is nearer round the circle, measured as the angular distance mod 2*pi, so a
+ knee that can bend 0..150 degrees and is asked for -170 lands at 150, the short
+ way round, and not at 0. A range that spans a whole turn takes everything.
+*>
+fn float clamp_on_circle(float angle, float minimum, float maximum) @private
+{
+	if (angle >= minimum && angle <= maximum) return angle;
+	float span = maximum - minimum;
+	if (span >= (float)math::TAU) return angle;
+	// How far round from the minimum, in [0, 2*pi): inside the range if no more than span.
+	float along = angle - minimum;
+	along -= (float)math::TAU * (float)math::floor(along / (float)math::TAU);
+	if (along <= span) return angle;
+	return along - span <= (float)math::TAU - along ? maximum : minimum;
+}
+
+<*
+ The angle this row holds `angle` to: its range, the nearer end round the circle
+ for an angle past it, or `locked` when the axis is not allowed.
+*>
+fn float JointAxisLimit.clamp(self, float angle)
+	=> self.allowed ? clamp_on_circle(angle, self.minimum, self.maximum) : self.locked;
+
+<*
+ How far `angle` is past this row, round the circle: what `clamp` would move it by.
+*>
+fn float JointAxisLimit.overshoot(self, float angle) => angle_gap(angle, self.clamp(angle));
+
+<*
+ A pose rotation expressed as three angles in this joint's bone-local frame: a
+ swing across the bone and a twist about it.
 
  `rig::Pose` stores a joint rotation in its parent's coordinate system. The
  frame quaternion carries bone-local axes into that same rest/model space, so
- changing basis is the conjugation `F^-1 * R * F`. C3's quaternion library then
- gives the matching ZYX decomposition: the fields are X, then Y, then Z turns,
- and `rotation_from_joint_angles` is its exact inverse away from the usual Euler
- singularity.
+ changing basis is the conjugation `M = F^-1 * R * F`. M is then split as
+ `M = S * T`, the twist T applied first and the swing S after it:
+
+   T   a turn about the frame's Y, the rest bone: the twist, y
+   S   a turn about an axis across the bone, X-Z plane: the swing
+
+ The fields are x and z, the swing's rotation vector (its axis times its angle)
+ on the frame's X and Z, and y, the twist angle. So x and z say where the bone
+ points, and y says how it is rolled about itself. With the twist applied first
+ the swing alone decides where the bone points, whatever the twist.
+
+ Why this and not three Euler angles. A Z-Y-X reading puts the twist in the middle
+ angle, which flips past a quarter turn, has no answer at a quarter turn (the
+ shoulder's own limit), forgets the wrap round the circle, and, once a thigh is
+ flexed about 90 degrees, reads sideways swing on the twist row and twist on the
+ sideways one. Here nothing flips at any angle: the one place the reading has no
+ answer is a swing of a half turn, outside any real limit. A turn about one axis
+ alone reads as that angle on that axis, as it always did.
+
+ The twist is the (w, y) part of M, normalised: for M = S * T with S across the
+ bone, M.w = S.w * T.w and M.y = S.w * T.y, so the swing's own scale drops out.
+ M is taken with w >= 0, so the twist angle 2 * atan2(T.y, T.w) is in (-pi, pi].
+ The swing is then M * T^-1, which has no Y part. When M.w and M.y are both about
+ zero the swing is a half turn and the twist is taken as nothing.
 
  The frame is deliberately *not* carried by the parent's current pose here.
  Parent motion carries both the joint and these axes together, and therefore
@@ -283,18 +363,37 @@ fn Vec3 joint_angles_from_rotation(JointLimitFrame frame, Quaternionf rotation)
 {
 	if (!frame.usable()) return {};
 	Quaternionf basis = frame.rotation.normalize();
-	return basis.invert().mul(rotation.normalize()).mul(basis).normalize().to_euler();
+	Quaternionf local = basis.invert().mul(rotation.normalize()).mul(basis).normalize();
+	if (local.v.w < 0.0f) local = { -local.v.x, -local.v.y, -local.v.z, -local.v.w };
+
+	Quaternionf twist = quaternion::IDENTITY;
+	float reach = (float)math::sqrt(local.v.w * local.v.w + local.v.y * local.v.y);
+	if (reach > SWING_TWIST_EDGE) twist = { 0.0f, local.v.y / reach, 0.0f, local.v.w / reach };
+	Quaternionf swing = local.mul(twist.invert());
+
+	float across = (float)math::sqrt(swing.v.x * swing.v.x + swing.v.z * swing.v.z);
+	float scale = across < 1.0e-8f
+		? 2.0f / math::max(swing.v.w, 1.0e-8f)
+		: 2.0f * (float)math::atan2(across, swing.v.w) / across;
+
+	float y = 2.0f * (float)math::atan2(twist.v.y, twist.v.w);
+	if (y <= -(float)math::PI) y += (float)math::TAU;
+	return { swing.v.x * scale, y, swing.v.z * scale };
 }
 
 <*
  Build the parent-relative quaternion represented by the inspector's bone-local
- X/Y/Z fields. See `joint_angles_from_rotation` for the fixed composition order.
+ X/Y/Z fields: the swing with rotation vector (x, 0, z) after the twist about Y
+ by y, carried back out of the frame. It is the exact inverse of
+ `joint_angles_from_rotation` for a swing under a half turn and a twist in
+ (-pi, pi].
 *>
 fn Quaternionf rotation_from_joint_angles(JointLimitFrame frame, Vec3 angles)
 {
 	if (!frame.usable()) return quaternion::IDENTITY;
 	Quaternionf basis = frame.rotation.normalize();
-	Quaternionf local = quaternion::from_euler{float}(angles.x, angles.y, angles.z);
+	Quaternionf twist = { 0.0f, (float)math::sin(angles.y * 0.5f), 0.0f, (float)math::cos(angles.y * 0.5f) };
+	Quaternionf local = swing_from_vector(angles.x, angles.z).mul(twist);
 	return basis.mul(local).mul(basis.invert()).normalize();
 }
 
@@ -304,6 +403,10 @@ fn Quaternionf rotation_from_joint_angles(JointLimitFrame frame, Vec3 angles)
  This is the shared boundary for numeric posing and direct FK turns. An absent
  table is genuinely free and returns the quaternion unchanged; a disabled axis
  takes its explicit locked value, while an allowed one is clamped to its range.
+ The rotation is read as swing and twist (`joint_angles_from_rotation`) and each
+ row is clamped as one component of that reading, so the allowed region is a box
+ in swing-twist space, and a corner pose stays allowed. An angle past its range
+ goes to the nearer end round the circle, so nothing snaps the long way.
  Playback, IK and export call this same operation in the later enforcement
  slices rather than learning a second interpretation of the table.
 *>
@@ -314,12 +417,7 @@ fn Quaternionf constrain_joint_rotation(
 {
 	if (!limits.constrained || !frame.usable()) return rotation.normalize();
 	Vec3 angles = joint_angles_from_rotation(frame, rotation);
-	foreach (usz i, axis : limits.axes)
-	{
-		angles[i] = axis.allowed
-			? math::clamp(angles[i], axis.minimum, axis.maximum)
-			: axis.locked;
-	}
+	foreach (usz i, axis : limits.axes) angles[i] = axis.clamp(angles[i]);
 	return rotation_from_joint_angles(frame, angles);
 }
 

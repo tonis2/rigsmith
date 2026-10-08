@@ -90,7 +90,9 @@ const String JOINT_LIMIT_Z_MAX_ID = "joint-limit-z-max";
 
 // Per-axis tables for the rotation fields and the limit grid, indexed by
 // `JointRotationAxis`, so each row is written once and looped.
-const String[3] JOINT_ROTATION_CAPTIONS = { "X · degrees", "Y · degrees", "Z · degrees" };
+// X and Z are the swing across the bone (where it points), Y the twist about it.
+const String[3] JOINT_ROTATION_CAPTIONS = { "X swing °", "Y twist °", "Z swing °" };
+const String[3] JOINT_LIMIT_NAMES = { "X swing", "Y twist", "Z swing" };
 const String[3] JOINT_ROTATION_IDS = { JOINT_ROTATION_X_ID, JOINT_ROTATION_Y_ID, JOINT_ROTATION_Z_ID };
 const OnSubmit[3] JOINT_ROTATION_ENTRIES = {
 	&joint_rotation_x_entered, &joint_rotation_y_entered, &joint_rotation_z_entered };
@@ -751,7 +753,7 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 
 														for (usz i = 0; i < 3; i++)
 														{
-															@node((Label) { .text = ((JointRotationAxis)i).label(), .size = 13.0f,
+															@node((Label) { .text = JOINT_LIMIT_NAMES[i], .size = 13.0f,
 																.color = joint_axis_color(i) });
 															@node((Checkbox) { .label = "", .checked = limits.axes[i].allowed,
 																.on_change = JOINT_LIMIT_ALLOWED[i], .style = CHECKBOX_STYLE })

@@ -3,18 +3,21 @@
 
  An anchor names a dot and, independently, whether to hold its world **position**,
  its world **orientation**, or both — each captured from where the joint stands
- the moment that half is switched on. Every gesture holds it hard: the body solve
- (`pose_body` in `pose_mode.c3`, `point_pose` in `core/point_pose.c3`) bends the
- whole figure around the pins, so a foot pinned position-and-rotation stays flat
- on the floor while the hips drop and the knee folds, which is a sit. Where a pin
+ the moment that half is switched on. Every gesture holds it: the body solve
+ (`pose_body` in `pose_mode.c3`, `body_solve` in `core/body_solve.c3`) bends the
+ whole figure around the pins, so a foot pinned stays on its point while the hips
+ drop and the knee folds, which is a sit. A position is held hard. Where a pin
  cannot hold — out of its limb's reach, or against another pin — the grab gives
  way first, and what is left of the miss is read back as the anchor's residual
  (`measure_position_locks`).
 
- **The two halves are separate on purpose.** Position alone pins the ankle but
- lets the foot pivot; rotation alone holds the foot's tilt but lets it slide;
- together they plant it. The Joint card shows them as two padlock toggles — see
- `lock_toggles.c3`.
+ **The two halves are separate on purpose.** Position alone pins the ankle and
+ keeps the foot's angle softly: the foot stays as flat as its ankle's limits
+ allow, and gives way as little as it must beyond them, so the sit is a sit on
+ flat feet until the ankles cannot bend further. Rotation as well holds the angle
+ hard, even if the body has to stop for it; rotation alone holds the foot's tilt
+ but lets it slide. Together they plant it. The Joint card shows them as two
+ padlock toggles — see `lock_toggles.c3`.
 
  **Session-only, deliberately.** An anchor is a world point and orientation in one
  pose of one model, so it is editor working memory like `pose_edit_draft` —

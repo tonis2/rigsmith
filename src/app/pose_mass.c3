@@ -6,7 +6,7 @@
  A joint's body part is the stretch of the rest mesh it carries most of: every
  vertex whose largest skin weight is that joint's. The part's bounding box is
  its size, and its size is its weight, so a fingertip weighs next to nothing, a
- hand more, a thigh a lot and the pelvis most — and `point_pose` lets the light
+ hand more, a thigh a lot and the pelvis most — and the body solve lets the light
  parts answer a pull before the heavy ones are asked. A finger pulled then bends
  at its knuckles instead of dragging the hand, the arm and the chest along.
 
@@ -24,7 +24,7 @@ import rig;
 import std::math;
 
 // The heaviest body part's mass, the lightest's being 1. The solve's inertia is
-// the mass less one (`PointSolve.inertia`), so the band is what separates a part
+// the mass less one (`BodySolve.mass`), so the band is what separates a part
 // that goes where it is pulled from one that barely stirs: a fingertip next to
 // a pelvis is about a thousandth of its volume, and lands near 1.
 const float PART_MASS_MAX = 16.0;

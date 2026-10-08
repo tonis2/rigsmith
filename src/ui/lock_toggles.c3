@@ -3,8 +3,9 @@
  rotation, or both, while another joint is moved.
 
  Two icons rather than one checkbox because the two halves are genuinely separate
- — a foot pinned by position alone still pivots, one held by rotation alone still
- slides, and only together is it planted flat. Each padlock is drawn open when its
+ — a foot pinned by position alone keeps its angle only softly, and gives way when
+ its ankle cannot bend further; one held by rotation alone still slides; and only
+ together is it planted flat, whatever the body has to do. Each padlock is drawn open when its
  half is off and closed-and-lit when on, so the pair reads at a glance without a
  word of label doing the work; the words are there anyway, since "Pin position"
  and "Pin angle" name what is held better than a lock alone can. ("Move" read as
@@ -173,7 +174,7 @@ fn String lock_tip(Element* holder, Vec2 pos)
 	Element* locks = holder.children[0];
 	if (pos.x - locks.absolute.x < locks.size.x * 0.5f)
 	{
-		return "Pin position (L) — hold this joint in place while you pose another; with a clip open it holds in playback too";
+		return "Pin position (L) — hold this joint in place while you pose another, its angle kept while its limits allow; with a clip open it holds in playback too";
 	}
-	return "Pin angle (Shift+L) — hold this joint's orientation while you pose another; with a clip open it holds in playback too";
+	return "Pin angle (Shift+L) — hold this joint's angle even if the body has to stop; with a clip open it holds in playback too";
 }

@@ -7,10 +7,18 @@
 module crig_tests::joint_limits;
 
 import crig;
+import crig_tests::euler_reference;
+import crig_tests::library;
 import rig;
 import collision;
+import std::collections::list;
+import std::encoding::json;
+import std::collections::object;
 import std::core::test;
+import std::io;
+import std::io::file;
 import std::math;
+import std::os::env;
 
 fn bool near(float a, float b) => math::abs(a - b) < 1.0e-5f;
 fn bool near_vec(Vec3 a, Vec3 b) => (a - b).length_sq() < 1.0e-10f;
@@ -750,6 +758,8 @@ fn bool Sides.reflects_the_same(&self, crig::JointRotationLimits source, crig::J
 	Vec3[] probes = {
 		{ 0.1f, 0.2f, 0.3f }, { 1.2f, -0.6f, 0.4f }, { -0.9f, 0.5f, -1.1f },
 		{ 2.0f, 0.0f, 0.0f }, { 0.0f, 1.4f, 0.0f }, { 0.0f, 0.0f, -1.3f }, { -1.5f, 1.0f, 0.9f },
+		// A twist past a quarter turn, with a swing, which the Euler reading could not name.
+		{ 0.9f, 2.6f, 0.7f }, { -1.0f, -2.9f, 0.5f }, { 1.4f, 0.5f, -1.3f }, { 0.4f, 3.0f, -0.6f },
 	};
 	foreach (angles : probes)
 	{
@@ -923,4 +933,833 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 	test::@check(sides.doc.set_rotation_limits(sides.knee_l, fork), "the fork's table was refused");
 	test::@check(!sides.mirrored(sides.knee_l, sides.knee_r, 0, &twin),
 		"a table on a fork with no child chosen claimed a reflection");
+}
+
+// ---------------------------------------------------------------------------
+// Swing and twist
+//
+// A limit frame's X and Z are the swing across the bone and its Y the twist about
+// it: `M = swing * twist`, twist first. These hold the reading to what that says,
+// and the old Euler reading (`crig_tests::euler_reference`) is the yardstick where
+// the two must agree.
+
+const float DEG = (float)math::PI / 180.0f;
+
+// A line of the report: on the screen, and appended to the file named by the
+// `LIMITS_LOG` environment variable when there is one (the runner hides the screen
+// of a test that passes).
+fn void note(String format, args...)
+{
+	String line = string::tformat(format, ...args);
+	io::printn(line);
+	String? path = env::tget_var("LIMITS_LOG");
+	if (catch path) return;
+	File? out = file::open(path, "a");
+	if (catch out) return;
+	(void)io::fprintn(&out, line);
+	(void)out.close();
+}
+
+fn crig::JointLimitFrame frame_from(Quaternionf rotation)
+{
+	crig::JointLimitFrame frame;
+	frame.status = crig::JointLimitFrameStatus.READY;
+	frame.rotation = rotation.normalize();
+	return frame;
+}
+
+// Three frames: the model's own, and two turned a good way off it.
+fn crig::JointLimitFrame[3] test_frames()
+{
+	return {
+		frame_from(quaternion::IDENTITY),
+		frame_from(quaternion::from_axis_angle{float}((Vec3){ 0.3f, 0.5f, 0.8f }.normalize(), 1.1f)),
+		frame_from(quaternion::from_axis_angle{float}((Vec3){ -0.7f, 0.2f, 0.4f }.normalize(), -2.4f)),
+	};
+}
+
+// The turn between two rotations, in radians, 0 to pi: read off the vector part so a
+// small gap keeps its precision, and q and -q are the same rotation.
+fn float rotation_gap(Quaternionf a, Quaternionf b)
+{
+	Quaternionf d = a.invert().mul(b).normalize();
+	float vector = math::sqrt(d.v.x * d.v.x + d.v.y * d.v.y + d.v.z * d.v.z);
+	return 2.0f * (float)math::atan2(vector, math::abs(d.v.w));
+}
+
+// The distance between two angles round the circle, 0 to pi.
+fn float circle_gap(float a, float b)
+{
+	float d = a - b;
+	d -= (float)math::TAU * (float)math::floor(d / (float)math::TAU + 0.5f);
+	return math::abs(d);
+}
+
+// A repeatable stream of numbers in [0, 1).
+struct Dice
+{
+	uint state;
+}
+
+fn float Dice.next(&self)
+{
+	self.state = self.state * 1664525 + 1013904223;
+	return (float)(self.state >> 8) / (float)(1 << 24);
+}
+
+fn float Dice.between(&self, float low, float high) => low + (high - low) * self.next();
+
+// Angles for a swing of up to `reach` radians in any direction across the bone, and any twist.
+fn Vec3 Dice.angles(&self, float reach)
+{
+	float direction = self.between(0.0f, (float)math::TAU);
+	float swing = self.between(0.0f, reach);
+	return { swing * (float)math::cos(direction), self.between(-(float)math::PI, (float)math::PI),
+		swing * (float)math::sin(direction) };
+}
+
+fn crig::JointRotationLimits box_limits(Vec3 low, Vec3 high)
+{
+	crig::JointRotationLimits limits = crig::unconstrained_rotation(1);
+	limits.constrained = true;
+	for (usz i = 0; i < 3; i++) limits.axes[i] = { .allowed = true, .minimum = low[i], .maximum = high[i] };
+	return limits;
+}
+
+<*
+ X and Z are the swing and Y the twist, and a turn about one axis alone reads as
+ that angle on that axis — including a twist past a quarter turn, which the
+ Euler reading flipped.
+*>
+fn void a_rotation_reads_as_where_the_bone_points_and_how_it_rolls() @test
+{
+	foreach (frame : test_frames())
+	{
+		// A twist of 143 degrees with a swing: all three come back as entered.
+		Vec3 entered = { 0.5f, 2.5f, 0.3f };
+		Vec3 shown = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, entered));
+		test::@check(near_vec(entered, shown), "swing and twist %s read back as %s", entered, shown);
+
+		// The twist goes first, so the bone points where the swing alone says.
+		Vec3 bone = frame.axis(crig::JointRotationAxis.Y);
+		Vec3 swung = crig::rotation_from_joint_angles(frame, { entered.x, 0.0f, entered.z }).rotate_vec3(bone);
+		float[5] twists = { -3.0f, -1.2f, 0.0f, 1.5f, 3.0f };
+		foreach (twist : twists)
+		{
+			Vec3 pointed = crig::rotation_from_joint_angles(frame, { entered.x, twist, entered.z }).rotate_vec3(bone);
+			test::@check(near_vec(pointed, swung), "twist %.1f moved the bone from %s to %s", twist, swung, pointed);
+		}
+
+		// One axis alone is that angle on that axis, however far.
+		float[6] angles = { -2.9f, -1.3f, -0.4f, 0.4f, 1.3f, 2.9f };
+		foreach (angle : angles)
+		{
+			for (usz axis = 0; axis < 3; axis++)
+			{
+				Vec3 alone;
+				alone[axis] = angle;
+				Vec3 back = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, alone));
+				test::@check(near_vec(back, alone), "%.1f about axis %d read as %s", angle, axis, back);
+			}
+		}
+
+		// The twist is in (-pi, pi]: past it, it comes round.
+		Vec3 past = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, { 0.0f, 3.3f, 0.0f }));
+		test::@check(near(past.y, 3.3f - (float)math::TAU), "a twist of 3.3 read as %.4f", past.y);
+
+		// A half-turn swing has no twist to read; it is the swing, whole.
+		Vec3 half = { (float)math::PI * (float)math::cos(0.3f), 0.0f, (float)math::PI * (float)math::sin(0.3f) };
+		Quaternionf over = crig::rotation_from_joint_angles(frame, half);
+		Vec3 seen = crig::joint_angles_from_rotation(frame, over);
+		test::@check(near(seen.y, 0.0f) && near(math::sqrt(seen.x * seen.x + seen.z * seen.z), (float)math::PI),
+			"a half-turn swing read as %s", seen);
+		test::@check(rotation_gap(crig::rotation_from_joint_angles(frame, seen), over) < 1.0e-4f,
+			"a half-turn swing did not read back to itself");
+	}
+}
+
+<*
+ The reading and its inverse are the same thing both ways for any rotation whose
+ swing is short of a half turn.
+*>
+fn void swing_and_twist_round_trip_for_any_rotation_short_of_a_half_turn() @test
+{
+	Dice dice = { .state = 7 };
+	float worst = 0.0f;
+	usz checked = 0;
+	foreach (frame : test_frames())
+	{
+		for (int run = 0; run < 3000; run++)
+		{
+			// A random rotation of the frame's, not one built from angles.
+			Quaternionf local = { dice.between(-1, 1), dice.between(-1, 1), dice.between(-1, 1), dice.between(-1, 1) };
+			local = local.normalize();
+			// Its swing, 2 acos of the (w, y) part, must be short of 175 degrees.
+			if (math::sqrt(local.v.w * local.v.w + local.v.y * local.v.y) < math::cos(87.5f * DEG)) continue;
+			Quaternionf rotation = frame.rotation.mul(local).mul(frame.rotation.invert()).normalize();
+			Quaternionf back = crig::rotation_from_joint_angles(frame, crig::joint_angles_from_rotation(frame, rotation));
+			worst = math::max(worst, rotation_gap(rotation, back));
+			checked++;
+		}
+	}
+	note("  swing-twist round trip: %d rotations, worst %.2e rad", checked, worst);
+	test::@check(checked > 3000, "only %d rotations were checked", checked);
+	test::@check(worst < 1.0e-5f, "a rotation came back %.2e rad away", worst);
+}
+
+<*
+ No flips: sweeping a rotation through the old gimbal point (a twist of a quarter
+ turn with a swing) or round the twist's wrap at a half turn moves the reading, and
+ the clamp's answer, only as far as the sweep moves.
+*>
+fn void the_reading_and_the_clamp_are_continuous_through_the_old_gimbal_and_the_wrap() @test
+{
+	float step = 0.25f * DEG;
+	// A box tight on the swing, so the clamp is working through the whole sweep, and
+	// open all the way round on the twist, so the sweep can cross the half turn.
+	crig::JointRotationLimits box = box_limits({ -0.2f, -(float)math::PI, -0.2f }, { 0.3f, (float)math::PI, 0.3f });
+	Vec3[4] swings = { { 0.5f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.5f }, { 0.3f, 0.0f, 0.4f }, { -0.6f, 0.0f, 0.2f } };
+	// A quarter turn of twist either way, and the half turn itself.
+	float[2][4] spans = { { 70.0f, 110.0f }, { -110.0f, -70.0f }, { 160.0f, 200.0f }, { -200.0f, -160.0f } };
+	float worst_reading = 0.0f;
+	float worst_clamp = 0.0f;
+	foreach (frame : test_frames())
+	{
+		foreach (swing : swings)
+		{
+			foreach (span : spans)
+			{
+				Vec3 last_angles;
+				Quaternionf last_held;
+				bool first = true;
+				for (float twist = span[0] * DEG; twist <= span[1] * DEG; twist += step)
+				{
+					Quaternionf rotation = crig::rotation_from_joint_angles(frame, { swing.x, twist, swing.z });
+					Vec3 angles = crig::joint_angles_from_rotation(frame, rotation);
+					Quaternionf clamped = crig::constrain_joint_rotation(frame, box, rotation);
+					if (!first)
+					{
+						float moved = math::max(circle_gap(angles.y, last_angles.y), math::max(math::abs(angles.x - last_angles.x), math::abs(angles.z - last_angles.z)));
+						worst_reading = math::max(worst_reading, moved);
+						worst_clamp = math::max(worst_clamp, rotation_gap(clamped, last_held));
+					}
+					last_angles = angles;
+					last_held = clamped;
+					first = false;
+				}
+			}
+		}
+	}
+	note("  continuity: the reading moved at most %.4f and the clamp %.4f rad for a %.4f rad step", worst_reading, worst_clamp, step);
+	test::@check(worst_reading < step * 1.01f, "the reading jumped by %.4f for a sweep step of %.4f", worst_reading, step);
+	test::@check(worst_clamp < step * 1.01f, "the clamp jumped by %.4f for a sweep step of %.4f", worst_clamp, step);
+
+	// The twist is the one angle that goes round: through a half turn the clamp is still
+	// continuous where the allowed arc spans it.
+	crig::JointRotationLimits round = box_limits({ -1.0f, 150.0f * DEG, -1.0f }, { 1.0f, 180.0f * DEG, 1.0f });
+	crig::JointLimitFrame turned_frame = test_frames()[1];
+	Quaternionf before;
+	bool begun = false;
+	float jump = 0.0f;
+	for (float twist = 140.0f * DEG; twist <= 220.0f * DEG; twist += step)
+	{
+		Quaternionf asked = crig::rotation_from_joint_angles(turned_frame, { 0.4f, twist, -0.3f });
+		Quaternionf got = crig::constrain_joint_rotation(turned_frame, round, asked);
+		if (begun) jump = math::max(jump, rotation_gap(got, before));
+		before = got;
+		begun = true;
+	}
+	note("  continuity through a half turn of twist: the clamp moved at most %.4f rad for a %.4f rad step", jump, step);
+	test::@check(jump < step * 1.01f, "the clamp jumped by %.4f through a twist of a half turn", jump);
+
+	// The same through the old gimbal as the old reading built it: R = Rz(z) Ry(t) Rx(x), the
+	// Euler middle angle t swept through a quarter turn. The rotation itself moves smoothly, so
+	// the reading and the clamp may move only a few times as far as it does — a flip is a
+	// jump of most of a half turn, hundreds of steps.
+	float worst_ratio = 0.0f;
+	float worst_flip = 0.0f;
+	Vec3[4] eulers = { { 0.5f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.5f }, { 0.3f, 0.0f, -0.4f }, { -0.6f, 0.0f, 0.2f } };
+	float[2][2] quarter = { { 80.0f, 100.0f }, { -100.0f, -80.0f } };
+	foreach (frame : test_frames())
+	{
+		foreach (euler : eulers)
+		{
+			foreach (span : quarter)
+			{
+				Quaternionf last;
+				Vec3 last_angles;
+				Vec3 last_old;
+				Quaternionf last_held;
+				bool first = true;
+				for (float t = span[0] * DEG; t <= span[1] * DEG; t += step)
+				{
+					Quaternionf rotation = euler_reference::euler_rotation(frame, { euler.x, t, euler.z });
+					Vec3 angles = crig::joint_angles_from_rotation(frame, rotation);
+					Quaternionf clamped = crig::constrain_joint_rotation(frame, box, rotation);
+					Vec3 old = euler_reference::euler_angles(frame, rotation);
+					if (!first)
+					{
+						float travelled = rotation_gap(rotation, last);
+						Vec3 delta = { circle_gap(angles.x, last_angles.x), circle_gap(angles.y, last_angles.y), circle_gap(angles.z, last_angles.z) };
+						worst_ratio = math::max(worst_ratio, math::max(delta.length(), rotation_gap(clamped, last_held)) / travelled);
+						worst_flip = math::max(worst_flip, (old - last_old).length());
+					}
+					last = rotation;
+					last_angles = angles;
+					last_old = old;
+					last_held = clamped;
+					first = false;
+				}
+			}
+		}
+	}
+	note("  through the Euler gimbal: the reading and the clamp moved at most %.2f times the rotation; the Euler reading jumped %.2f rad", worst_ratio, worst_flip);
+	test::@check(worst_ratio < 4.0f, "the reading or the clamp moved %.2f times as far as the rotation through the old gimbal", worst_ratio);
+	// The old reading did flip there, so the sweep has teeth.
+	test::@check(worst_flip > 1.0f, "the old reading no longer flips through its gimbal (%.2f rad), so this sweep proves nothing", worst_flip);
+}
+
+<*
+ A knee that bends 0..150 degrees and is asked for -170 goes to 150, the short way
+ round; asked for -20 it goes to 0. Every row wraps the same way.
+*>
+fn void an_angle_past_a_range_goes_to_the_nearer_end_round_the_circle() @test
+{
+	crig::JointRotationLimits knee = crig::unconstrained_rotation(1);
+	knee.constrained = true;
+	knee.axes[0] = { .allowed = true, .minimum = 0.0f, .maximum = 150.0f * DEG };
+	knee.axes[1] = { .allowed = false, .locked = 0.0f };
+	knee.axes[2] = { .allowed = false, .locked = 0.0f };
+	float[7] asked = { -170.0f, -20.0f, -100.0f, 170.0f, 100.0f, -130.0f, 160.0f };
+	float[7] lands = { 150.0f, 0.0f, 0.0f, 150.0f, 100.0f, 150.0f, 150.0f };
+	foreach (frame : test_frames())
+	{
+		foreach (usz i, degrees : asked)
+		{
+			Quaternionf bent = crig::rotation_from_joint_angles(frame, { degrees * DEG, 0.0f, 0.0f });
+			Vec3 got = crig::joint_angles_from_rotation(frame, crig::constrain_joint_rotation(frame, knee, bent));
+			test::@check(near_vec(got, { lands[i] * DEG, 0.0f, 0.0f }), "%.0f degrees landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), lands[i]);
+		}
+	}
+
+	// The twist wraps too, and a range that crosses the half turn takes angles on both sides of it.
+	crig::JointRotationLimits twist = box_limits({ -1.0f, -120.0f * DEG, -1.0f }, { 1.0f, 120.0f * DEG, 1.0f });
+	crig::JointLimitFrame frame = test_frames()[2];
+	float[4] twist_asked = { 175.0f, -175.0f, 100.0f, -110.0f };
+	float[4] twist_lands = { 120.0f, -120.0f, 100.0f, -110.0f };
+	foreach (usz i, degrees : twist_asked)
+	{
+		Quaternionf turned = crig::rotation_from_joint_angles(frame, { 0.3f, degrees * DEG, 0.2f });
+		Vec3 got = crig::joint_angles_from_rotation(frame, crig::constrain_joint_rotation(frame, twist, turned));
+		test::@check(near_vec(got, { 0.3f, twist_lands[i] * DEG, 0.2f }), "a twist of %.0f landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), twist_lands[i]);
+	}
+	crig::JointRotationLimits across = box_limits({ -1.0f, 150.0f * DEG, -1.0f }, { 1.0f, 180.0f * DEG, 1.0f });
+	Quaternionf over = crig::rotation_from_joint_angles(frame, { 0.0f, 190.0f * DEG, 0.0f });
+	Vec3 held = crig::joint_angles_from_rotation(frame, crig::constrain_joint_rotation(frame, across, over));
+	// 180 degrees is the wrap itself, so it may read as either side of it.
+	test::@check(circle_gap(held.y, 180.0f * DEG) < 1.0e-4f, "a twist of 190 past a range ending at 180 landed at %.1f", held.y / DEG);
+	Quaternionf inside = crig::rotation_from_joint_angles(frame, { 0.0f, 160.0f * DEG, 0.0f });
+	test::@check(rotation_gap(crig::constrain_joint_rotation(frame, across, inside), inside) < 1.0e-5f, "an angle inside its range moved");
+	crig::JointAxisLimit row = { .allowed = true, .minimum = 150.0f * DEG, .maximum = 200.0f * DEG };
+	test::@check(near(row.clamp(-170.0f * DEG), -170.0f * DEG) && near(row.overshoot(-170.0f * DEG), 0.0f),
+		"-170 is 190 round the circle, inside a range of 150..200");
+}
+
+<*
+ What "nearest" means for the box's clamp. Each row is clamped on its own, so the
+ result is the nearest point of the box in the reading's own coordinates (swing
+ x and z, and twist y round the circle), and that is exact. As an angle between
+ rotations it is exact where those coordinates are the rotation's own angle — a
+ hinge, and a twist with no swing — and elsewhere falls short of the true nearest
+ by a second-order amount in the swing: a twist past its range, put on the bound,
+ leaves the bone where it points, while a nearer rotation would nudge the swing
+ too. For this box the twist can be at most 1.94 rad past a bound, which puts the
+ shortfall at under 0.4 * swing^2. The last check holds it to that, and prints it.
+*>
+fn void the_clamp_lands_no_farther_than_sampled_allowed_rotations() @test
+{
+	crig::JointRotationLimits box = box_limits({ -0.6f, -1.1f, -0.5f }, { 0.9f, 1.3f, 0.7f });
+	// The faces of the box: one coordinate on a bound, the others across their ranges.
+	Vec3[] faces = alloc::new_array(mem, Vec3, 6 * 9 * 9);
+	defer alloc::free(mem, faces);
+	crig::JointLimitFrame identity = test_frames()[0];
+	usz count = 0;
+	for (usz fixed = 0; fixed < 3; fixed++)
+	{
+		for (usz side = 0; side < 2; side++)
+		{
+			for (usz a = 0; a < 9; a++)
+			{
+				for (usz b = 0; b < 9; b++)
+				{
+					Vec3 at;
+					usz first = (fixed + 1) % 3;
+					usz second = (fixed + 2) % 3;
+					at[fixed] = side == 0 ? box.axes[fixed].minimum : box.axes[fixed].maximum;
+					at[first] = box.axes[first].minimum + (box.axes[first].maximum - box.axes[first].minimum) * (float)a / 8.0f;
+					at[second] = box.axes[second].minimum + (box.axes[second].maximum - box.axes[second].minimum) * (float)b / 8.0f;
+					faces[count++] = at;
+				}
+			}
+		}
+	}
+
+	// In the reading's coordinates the clamp is exactly the nearest.
+	Dice dice = { .state = 11 };
+	for (int run = 0; run < 2000; run++)
+	{
+		Vec3 asked = dice.angles(1.5f);
+		Vec3 got = crig::joint_angles_from_rotation(identity, crig::constrain_joint_rotation(identity, box,
+			crig::rotation_from_joint_angles(identity, asked)));
+		Vec3 here = { asked.x - got.x, circle_gap(asked.y, got.y), asked.z - got.z };
+		foreach (face : faces)
+		{
+			Vec3 there = { asked.x - face.x, circle_gap(asked.y, face.y), asked.z - face.z };
+			test::@check(here.length() <= there.length() + 1.0e-4f, "%s clamped to %s, but %s is nearer in its coordinates", asked, got, face);
+		}
+	}
+
+	// As a rotation, exact for a twist with no swing...
+	foreach (frame : test_frames())
+	{
+		for (int run = 0; run < 200; run++)
+		{
+			Quaternionf asked = crig::rotation_from_joint_angles(frame, { 0.0f, dice.between(-(float)math::PI, (float)math::PI), 0.0f });
+			float own = rotation_gap(asked, crig::constrain_joint_rotation(frame, box, asked));
+			float nearest = float::max;
+			foreach (face : faces) nearest = math::min(nearest, rotation_gap(asked, crig::rotation_from_joint_angles(frame, face)));
+			test::@check(own <= nearest + 2.0e-5f, "a bare twist: the clamp is %.5f away, a face rotation %.5f", own, nearest);
+		}
+	}
+	// ...and for a hinge, whose faces are its two ends.
+	crig::JointRotationLimits hinge = crig::unconstrained_rotation(1);
+	hinge.constrained = true;
+	hinge.axes[0] = { .allowed = true, .minimum = -0.6f, .maximum = 0.9f };
+	hinge.axes[1] = { .allowed = false, .locked = 0.0f };
+	hinge.axes[2] = { .allowed = false, .locked = 0.0f };
+	for (int run = 0; run < 400; run++)
+	{
+		float turn = dice.between(-(float)math::PI, (float)math::PI);
+		Quaternionf asked = crig::rotation_from_joint_angles(identity, { turn, 0.0f, 0.0f });
+		float own = rotation_gap(asked, crig::constrain_joint_rotation(identity, hinge, asked));
+		float nearest = float::max;
+		for (usz a = 0; a <= 150; a++)
+		{
+			float angle = -0.6f + 1.5f * (float)a / 150.0f;
+			nearest = math::min(nearest, rotation_gap(asked, crig::rotation_from_joint_angles(identity, { angle, 0.0f, 0.0f })));
+		}
+		test::@check(own <= nearest + 2.0e-5f, "a hinge turned %.3f: the clamp is %.5f away, an allowed angle %.5f", turn, own, nearest);
+	}
+
+	// ...and otherwise short of the nearest by a second-order amount in the swing.
+	float[3] reaches = { 0.2f, 0.5f, 1.0f };
+	foreach (reach : reaches)
+	{
+		float worst = 0.0f;
+		for (int run = 0; run < 1500; run++)
+		{
+			Quaternionf asked = crig::rotation_from_joint_angles(identity, dice.angles(reach));
+			float own = rotation_gap(asked, crig::constrain_joint_rotation(identity, box, asked));
+			float nearest = float::max;
+			foreach (face : faces) nearest = math::min(nearest, rotation_gap(asked, crig::rotation_from_joint_angles(identity, face)));
+			worst = math::max(worst, own - nearest);
+		}
+		note("  nearest: with a swing up to %.1f rad the clamp is at most %.4f rad (%.2f deg) past the nearest sampled face rotation (bound %.4f)", reach, worst, worst / DEG, 0.4f * reach * reach);
+		test::@check(worst <= 0.4f * reach * reach, "with a swing up to %.1f rad the clamp was %.4f rad past the nearest", reach, worst);
+	}
+}
+
+<*
+ A hinge — one axis allowed, the others held at zero — clamps as it did under the
+ Euler reading, for turns about that axis with a little off-axis noise. Out past
+ the range the answer is the bound itself, exactly, whatever the noise; inside it
+ the two readings of the same noise differ at second order in the noise. The
+ inputs stay where going straight and going the short way round agree, since the
+ wrap is the one thing that changed.
+*>
+fn void a_hinge_clamps_as_it_did_under_the_euler_reading() @test
+{
+	// One axis free over a range, per axis: a knee-like X, a twist-like Y, a swing-like Z.
+	float[3] low = { 0.0f, -60.0f * DEG, -45.0f * DEG };
+	float[3] high = { 150.0f * DEG, 60.0f * DEG, 45.0f * DEG };
+	// Furthest the turn goes past a bound, and furthest a twist goes: the Euler middle angle
+	// has no reading past a quarter turn.
+	float past = 0.8f;
+	Dice dice = { .state = 5 };
+	float worst_small = 0.0f;
+	float worst_large = 0.0f;
+	usz clamped = 0;
+	foreach (frame : test_frames())
+	{
+		for (usz axis = 0; axis < 3; axis++)
+		{
+			crig::JointRotationLimits hinge = crig::unconstrained_rotation(1);
+			hinge.constrained = true;
+			for (usz i = 0; i < 3; i++)
+			{
+				hinge.axes[i] = i == axis
+					? (crig::JointAxisLimit){ .allowed = true, .minimum = low[axis], .maximum = high[axis] }
+					: (crig::JointAxisLimit){ .allowed = false, .locked = 0.0f };
+			}
+			float top = axis == 1 ? 85.0f * DEG : 3.0f;
+			for (int run = 0; run < 300; run++)
+			{
+				float turn = math::clamp(dice.between(low[axis] - past, high[axis] + past), -top, top);
+				bool outside = turn < low[axis] || turn > high[axis];
+				// Noise on the other two angles: a hair for any turn, a good deal for one past its bound.
+				foreach (float noise : (float[2]){ 1.0e-3f, 0.05f })
+				{
+					if (noise > 0.01f && (!outside || math::min(math::abs(turn - low[axis]), math::abs(turn - high[axis])) < 0.2f)) continue;
+					Vec3 angles = { dice.between(-noise, noise), dice.between(-noise, noise), dice.between(-noise, noise) };
+					angles[axis] = turn;
+					Quaternionf asked = euler_reference::euler_rotation(frame, angles);
+					Quaternionf before = euler_reference::euler_clamp(frame, hinge, asked);
+					Quaternionf now = crig::constrain_joint_rotation(frame, hinge, asked);
+					float gap = rotation_gap(before, now);
+					if (noise > 0.01f)
+					{
+						worst_large = math::max(worst_large, gap);
+					}
+					else
+					{
+						worst_small = math::max(worst_small, gap);
+					}
+					if (outside) clamped++;
+				}
+			}
+		}
+	}
+	note("  hinge parity: %d turns past a bound; worst difference from the Euler clamp %.2e rad with 1e-3 noise, %.2e rad with 0.05 noise past a bound", clamped, worst_small, worst_large);
+	test::@check(worst_small < 1.0e-5f, "a hinge with a hair of noise differs from the Euler clamp by %.2e rad", worst_small);
+	test::@check(worst_large < 1.0e-5f, "a hinge past its bound differs from the Euler clamp by %.2e rad", worst_large);
+}
+
+<*
+ The reading survives a reflection one angle at a time: a turn about the source's
+ axis by theta is a turn about the twin's by -s*theta, s the sign that axis
+ reflects with, for the swing's two components and the twist alike — including a
+ twist past a quarter turn and a swing past a right angle. That is why the box a
+ mirrored table describes is still a box.
+*>
+fn void the_swing_twist_reading_reflects_one_angle_at_a_time() @test
+{
+	Sides sides;
+	sides.open();
+	defer sides.close();
+
+	uint[2][3] pairs = { { sides.hip_l, sides.hip_r }, { sides.shoulder_l, sides.shoulder_r }, { sides.knee_l, sides.knee_r } };
+	Dice dice = { .state = 17 };
+	foreach (pair : pairs)
+	{
+		crig::JointLimitFrame from = frame_of(&sides.doc, pair[0]);
+		crig::JointLimitFrame to = frame_of(&sides.doc, pair[1]);
+		Vec3 signs;
+		test::@check(crig::reflection_signs_between(from.rotation, to.rotation, &signs), "the pair has no reflected frame");
+		float worst = 0.0f;
+		for (int run = 0; run < 500; run++)
+		{
+			Vec3 angles = dice.angles(2.6f);
+			Quaternionf reflected = crig::reflected_rotation(crig::rotation_from_joint_angles(from, angles));
+			Vec3 read = crig::joint_angles_from_rotation(to, reflected);
+			Vec3 expected = { -signs.x * angles.x, -signs.y * angles.y, -signs.z * angles.z };
+			float gap = math::max(math::abs(read.x - expected.x), math::max(circle_gap(read.y, expected.y), math::abs(read.z - expected.z)));
+			worst = math::max(worst, gap);
+		}
+		note("  mirror: pair %d, signs %s, the reflected reading is off by %.2e rad at worst", (int)pair[0], signs, worst);
+		test::@check(worst < 5.0e-5f, "a reflected rotation read %.2e rad from the mirrored angles (signs %s)", worst, signs);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The shipped clips
+
+// How many times each clip is sampled across its length.
+const usz CLIP_SAMPLES = 240;
+
+// The old Euler clamp is taken not to have moved a joint when it moved it by less than
+// this many degrees, and two clamps are taken to have moved it equally far within the second.
+const float EULER_UNMOVED_DEGREES = 0.01f;
+const float MOVED_ALIKE_DEGREES = 0.001f;
+
+<*
+ One clip's limited-joint samples, split by whether the old Euler clamp moved the joint.
+
+ Inside the old box, the Euler clamp left the authored pose alone; the question is how
+ far the swing-twist clamp moves it. Outside, the authored pose already broke the old
+ limits and both clamps moved it; the question is which stays nearer the clip.
+*>
+struct ClipGroups
+{
+	usz inside;
+	float inside_worst; // degrees the swing-twist clamp moved an authored pose that was inside the old box
+	String inside_joint;
+	float inside_time;
+	usz outside;
+	usz closer;  // the swing-twist clamp landed nearer the authored pose than the Euler clamp did
+	usz farther;
+	usz alike;
+	float farther_worst; // the largest (swing-twist moved) - (Euler moved), degrees
+	String farther_joint;
+	float farther_time;
+	float farther_new;
+	float farther_old;
+}
+
+<*
+ One clip, sampled and put through both clamps: the largest difference between the
+ old and the new answer for any limited joint and where it was, and the samples split
+ into the two groups.
+*>
+struct ClipDifference
+{
+	String clip;
+	float degrees;
+	String joint;
+	float time;
+	Vec3 asked;      // the clip's own rotation, read as swing-twist
+	Vec3 asked_old;  // ... and as Euler angles
+	Vec3 limits_low;
+	Vec3 limits_high;
+	Vec3 kept_old;   // what the Euler clamp left, read as Euler angles
+	Vec3 kept_new;   // what the swing-twist clamp left, read as swing-twist
+	float moved_old; // how far each clamp moved the clip's rotation here, in degrees
+	float moved_new;
+	usz moved; // limited joints the clamp moved at all, over every sample
+	usz differing; // limited joints the two clamps put more than a degree apart, over every sample
+	usz samples;
+	ClipGroups groups;
+}
+
+<*
+ @param failing : `Gets a line for each joint of this clip whose authored pose, inside the old box, the swing-twist clamp moved by a degree or more.`
+*>
+fn ClipDifference compare_clamps(crig::AppState* app, crig::RigView* view, crig::AnimTemplate* clip, usz count, DString* failing)
+{
+	ClipDifference out = { .clip = clip.name, .joint = "" };
+	ClipGroups groups = { .inside_joint = "", .farther_joint = "" };
+	usz joints = view.dot_ids.len;
+	float[] joint_worst = alloc::new_array(mem, float, (sz)joints);
+	float[] joint_time = alloc::new_array(mem, float, (sz)joints);
+	Vec3[] joint_euler = alloc::new_array(mem, Vec3, (sz)joints);
+	Vec3[] joint_swing = alloc::new_array(mem, Vec3, (sz)joints);
+	defer alloc::free(mem, joint_worst);
+	defer alloc::free(mem, joint_time);
+	defer alloc::free(mem, joint_euler);
+	defer alloc::free(mem, joint_swing);
+	for (usz s = 0; s < count; s++)
+	{
+		float time = clip.duration * (float)s / (float)count;
+		rig::Pose pose = clip.pose(mem, &view.skeleton, view.names, time, false);
+		defer pose.free(mem);
+		out.samples++;
+		foreach (usz j, id : view.dot_ids)
+		{
+			crig::JointRotationLimits limits = app.doc.rotation_limits_of(id);
+			if (!limits.constrained) continue;
+			crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+			if (!frame.usable()) continue;
+			Quaternionf asked = pose.rotations[j];
+			Quaternionf before = euler_reference::euler_clamp(frame, limits, asked);
+			Quaternionf now = crig::constrain_joint_rotation(frame, limits, asked);
+			float moved_old = rotation_gap(asked, before) / DEG;
+			float moved_new = rotation_gap(asked, now) / DEG;
+			if (rotation_gap(asked, now) > 1.0e-4f) out.moved++;
+
+			if (moved_old < EULER_UNMOVED_DEGREES)
+			{
+				groups.inside++;
+				if (moved_new > joint_worst[j])
+				{
+					joint_worst[j] = moved_new;
+					joint_time[j] = time;
+					joint_euler[j] = euler_reference::euler_angles(frame, asked);
+					joint_swing[j] = crig::joint_angles_from_rotation(frame, asked);
+				}
+				if (moved_new > groups.inside_worst)
+				{
+					groups.inside_worst = moved_new;
+					groups.inside_joint = view.names[j];
+					groups.inside_time = time;
+				}
+			}
+			else
+			{
+				groups.outside++;
+				float excess = moved_new - moved_old;
+				if (excess > MOVED_ALIKE_DEGREES)
+				{
+					groups.farther++;
+				}
+				else if (excess < -MOVED_ALIKE_DEGREES)
+				{
+					groups.closer++;
+				}
+				else
+				{
+					groups.alike++;
+				}
+				if (excess > groups.farther_worst)
+				{
+					groups.farther_worst = excess;
+					groups.farther_joint = view.names[j];
+					groups.farther_time = time;
+					groups.farther_new = moved_new;
+					groups.farther_old = moved_old;
+				}
+			}
+
+			float degrees = rotation_gap(before, now) / DEG;
+			if (degrees >= 1.0f) out.differing++;
+			if (degrees > out.degrees)
+			{
+				ClipDifference worse = {
+					.clip = clip.name, .degrees = degrees, .joint = view.names[j], .time = time,
+					.asked = crig::joint_angles_from_rotation(frame, asked),
+					.asked_old = euler_reference::euler_angles(frame, asked),
+					.kept_old = euler_reference::euler_angles(frame, before),
+					.kept_new = crig::joint_angles_from_rotation(frame, now),
+					.moved_old = moved_old,
+					.moved_new = moved_new,
+				};
+				for (usz a = 0; a < 3; a++)
+				{
+					worse.limits_low[a] = limits.axes[a].allowed ? limits.axes[a].minimum : limits.axes[a].locked;
+					worse.limits_high[a] = limits.axes[a].allowed ? limits.axes[a].maximum : limits.axes[a].locked;
+				}
+				worse.moved = out.moved;
+				worse.differing = out.differing;
+				worse.samples = out.samples;
+				out = worse;
+			}
+		}
+	}
+	out.groups = groups;
+	foreach (usz j, worst : joint_worst)
+	{
+		if (worst < 1.0f) continue;
+		crig::JointRotationLimits limits = app.doc.rotation_limits_of(view.dot_ids[j]);
+		Vec3 low;
+		Vec3 high;
+		for (usz a = 0; a < 3; a++)
+		{
+			low[a] = limits.axes[a].allowed ? limits.axes[a].minimum : limits.axes[a].locked;
+			high[a] = limits.axes[a].allowed ? limits.axes[a].maximum : limits.axes[a].locked;
+		}
+		failing.appendf("\n  - %s: %s moved %.3f deg at t=%.3f; authored %s as Euler (table %s .. %s), %s as swing-twist",
+			clip.name, view.names[j], worst, joint_time[j], joint_euler[j] * (1.0f / DEG),
+			low * (1.0f / DEG), high * (1.0f / DEG), joint_swing[j] * (1.0f / DEG));
+	}
+	return out;
+}
+
+<*
+ Existing animation does not change where it was inside the limits. Every clip the
+ shipped humanoid carries (`Walk_slow`, `Climb ladder`), the sample clips the test
+ library puts on its copy, and a generated walk, are sampled 240 times, and every
+ limited joint is put through the old Euler clamp and the new swing-twist one. The
+ samples fall in two groups.
+
+ Inside the old box, the Euler clamp left the authored pose alone. Those are the
+ poses the old limits allowed, and the new clamp must not disturb them: it moves
+ each by under a degree. That is the assertion.
+
+ Outside it, the authored pose already broke the old limits and both clamps moved
+ it. There is no "before" to keep for such a pose, and which result is right depends
+ on what the table's numbers meant, which is what changed. So the two clamps are not
+ asked to agree; the change is judged on which stays nearer the clip, and the counts
+ and the worst case are printed. The old test, that no clamp differs from the
+ Euler one by a degree, is kept only as a printed note.
+
+ The numbers are printed, and written to the `LIMITS_LOG` file when there is one.
+*>
+fn void clips_inside_the_old_limits_play_within_a_degree_of_the_authored_pose() @test
+{
+	String path = library::shipped_humanoid();
+	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;
+	crig::AppState app = crig::new_app(mesh, path);
+	defer
+	{
+		app.free();
+		mesh.free(mem);
+	}
+	test::@check(app.import_rig_from_source(), "%s must import its rig", path);
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+
+	usz limited = 0;
+	foreach (id : view.dot_ids) if (app.doc.rotation_limits_of(id).constrained) limited++;
+	note("  %d of %d joints carry limits", limited, view.dot_ids.len);
+	test::@check(limited > 20, "only %d joints carry limits", limited);
+
+	DString failing = dstring::new(mem);
+	defer failing.free();
+	List{ClipDifference} found;
+	found.init(mem);
+	defer found.free();
+
+	// What the shipped file carries.
+	crig::AnimPack shipped = crig::read_pack(mem, path)!!;
+	defer shipped.free(mem);
+	bool walk_slow;
+	bool ladder;
+	foreach (&clip : shipped.clips)
+	{
+		if (clip.name == "Walk_slow") walk_slow = true;
+		if (clip.name == "Climb ladder") ladder = true;
+		found.push(compare_clamps(&app, &view, clip, CLIP_SAMPLES, &failing));
+	}
+	test::@check(walk_slow && ladder, "the shipped humanoid no longer carries Walk_slow and Climb ladder");
+
+	// The sample clips the test library puts on its copy.
+	String library_path = string::tformat("%s/humanoid.glb", library::ready());
+	crig::AnimPack samples = crig::read_pack(mem, library_path)!!;
+	defer samples.free(mem);
+	foreach (&clip : samples.clips) found.push(compare_clamps(&app, &view, clip, CLIP_SAMPLES, &failing));
+
+	// A generated walk, the way the gait tests make one.
+	Object*? args = json::parse(mem, `{"name":"Gait Biped","duration":1.0,"gait":"walk"}`);
+	if (try args)
+	{
+		defer args.free();
+		DString detail = dstring::new(mem);
+		defer detail.free();
+		String? text = crig::author_gait_json(&app, args, &detail);
+		if (try text)
+		{
+			defer text.free(mem);
+			crig::AnimRef ref = app.clip_named_in_authored("Gait Biped");
+			if (ref.valid())
+			{
+				found.push(compare_clamps(&app, &view, app.clip(ref), CLIP_SAMPLES, &failing));
+			}
+			else
+			{
+				test::@check(false, "the generated walk did not land");
+			}
+		}
+		else
+		{
+			test::@check(false, "the walk would not generate: %s", detail.str_view());
+		}
+	}
+
+	// Everything is printed first, so one clip does not hide the rest.
+	float inside_worst = 0.0f;
+	usz inside_over = 0;
+	foreach (result : found)
+	{
+		ClipGroups g = result.groups;
+		note("clip %s (%d samples of each limited joint)", result.clip, result.samples);
+		note("  (a) inside the old box: %d samples; the swing-twist clamp moved one by at most %.4f deg (%s, t=%.3f)",
+			g.inside, g.inside_worst, g.inside_joint, g.inside_time);
+		note("  (b) outside it: %d samples; the swing-twist clamp landed nearer the authored pose %d times, farther %d, as near %d; the largest excess of its move over the Euler clamp's is %.3f deg (%s, t=%.3f: it moved %.3f, Euler %.3f)",
+			g.outside, g.closer, g.farther, g.alike, g.farther_worst, g.farther_joint, g.farther_time, g.farther_new, g.farther_old);
+		note("  note: against the Euler clamp the largest difference is %.4f deg at %s, t=%.3f, and they differ by a degree or more %d times",
+			result.degrees, result.joint, result.time, result.differing);
+		if (g.inside_worst > inside_worst) inside_worst = g.inside_worst;
+		if (g.inside_worst >= 1.0f) inside_over++;
+	}
+	note("  largest move of a pose inside the old box, over every clip: %.4f deg", inside_worst);
+	test::@check(inside_over == 0, "the new clamp moved poses that were inside the old limits by a degree or more in %d of %d clips:%s",
+		inside_over, found.len(), failing.str_view());
 }

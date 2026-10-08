@@ -103,6 +103,65 @@ fn Vec3 Sitter.at(&self, uint id) => self.app.dot_position(*self.app.doc.find(id
 // quaternion has |w| = cos(half-angle), 1 at rest and falling as the joint turns.
 fn float bend_of(Quaternionf q) @local => 1.0f - math::abs(q.v.w);
 
+// The angle of a rotation, in degrees, 0 to 180.
+fn float angle_of(Quaternionf q) @local
+{
+	q = q.normalize();
+	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
+	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * 57.29578f;
+}
+
+// How far a rotation's up has leaned from where `was` had it, in degrees.
+fn float tilt_of(Quaternionf was, Quaternionf now) @local
+{
+	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
+	Vec3 after = now.rotate_vec3({ 0, 1, 0 });
+	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * 57.29578f;
+}
+
+// The thresholds `puppet_test` judges a sit by: the hips (and the trunk, where it is
+// asked) lean less than `UPRIGHT` degrees, a pinned foot turns less than `FOOT_FLAT`.
+const float UPRIGHT = 10.0f;
+const float FOOT_FLAT = 3.0f;
+
+<*
+ How the figure stood as a gesture began, for the sit to be judged against: the
+ world rotations of the hips, the waist and the feet. Read while the gesture is open,
+ which is when `dot_world_rotation` has a draft to read.
+*>
+struct Stance
+{
+	Quaternionf hips;
+	Quaternionf waist;
+	Quaternionf foot_l;
+	Quaternionf foot_r;
+}
+
+fn Stance Sitter.stance(&self) => {
+	.hips = self.app.dot_world_rotation(self.hips),
+	.waist = self.app.dot_world_rotation(self.upper_spine),
+	.foot_l = self.app.dot_world_rotation(self.ankle_l),
+	.foot_r = self.app.dot_world_rotation(self.ankle_r),
+};
+
+<*
+ The sit upright and the feet flat: neither foot turned `FOOT_FLAT` degrees since
+ `was`, the hips leaned less than `UPRIGHT`, and — when `waist` — the waist too. (A
+ pull on the hips with Balance on leans the waist over the feet: that is its job, and it
+ is not asked to stay up.)
+*>
+fn void Sitter.check_stance(&self, Stance* was, bool waist, String what)
+{
+	crig::AppState* app = &self.app;
+	float foot_l = angle_of(app.dot_world_rotation(self.ankle_l).mul(was.foot_l.invert()));
+	float foot_r = angle_of(app.dot_world_rotation(self.ankle_r).mul(was.foot_r.invert()));
+	float hips = tilt_of(was.hips, app.dot_world_rotation(self.hips));
+	float trunk = tilt_of(was.waist, app.dot_world_rotation(self.upper_spine));
+	test::@check(foot_l < FOOT_FLAT && foot_r < FOOT_FLAT, "%s: a foot turned %.2f / %.2f degrees", what, foot_l, foot_r);
+	test::@check(hips < UPRIGHT, "%s: the hips tilted %.2f degrees", what, hips);
+	test::@check(!waist || trunk < UPRIGHT, "%s: the waist tilted %.2f degrees", what, trunk);
+}
+
 <*
  The sit: lock the feet, pull the hips down, the knees fold and the feet stay.
 *>
@@ -123,21 +182,23 @@ fn void anchored_feet_hold_while_the_hips_drop() @test
 	app.select(fixture.hips);
 	test::@check(app.begin_pose(), "G did not begin on the hips");
 	Vec3 hips_from = fixture.at(fixture.hips);
-	app.pose_toward(hips_from - (Vec3){ 0, 0.35, 0 });
+	Stance stance = fixture.stance();
+	app.pose_toward(hips_from - (Vec3){ 0, 0.5, 0 });
 
-	// The feet stayed. Without the anchors they would have fallen the whole 0.35.
+	// The feet stayed. Without the anchors they would have fallen the whole 0.5.
 	float moved_l = (fixture.at(fixture.ankle_l) - foot_l).length();
 	float moved_r = (fixture.at(fixture.ankle_r) - foot_r).length();
 	test::@check(moved_l < 0.03f, "the left foot moved %.3f from where it was pinned", moved_l);
 	test::@check(moved_r < 0.03f, "the right foot moved %.3f from where it was pinned", moved_r);
 
 	// The hips did drop.
-	test::@check(math::abs(fixture.at(fixture.hips).y - (hips_from.y - 0.35f)) < 0.02f,
-		"the hips landed at y=%.3f, not %.3f", fixture.at(fixture.hips).y, hips_from.y - 0.35f);
+	test::@check(math::abs(fixture.at(fixture.hips).y - (hips_from.y - 0.5f)) < 0.02f,
+		"the hips landed at y=%.3f, not %.3f", fixture.at(fixture.hips).y, hips_from.y - 0.5f);
 
-	// And the knees folded to keep the feet in place.
+	// And the knees folded to keep the feet in place, the pelvis level and the feet flat.
 	test::@check(bend_of(app.working_pose(fixture.knee_l).rotation) > 1.0e-3f, "the left knee did not bend");
 	test::@check(bend_of(app.working_pose(fixture.knee_r).rotation) > 1.0e-3f, "the right knee did not bend");
+	fixture.check_stance(&stance, false, "hips drop");
 }
 
 <*
@@ -197,9 +258,10 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 	test::@check(app.lock_position(fixture.ankle_l), "the left foot did not lock");
 	test::@check(app.lock_position(fixture.ankle_r), "the right foot did not lock");
 
+	Stance stance;
 	Vec3 spine_from = fixture.at(fixture.spine);
-	Vec3 target = spine_from - (Vec3){ 0, 0.35, 0 };
-	pull_in_steps(&fixture, fixture.spine, target - spine_from);
+	Vec3 target = spine_from - (Vec3){ 0, 0.5, 0 };
+	pull_in_steps(&fixture, fixture.spine, target - spine_from, &stance);
 
 	// The spine reached the pointer, carried there by the root sliding under it.
 	float off = (fixture.at(fixture.spine) - target).length();
@@ -207,6 +269,8 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 	// And the feet held.
 	float moved_l = (fixture.at(fixture.ankle_l) - foot_l).length();
 	test::@check(moved_l < 0.03f, "the foot moved %.3f under a spine grab", moved_l);
+	// The body came down level and upright, the feet flat.
+	fixture.check_stance(&stance, true, "spine grab");
 }
 
 <*
@@ -322,8 +386,11 @@ fn void the_two_anchor_halves_are_independent() @test
 }
 
 <*
- A rotation anchor holds the foot's orientation flat while its leg folds, where a
- position-only anchor lets it tilt.
+ A rotation anchor holds the foot's orientation flat while its leg folds, and a
+ position-only anchor keeps it too — softly (`POINT_POSE_PIN_SOFT_TURN`), where the
+ rotation anchor holds it hard. The sitter's ankles have no limits to give way
+ against, so both feet stay flat; the difference between the two is what happens
+ past an ankle's reach, which the humanoid's own checks measure (`puppet_test`).
 *>
 fn void a_rotation_anchor_holds_the_foot_flat() @test
 {
@@ -344,15 +411,14 @@ fn void a_rotation_anchor_holds_the_foot_flat() @test
 	app.select(fixture.hips);
 	test::@check(app.begin_pose(), "G did not begin");
 	Vec3 hips_from = fixture.at(fixture.hips);
-	app.pose_toward(hips_from - (Vec3){ 0, 0.35, 0 });
+	app.pose_toward(hips_from - (Vec3){ 0, 0.5, 0 });
 
-	// The rotation-anchored foot kept its orientation; the position-only one tilted
-	// as its leg folded under it.
+	// The rotation-anchored foot kept its orientation, and so did the position-only
+	// one: its angle is held softly, and nothing here asks it to give.
 	float held_gap = orient_gap(app.dot_world_rotation(fixture.ankle_l), held);
 	float free_gap = orient_gap(app.dot_world_rotation(fixture.ankle_r), held);
 	test::@check(held_gap < 0.01f, "the rotation-anchored foot tilted by %.3f", held_gap);
-	test::@check(free_gap > held_gap + 0.01f,
-		"the position-only foot did not tilt (free %.3f vs held %.3f)", free_gap, held_gap);
+	test::@check(free_gap < 0.01f, "the position-only foot did not keep its angle (free %.3f vs held %.3f)", free_gap, held_gap);
 }
 
 <*
@@ -561,11 +627,13 @@ fn void a_pinned_spine_holds_the_body_and_says_so() @test
 
 // Pull `grabbed` from where it stands by `by`, in the ten steps a pointer would
 // take, as one gesture left open.
-fn void pull_in_steps(Sitter* fixture, uint grabbed, Vec3 by) @local
+// `stance`, when given, is filled with how the figure stood as the gesture began.
+fn void pull_in_steps(Sitter* fixture, uint grabbed, Vec3 by, Stance* stance = null) @local
 {
 	crig::AppState* app = &fixture.app;
 	app.select(grabbed);
 	test::@check(app.begin_pose(), "G did not begin on the grabbed joint");
+	if (stance) *stance = fixture.stance();
 	Vec3 from = fixture.at(grabbed);
 	for (int k = 1; k <= 10; k++) app.pose_toward(from + by * (k / 10.0f));
 }
@@ -588,10 +656,13 @@ fn void pulling_the_waist_sits_a_t_pose_down() @test
 	Vec3 hips_from = fixture.at(fixture.hips);
 	test::@check(app.lock_position(fixture.ankle_l) && app.lock_position(fixture.ankle_r), "the feet did not lock");
 
-	pull_in_steps(&fixture, fixture.upper_spine, { 0, -0.35f, 0 });
+	Stance stance;
+	pull_in_steps(&fixture, fixture.upper_spine, { 0, -0.5f, 0 }, &stance);
 
 	float dropped = hips_from.y - fixture.at(fixture.hips).y;
-	test::@check(dropped > 0.25f, "the hips dropped only %.3f — the waist pull did not lower the body", dropped);
+	test::@check(dropped > 0.45f, "the hips dropped only %.3f — the waist pull did not lower the body", dropped);
+	// Level, upright and flat-footed all the way down.
+	fixture.check_stance(&stance, true, "waist sit");
 	float slip_l = (fixture.at(fixture.ankle_l) - foot_l).length();
 	float slip_r = (fixture.at(fixture.ankle_r) - foot_r).length();
 	test::@check(slip_l < 0.014f && slip_r < 0.014f, "the feet slipped %.3f / %.3f off their pins", slip_l, slip_r);
@@ -629,10 +700,13 @@ fn void a_chair_sit_holds_the_feet_and_undoes_in_one_step() @test
 	Vec3 hips_from = fixture.at(fixture.hips);
 	test::@check(app.lock_position(fixture.ankle_l) && app.lock_position(fixture.ankle_r), "the feet did not lock");
 
-	pull_in_steps(&fixture, fixture.hips, { 0, -0.3f, -0.2f });
+	Stance stance;
+	pull_in_steps(&fixture, fixture.hips, { 0, -0.3f, -0.2f }, &stance);
 	test::@check((fixture.at(fixture.hips) - (hips_from + (Vec3){ 0, -0.3f, -0.2f })).length() < 0.03f,
 		"the hips did not reach the chair");
 	test::@check((fixture.at(fixture.ankle_l) - foot_l).length() < 0.014f, "the foot slipped");
+	// The waist is left to lean over the feet (the next test); the pelvis and the feet are not.
+	fixture.check_stance(&stance, false, "chair sit");
 
 	app.auto_key = true;
 	app.end_drag();
@@ -694,7 +768,9 @@ fn void sitting_back_leans_the_body_over_the_feet() @test
 		Vec3 foot_l = fixture.at(fixture.ankle_l);
 		Vec3 hips_from = fixture.at(fixture.hips);
 		test::@check(app.lock_position(fixture.ankle_l) && app.lock_position(fixture.ankle_r), "the feet did not lock");
-		pull_in_steps(&fixture, fixture.hips, { 0, -0.3f, -0.15f });
+		Stance stance;
+		pull_in_steps(&fixture, fixture.hips, { 0, -0.3f, -0.15f }, &stance);
+		fixture.check_stance(&stance, false, off ? "sitting back, balance off" : "sitting back, balance on");
 
 		float off_target = (fixture.at(fixture.hips) - (hips_from + (Vec3){ 0, -0.3f, -0.15f })).length();
 		test::@check(off_target < 0.02f, "the hips missed the pull by %.3f (balance %s)", off_target, off ? "off" : "on");
@@ -723,12 +799,14 @@ fn void a_hyper_extended_rest_knee_still_sits() @test
 	Vec3 hips_from = fixture.at(fixture.hips);
 	test::@check(app.lock_position(fixture.ankle_l) && app.lock_position(fixture.ankle_r), "the feet did not lock");
 
-	pull_in_steps(&fixture, fixture.upper_spine, { 0, -0.3f, 0 });
+	Stance stance;
+	pull_in_steps(&fixture, fixture.upper_spine, { 0, -0.45f, 0 }, &stance);
 
 	float dropped = hips_from.y - fixture.at(fixture.hips).y;
-	test::@check(dropped > 0.2f, "the hips dropped only %.3f from a hyper-extended rest", dropped);
+	test::@check(dropped > 0.4f, "the hips dropped only %.3f from a hyper-extended rest", dropped);
 	test::@check((fixture.at(fixture.ankle_l) - foot_l).length() < 0.014f, "the foot slipped");
 	test::@check(fixture.at(fixture.knee_l).z > 0.05f, "the knee did not come forward (z %.3f)", fixture.at(fixture.knee_l).z);
+	fixture.check_stance(&stance, true, "hyper-extended sit");
 }
 
 <*

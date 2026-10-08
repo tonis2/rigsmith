@@ -16,6 +16,7 @@ import rig;
 import std::io;
 import std::math;
 import std::math::vector;
+import std::math::quaternion;
 import std::collections::object;
 import std::encoding::json;
 import std::core::test;
@@ -156,6 +157,93 @@ fn void Model.check_held(&self, String[] names, Vec3[] was, String what)
 	}
 }
 
+<*
+ A joint's world rotation as the figure stands now: the draft's while a gesture holds
+ one open, and the clip's own key at the playhead once `end_drag` has keyed it, which
+ closes the draft (`dot_world_rotation` reads the draft, so after a release it says
+ nothing about the pose that was just made).
+*>
+fn Quaternionf Model.world(&self, String name)
+{
+	crig::RigView view = self.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose;
+	if (self.app.pose_edit_active)
+	{
+		pose = self.app.draft_pose(mem, &view);
+	}
+	else
+	{
+		crig::AnimTemplate* clip = self.app.clip(self.app.editing);
+		String[] names = self.app.names_for(&view, self.app.editing);
+		pose = clip.pose(mem, &view.skeleton, names, self.app.edit_time, false);
+	}
+	defer pose.free(mem);
+	Quaternionf[] world = pose.world_rotations(mem, &view.skeleton)!!;
+	defer alloc::free(mem, world);
+	return world[(usz)view.joint_of(self.id(name))];
+}
+
+<*
+ What a figure stood like as a gesture began: the world rotations a sit is judged by.
+*>
+struct Stance
+{
+	Quaternionf hips;
+	Quaternionf chest;
+	Quaternionf foot_l;
+	Quaternionf foot_r;
+}
+
+fn Stance Model.stance(&self) => {
+	.hips = self.world("hips"),
+	.chest = self.world("chest"),
+	.foot_l = self.world("ankle_L"),
+	.foot_r = self.world("ankle_R"),
+};
+
+// The angle of a rotation, in degrees, 0 to 180.
+fn float angle_of(Quaternionf q)
+{
+	q = q.normalize();
+	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
+	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * 57.29578f;
+}
+
+// How far a joint has turned in the world since `was`, in degrees.
+fn float Model.turned(&self, String name, Quaternionf was) => angle_of(self.world(name).mul(was.invert()));
+
+// How far a joint's up has leaned from where `was` had it, in degrees: a yaw is not a tilt.
+fn float Model.tilt(&self, String name, Quaternionf was)
+{
+	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
+	Vec3 after = self.world(name).rotate_vec3({ 0, 1, 0 });
+	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * 57.29578f;
+}
+
+// The sit thresholds `puppet_test` judges by: the hips and the chest tilt less than
+// `UPRIGHT` degrees, a position-pinned foot turns less than `FOOT_FLAT`.
+const float UPRIGHT = 10.0f;
+const float FOOT_FLAT = 3.0f;
+
+<*
+ The figure sat and still upright: the hips and the chest tilted less than `UPRIGHT`
+ degrees from how `was` had them, and — when `feet` is above zero — neither foot
+ turned more than `feet` degrees.
+*>
+fn void Model.check_stance(&self, Stance* was, float feet, String what)
+{
+	float hips = self.tilt("hips", was.hips);
+	float chest = self.tilt("chest", was.chest);
+	float foot_l = self.turned("ankle_L", was.foot_l);
+	float foot_r = self.turned("ankle_R", was.foot_r);
+	io::printfn("  %s: hips tilt %.2f, chest tilt %.2f, feet turned %.2f %.2f deg", what, hips, chest, foot_l, foot_r);
+	test::@check(hips < UPRIGHT, "%s: the hips tilted %.2f degrees", what, hips);
+	test::@check(chest < UPRIGHT, "%s: the chest tilted %.2f degrees", what, chest);
+	if (feet <= 0.0f) return;
+	test::@check(foot_l < feet && foot_r < feet, "%s: a foot turned %.2f / %.2f degrees (limit %.1f)", what, foot_l, foot_r, feet);
+}
+
 // ---------------------------------------------------------------------------
 // The dog: pelvis down with the hind paws pinned
 
@@ -272,17 +360,25 @@ fn void the_humanoid_squats_on_pinned_feet() @test
 		if (grounded) m.stand_on("toe_L", "toe_R");
 		Vec3 foot_l = m.at("ankle_L");
 		Vec3 foot_r = m.at("ankle_R");
+		Stance stance = m.stance();
 		m.app.pin_feet(true);
 		Vec3 hips = m.at("hips");
-		// A grounded figure's feet are also planted on the floor, which is held at
-		// the same time: a squat only as deep as the ankles can stay flat for.
-		float drop = m.height * (grounded ? 0.05f : 0.15f);
+		// The feet are pinned flat — position and angle, and the angle is held hard —
+		// so a squat is only as deep as the ankles bend with the feet still flat: about
+		// seven hundredths of the height from standing, whatever is asked (a tenth of
+		// the height here, which the grab gives way on). A grounded figure's feet are
+		// also planted on the floor, which is held at the same time, and costs nothing:
+		// a flat foot is on it already.
+		float drop = m.height * 0.10f;
 		m.pull("hips", { 0, -drop, 0 });
 		Vec3 after = m.at("hips");
 		io::printfn("  grounded=%s hips %.3f -> %.3f (asked %.3f lower)", grounded, hips.y, after.y, drop);
 		test::@check(after.y <= hips.y + 1.0e-4f, "the hips went UP: %.3f -> %.3f", hips.y, after.y);
-		test::@check(hips.y - after.y > drop * 0.7f, "the hips only dropped %.3f of %.3f", hips.y - after.y, drop);
+		test::@check(hips.y - after.y > m.height * 0.06f, "the hips only dropped %.3f of %.3f", hips.y - after.y, drop);
 		m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "squat");
+		// And the feet stayed flat: not a degree of turn. (This was once read off
+		// `dot_world_rotation`, which after the release is the rest draft's: it could not fail.)
+		m.check_stance(&stance, 1.0f, "squat");
 	}
 }
 
@@ -297,9 +393,15 @@ fn float Model.fold(&self, String thigh, String knee, String ankle)
 <*
  Both ankles pinned and the body pulled down by `spine`: the knees fold and both
  feet stay on their pins. The grab is what gives way, never a pin — and never
- just one leg of the two.
+ just one leg of the two. The body sits upright all the way: the hips and the chest
+ hardly tilt, and — where `judge_feet` — the feet stay flat.
+
+ @param folded : `The least either knee may fold, in degrees.`
+ @param dropped : `The least the spine may come down, in heights; the grab gives way where flat feet allow no more.`
+ @param judge_feet : `Whether the feet are held to FOOT_FLAT; a walking figure's are not flat to begin with.`
 *>
-fn void check_spine_pulled_down(bool grounded, Vec3 by_fraction, bool walking = false, float at = 0.0f) @local
+fn void check_spine_pulled_down(bool grounded, Vec3 by_fraction, bool walking = false, float at = 0.0f,
+	float folded = 20.0f, float dropped = 0.0f, bool judge_feet = true) @local
 {
 	Model m;
 	if (!m.open(PERSON, walking)) return;
@@ -308,35 +410,44 @@ fn void check_spine_pulled_down(bool grounded, Vec3 by_fraction, bool walking = 
 	if (grounded && !walking) m.stand_on("toe_L", "toe_R");
 	Vec3 foot_l = m.at("ankle_L");
 	Vec3 foot_r = m.at("ankle_R");
+	Vec3 toe_l = m.at("toe_L");
+	Vec3 toe_r = m.at("toe_R");
+	Vec3 spine = m.at("spine");
+	Stance stance = m.stance();
 	m.pin("ankle_L");
 	m.pin("ankle_R");
 	m.pull("spine", by_fraction * m.height);
 	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
 	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
-	io::printfn("  grounded=%s ankle_L off %.4f ankle_R off %.4f knees %.1f %.1f", grounded,
-		m.off("ankle_L", foot_l), m.off("ankle_R", foot_r), fold_l, fold_r);
+	float came = (spine.y - m.at("spine").y) / m.height;
+	io::printfn("  grounded=%s ankle_L off %.4f ankle_R off %.4f knees %.1f %.1f spine down %.4f of %.4f", grounded,
+		m.off("ankle_L", foot_l), m.off("ankle_R", foot_r), fold_l, fold_r, came, -by_fraction.y);
 	m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "spine pulled down");
-	test::@check(fold_l > 20.0f, "the left knee only folded %.1f degrees", fold_l);
-	test::@check(fold_r > 20.0f, "the right knee only folded %.1f degrees", fold_r);
+	if (grounded) m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "spine pulled down, toes planted");
+	test::@check(fold_l > folded, "the left knee only folded %.1f degrees", fold_l);
+	test::@check(fold_r > folded, "the right knee only folded %.1f degrees", fold_r);
+	test::@check(came > dropped, "the spine came down only %.4f heights", came);
+	m.check_stance(&stance, judge_feet ? FOOT_FLAT : 0.0f, "spine pulled down");
 }
 
 fn void pulling_the_spine_down_folds_both_knees_on_pinned_ankles() @test
 {
 	io::printn("humanoid: spine down with both ankles pinned");
-	foreach (bool grounded : { false, true })
-	{
-		// The grounded body is also standing on its toes, so it sits only as deep as flat feet allow.
-		check_spine_pulled_down(grounded, { 0, grounded ? -0.05f : -0.15f, 0 });
-	}
+	// Flat feet bend the ankles only so far, and the body stops short of the pull
+	// (the spine comes down 0.12 of the 0.18 asked, 0.095 of the 0.15 grounded).
+	check_spine_pulled_down(false, { 0, -0.18f, 0 }, folded: 60.0f, dropped: 0.10f);
+	// The grounded body is also standing on its toes, so it sits only as deep as flat feet allow.
+	check_spine_pulled_down(true, { 0, -0.15f, 0 }, folded: 60.0f, dropped: 0.08f);
 }
 
 fn void pulling_the_spine_down_in_a_grounded_walk_keeps_both_feet() @test
 {
 	io::printn("humanoid, grounded Walk: spine down with both ankles pinned");
 	// Shallow: a planted toe under a pinned ankle holds only as deep as the ankle's own limits let the foot stay flat.
+	// A walk's feet are not flat to begin with, so they are not judged against `FOOT_FLAT`.
 	foreach (float at : { 0.0f, 0.2f, 0.4f, 0.6f, 0.8f })
 	{
-		check_spine_pulled_down(true, { 0, -0.02f, 0 }, true, at);
+		check_spine_pulled_down(true, { 0, -0.06f, 0 }, true, at, judge_feet: false);
 	}
 }
 
@@ -347,7 +458,7 @@ fn void pulling_the_spine_down_and_aside_keeps_both_feet() @test
 	{
 		foreach (float side : { 0.03f, -0.03f })
 		{
-			check_spine_pulled_down(grounded, { side, grounded ? -0.05f : -0.15f, 0 });
+			check_spine_pulled_down(grounded, { side, grounded ? -0.15f : -0.18f, 0 }, folded: 60.0f, dropped: grounded ? 0.08f : 0.10f);
 		}
 	}
 }
@@ -376,6 +487,9 @@ fn void the_spine_moves_the_body_with_nothing_pinned() @test
 <*
  Nothing pinned on a clip shown grounded: the feet it has planted hold, so pulling
  `spine` down folds the knees instead of the floor lifting the body straight back.
+ The body stays upright. (The feet are not judged flat: with only the toes and the
+ ankles held in place nothing asks the foot to keep its angle, and it rolls about the
+ line between them — 3.7 degrees at 0.05 of the height, 27 at 0.12.)
 *>
 fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
 {
@@ -386,14 +500,16 @@ fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
 	Vec3 spine = m.at("spine");
 	Vec3 toe_l = m.at("toe_L");
 	Vec3 toe_r = m.at("toe_R");
-	Vec3 by = { 0, -0.05f * m.height, 0 };
+	Stance stance = m.stance();
+	Vec3 by = { 0, -0.12f * m.height, 0 };
 	m.pull("spine", by);
 	float dropped = (spine.y - m.at("spine").y) / m.height;
-	test::@check(dropped > 0.04f, "the spine came down only %.4f heights", dropped);
+	test::@check(dropped > 0.08f, "the spine came down only %.4f heights", dropped);
 	m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "grounded spine pull");
 	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
 	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
-	test::@check(fold_l > 10.0f && fold_r > 10.0f, "the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
+	test::@check(fold_l > 60.0f && fold_r > 60.0f, "the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
+	m.check_stance(&stance, 0.0f, "grounded spine pull");
 }
 
 <*
@@ -425,9 +541,14 @@ fn void turning_the_humanoids_hips_keeps_the_feet_down() @test
 		if (grounded) m.stand_on("toe_L", "toe_R");
 		Vec3 foot_l = m.at("ankle_L");
 		Vec3 foot_r = m.at("ankle_R");
+		Stance stance = m.stance();
 		m.app.pin_feet(true);
 		m.turn("hips", { 0, 1, 0 }, 0.4f);
 		m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "hips turned");
+		// A turn about the vertical is not a lean, and the pinned feet's angles are held hard.
+		float yaw = m.turned("hips", stance.hips);
+		test::@check(yaw > 15.0f, "the hips turned only %.2f degrees of the 22.9 asked", yaw);
+		m.check_stance(&stance, 1.0f, "hips turned");
 	}
 }
 

@@ -1,6 +1,8 @@
 <*
  The selected joint's three rotation dials, on the Joint card: one ring per
- bone-local axis, dragged to turn the joint about that axis.
+ bone-local angle, dragged to change that angle. X and Z are the swing across the
+ bone (where it points) and Y is the twist about it, so the Y ring rolls the bone
+ where it is and the other two aim it.
 
  These are the rotation rings that used to be drawn around the joint in the
  viewport, moved off the model. Around the joint they sat exactly where the eye

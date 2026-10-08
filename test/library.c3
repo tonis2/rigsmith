@@ -64,6 +64,32 @@ fn String ready_second()
 	return SECOND_LIBRARY;
 }
 
+// A byte copy of the shipped humanoid, clips and all. `ready` puts generated sample
+// clips on its copy in place of the shipped ones; this one keeps what the file ships
+// (`Walk_slow`, `Climb ladder`), for a check on the clips as they play. Still a copy
+// under `build`, never the asset itself.
+const String SHIPPED_COPY = "build/test-shipped";
+const String SHIPPED_HUMANOID = "build/test-shipped/humanoid.glb";
+bool shipped_copied @local;
+
+<*
+ Make the shipped-clips copy once, and hand back its path.
+*>
+fn String shipped_humanoid()
+{
+	if (shipped_copied) return SHIPPED_HUMANOID;
+	if (catch path::mkdir((Path)SHIPPED_COPY))
+	{
+		// Already there, which is the ordinary case after the first check.
+	}
+	String source = string::tformat("%s/humanoid.glb", PACK_SOURCE);
+	char[] bytes = file::load(mem, source)!!;
+	defer alloc::free(mem, bytes);
+	file::save(SHIPPED_HUMANOID, bytes)!!;
+	shipped_copied = true;
+	return SHIPPED_HUMANOID;
+}
+
 // Refresh the exact fixture files, leaving unrelated files alone.
 fn String fill(String folder) @local
 {

@@ -291,17 +291,15 @@ fn ClipMetrics clip_metrics(
 
 			// How far this joint's animated rotation asks to go past its limits here,
 			// per bone-local axis — an allowed axis past its range, a locked one off
-			// its angle. The same decomposition the clamp uses, so what is measured is
-			// exactly what playback would remove.
+			// its angle. The same swing-twist reading and the same nearest end round
+			// the circle the clamp uses, so what is measured is exactly what playback
+			// would remove.
 			if (check_limits && limit_active[j])
 			{
 				Vec3 angles = joint_angles_from_rotation(limit_frame[j], pose.rotations[j]);
 				for (usz i = 0; i < 3; i++)
 				{
-					JointAxisLimit ax = limit_table[j].axes[i];
-					float over = ax.allowed
-						? math::max(0.0f, math::max(angles[i] - ax.maximum, ax.minimum - angles[i]))
-						: math::abs(angles[i] - ax.locked);
+					float over = limit_table[j].axes[i].overshoot(angles[i]);
 					usz slot = j * 3 + i;
 					if (over > limit_worst[slot])
 					{

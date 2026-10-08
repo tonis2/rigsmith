@@ -257,7 +257,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "edit_rig",
-		.description = "Change the rig: place, move, name, remove, connect, disconnect dots, move the root, or edit bone-local X/Y/Z rotation limits. A list of ops is applied as one undo step, and an op that fails takes the whole call back. Limit angles are radians; each axis is allowed inside its minimum/maximum or held at its locked value. Branches need primary_child or an explicit frame. Naming matters most: only a named dot can be animated.",
+		.description = "Change the rig: place, move, name, remove, connect, disconnect dots, move the root, or edit bone-local rotation limits (x and z the swing across the bone, y the twist about it). A list of ops is applied as one undo step, and an op that fails takes the whole call back. Limit angles are radians; each axis is allowed inside its minimum/maximum or held at its locked value. Branches need primary_child or an explicit frame. Naming matters most: only a named dot can be animated.",
 		.input_schema = EDIT_RIG_SCHEMA,
 		.handler = &tool_edit_rig,
 		.user_data = app,
