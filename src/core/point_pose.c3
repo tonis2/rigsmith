@@ -111,6 +111,7 @@ struct PointPoseSettings
 	bool has_floor;
 	float floor;             // along `up`: floored joints stay at or above it
 	int iterations;          // trial steps per sub-step; zero for `BODY_SOLVE_ITERATIONS`
+	int ramp;                // sub-steps the grab is carried in; zero for as many as its distance asks (`BodySolve.ramp_steps`)
 	bool balance;            // keep the centre of mass over the hard goals planted below the root
 	Quaternionf[] posture;   // per skeleton joint, the local rotation the stiffness draws toward; empty for the pose handed in
 	float balance_miss;      // out: how far the centre of mass ended from over what the body stands on

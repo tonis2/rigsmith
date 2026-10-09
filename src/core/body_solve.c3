@@ -220,27 +220,19 @@ const float POINT_POSE_SOLE = 0.01;
 const float POINT_POSE_GRAB_HOLD = 5.0;
 const float POINT_POSE_PIN_SOFT_TURN = 30.0;
 
-// Sub-steps the grab is carried over, from where its joint stands to the pointer.
+// Sub-steps the grab is carried over, from where its joint stands to the pointer, and
+// how many more it gets for a long pull. A pull of up to `POINT_POSE_RAMP_FREE` of the
+// height is carried in the base sub-steps; each `POINT_POSE_RAMP_STEP` of the height past
+// it adds one, up to eight times the base. A long pull crosses limits that a hand held at
+// its angle runs into one after another, and a coarse walk to it can land in another fold
+// of the arm than the walk a neighbouring pointer position takes: the pose jumps
+// (`body_solve::a_circling_hand_held_at_its_angle_never_twitches`,
+// `a_wide_stepped_circle_is_fast_but_never_hops`). The base and the free length are
+// bound from the other side by the time of a spine sit, which they leave at three
+// (`a_solve_is_fast`, 5 ms).
 const int POINT_POSE_RAMP = 3;
-int diag_ramp;
-double diag_cost;
-double diag_cost_polished;
-double[8] diag_terms;
-int diag_iters;
-int diag_rejects;
-int diag_accepts;
-bool diag_trace;
-double diag_floor = -1.0;
-int diag_iterations;
-double diag_saving = -1.0;
-double diag_early = -1.0;
-usz diag_pull_joint;
-int diag_pull_axis;
-double diag_pull_value;
-double diag_pull_weight;
-int diag_early_iterations;
-DString diag_log;
-
+const float POINT_POSE_RAMP_FREE = 0.2;
+const float POINT_POSE_RAMP_STEP = 0.01;
 
 // Trial steps the last sub-step may take, and the most an earlier one takes before
 // going on: the early ones only point the way, so they stop at a share of their
@@ -1302,21 +1294,6 @@ fn double BodySolve.evaluate(&self, BodySolveState* s, bool derive)
 		}
 	}
 
-	if (diag_pull_weight > 0.0)
-	{
-		usz j = diag_pull_joint;
-		double r = ((double)s.angles[j][diag_pull_axis] - diag_pull_value) * (double)POINT_POSE_TURN_LENGTH;
-		cost += diag_pull_weight * r * r;
-		if (derive)
-		{
-			for (usz c = self.first[j]; c < self.first[j] + self.count[j]; c++)
-			{
-				if (self.unknowns[c].limit != diag_pull_axis) continue;
-				self.mat[c * self.nu + c] += diag_pull_weight * (double)POINT_POSE_TURN_LENGTH * (double)POINT_POSE_TURN_LENGTH;
-				self.grad[c] += diag_pull_weight * (double)POINT_POSE_TURN_LENGTH * r;
-			}
-		}
-	}
 	if (derive)
 	{
 		self.resting[..] = false;
@@ -1735,23 +1712,8 @@ fn void BodySolve.minimise(&self, int iterations, double saving, double* lambda)
 		self.advance(&self.cur, &self.trial, scale);
 		double after = self.evaluate(&self.trial, false);
 		double ratio = predicted > 0.0 ? (cost - after) / predicted : -1.0;
-		if (diag_trace)
-		{
-			usz nf = 0;
-			for (usz c = 0; c < self.nu; c++) if (self.fixed[c]) nf++;
-			double step_norm = 0.0;
-			for (usz c = 0; c < self.nu; c++) step_norm += self.delta[c] * self.delta[c] * scale * scale;
-			Vec3 wx = self.trial.angles[24] * 57.29578f;
-			Vec3 ey = self.trial.angles[21] * 57.29578f;
-			Vec3 cz = self.trial.angles[11] * 57.29578f;
-			Vec3 sh = self.trial.angles[16] * 57.29578f;
-			diag_log.appendf("    it %d cost %.6e -> %.6e ratio %.3f lam %.1e sc %.2f |st| %.2e fx %d | trial: wristX %.1f elbowY %.1f clavXYZ %.1f %.1f %.1f shoulder %.1f %.1f %.1f\n", t, cost, after, ratio, *lambda, scale, math::sqrt(step_norm), (int)nf, wx.x, ey.y, cz.x, cz.y, cz.z, sh.x, sh.y, sh.z);
-		}
-		diag_iters++;
-		if (!(after < cost)) diag_rejects++;
 		if (after < cost)
 		{
-			diag_accepts++;
 			BodySolveState held = self.cur;
 			self.cur = self.trial;
 			self.trial = held;
@@ -1759,7 +1721,7 @@ fn void BodySolve.minimise(&self, int iterations, double saving, double* lambda)
 			bool settled = biggest_turn * scale < tiny_turn && biggest_slide * scale < tiny_slide;
 			bool saved_little = predicted <= saving * cost + BODY_SOLVE_NOISE;
 			double ease = 1.0 - math::pow(2.0 * ratio - 1.0, 3.0);
-			*lambda = math::max(*lambda * math::clamp(ease, 1.0 / 3.0, 8.0), diag_floor > 0.0 ? diag_floor : BODY_SOLVE_DAMPING_FLOOR);
+			*lambda = math::max(*lambda * math::clamp(ease, 1.0 / 3.0, 8.0), BODY_SOLVE_DAMPING_FLOOR);
 			raise = 2.0;
 			if (settled || saved_little) break;
 		}
@@ -1886,8 +1848,25 @@ fn void BodySolve.seed_straight_pulls(&self)
 }
 
 <*
+ How many sub-steps the grabs are carried in: `settings.ramp` when it asks for some,
+ else `POINT_POSE_RAMP`, and more for the longest pull (`POINT_POSE_RAMP_FREE`). A
+ function of the goals alone, so the same pointer takes the same walk.
+*>
+fn int BodySolve.ramp_steps(&self)
+{
+	if (self.settings.ramp > 0) return self.settings.ramp;
+	float longest = 0.0f;
+	foreach (usz g, &goal : self.goals)
+	{
+		if (self.live[g] && self.ramped[g] && self.use_pos[g]) longest = math::max(longest, (goal.target - self.from[g]).length());
+	}
+	float past = math::max(longest / self.h - POINT_POSE_RAMP_FREE, 0.0f);
+	return math::min(POINT_POSE_RAMP + (int)math::ceil(past / POINT_POSE_RAMP_STEP), POINT_POSE_RAMP * 8);
+}
+
+<*
  The whole solve: the hinges and the straight pulls seeded, then the cost minimised
- with the grab carried to the pointer in `POINT_POSE_RAMP` sub-steps — one when there
+ with the grab carried to the pointer in `ramp_steps` sub-steps — one when there
  is no grab to carry.
 
  Each sub-step is minimised to rest (`BODY_SOLVE_EARLY_SAVING`) before the next, not
@@ -1901,18 +1880,15 @@ fn void BodySolve.seed_straight_pulls(&self)
 fn void BodySolve.run(&self)
 {
 	int per = self.settings.iterations > 0 ? self.settings.iterations : BODY_SOLVE_ITERATIONS;
-	if (diag_iterations > 0) per = diag_iterations;
 	self.seed_bends();
 	bool carried = false;
 	foreach (usz g, used : self.ramped) if (used && self.use_pos[g]) carried = true;
-	int ramp = carried ? POINT_POSE_RAMP : 1;
-	if (carried && diag_ramp > 0) ramp = diag_ramp;
+	int ramp = carried ? self.ramp_steps() : 1;
 	double lambda = BODY_SOLVE_DAMPING;
 	self.pin = POINT_POSE_PIN;
 	for (int sub = 1; sub <= ramp; sub++)
 	{
 		float along = (float)sub / (float)ramp;
-		if (diag_trace) diag_log.appendf("  substep %d/%d\n", sub, ramp);
 		foreach (usz g, &goal : self.goals)
 		{
 			if (self.ramped[g]) self.aim[g] = self.from[g] + (goal.target - self.from[g]) * along;
@@ -1920,28 +1896,8 @@ fn void BodySolve.run(&self)
 		lambda = BODY_SOLVE_DAMPING;
 		self.slide_boost = !self.grounded && sub < ramp ? POINT_POSE_FLOATING_SLIDE : 1.0f;
 		bool last = sub == ramp;
-		self.minimise(last ? per : math::min(per, diag_early_iterations > 0 ? diag_early_iterations : BODY_SOLVE_EARLY_ITERATIONS), last ? (diag_saving > 0.0 ? diag_saving : BODY_SOLVE_SAVING) : (diag_early > 0.0 ? diag_early : BODY_SOLVE_EARLY_SAVING), &lambda);
+		self.minimise(last ? per : math::min(per, BODY_SOLVE_EARLY_ITERATIONS), last ? BODY_SOLVE_SAVING : BODY_SOLVE_EARLY_SAVING, &lambda);
 	}
-	diag_cost = self.evaluate(&self.cur, false);
-	diag_terms[..] = 0.0;
-	foreach (usz g, &goal : self.goals)
-	{
-		if (!self.live[g]) continue;
-		usz j = goal.joint;
-		if (self.use_pos[g])
-		{
-			Vec3 r = (self.cur.x[j] - self.aim[g]) / self.h;
-			diag_terms[goal.soft ? 0 : 2] += (goal.soft ? 1.0 : (double)self.pin) * (double)r.dot(r);
-		}
-		if (self.use_rot[g])
-		{
-			Vec3 r = body_solve_log(self.cur.world[j].mul(goal.orient.invert()).normalize()) * POINT_POSE_TURN_LENGTH;
-			double w = goal.turn_weight > 0.0f ? goal.turn_weight : self.pin;
-			diag_terms[goal.soft ? 1 : 3] += w * (double)r.dot(r);
-		}
-	}
-	diag_terms[4] = self.part_rows(&self.cur, false);
-	diag_terms[5] = self.joint_rows(&self.cur, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -2108,7 +2064,6 @@ fn float body_solve(rig::Skeleton* skeleton, rig::Pose* pose, PointJoint[] joint
 		{
 			s.run();
 			s.polish();
-			diag_cost_polished = s.evaluate(&s.cur, false);
 			s.save(pose);
 		}
 		settings.balance_miss = s.balance_on ? s.balance_error(&s.cur).length() : 0.0f;

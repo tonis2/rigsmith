@@ -487,9 +487,8 @@ fn void the_spine_moves_the_body_with_nothing_pinned() @test
 <*
  Nothing pinned on a clip shown grounded: the feet it has planted hold, so pulling
  `spine` down folds the knees instead of the floor lifting the body straight back.
- The body stays upright. (The feet are not judged flat: with only the toes and the
- ankles held in place nothing asks the foot to keep its angle, and it rolls about the
- line between them — 3.7 degrees at 0.05 of the height, 27 at 0.12.)
+ The body stays upright. The feet stay flat as far as the ankle lets them (see
+ `planted_feet_stay_flat_as_the_spine_comes_down`).
 *>
 fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
 {
@@ -510,6 +509,35 @@ fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
 	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
 	test::@check(fold_l > 60.0f && fold_r > 60.0f, "the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
 	m.check_stance(&stance, 0.0f, "grounded spine pull");
+}
+
+<*
+ Nothing pinned, the toes planted: the spine pulled down by `depth` heights leaves
+ each foot as it stood, to within `FOOT_FLAT` degrees. The toes and the ankles hold in
+ place and fix the line between them, and a foot is free to roll about that line unless
+ the planted ankle keeps its angle softly, as a pinned one does: without the hold the
+ feet rolled 3.7, 14 and 20 degrees at 0.05, 0.08 and 0.12. Flat feet go on being allowed
+ well past the last depth here (0.8 degrees at 0.25); the ankle's dorsiflexion, the -25
+ degree side of its X, is what ends them.
+*>
+fn void planted_feet_stay_flat_as_the_spine_comes_down() @test
+{
+	foreach (float depth : (float[]){ 0.05f, 0.08f, 0.12f, 0.2f })
+	{
+		Model m;
+		if (!m.open(PERSON, false)) return;
+		defer m.close();
+		m.stand_on("toe_L", "toe_R");
+		Vec3 toe_l = m.at("toe_L");
+		Vec3 toe_r = m.at("toe_R");
+		Stance stance = m.stance();
+		m.pull("spine", { 0, -depth * m.height, 0 });
+		float foot_l = m.turned("ankle_L", stance.foot_l);
+		float foot_r = m.turned("ankle_R", stance.foot_r);
+		io::printfn("  spine down %.2f: feet turned %.2f %.2f deg", depth, foot_l, foot_r);
+		m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "planted feet");
+		test::@check(foot_l < FOOT_FLAT && foot_r < FOOT_FLAT, "spine down %.2f: a foot turned %.2f / %.2f degrees (limit %.1f)", depth, foot_l, foot_r, FOOT_FLAT);
+	}
 }
 
 <*

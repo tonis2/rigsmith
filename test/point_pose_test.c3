@@ -16,10 +16,8 @@
  Where a legacy number could not carry over it is said in the test that had it. The
  hand is grabbed on its point alone, as the old solver was and as `body_solve_test`'s
  hand tests do, unless a test says it holds the part's world rotation too, which is
- what the app asks of every grab. Two misses are known with the other setting, and
- not asserted: the pull past reach (`a_pull_past_the_elbows_limit_keeps_tracking`)
- jumps back at its last step when the hand's rotation is not held, and the circle
- (`a_continuous_sweep_never_jumps`) spikes for one step when it is.
+ what the app asks of every grab. The pull past reach
+ (`a_pull_past_the_elbows_limit_keeps_tracking`) is made both ways.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::point_pose`
 *>
@@ -270,7 +268,12 @@ fn float Body.feet_turned(&self, Stance* was) => math::max(self.turned("ankle_L"
  The old test looked at where the chest and hips stood; the tilt checks are new. The
  chest does lean a little for this reach (6.6 degrees) though the arm alone makes it
  (with the trunk frozen the hand misses by 0.0002 h): the stiffness shares a long
- reach with the trunk, which a quarter of this reach does not (0.8 degrees).
+ reach with the trunk, which a quarter of this reach does not (0.8 degrees). It is not
+ the straight arm's singularity: along the same line the lean grows steadily with the
+ reach, 0.8 degrees at 0.1 h from the shoulder, 3.0 at 0.2, 6.9 at the arm's full
+ 0.299, and the solution with the trunk held costs only 3% more (4.3e-5 against
+ 4.2e-5), so the lean is the cost's own flat valley, to be moved by the trunk's stiffness
+ against the arm's, not by a fix of the solve.
 *>
 fn void a_free_hand_reaches_and_leaves_the_trunk_alone() @test
 {
@@ -314,10 +317,11 @@ fn void a_free_hand_reaches_and_leaves_the_trunk_alone() @test
  at the elbow — and stop cleanly once the body is out of reach, the feet never
  leaving their pins nor turning.
 
- The grab holds the hand's world rotation, as the app's does. Without it the answer
- jumps at the last step: the pointer arrives and the hand is 0.17 h from it, where
- the step before it was 0.05 h, with the chest bent double (95 degrees) on both. The
- app cannot ask for that; a direct call can. Not asserted: a known miss.
+ Made with the grab holding the hand's world rotation, as the app's does, and without
+ it, which no gesture of the app asks for. A pull this long (0.66 h) was carried to the
+ pointer in three sub-steps, 0.22 h each, and without the hold the last of them landed in
+ another fold of the arm: the pointer arrived and the hand was 0.17 h from it, where the
+ step before it was 0.05 h. It is carried in more now (`POINT_POSE_RAMP_STEP`).
 
  The pointer goes 16 steps out and holds still for 8. The old solver was warm-started
  from its last answer and could wander on a still pointer, so the test asked it
@@ -326,45 +330,48 @@ fn void a_free_hand_reaches_and_leaves_the_trunk_alone() @test
 *>
 fn void a_pull_past_the_elbows_limit_keeps_tracking() @test
 {
-	Body b;
-	if (!b.open()) return;
-	defer b.close();
-	b.begin();
-	rig::Pose start = b.pose.copy(mem);
-	defer start.free(mem);
-	crig::PointGoal[3] goals;
-	goals[1] = b.pin("ankle_L");
-	goals[2] = b.pin("ankle_R");
-	Stance stance = b.stance();
-	Vec3 from = b.at("wrist_L");
-	Vec3 to = from + (Vec3){ 0.2f, -0.6f, 0.2f } * b.height;
-	float last = (from - to).length();
-	Vec3 held;
-	float travelled_late = 0.0f;
-	float worst_feet = 0.0f;
-	float worst_slip = 0.0f;
-	for (int k = 1; k <= 24; k++)
+	foreach (bool hold : (bool[2]){ true, false })
 	{
-		b.restore(&start);
-		goals[0] = b.grab("wrist_L", from + (to - from) * math::min(k / 16.0f, 1.0f), true);
-		b.solve(goals[..]);
-		Vec3 hand = b.at("wrist_L");
-		float left = (hand - to).length();
-		test::@check(left <= last + b.height * 1.0e-3f, "step %d: the hand fell back from %.4f to %.4f", k, last, left);
-		last = left;
-		if (k == 16) held = hand;
-		if (k > 16) travelled_late = math::max(travelled_late, (hand - held).length() / b.height);
-		worst_feet = math::max(worst_feet, b.feet_turned(&stance));
-		worst_slip = math::max(worst_slip, math::max(b.off("ankle_L", goals[1].target), b.off("ankle_R", goals[2].target)));
+		Body b;
+		if (!b.open()) return;
+		defer b.close();
+		b.begin();
+		rig::Pose start = b.pose.copy(mem);
+		defer start.free(mem);
+		crig::PointGoal[3] goals;
+		goals[1] = b.pin("ankle_L");
+		goals[2] = b.pin("ankle_R");
+		Stance stance = b.stance();
+		Vec3 from = b.at("wrist_L");
+		Vec3 to = from + (Vec3){ 0.2f, -0.6f, 0.2f } * b.height;
+		float last = (from - to).length();
+		Vec3 held;
+		float travelled_late = 0.0f;
+		float worst_feet = 0.0f;
+		float worst_slip = 0.0f;
+		for (int k = 1; k <= 24; k++)
+		{
+			b.restore(&start);
+			goals[0] = b.grab("wrist_L", from + (to - from) * math::min(k / 16.0f, 1.0f), hold);
+			b.solve(goals[..]);
+			Vec3 hand = b.at("wrist_L");
+			float left = (hand - to).length();
+			test::@check(left <= last + b.height * 1.0e-3f, "step %d: the hand fell back from %.4f to %.4f (hold %s)", k, last, left, hold);
+			last = left;
+			if (k == 16) held = hand;
+			if (k > 16) travelled_late = math::max(travelled_late, (hand - held).length() / b.height);
+			worst_feet = math::max(worst_feet, b.feet_turned(&stance));
+			worst_slip = math::max(worst_slip, math::max(b.off("ankle_L", goals[1].target), b.off("ankle_R", goals[2].target)));
+		}
+		float came = ((from - to).length() - last) / b.height;
+		body_solve::note("  pull past reach (%s): the hand came %.3f heights of %.3f, a still pointer moved it %.6f h, ankles slipped up to %.6f h, feet turned up to %.2f deg, hips tilt %.2f deg, chest tilt %.2f deg",
+			hold ? "hand held at its angle" : "hand free to turn", came, (from - to).length() / b.height, travelled_late, worst_slip, worst_feet, b.tilt("hips", stance.hips), b.tilt("chest", stance.chest));
+		test::@check(came > 0.3f, "the hand stuck after %.3f heights (hold %s)", came, hold);
+		test::@check(travelled_late == 0.0f, "a still pointer moved the hand %.5f heights", travelled_late);
+		test::@check(worst_slip < PIN_HELD, "an ankle slipped %.6f heights", worst_slip);
+		test::@check(worst_feet < FOOT_FLAT, "a pinned foot turned %.2f degrees", worst_feet);
+		b.check_limits("pull past reach");
 	}
-	float came = ((from - to).length() - last) / b.height;
-	body_solve::note("  pull past reach: the hand came %.3f heights of %.3f, a still pointer moved it %.6f h, ankles slipped up to %.6f h, feet turned up to %.2f deg, hips tilt %.2f deg, chest tilt %.2f deg",
-		came, (from - to).length() / b.height, travelled_late, worst_slip, worst_feet, b.tilt("hips", stance.hips), b.tilt("chest", stance.chest));
-	test::@check(came > 0.3f, "the hand stuck after %.3f heights", came);
-	test::@check(travelled_late == 0.0f, "a still pointer moved the hand %.5f heights", travelled_late);
-	test::@check(worst_slip < PIN_HELD, "an ankle slipped %.6f heights", worst_slip);
-	test::@check(worst_feet < FOOT_FLAT, "a pinned foot turned %.2f degrees", worst_feet);
-	b.check_limits("pull past reach");
 }
 
 <*

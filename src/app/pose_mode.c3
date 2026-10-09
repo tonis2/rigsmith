@@ -1814,11 +1814,20 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 		if (rides_a_pin(skeleton, goals.array_view(), foot)) continue;
 		goals.push({ .joint = foot, .position = true, .target = skeleton.joints[foot].transform(palette[foot]) });
 		// And the end of a short foot bone above a planted toe, so the foot stays flat
-		// rather than pivoting on its toe as the leg folds.
+		// rather than pivoting on its toe as the leg folds. The toe and the heel fix
+		// the line between them and leave the foot free to roll about it, so the heel
+		// keeps its angle softly too, as a position pin does.
 		int heel = skeleton.parents[foot];
 		if (heel < 0 || (usz)heel == root || body_goal_of(goals.array_view(), (usz)heel) >= 0) continue;
 		if ((skeleton.joints[foot] - skeleton.joints[(usz)heel]).length() > h * CURL_CHAIN_SHARE) continue;
-		goals.push({ .joint = (usz)heel, .position = true, .target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]) });
+		goals.push({
+			.joint = (usz)heel,
+			.position = true,
+			.target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]),
+			.rotation = true,
+			.orient = world[(usz)heel],
+			.turn_weight = POINT_POSE_PIN_SOFT_TURN,
+		});
 	}
 
 	PointPoseSettings settings = {
