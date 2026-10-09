@@ -165,7 +165,12 @@ fn void a_saved_frame_becomes_a_bone_relative_adjustment() @test
 		"the carried adjustment does not reconstruct the source frame");
 }
 
-fn void ambiguous_transfer_frames_are_reported_not_guessed() @test
+<*
+ A fork that names no child crosses naming the one its axes followed, so a
+ template fitted to a rig of another shape follows the same bone — and a saved
+ frame crosses as an adjustment of that bone, not left out as ambiguous.
+*>
+fn void a_fork_transfers_naming_the_child_it_follows() @test
 {
 	ConstraintFixture fixture;
 	fixture.open();
@@ -175,31 +180,48 @@ fn void ambiguous_transfer_frames_are_reported_not_guessed() @test
 	fixture.doc.connect(fixture.knee, toe);
 	crig::JointRotationLimits limits = knee_limits(fixture.knee, 0);
 	limits.primary_child = 0;
-	limits.has_saved_frame = true;
-	limits.saved_frame = quaternion::IDENTITY;
 	test::@check(fixture.doc.set_rotation_limits(fixture.knee, limits),
-		"the explicit source frame was refused");
+		"the automatic fork table was refused");
 
-	uint[] ids;
-	rig::Skeleton skeleton = crig::build_skeleton(&fixture.doc, mem, &ids)!!;
-	defer
+	for (usz pass = 0; pass < 2; pass++)
 	{
-		skeleton.free(mem);
-		alloc::free(mem, ids);
-	}
-	crig::ConstraintRig constraints = crig::constraint_rig_of(mem, &fixture.doc,
-		&skeleton, ids);
-	defer constraints.free(mem);
+		if (pass == 1)
+		{
+			limits.has_saved_frame = true;
+			limits.saved_frame = quaternion::IDENTITY;
+			test::@check(fixture.doc.set_rotation_limits(fixture.knee, limits),
+				"the explicit source frame was refused");
+		}
 
-	int knee = joint_of(ids, fixture.knee);
-	if (knee < 0) { test::@check(false, "the knee did not build"); return; }
-	crig::JointConstraint carried = constraints.joints[(usz)knee];
-	test::@check(carried.status == crig::JointConstraintStatus.UNSUPPORTED,
-		"an ambiguous reusable frame was silently accepted");
-	test::@check(carried.frame_status == crig::JointLimitFrameStatus.NEEDS_PRIMARY_CHILD,
-		"the unsupported row lost the reason it cannot transfer (%s)", carried.frame_status);
-	test::@check(constraints.unsupported() == 1,
-		"the constraint report counted %d unsupported rows", constraints.unsupported());
+		uint[] ids;
+		rig::Skeleton skeleton = crig::build_skeleton(&fixture.doc, mem, &ids)!!;
+		defer
+		{
+			skeleton.free(mem);
+			alloc::free(mem, ids);
+		}
+		crig::ConstraintRig constraints = crig::constraint_rig_of(mem, &fixture.doc,
+			&skeleton, ids);
+		defer constraints.free(mem);
+
+		int knee = joint_of(ids, fixture.knee);
+		if (knee < 0) { test::@check(false, "the knee did not build"); return; }
+		crig::JointConstraint carried = constraints.joints[(usz)knee];
+		test::@check(carried.status == crig::JointConstraintStatus.EXACT && constraints.unsupported() == 0,
+			"the fork's table did not cross (pass %d, %s)", pass, carried.frame_status);
+		test::@check(carried.frame_intent == (pass == 0
+			? crig::ConstraintFrameIntent.PRIMARY_CHILD : crig::ConstraintFrameIntent.ADJUSTED_PRIMARY_CHILD),
+			"the fork crossed as %s (pass %d)", carried.frame_intent, pass);
+		test::@check(carried.primary_child == joint_of(ids, fixture.foot),
+			"the fork named joint %d, not the foot its bone runs on to (pass %d)", carried.primary_child, pass);
+		if (pass == 1)
+		{
+			crig::JointLimitFrame base = crig::joint_limit_frame_by_index(&skeleton, (usz)knee,
+				carried.primary_child);
+			test::@check(near_quat(base.rotation.mul(carried.frame_adjustment).normalize(),
+				quaternion::IDENTITY), "the carried adjustment does not reconstruct the saved frame");
+		}
+	}
 }
 
 const String PACK_CONSTRAINT_GLB = "build/out_constraint_pack.glb";

@@ -51,7 +51,7 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 		"x":{"type":"object","description":"limits only: the swing across the bone about the joint's X, in radians (where the bone points).","properties":{"allow":{"type":"boolean"},"minimum":{"type":"number"},"maximum":{"type":"number"},"locked":{"type":"number"}}},
 		"y":{"type":"object","description":"limits only: the twist about the bone (the joint's Y), in radians.","properties":{"allow":{"type":"boolean"},"minimum":{"type":"number"},"maximum":{"type":"number"},"locked":{"type":"number"}}},
 		"z":{"type":"object","description":"limits only: the swing across the bone about the joint's Z, in radians (where the bone points).","properties":{"allow":{"type":"boolean"},"minimum":{"type":"number"},"maximum":{"type":"number"},"locked":{"type":"number"}}},
-		"primary_child":{"type":"string","description":"limits only: for a branching joint, which direct child defines local +Y. Empty clears the choice."},
+		"primary_child":{"type":"string","description":"limits only: for a branching joint, which direct child defines local +Y, in place of the one that carries its bone on. Empty clears the choice."},
 		"frame":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"number"},"description":"limits only: an explicit rest/model-space local-axis quaternion [x,y,z,w], overriding topology."},
 		"clear_frame":{"type":"boolean","description":"limits only: remove an explicit frame and derive axes from the bone again."},
 		"reset":{"type":"boolean","description":"limits only: remove all limits and saved frame choices from this joint."},

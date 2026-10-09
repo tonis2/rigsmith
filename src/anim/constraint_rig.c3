@@ -311,10 +311,9 @@ fn JointConstraint free_joint_constraint() @private
  exactly reconstructs the source frame as `derived * adjustment` and remains
  meaningful when P4 derives a different target frame.
 
- A saved absolute frame cannot rescue ambiguous topology for reuse. If a fork
- has no primary child, there is no bone direction on the target against which
- its saved adjustment could be interpreted, so the row is `UNSUPPORTED` and is
- reported instead of copying the source-space quaternion.
+ A fork with no primary child crosses naming the child its frame followed
+ here, so a target of another shape follows the same bone rather than
+ whichever child its own geometry would pick.
 
  The returned value owns `joints`; release it with `ConstraintRig.free`.
 
@@ -346,13 +345,6 @@ fn ConstraintRig constraint_rig_of(
 		carried.status = EXACT;
 		carried.axes = limits.axes;
 
-		int primary = constraint_joint_of(dot_ids, joints, limits.primary_child);
-		carried.primary_child = primary;
-		bool explicit_child = limits.primary_child != 0;
-		carried.frame_intent = limits.has_saved_frame
-			? (explicit_child ? ADJUSTED_PRIMARY_CHILD : ADJUSTED_AUTOMATIC)
-			: (explicit_child ? PRIMARY_CHILD : AUTOMATIC);
-
 		// Rebuild the transferable base even when the document has an explicit
 		// frame: the explicit value itself is source-space and must never be the
 		// value copied onto another model.
@@ -360,6 +352,14 @@ fn ConstraintRig constraint_rig_of(
 		base_limits.has_saved_frame = false;
 		base_limits.saved_frame = quaternion::IDENTITY;
 		JointLimitFrame base = joint_limit_frame(skeleton, dot_ids, base_limits);
+
+		uint child = limits.primary_child;
+		if (child == 0 && base.usable() && limit_frame_forks(skeleton, joint)) child = base.direction_dot;
+		carried.primary_child = constraint_joint_of(dot_ids, joints, child);
+		bool explicit_child = child != 0;
+		carried.frame_intent = limits.has_saved_frame
+			? (explicit_child ? ADJUSTED_PRIMARY_CHILD : ADJUSTED_AUTOMATIC)
+			: (explicit_child ? PRIMARY_CHILD : AUTOMATIC);
 		if (!base.usable())
 		{
 			carried.status = UNSUPPORTED;

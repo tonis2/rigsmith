@@ -160,7 +160,13 @@ fn void joint_panel_numeric_rotation_follows_auto_key() @test
 	test::eq(f.app.clip(f.app.editing).keyframes.len, keys);
 }
 
-fn void branching_joint_panel_asks_which_child_defines_its_axes() @test
+<*
+ A branching joint's card has its axes from the start: they follow the child
+ that carries the bone on, so there is no child to choose. A stored choice of
+ another child — one made before forks chose for themselves — is shown with a
+ button back to the automatic one.
+*>
+fn void a_branching_joint_card_follows_the_child_that_carries_its_bone() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -172,10 +178,28 @@ fn void branching_joint_panel_asks_which_child_defines_its_axes() @test
 	f.app.select(made.joint);
 	f.feed({ 0, 0 });
 
-	test::@check(f.in_tree(crig::JOINT_PRIMARY_CHILD_ID),
-		"a branch did not offer a bone-axis child choice");
-	test::@check(!f.in_tree(crig::JOINT_ROTATION_X_ID),
-		"a branch invented local axes before a child was chosen");
+	test::@check(f.in_tree(crig::JOINT_LIMITS_ACTIVE_ID),
+		"a branch had no local axes until a child was chosen");
+	test::@check(!f.in_tree(crig::JOINT_AXES_FOLLOW_ID),
+		"a branch on its automatic child offered a way back to it");
+	test::eq(panel_frame(&f, made.joint).direction_dot, made.tip);
+
+	crig::JointRotationLimits limits = f.app.doc.rotation_limits_of(made.joint);
+	limits.primary_child = branch;
+	test::@check(f.app.set_rotation_limits_recorded(made.joint, limits), "the stored child was refused");
+	f.app.undo_stack.commit();
+	f.app.refresh_ui();
+	crig::refresh_joint_panel(f.ui);
+	f.feed({ 0, 0 });
+	test::eq(panel_frame(&f, made.joint).direction_dot, branch);
+
+	f.click(f.center_of(crig::JOINT_AXES_FOLLOW_ID)!!);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	test::eq(f.app.doc.rotation_limits_of(made.joint).primary_child, (uint)0);
+	test::eq(panel_frame(&f, made.joint).direction_dot, made.tip);
+	test::@check(!f.in_tree(crig::JOINT_AXES_FOLLOW_ID),
+		"the way back stayed after the axes followed the bone again");
 }
 
 <*

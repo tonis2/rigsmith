@@ -193,15 +193,14 @@ fn bool RigDocument.set_rotation_limits(&self, uint dot_id, JointRotationLimits 
 <*
  Why a bone-local frame could not be produced.
 
- `NEEDS_PRIMARY_CHILD` is a useful, fixable state rather than an arbitrary
- answer: averaging a shoulder's spine and arm children would make its axes move
- when an unrelated branch is edited.
+ A fork is not one of them: its bone runs to the child `continuing_child`
+ picks, one whole child rather than an average, so editing an unrelated branch
+ never moves its axes.
 *>
 enum JointLimitFrameStatus
 {
 	READY,
 	JOINT_NOT_FOUND,
-	NEEDS_PRIMARY_CHILD,
 	PRIMARY_CHILD_INVALID,
 	ZERO_LENGTH,
 	NO_DIRECTION,
@@ -226,7 +225,6 @@ fn String JointLimitFrameStatus.reason(self)
 	{
 		case READY: return "";
 		case JOINT_NOT_FOUND: return "the joint is no longer in this rig";
-		case NEEDS_PRIMARY_CHILD: return "this joint branches; choose which child defines its bone-local axes";
 		case PRIMARY_CHILD_INVALID: return "the saved primary child is not a child of this joint";
 		case ZERO_LENGTH: return "the selected bone has zero length and cannot define stable axes";
 		case NO_DIRECTION: return "this isolated joint has no bone direction to define local axes";
@@ -565,8 +563,9 @@ fn JointLimitFrame legacy_limit_frame(JointLimitFrame derived)
  different axes for the same bone.
 
  `primary_child < 0` selects the automatic rule. `direction_ids` is optional;
- the editor supplies dot ids so `direction_dot` can drive its child picker,
- while file boundaries leave it empty because a glTF node has no dot id.
+ the editor supplies dot ids so `direction_dot` says which child a fork
+ followed, while file boundaries leave it empty because a glTF node has no dot
+ id.
 *>
 fn JointLimitFrame joint_limit_frame_by_index(
 	rig::Skeleton* skeleton,
@@ -615,9 +614,9 @@ fn JointLimitFrame joint_limit_frame_by_index(
 	{
 		if (children > 1)
 		{
-			return { .status = NEEDS_PRIMARY_CHILD, .rotation = quaternion::IDENTITY };
+			direction = continuing_child(skeleton, joint);
 		}
-		if (children == 1)
+		else if (children == 1)
 		{
 			direction = only_child;
 		}
@@ -646,12 +645,83 @@ fn JointLimitFrame joint_limit_frame_by_index(
 }
 
 <*
+ Whether a joint's bone is one of several children's: a fork, whose frame
+ follows `continuing_child` unless `primary_child` names another. Zero-length
+ children do not count, as they cannot define a bone.
+*>
+fn bool limit_frame_forks(rig::Skeleton* skeleton, usz joint)
+{
+	usz children = 0;
+	foreach (usz i, int parent : skeleton.parents)
+	{
+		if (parent != (int)joint) continue;
+		if ((skeleton.joints[i] - skeleton.joints[joint]).length_sq() <= LIMIT_FRAME_EDGE_SQ) continue;
+		if (++children > 1) return true;
+	}
+	return false;
+}
+
+<*
+ The child a fork's bone runs on to when nothing names one.
+
+ The one that carries on the way the bone into the fork came: a chest's neck
+ rather than its clavicles, a wrist's middle finger rather than its thumb. A
+ fork with no bone coming in — the root's hips — follows the child that leads
+ the most of the skeleton: the spine, not a thigh. Ties go to the earlier
+ child, so the answer depends on nothing but the rig.
+*>
+fn usz continuing_child(rig::Skeleton* skeleton, usz joint) @private
+{
+	usz count = skeleton.len();
+	int parent = skeleton.parents[joint];
+	Vec3 incoming = parent >= 0 && (usz)parent < count
+		? skeleton.joints[joint] - skeleton.joints[(usz)parent] : (Vec3){};
+	bool along = incoming.length_sq() > LIMIT_FRAME_EDGE_SQ;
+	if (along) incoming = incoming.normalize();
+
+	usz best = count;
+	float best_score;
+	for (usz i = 0; i < count; i++)
+	{
+		if (skeleton.parents[i] != (int)joint) continue;
+		Vec3 edge = skeleton.joints[i] - skeleton.joints[joint];
+		if (edge.length_sq() <= LIMIT_FRAME_EDGE_SQ) continue;
+		float score = along ? edge.normalize().dot(incoming) : (float)joints_below(skeleton, i);
+		if (best < count && score <= best_score) continue;
+		best = i;
+		best_score = score;
+	}
+	return best;
+}
+
+<*
+ How many joints hang below `joint`, however deep.
+*>
+fn usz joints_below(rig::Skeleton* skeleton, usz joint) @private
+{
+	usz count = skeleton.len();
+	usz below = 0;
+	for (usz k = 0; k < count; k++)
+	{
+		int at = skeleton.parents[k];
+		// Bounded, so a parent cycle in a hand-built skeleton cannot hang it.
+		for (usz step = 0; at >= 0 && (usz)at < count && step < count; step++)
+		{
+			if (at == (int)joint) { below++; break; }
+			at = skeleton.parents[(usz)at];
+		}
+	}
+	return below;
+}
+
+<*
  Derive one joint's rest/model-space bone-local frame.
 
  The skeleton and dot ids must come from the same `build_skeleton` call. Zero
  length children are ignored when a real child exists; if none can define the
- direction, a leaf falls back to parent -> joint. A true fork refuses to guess
- unless `primary_child` names one of its direct non-zero children.
+ direction, a leaf falls back to parent -> joint. A fork follows
+ `continuing_child` unless `primary_child` names one of its direct non-zero
+ children.
 
  The returned frame is stable rest data. To display it over a pose or constrain
  a local rotation, carry it by the selected joint's *parent* world rotation. A

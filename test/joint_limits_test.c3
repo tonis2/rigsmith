@@ -449,7 +449,13 @@ fn void directional_and_plane_locks_project_the_pointer_without_drift() @test
 		"the bone-direction projection missed the closest point (%s)", along);
 }
 
-fn void a_fork_requires_an_explicit_primary_child() @test
+<*
+ A fork's bone axes follow the child that carries its bone on, with nothing to
+ choose: the child along the bone coming in, or at the root, where none comes
+ in, the child leading the most of the skeleton — the hips' spine, not a thigh.
+ A named child or a saved frame still wins.
+*>
+fn void a_fork_follows_the_child_that_carries_its_bone_on() @test
 {
 	LimitRig fixture;
 	fixture.open();
@@ -457,9 +463,17 @@ fn void a_fork_requires_an_explicit_primary_child() @test
 
 	uint side = fixture.doc.add_dot({ 1, 1, 0 }, "side");
 	fixture.doc.connect(fixture.middle, side);
-	crig::JointLimitFrame refused = frame_of(&fixture.doc, fixture.middle);
-	test::@check(refused.status == crig::JointLimitFrameStatus.NEEDS_PRIMARY_CHILD,
-		"a fork silently chose a child (%s)", refused.status);
+	crig::JointLimitFrame automatic = frame_of(&fixture.doc, fixture.middle);
+	test::@check(automatic.usable() && automatic.direction_dot == fixture.leaf,
+		"a fork did not follow the child along its bone (%s, dot %d)", automatic.status, automatic.direction_dot);
+	test::@check(near_vec(automatic.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }),
+		"the continuing child did not become +Y");
+
+	uint tail = fixture.doc.add_dot({ -1, -0.5f, 0 }, "tail");
+	fixture.doc.connect(fixture.root, tail);
+	crig::JointLimitFrame root = frame_of(&fixture.doc, fixture.root);
+	test::@check(root.usable() && root.direction_dot == fixture.middle,
+		"the root followed its short branch (%s, dot %d)", root.status, root.direction_dot);
 
 	crig::JointRotationLimits settings = crig::unconstrained_rotation(fixture.middle);
 	settings.primary_child = side;
@@ -472,12 +486,46 @@ fn void a_fork_requires_an_explicit_primary_child() @test
 
 	settings.primary_child = 0;
 	settings.has_saved_frame = true;
-	settings.saved_frame = quaternion::IDENTITY;
+	settings.saved_frame = { .v = { 0, 0, 0.70710678f, 0.70710678f } };
 	test::@check(fixture.doc.set_rotation_limits(fixture.middle, settings), "explicit frame was not stored");
 	crig::JointLimitFrame explicit = frame_of(&fixture.doc, fixture.middle);
 	test::@check(explicit.usable()
-		&& near_vec(explicit.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }),
-		"a saved frame did not resolve the fork");
+		&& near_vec(explicit.axis(crig::JointRotationAxis.Y), { -1, 0, 0 }),
+		"a saved frame did not win over the fork's own child");
+}
+
+<*
+ On the shipped humanoid, the forks follow the bones a person would name with
+ no child stored: the hips the spine, the chest the neck, each wrist its middle
+ finger — the last two what the file names outright.
+*>
+fn void the_humanoids_forks_follow_its_spine_neck_and_middle_fingers() @test
+{
+	String path = library::shipped_humanoid();
+	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;
+	crig::AppState app = crig::new_app(mesh, path);
+	defer
+	{
+		app.free();
+		mesh.free(mem);
+	}
+	test::@check(app.import_rig_from_source(), "%s must import its rig", path);
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+
+	String[2][4] forks = { { "hips", "spine" }, { "chest", "neck" },
+		{ "wrist_L", "middle_1_L" }, { "wrist_R", "middle_1_R" } };
+	foreach (fork : forks)
+	{
+		crig::Dot* joint = app.dot_named(fork[0]);
+		crig::Dot* child = app.dot_named(fork[1]);
+		if (!joint || !child) { test::@check(false, "the humanoid has no %s or %s", fork[0], fork[1]); continue; }
+		crig::JointRotationLimits limits = crig::unconstrained_rotation(joint.id);
+		crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+		crig::Dot* followed = app.doc.find(frame.direction_dot);
+		test::@check(frame.usable() && frame.direction_dot == child.id,
+			"%s followed %s, not %s", fork[0], followed ? followed.name : "nothing", fork[1]);
+	}
 }
 
 fn void zero_length_and_invalid_primary_edges_are_reported() @test
@@ -868,9 +916,10 @@ fn void a_shoulder_reflects_its_raise_as_is_and_its_swing_and_twist_the_other_wa
 }
 
 <*
- A chosen child crosses as its twin, a saved frame crosses reflected, and a
- twin whose own bone cannot carry the axes is pinned to the reflection — each
- still the source's table seen in a mirror.
+ A chosen child crosses as its twin, a twin's fork follows its own matching
+ child, a saved frame crosses reflected, and a twin whose own bone cannot carry
+ the axes is pinned to the reflection — each still the source's table seen in a
+ mirror.
 *>
 fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 {
@@ -879,8 +928,8 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 	defer sides.close();
 
 	// --- a chosen child, on a knee that branches into a foot and a heel -------
-	uint heel_l = sides.doc.add_dot({ 0.1f, -0.8f, -0.05f }, "heel_L");
-	uint heel_r = sides.doc.add_dot({ -0.1f, -0.8f, -0.05f }, "heel_R");
+	uint heel_l = sides.doc.add_dot({ 0.1f, -0.7f, -0.1f }, "heel_L");
+	uint heel_r = sides.doc.add_dot({ -0.1f, -0.7f, -0.1f }, "heel_R");
 	sides.doc.connect(sides.knee_l, heel_l);
 	sides.doc.connect(sides.knee_r, heel_r);
 
@@ -898,10 +947,18 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 		"the other knee did not take the other foot for its bone");
 	test::@check(sides.reflects_the_same(knee, twin), "constraining and reflecting do not commute on the knees");
 
-	// --- and without the child crossing, the twin cannot carry the axes itself
+	// --- without the child crossing, the twin's fork follows its own foot ------
 	test::@check(sides.mirrored(sides.knee_l, sides.knee_r, 0, &twin), "the reflection was refused with no child named");
+	test::@check(!twin.has_saved_frame && twin.primary_child == 0,
+		"a twin whose fork follows the matching child was pinned to a frame");
+	test::@check(sides.reflects_the_same(knee, twin), "the twin's own fork does not read the table the same way");
+
+	// --- and a twin whose bone runs on elsewhere is pinned to the reflection ---
+	uint spur_r = sides.doc.add_dot({ -0.1f, -0.8f, 0 }, "spur_R");
+	sides.doc.connect(sides.knee_r, spur_r);
+	test::@check(sides.mirrored(sides.knee_l, sides.knee_r, 0, &twin), "the reflection was refused for the spurred knee");
 	test::@check(twin.has_saved_frame && twin.primary_child == 0,
-		"a twin that branches with no child chosen was not pinned to the reflected frame");
+		"a twin whose fork follows another bone was not pinned to the reflected frame");
 	test::@check(sides.reflects_the_same(knee, twin), "the pinned frame does not read the table the same way");
 
 	// --- a saved frame: the hip's, rolled a little about its bone --------------
@@ -928,11 +985,12 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 		"the saved roll crossed as %s rather than the same roll the other way", adjustment.v);
 
 	// --- a source with no axes has nothing to reflect --------------------------
-	crig::JointRotationLimits fork = crig::unconstrained_rotation(sides.knee_l);
-	fork.constrained = true;
-	test::@check(sides.doc.set_rotation_limits(sides.knee_l, fork), "the fork's table was refused");
+	crig::JointRotationLimits stale = crig::unconstrained_rotation(sides.knee_l);
+	stale.constrained = true;
+	stale.primary_child = sides.hip_l;
+	test::@check(sides.doc.set_rotation_limits(sides.knee_l, stale), "the stale table was refused");
 	test::@check(!sides.mirrored(sides.knee_l, sides.knee_r, 0, &twin),
-		"a table on a fork with no child chosen claimed a reflection");
+		"a table whose bone follows no child claimed a reflection");
 }
 
 // ---------------------------------------------------------------------------

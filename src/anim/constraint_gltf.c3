@@ -809,8 +809,10 @@ fn bool infer_constraint_frame(
 	Quaternionf world_frame,
 	JointConstraint* out) @local
 {
+	// A fork's frame is read as the child it matches, never as an adjustment of
+	// whichever child this rig's shape would follow on its own.
 	JointLimitFrame automatic = joint_limit_frame_by_index(skeleton, joint);
-	if (automatic.usable())
+	if (automatic.usable() && !limit_frame_forks(skeleton, joint))
 	{
 		Quaternionf adjustment = automatic.rotation.invert().mul(world_frame).normalize();
 		out.status = EXACT;

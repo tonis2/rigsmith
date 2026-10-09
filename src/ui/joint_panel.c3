@@ -72,7 +72,7 @@ const String JOINT_SECTION_ID = "joint-section";
 const String ALIGN_SECTION_ID = "align-section";
 const String JOINT_RENAME_ID = "joint-rename";
 const String JOINT_NAME_FIELD_ID = "joint-name-field";
-const String JOINT_PRIMARY_CHILD_ID = "joint-primary-child";
+const String JOINT_AXES_FOLLOW_ID = "joint-axes-follow";
 const String JOINT_LIMITS_ACTIVE_ID = "joint-limits-active";
 const String JOINT_LIMITS_RESET_ID = "joint-limits-reset";
 const String JOINT_LIMIT_X_ALLOW_ID = "joint-limit-x-allow";
@@ -354,20 +354,9 @@ struct JointPanel (Widget)
 {
 	JointPanelSnapshot shown;
 	char[320] readout; // the Weights card's readout line, held for the label to borrow
-	String[] child_labels;
-	uint[] child_ids;
+	char[96] follow_note; // the bone-axes repair line and its button, likewise
+	char[96] follow_label;
 }
-
-fn void JointPanel.release_choices(&self)
-{
-	foreach (label : self.child_labels) if (label.len > 0) alloc::free(mem, label.ptr);
-	if (self.child_labels.len > 0) alloc::free(mem, self.child_labels);
-	if (self.child_ids.len > 0) alloc::free(mem, self.child_ids);
-	self.child_labels = {};
-	self.child_ids = {};
-}
-
-fn void JointPanel.unmount(&self, Element* elem) @dynamic => self.release_choices();
 
 fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
 {
@@ -471,8 +460,7 @@ fn String joint_frame_note(JointLimitFrameStatus status) @private
 	switch (status)
 	{
 		case READY: return "";
-		case NEEDS_PRIMARY_CHILD: return "Choose which child defines the bone axes.";
-		case PRIMARY_CHILD_INVALID: return "Choose a valid child for the bone axes.";
+		case PRIMARY_CHILD_INVALID: return "The bone axes follow a joint that is no longer a child here.";
 		case ZERO_LENGTH: return "This bone has zero length; local axes are unavailable.";
 		case NO_DIRECTION: return "This joint has no bone direction for local axes.";
 		case INVALID_SAVED_FRAME: return "The saved bone-axis frame is invalid.";
@@ -480,32 +468,27 @@ fn String joint_frame_note(JointLimitFrameStatus status) @private
 	}
 }
 
-fn void JointPanel.collect_child_choices(&self, AppState* app, RigView* view, usz joint)
+<*
+ The child the bone axes would follow on their own, when the stored choice
+ names another — a pick from before forks chose for themselves, or a file's —
+ or zero when the two agree. A fork follows the child that carries its bone
+ on (`continuing_child`), so the panel offers no choice, only this way back.
+*>
+fn uint joint_axes_automatic_child(RigView* view, JointRotationLimits limits) @private
 {
-	usz count = 0;
-	foreach (usz i, int parent : view.skeleton.parents)
-	{
-		if (parent != (int)joint) continue;
-		if ((view.skeleton.joints[i] - view.skeleton.joints[joint]).length_sq() <= LIMIT_FRAME_EDGE_SQ) continue;
-		count++;
-	}
-	if (count < 2) return;
-
-	self.child_labels = alloc::new_array(mem, String, (sz)count + 1);
-	self.child_ids = alloc::new_array(mem, uint, (sz)count + 1);
-	self.child_labels[0] = "Choose child...".copy(mem);
-
-	usz at = 1;
-	foreach (usz i, int parent : view.skeleton.parents)
-	{
-		if (parent != (int)joint) continue;
-		if ((view.skeleton.joints[i] - view.skeleton.joints[joint]).length_sq() <= LIMIT_FRAME_EDGE_SQ) continue;
-		uint id = view.dot_ids[i];
-		Dot* dot = app.doc.find(id);
-		self.child_ids[at] = id;
-		self.child_labels[at] = (dot && dot.name.len > 0 ? dot.name : "unnamed joint").copy(mem);
-		at++;
-	}
+	uint held = limits.primary_child;
+	if (held == 0) return 0;
+	limits.primary_child = 0;
+	limits.has_saved_frame = false;
+	JointLimitFrame automatic = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+	if (!automatic.usable() || automatic.direction_dot == 0) return 0;
+	if (automatic.direction_dot == held) return 0;
+	sz joint = view.joint_of(limits.dot_id);
+	if (joint < 0) return 0;
+	// A leaf's bone runs from its parent; only a child is a choice to go back to.
+	int parent = view.skeleton.parents[(usz)joint];
+	if (parent >= 0 && view.dot_ids[(usz)parent] == automatic.direction_dot) return 0;
+	return automatic.direction_dot;
 }
 
 fn void set_joint_degree_field(Element* body, String id, float radians) @private
@@ -543,7 +526,6 @@ fn void refresh_joint_degree_fields(Ui* ui, AppState* app)
 fn Element* JointPanel.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
-	self.release_choices();
 	self.shown = joint_panel_snapshot(app);
 
 	Dot* dot = app.doc.find(app.selected);
@@ -560,7 +542,9 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 	Vec3 angles = {};
 	JointRotationAxis[3] posable;
 	usz posable_count = 0;
-	usz primary = 0;
+	uint follow = 0;
+	String follow_note;
+	String follow_label;
 
 	if (app.show_joint_panel && app.joint_panel_tab == JointPanelTab.JOINT && dot)
 	{
@@ -576,8 +560,16 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 				rig_ok = true;
 				limits = app.doc.rotation_limits_of(dot.id);
 				frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-				self.collect_child_choices(app, &view, joint);
-				foreach (usz i, id : self.child_ids) if (id == limits.primary_child) { primary = i; break; }
+				follow = joint_axes_automatic_child(&view, limits);
+				if (follow != 0)
+				{
+					Dot* held = app.doc.find(limits.primary_child);
+					Dot* automatic = app.doc.find(follow);
+					follow_note = string::bformat(self.follow_note[..], "Bone axes follow %s",
+						held && held.name.len > 0 ? held.name : "a removed joint");
+					follow_label = string::bformat(self.follow_label[..], "Follow %s",
+						automatic && automatic.name.len > 0 ? automatic.name : "its bone");
+				}
 				PosedJoint pose = joint_panel_pose(app, &view, dot.id);
 				angles = joint_angles_from_rotation(frame, pose.rotation);
 				// Only the axes the joint may turn about get a dial and a field. A
@@ -646,12 +638,16 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 												};
 											}
 
-											if (self.child_labels.len > 0)
+											if (follow != 0)
 											{
-												@node((Label) { .text = "Bone axes follow", .size = 12.0f, .color = TEXT_DIM });
-												@node((Select) { .options = self.child_labels, .selected = primary,
-													.width = JOINT_PANEL_W, .style = VIEW_MENU_STYLE,
-													.on_change = &joint_primary_child_chosen }).with_id(JOINT_PRIMARY_CHILD_ID);
+												@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
+													.size = { JOINT_PANEL_W, 0 } })
+												{
+													@node((Label) { .text = follow_note,
+														.size = 12.0f, .color = TEXT_DIM });
+													@node(panel_button(follow_label,
+														&joint_axes_follow_bone)).with_id(JOINT_AXES_FOLLOW_ID);
+												};
 											}
 
 											// The anchors live with the pose controls, and appear when posing is
@@ -1335,30 +1331,11 @@ fn bool commit_joint_limits(Ui* ui, JointRotationLimits limits) @private
 	return true;
 }
 
-fn void joint_primary_child_chosen(Ui* ui, usz row) @private
+fn void joint_axes_follow_bone(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	RigView? opened = app.open_rig(mem);
-	if (catch opened) return;
-	RigView view = opened;
-	defer view.free(mem);
-	sz selected = view.joint_of(app.selected);
-	if (selected < 0) return;
-
-	usz at = 0;
-	uint chosen = 0;
-	foreach (usz i, int parent : view.skeleton.parents)
-	{
-		if (parent != selected) continue;
-		if ((view.skeleton.joints[i] - view.skeleton.joints[(usz)selected]).length_sq()
-			<= LIMIT_FRAME_EDGE_SQ) continue;
-		at++;
-		if (at == row) { chosen = view.dot_ids[i]; break; }
-	}
-	if (row > 0 && chosen == 0) return;
-
 	JointRotationLimits limits = app.doc.rotation_limits_of(app.selected);
-	limits.primary_child = chosen;
+	limits.primary_child = 0;
 	(void)commit_joint_limits(ui, limits);
 }
 

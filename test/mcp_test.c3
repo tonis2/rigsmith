@@ -6006,7 +6006,7 @@ fn void collision_exclusions_cross_the_wire_read_back_and_undo() @test
 		"an exclusion missing its other joint was accepted, or refused without naming the fields");
 }
 
-fn void joint_limits_refuse_invalid_ranges_and_ambiguous_frames() @test
+fn void joint_limits_refuse_invalid_ranges_and_take_a_forks_own_child() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -6020,16 +6020,25 @@ fn void joint_limits_refuse_invalid_ranges_and_ambiguous_frames() @test
 	test::@check(f.app.doc.rotation_limits.len() == 0 && !f.app.undo_stack.can_undo(),
 		"a refused range changed the document or history");
 
-	// Turn hips into a fork. Enabling local-axis limits there without selecting
-	// a primary child must not choose knee or the new branch arbitrarily.
+	// Turn hips into a fork. Limits there need no primary child: the root's axes
+	// follow the child leading the most of the rig, the knee, not the new leaf.
 	uint branch = f.app.doc.add_dot({ 0.5f, 0.75f, 0 }, "branch");
 	f.app.doc.connect(f.app.doc.dots[0].id, branch);
-	test::@check(f.refuses_tool("edit_rig",
-		`{"ops":[{"op":"limits","joint":"hips","x":{"allow":true,"minimum":-1,"maximum":1}}]}`,
-		"branches", "choose which child"),
-		"a branching joint silently chose its local frame");
-	test::@check(f.app.doc.rotation_limits.len() == 0,
-		"the ambiguous table remained after refusal");
+	Object*? set = f.call_tool("edit_rig",
+		`{"ops":[{"op":"limits","joint":"hips","x":{"allow":true,"minimum":-1,"maximum":1}}]}`);
+	if (catch set)
+	{
+		test::@check(false, "a branching joint's limits were refused");
+		return;
+	}
+	defer set.free();
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	crig::JointRotationLimits held = f.app.doc.rotation_limits_of(f.app.doc.dots[0].id);
+	crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, held);
+	test::@check(held.constrained && held.primary_child == 0 && frame.usable()
+		&& frame.direction_dot == f.app.doc.dots[1].id,
+		"the fork's axes did not follow the knee (%s, dot %d)", frame.status, frame.direction_dot);
 }
 
 <*
