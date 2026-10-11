@@ -293,7 +293,7 @@ fn AreaNode* find_spare_leaf(AreaNode* node) @private
 fn void guide_frame_model(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	app.camera = framed(app.geometry.bounds());
+	app.camera = framed(app.world_bounds());
 	app.camera_reset_generation++;
 	ui.invalidate(OrbitCamera);
 }

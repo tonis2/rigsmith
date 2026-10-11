@@ -1184,14 +1184,6 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	self.source_path = path.len > 0 ? path.copy(mem) : "";
 	self.owns_path = path.len > 0;
 
-	// Not for a character added beside others: the view is on the scene, and
-	// jumping it to the newcomer would lose the one the user was looking at.
-	if (reframe)
-	{
-		self.camera = framed(geometry.bounds());
-		self.camera_reset_generation++;
-	}
-
 	self.doc.free();
 	self.doc = {
 		.auto_connect = true,
@@ -1232,6 +1224,17 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	// Same call the command line makes — see `adopt_source_rig` for the order and
 	// why it is one decision rather than two.
 	self.adopt_source_rig();
+
+	// After the rig, because the session carries the model's placement: framed
+	// before it, a model saved away from the origin opens with the camera on the
+	// empty spot it would stand on unplaced. Not for a character added beside
+	// others: the view is on the scene, and jumping it to the newcomer would lose
+	// the one the user was looking at.
+	if (reframe)
+	{
+		self.camera = framed(self.world_bounds());
+		self.camera_reset_generation++;
+	}
 }
 
 <*
@@ -1275,7 +1278,8 @@ fn void AppState.replace_geometry(&self, rig::TriMesh geometry)
 
 	if (!had_mesh)
 	{
-		self.camera = framed(geometry.bounds());
+		// World bounds: the rig, and the placement with it, stay as they were.
+		self.camera = framed(self.world_bounds());
 		self.camera_reset_generation++;
 	}
 

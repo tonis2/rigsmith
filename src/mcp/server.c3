@@ -403,11 +403,10 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "set_camera",
-		.description = "Aim the viewport for the person in front of it: one of the six axis views, or yaw, pitch, distance and target by hand, or frame to back off until the whole model is in view. Aiming is for them — render takes its own camera arguments and puts the camera back, so a picture never needs this first.",
+		.description = "Aim the viewport for the person in front of it. {\"frame\": true} centres it on the character being edited, wherever that character stands in the scene, and backs off until all of it is in view — the fix when a screenshot shows only empty floor. Or one of the six axis views, or yaw, pitch, distance and target (model space) by hand. render takes its own camera arguments and puts the camera back, so a picture never needs this first.",
 		.input_schema = SET_CAMERA_SCHEMA,
 		.handler = &tool_set_camera,
 		.user_data = app,
-		.hidden = true,
 	});
 	if (!hosted()) server.add_tool({
 		.name = "get_api_docs",

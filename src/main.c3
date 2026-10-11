@@ -244,6 +244,9 @@ fn int main(String[] args)
 	if (mesh_path.len > 0)
 	{
 		app.adopt_source_rig();
+		// `new_app` framed the mesh's own bounds; the session just read may have
+		// placed it somewhere else. See `load_mesh`, which does the same.
+		app.camera = framed(app.world_bounds());
 		app.remember_project(mesh_path);
 	}
 

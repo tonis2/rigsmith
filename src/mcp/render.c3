@@ -83,7 +83,7 @@ const String SET_CAMERA_SCHEMA = `{"type":"object","properties":{
 		"distance":{"type":"number","description":"Eye to target, in model units."},
 		"target":{"type":"array","items":{"type":"number"},"description":"[x,y,z] the camera looks at, in model space."}
 	}},
-	"frame":{"type":"boolean","description":"Back off until the whole model is in frame first, then apply anything above. What to ask for when the camera has been left somewhere unhelpful."}
+	"frame":{"type":"boolean","description":"Centre on the character being edited, wherever it stands in the scene, and back off until all of it is in frame; then apply anything above. What to ask for when the camera has been left somewhere unhelpful, or a screenshot comes back as empty floor."}
 }}`;
 
 <*
@@ -303,7 +303,10 @@ fn bool apply_framing(AppState* app, Object* args, DString* detail) @local
 		detail.append_string(`"frame" backs the camera off until the model is all in view, and nothing is loaded.`);
 		return false;
 	}
-	app.camera = framed(app.geometry.bounds(), app.camera.fov);
+	// World bounds, not the mesh's own: the camera looks at the world, and a
+	// character placed away from the origin — set down beside another, or moved
+	// with the Model gizmo — is drawn where its placement puts it.
+	app.camera = framed(app.world_bounds(), app.camera.fov);
 	return true;
 }
 
@@ -410,7 +413,9 @@ fn bool apply_camera(AppState* app, Object* args, DString* detail) @local
 			detail.append_string(`"camera".target must be [x,y,z] in model space`);
 			return false;
 		}
-		app.camera.target = at;
+		// Model space, like every other point on the wire, carried through the
+		// character's placement onto the world the camera orbits in.
+		app.camera.target = app.doc.model_transform.point(at);
 	}
 	return true;
 }
@@ -715,9 +720,11 @@ fn String camera_json(AppState* app) @local
 
 	out.appendf(`{"view":"%s","yaw":%s,"pitch":%s,"distance":%s,"target":`,
 		app.camera.view_name(), (JsonFloat)app.camera.yaw, (JsonFloat)app.camera.pitch, (JsonFloat)app.camera.distance);
-	append_vec3(&out, app.camera.target);
+	// Read back in the model space `target` is given in, so an answer can be
+	// handed straight back as an argument.
+	append_vec3(&out, app.doc.model_transform.inverse_point(app.camera.target));
 	out.append_string(`,"eye":`);
-	append_vec3(&out, app.camera.eye());
+	append_vec3(&out, app.doc.model_transform.inverse_point(app.camera.eye()));
 	out.append_char('}');
 
 	return out.copy_str(mem);

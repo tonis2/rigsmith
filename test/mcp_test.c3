@@ -478,10 +478,10 @@ fn void the_boot_server_holds_every_tool() @test
 // Kept as a second table rather than a flag on the first, because the two are
 // asserted against different things: this one against what a client is told, that
 // one against what the server can do.
-String[12] listed_tools @local = {
+String[13] listed_tools @local = {
 	"get_scene", "screenshot", "undo", "redo", "get_api_docs", "get_crig_docs",
 	"solve_targets", "get_annotations", "list_poses", "get_saved_pose", "tween_poses",
-	"focus_character",
+	"focus_character", "set_camera",
 };
 
 fn bool? tools_list_body(Object* root)
@@ -5419,6 +5419,52 @@ fn void set_camera_backs_off_until_the_model_fits() @test
 	test::@check(math::abs(f.app.camera.distance - 7.5f) < 0.001f,
 		"an explicit distance overrides the framing rather than being overridden by it (%.3f)",
 		f.app.camera.distance);
+}
+
+<*
+ `frame` and `target` find a character that was placed away from the origin.
+
+ The camera orbits in the world and the model is drawn through its placement, so
+ framing the mesh's own bounds, or taking a model-space target as a world one,
+ aims at the empty spot the model would stand on unplaced — and every picture
+ after that is bare floor with nothing in the answer to say why.
+*>
+fn void set_camera_frames_a_placed_character_where_it_stands() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	f.app.doc.model_transform.location = { 5, 0, 0 };
+
+	Object*? framed = f.call_tool("set_camera", `{"frame":true}`);
+	if (catch framed)
+	{
+		test::@check(false, "set_camera takes frame on a placed character");
+		return;
+	}
+	defer framed.free();
+
+	Vec3 centre = f.app.world_bounds().center();
+	test::@check((f.app.camera.target - centre).length() < 0.001f,
+		"frame centres on the character where it stands, not where its mesh would be unplaced (%.3f from it)",
+		(f.app.camera.target - centre).length());
+
+	Object*? aimed = f.call_tool("set_camera", `{"camera":{"target":[0,0,0]}}`);
+	if (catch aimed)
+	{
+		test::@check(false, "set_camera takes a target");
+		return;
+	}
+	defer aimed.free();
+
+	test::@check((f.app.camera.target - (Vec3){ 5, 0, 0 }).length() < 0.001f,
+		"a model-space target is carried through the placement onto the world");
+	Object* reported = aimed.get("target") ?? null;
+	test::@check(reported != null && reported.get_len() == 3
+		&& math::abs(reported.get_float_at(0) ?? 99) < 0.001,
+		"and reported back in the model space it was given in");
 }
 
 fn void set_camera_will_not_read_a_frame_that_is_not_a_flag() @test

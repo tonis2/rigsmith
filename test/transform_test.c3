@@ -5,6 +5,7 @@ import rig;
 import gltf;
 import std::core::test;
 import std::io;
+import std::io::file;
 import std::math;
 import std::math::quaternion;
 
@@ -98,6 +99,54 @@ fn void model_transform_is_non_destructive_undoable_and_persistent() @test
 	defer reopened.free();
 	test::@check(reopened.model_transform.same(fixture.app.doc.model_transform),
 		"the project sidecar lost the model placement");
+}
+
+<*
+ A model saved away from the origin reopens in view.
+
+ The placement lives in the session, which is read after the mesh is loaded; a
+ camera framed on the mesh's own bounds before that looks at the empty spot the
+ model would stand on unplaced, and the first thing the user sees is bare floor.
+*>
+fn void a_placed_model_reopens_in_view() @test
+{
+	const String PLACED = "build/transform-placed.glb";
+	char[] original = file::load(mem, "assets/animations/humanoid.glb")!!;
+	defer alloc::free(mem, original);
+	file::save(PLACED, original)!!;
+	String sidecar = crig::session_path(mem, PLACED);
+	defer sidecar.free(mem);
+	String copy = crig::copy_path(mem, PLACED);
+	defer copy.free(mem);
+	defer
+	{
+		(void)file::delete(PLACED);
+		(void)file::delete(sidecar);
+		(void)file::delete(copy);
+		String copied_sidecar = crig::session_path(mem, copy);
+		(void)file::delete(copied_sidecar);
+		copied_sidecar.free(mem);
+	}
+
+	rig::TriMesh mesh = rig::load_gltf(mem, PLACED)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, PLACED);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.doc.model_transform.location = { 5, 0, 0 };
+	app.save_session();
+	String saved = app.source_path.copy(mem);
+	defer saved.free(mem);
+
+	crig::AppState reopened = crig::new_app({});
+	defer reopened.free();
+	reopened.load_mesh(rig::load_gltf(mem, saved)!!, saved);
+	test::@check(near_vec(reopened.doc.model_transform.location, { 5, 0, 0 }),
+		"the session did not bring the placement back");
+	Vec3 centre = reopened.world_bounds().center();
+	test::@check((reopened.camera.target - centre).length() < 1.0e-3f,
+		"the camera opened on the unplaced mesh (target %s, the model stands at %s)",
+		reopened.camera.target, centre);
 }
 
 fn void model_rotation_keeps_the_character_center_fixed() @test
