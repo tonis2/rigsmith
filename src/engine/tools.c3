@@ -150,8 +150,9 @@ fn void ensure_tools(AppState* self)
  registration and the server borrows the strings, which live in the table.
 
  @param server : `Built by three's new_mcp_server, already carrying its own three tools.`
+ @param allocator : `For the widened schemas, which must outlive the server.`
 *>
-fn void install_tools(AppState* self, mcp::Server* server)
+fn void install_tools(AppState* self, mcp::Server* server, Allocator allocator = mem)
 {
 	ensure_tools(self);
 
@@ -166,7 +167,7 @@ fn void install_tools(AppState* self, mcp::Server* server)
 		// is static, so the record the wrapper points at outlives the server; so
 		// does the widened schema, which lives as long as the run.
 		String schema;
-		server.add_tool(routed_def(def, mem, &schema));
+		server.add_tool(routed_def(def, allocator, &schema));
 	}
 }
 

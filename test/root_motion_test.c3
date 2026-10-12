@@ -683,9 +683,15 @@ fn void optimize_keys_drops_joints_a_key_does_not_need() @test
 	{
 		float f = (float)k / (float)(KEYS - 1);
 		crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 8);
-		foreach (usz j, name : ROOTED_JOINTS) dots[j] = dot(name, { 0, 1, 0 }, 0.0f);
-		dots[1] = dot("hips", { 0, 1, 0 }, 0.4f * f, { 0.2f * f, 0.0f, 0.3f * f });
-		dots[4] = dot("arm_L", { 0, 0, 1 }, k % 2 == 1 ? -0.7f : 0.2f);
+		foreach (usz j, name : ROOTED_JOINTS)
+		{
+			switch (j)
+			{
+				case 1: dots[j] = dot("hips", { 0, 1, 0 }, 0.4f * f, { 0.2f * f, 0.0f, 0.3f * f });
+				case 4: dots[j] = dot("arm_L", { 0, 0, 1 }, k % 2 == 1 ? -0.7f : 0.2f);
+				default: dots[j] = dot(name, { 0, 1, 0 }, 0.0f);
+			}
+		}
 		frames[k] = { .time = f, .dots = dots };
 	}
 	crig::AnimTemplate clip = { .name = "every".copy(mem), .duration = 1.0f, .keyframes = frames, .owned = true };

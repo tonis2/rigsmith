@@ -43,7 +43,11 @@ fn bool Body.open(&self)
 	return true;
 }
 
-fn void Body.close(&self) => self.app.free();
+fn void Body.close(&self)
+{
+	self.app.free();
+	self.mesh.free(mem);
+}
 
 fn uint Body.id(&self, String name)
 {

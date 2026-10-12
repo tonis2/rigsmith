@@ -393,13 +393,12 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "render",
-		.description = "Photograph a clip at instants nobody is watching, tiled into one PNG. Give it four to nine times over a cycle and a view to look from, and what comes back is a contact sheet — which is how a walk is read, because a foot that plants and a foot that skates are the same picture one frame at a time. The player and the camera are put back exactly as they were, so this costs the person at the screen a flicker. screenshot is the tool for what they are actually looking at; measure_clip is the one for anything with a number attached, since foot_slide and floor_penetration are precisely what a picture hides.",
+		.description = "Photograph a clip at instants nobody is watching, tiled into one PNG, each tile labelled with its time. Give it four to nine times over a cycle, or {\"keys\": true} for every keyframe the clip has (keys: [0, 2, 5] for some of them), and a view to look from, and what comes back is a contact sheet — which is how a walk is read, because a foot that plants and a foot that skates are the same picture one frame at a time. The player and the camera are put back exactly as they were, so this costs the person at the screen a flicker. screenshot is the tool for what they are actually looking at; measure_clip is the one for anything with a number attached, since foot_slide and floor_penetration are precisely what a picture hides.",
 		.input_schema = RENDER_SCHEMA,
 		.handler = &tool_render,
 		.user_data = app,
 		// An image, like screenshot's; see `screenshot_content`.
 		.raw_content = true,
-		.hidden = true,
 	});
 	server.add_tool({
 		.name = "set_camera",

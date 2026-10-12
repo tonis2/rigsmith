@@ -14,7 +14,9 @@
  whole reason for tiling four instants into one picture is that the eye reads the
  difference between them instantly. Composed here, in-process, because the
  alternative is handing a caller four base64 blobs and asking it to own an image
- library.
+ library. The instants are seconds, or the clip's own keys — what an agent that
+ just wrote five keys wants to see is those five poses, without working out
+ when each one fell.
 
  `measure_clip` remains the better instrument for anything with a number attached
  to it: `foot_slide` and `floor_penetration` are exactly the faults a picture
@@ -62,6 +64,7 @@ const String RENDER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"Clip to photograph, or \"Pack/Clip\". Omit to photograph whatever is on screen now, which is what the camera and crop arguments are still worth."},
 	"times":{"type":"array","items":{"type":"number"},"description":"Seconds from the clip's start, one tile each, in the order given. Omit for a single frame at t. A cycle reads best as four to nine instants spread over its duration."},
 	"t":{"type":"number","description":"A single instant, when times is not given. Default 0."},
+	"keys":{"description":"The clip's own keyframes instead of times: true for every key, or an array of key numbers, counted from 0 in time order, for some of them. Each tile is labelled with its key number and time. Layers, aims and pins adjust a clip without adding keys, so they are not counted. Give this or times, not both.","anyOf":[{"type":"boolean"},{"type":"array","items":{"type":"integer"}}]},
 	"view":{"type":"string","enum":["Front","Back","Left","Right","Top","Bottom"],"description":"Look down an axis. What makes two renders comparable — a limb swinging in depth is invisible from the front and obvious from the left. The camera is put back afterwards."},
 	"camera":{"type":"object","description":"The camera by hand, for an angle none of the six named views gives. Applied after view, so either may be used alone.","properties":{
 		"yaw":{"type":"number","description":"Degrees about +Y. 0 puts the eye on +Z, which is in front of the model."},
@@ -114,7 +117,10 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 	// user nothing at all.
 	AnimRef ref = NO_ANIM;
 	float[RENDER_MOST_FRAMES] times;
+	// Which key each tile is, when they were asked for by key; empty otherwise.
+	usz[RENDER_MOST_FRAMES] keys;
 	usz frames = 1;
+	bool by_key = false;
 
 	if (member(args, "clip") != null)
 	{
@@ -135,7 +141,20 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 			return RENDER_REFUSED~;
 		}
 
-		if (!read_times(args, template.duration, times[..], &frames, detail)) return RENDER_REFUSED~;
+		if (member(args, "keys") != null)
+		{
+			if (!read_keys(app, ref, args, times[..], keys[..], &frames, detail)) return RENDER_REFUSED~;
+			by_key = true;
+		}
+		else if (!read_times(args, template.duration, times[..], &frames, detail))
+		{
+			return RENDER_REFUSED~;
+		}
+	}
+	else if (member(args, "keys") != null)
+	{
+		detail.append_string(`"keys" are a clip's keyframes, and no "clip" was named. get_scene lists the clips there are.`);
+		return RENDER_REFUSED~;
 	}
 
 	// Left at zero when the caller says nothing, and worked out from the first
@@ -238,10 +257,13 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 
 		image::Image scaled = tile.resize(tile_width, tile_height, mem);
 		defer scaled.free();
-		blit(&sheet, &scaled, tile_width * (uint)(f % columns), tile_height * (uint)(f / columns));
+		uint left = tile_width * (uint)(f % columns);
+		uint top = tile_height * (uint)(f / columns);
+		blit(&sheet, &scaled, left, top);
+		if (ref.valid()) label_tile(&sheet, left, top, tile_width, tile_height, by_key, keys[f], times[f]);
 	}
 
-	return sheet_content(app, &sheet, ref, times[:frames], columns, crop, args, detail);
+	return sheet_content(app, &sheet, ref, times[:frames], by_key ? keys[:frames] : (usz[]){}, columns, crop, args, detail);
 }
 
 <*
@@ -473,6 +495,123 @@ fn bool read_times(Object* args, float duration, float[] into, usz* count, DStri
 	return true;
 }
 
+<*
+ The instants to photograph, out of `keys`: the clip's own key times, all of
+ them or the ones numbered.
+
+ Numbered over the distinct times rather than the stored keyframes, so a pose
+ keyed in two passes at the same instant is one key here as it is on the
+ timeline.
+
+ @param into : `Filled with up to RENDER_MOST_FRAMES times.`
+ @param keys : `Filled with each time's key number, in the same order.`
+ @param count : `Set to how many were written.`
+ @return `False when something was refused, with the reason in detail.`
+*>
+fn bool read_keys(AppState* app, AnimRef ref, Object* args, float[] into, usz[] keys, usz* count, DString* detail) @local
+{
+	if (member(args, "times") != null || member(args, "t") != null)
+	{
+		detail.append_string(`"keys" and "times" (or "t") both say which instants to photograph. Give one of them.`);
+		return false;
+	}
+	// A pack read lazily knows its clips' names and lengths and none of their
+	// keys until one is asked for.
+	if (!app.ensure_clip_imported(ref))
+	{
+		detail.appendf(`"%s"'s keys could not be read out of its pack: %s`, app.clip(ref).name, app.notice());
+		return false;
+	}
+
+	AnimTemplate* clip = app.clip(ref);
+	float[] all = distinct_key_times(clip);
+	defer if (all.len > 0) alloc::free(mem, all.ptr);
+
+	if (all.len == 0)
+	{
+		detail.appendf(`"%s" has no keys to photograph. "times" photographs it at any instant.`, clip.name);
+		return false;
+	}
+
+	Object* given = member(args, "keys");
+	if (given.is_bool())
+	{
+		if (!given.b)
+		{
+			detail.append_string(`"keys" is true, for every key, or an array of key numbers. Leave it out to choose instants with "times".`);
+			return false;
+		}
+		if (all.len > RENDER_MOST_FRAMES)
+		{
+			detail.appendf(`"%s" has %d keys and %d is the most one call photographs. Choose some with "keys": [numbers], counted from 0; `,
+				clip.name, all.len, RENDER_MOST_FRAMES);
+			append_key_times(detail, all);
+			return false;
+		}
+		foreach (i, t : all)
+		{
+			into[i] = t;
+			keys[i] = (usz)i;
+		}
+		*count = all.len;
+		return true;
+	}
+
+	if (!given.is_array() || given.get_len() == 0)
+	{
+		detail.append_string(`"keys" must be true, for every key, or a non-empty array of key numbers counted from 0`);
+		return false;
+	}
+	if ((usz)given.get_len() > RENDER_MOST_FRAMES)
+	{
+		detail.appendf(`"keys" has %d entries and %d is the most one call photographs.`, given.get_len(), RENDER_MOST_FRAMES);
+		return false;
+	}
+
+	for (usz i = 0; i < (usz)given.get_len(); i++)
+	{
+		// Anything that is not a whole number reads as -1, which the range below
+		// refuses by naming it, as read_times does.
+		double n = given.get_float_at((sz)i) ?? -1.0;
+		if (n != math::floor(n)) n = -1.0;
+		if (n < 0 || n >= (double)all.len)
+		{
+			detail.appendf(`keys[%d] is %.9g, and "%s" has %d key(s), numbered from 0: `, i, n, clip.name, all.len);
+			append_key_times(detail, all);
+			return false;
+		}
+		into[i] = all[(usz)n];
+		keys[i] = (usz)n;
+	}
+	*count = (usz)given.get_len();
+	return true;
+}
+
+// "key 0 at 0 s, key 1 at 0.5 s.", so a refusal can be answered without a
+// second call to find out what there is.
+fn void append_key_times(DString* detail, float[] times) @local
+{
+	foreach (i, t : times)
+	{
+		detail.appendf(i > 0 ? `, key %d at %.4g s` : `key %d at %.4g s`, i, t);
+	}
+	detail.append_char('.');
+}
+
+<*
+ A tile's label, in its top-left corner: the key number and time, or the time.
+
+ Sized from the tile's shorter side, which keeps the longest label a sheet can
+ carry ("k15 10.00s") inside the tile it names at every scale.
+*>
+fn void label_tile(image::Image* sheet, uint left, uint top, uint width, uint height, bool by_key, usz key, float t) @local
+{
+	uint scale = math::max(1u, math::min(width, height) / 60);
+	String text = by_key ? string::format(mem, "k%d %.2fs", key, t) : string::format(mem, "%.2fs", t);
+	defer text.free(mem);
+	draw_label(sheet, left, top, scale, text);
+}
+
 // Put the clip on screen at `t`. `AppState.park_clip` is the whole of it — the
 // timeline's scrub needed exactly this and the two now share it, which is what
 // keeps a photographed frame and a scrubbed one the same picture — and, like the
@@ -638,14 +777,15 @@ fn void tile_size(uint width, uint height, usz columns, usz rows, uint* out_widt
 }
 
 // The sheet as MCP content: the picture, then a line saying what is in each tile
-// and in what order. The times are text rather than drawn into the pixels
-// because burning them in would want a font, and a caller reading tiles left to
-// right needs the list either way.
+// and in what order. The tiles carry their own labels (see `label_tile`); the
+// list is here too because a caller reading tiles left to right wants the
+// numbers exactly, and a 3x5 font rounds the time to two places.
 fn String? sheet_content(
 	AppState* app,
 	image::Image* sheet,
 	AnimRef ref,
 	float[] times,
+	usz[] keys,
 	usz columns,
 	Vec4 crop,
 	Object* args,
@@ -691,13 +831,24 @@ fn String? sheet_content(
 	if (ref.valid())
 	{
 		AnimTemplate* template = app.clip(ref);
-		out.appendf(`, %d tile(s) of \"%s\" across %d column(s), left to right and top to bottom, at t =`,
+		out.appendf(`, %d tile(s) of \"%s\" across %d column(s), left to right and top to bottom, at `,
 			times.len, template.name, columns);
+		if (keys.len > 0)
+		{
+			out.append_string("keys");
+			foreach (i, key : keys) out.appendf(i > 0 ? `, %d` : ` %d`, key);
+			out.append_string(" (t =");
+		}
+		else
+		{
+			out.append_string("t =");
+		}
 		foreach (i, t : times)
 		{
 			out.appendf(i > 0 ? `, %.4g` : ` %.4g`, t);
 		}
-		out.append_string(" seconds");
+		out.append_string(keys.len > 0 ? " seconds)" : " seconds");
+		out.append_string(", each labelled in its top-left corner");
 	}
 	else
 	{

@@ -455,13 +455,14 @@ String[56] tool_names @local = {
 // The server the app boots with holds three's own tools and all of crig's, and
 // `mcp::Server` keeps them in a fixed array whose overflow is an abort at launch —
 // which no test that drives the tool table directly would see. Built here the way
-// `main` builds it, with room still to spare.
+// `main` builds it, with room still to spare. The widened schemas go on the temp
+// allocator here; in `main` they live as long as the run.
 fn void the_boot_server_holds_every_tool() @test
 {
 	crig::AppState app;
 	three::ToolHost host = { };
 	mcp::Server server = three::new_mcp_server(&host);
-	crig::install_tools(&app, &server);
+	crig::install_tools(&app, &server, tmem);
 	test::@check(server.tools_len + 16 <= mcp::MAX_TOOLS,
 		"the boot server holds %d tools of %d; raise mcp::MAX_TOOLS before the next one aborts the launch",
 		server.tools_len, mcp::MAX_TOOLS);
@@ -478,10 +479,10 @@ fn void the_boot_server_holds_every_tool() @test
 // Kept as a second table rather than a flag on the first, because the two are
 // asserted against different things: this one against what a client is told, that
 // one against what the server can do.
-String[13] listed_tools @local = {
+String[14] listed_tools @local = {
 	"get_scene", "screenshot", "undo", "redo", "get_api_docs", "get_crig_docs",
 	"solve_targets", "get_annotations", "list_poses", "get_saved_pose", "tween_poses",
-	"focus_character", "set_camera",
+	"focus_character", "set_camera", "render",
 };
 
 fn bool? tools_list_body(Object* root)
@@ -5330,6 +5331,183 @@ fn void render_says_when_there_is_nothing_to_photograph() @test
 	test::@check(f.refuses_tool("render", `{"clip":"bend","times":[0,9]}`, "9", "0 to 0.5"),
 		"an instant past the end of the clip is named against the length it overran");
 	test::@check(frames == 0, "and nothing was drawn on the way to refusing");
+}
+
+// `keys` photographs the poses a clip was written as, which is the question an
+// agent has right after writing them: not "what happens at 0.3 s" but "did the
+// five keys I sent come out as five sensible poses".
+fn void render_photographs_a_clip_at_its_keys() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	int frames = 0;
+	f.app.screenshot = &wide_grab;
+	f.app.screenshot_ctx = &frames;
+
+	Object*? root = f.request(
+		`{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"render","arguments":{"clip":"bend","keys":true}}}`);
+	if (catch root)
+	{
+		test::@check(false, "render answers for keys");
+		return;
+	}
+	defer root.free();
+
+	String mime;
+	String data;
+	String caption;
+	if (!(screenshot_body(root, &mime, &data, &caption) ?? false))
+	{
+		test::@check(false, "render by key answers with an image block and a caption");
+		return;
+	}
+
+	// bend is keyed at 0 and 0.5 and at nothing in between.
+	test::@check(frames == 2, "one frame per key, %d drawn", frames);
+	test::@check(caption.contains("keys 0, 1") && caption.contains("t = 0, 0.5"),
+		"and the caption says which key each tile is and when it falls: %s", caption);
+	test::@check(caption.contains("labelled"), "and that the tiles carry their own labels");
+}
+
+fn void render_picks_keys_by_number() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	int frames = 0;
+	f.app.screenshot = &wide_grab;
+	f.app.screenshot_ctx = &frames;
+
+	Object*? root = f.request(
+		`{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"render","arguments":{"clip":"bend","keys":[1]}}}`);
+	if (catch root)
+	{
+		test::@check(false, "render answers for one key");
+		return;
+	}
+	defer root.free();
+
+	String mime;
+	String data;
+	String caption;
+	if (!(screenshot_body(root, &mime, &data, &caption) ?? false))
+	{
+		test::@check(false, "render of one key answers with an image block and a caption");
+		return;
+	}
+	test::@check(frames == 1, "only the key asked for is drawn, %d drawn", frames);
+	test::@check(caption.contains("keys 1 (t = 0.5"), "and it is key 1, at 0.5 s: %s", caption);
+
+	frames = 0;
+	test::@check(f.refuses_tool("render", `{"clip":"bend","keys":[2]}`, "2 key(s)", "key 1 at 0.5 s"),
+		"a key past the last is refused with the keys there are");
+	test::@check(f.refuses_tool("render", `{"clip":"bend","keys":[0.5]}`, "keys[0]"),
+		"a key number is a whole number");
+	test::@check(f.refuses_tool("render", `{"clip":"bend","keys":true,"times":[0]}`, "Give one of them"),
+		"keys and times together are refused rather than one silently winning");
+	test::@check(f.refuses_tool("render", `{"keys":true}`, "get_scene"),
+		"keys with no clip says there is no clip to have keys");
+	test::@check(frames == 0, "and nothing was drawn on the way to refusing");
+}
+
+// A clip keyed every frame — anything baked or imported — has more keys than a
+// sheet holds. Every key at once is refused with the list to choose from, not
+// cut short at sixteen, which would answer a different question than was asked.
+fn void render_refuses_more_keys_than_a_sheet_holds() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	DString clip = dstring::new(mem);
+	defer clip.free();
+	clip.append_string(`{"name":"dense","keyframes":[`);
+	for (int i = 0; i < 17; i++)
+	{
+		clip.appendf(`%s{"time":%.4g,"joints":[{"name":"knee","rotation":[0,0,0]}]}`, i > 0 ? "," : "", (double)i / 30.0);
+	}
+	clip.append_string(`]}`);
+
+	Object*? applied = f.call_tool("apply_clip", clip.str_view());
+	if (catch applied)
+	{
+		test::@check(false, "a seventeen-key clip could be authored");
+		return;
+	}
+	applied.free();
+
+	int frames = 0;
+	f.app.screenshot = &wide_grab;
+	f.app.screenshot_ctx = &frames;
+
+	test::@check(f.refuses_tool("render", `{"clip":"dense","keys":true}`, "17 keys", "key 16 at"),
+		"every key of a clip with more than a sheet holds is refused, naming them");
+
+	Object*? root = f.request(
+		`{"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"render","arguments":{"clip":"dense","keys":[0,8,16]}}}`);
+	if (catch root)
+	{
+		test::@check(false, "some of them can still be asked for");
+		return;
+	}
+	root.free();
+	test::@check(frames == 3, "and are drawn, %d drawn", frames);
+}
+
+fn void a_tile_label_is_drawn_into_the_pixels() @test
+{
+	char[20 * 12 * 4] pixels;
+	foreach (&channel : pixels) *channel = 200;
+
+	image::Image picture = {
+		.width = 20,
+		.height = 12,
+		.bit_depth = 8,
+		.format = image::PixelFormat.RGBA,
+		.pixels = pixels[..],
+	};
+
+	// "1" is one glyph: a box of 3 + 2 wide and 5 + 2 tall at scale 1.
+	crig::draw_label(&picture, 1, 1, 1, "1");
+
+	int white;
+	int dark;
+	bool alpha_kept = true;
+	bool outside_untouched = true;
+	for (uint y = 0; y < 12; y++)
+	{
+		for (uint x = 0; x < 20; x++)
+		{
+			char* p = &pixels[(y * 20 + x) * 4];
+			bool inside = x >= 1 && x < 6 && y >= 1 && y < 8;
+			if (p[3] != 200 && p[3] != 255) alpha_kept = false;
+			if (!inside && (p[0] != 200 || p[3] != 200)) outside_untouched = false;
+			if (inside && p[0] == 255) white++;
+			if (inside && p[0] == 50) dark++;
+		}
+	}
+	test::@check(white == 8, "the glyph's eight pixels are white, %d were", white);
+	test::@check(dark == 5 * 7 - 8, "and the rest of its box is darkened, %d were", dark);
+	test::@check(alpha_kept, "the box never makes the picture see-through");
+	test::@check(outside_untouched, "and nothing outside the box is touched");
+
+	// Past the right and bottom edges: clipped, not written past the buffer.
+	char[4 * 3 * 4] small;
+	image::Image corner = {
+		.width = 4,
+		.height = 3,
+		.bit_depth = 8,
+		.format = image::PixelFormat.RGBA,
+		.pixels = small[..],
+	};
+	crig::draw_label(&corner, 2, 1, 3, "k15 10.00s");
+	test::@check(true, "a label running off the image is clipped to it");
 }
 
 fn void set_camera_aims_down_a_named_axis() @test
