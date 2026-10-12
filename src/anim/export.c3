@@ -730,9 +730,24 @@ fn bool constrained_midpoint_misses(
 	return false;
 }
 
+// Ends a span: its end time joins the bake, and when the caller is collecting the
+// evaluated poses, the pose that was already computed for it joins them, so the
+// samples are not evaluated a second time once the times are known.
+fn void push_constraint_bake_sample(
+	Allocator allocator,
+	List{float}* times,
+	List{rig::Pose}* poses,
+	float time,
+	rig::Pose* pose) @local
+{
+	times.push(time);
+	if (poses) poses.push(pose.copy(allocator));
+}
+
 fn void append_constraint_bake_span(
 	Allocator allocator,
 	List{float}* times,
+	List{rig::Pose}* poses,
 	rig::Skeleton* skeleton,
 	String[] names,
 	AnimTemplate template,
@@ -746,7 +761,7 @@ fn void append_constraint_bake_span(
 	if (depth >= ANIM_CONSTRAINT_BAKE_DEPTH
 		|| (usz)times.len() >= ANIM_CONSTRAINT_BAKE_SAMPLES)
 	{
-		times.push(to_time);
+		push_constraint_bake_sample(allocator, times, poses, to_time, to);
 		return;
 	}
 
@@ -756,7 +771,7 @@ fn void append_constraint_bake_span(
 	// it read from the file and the file grows on every save.
 	if (to_time - from_time <= ANIM_CONSTRAINT_BAKE_MIN_SPAN)
 	{
-		times.push(to_time);
+		push_constraint_bake_sample(allocator, times, poses, to_time, to);
 		return;
 	}
 
@@ -765,7 +780,7 @@ fn void append_constraint_bake_span(
 	// representable time between them, hence no midpoint worth refining.
 	if (!(middle_time > from_time) || !(middle_time < to_time))
 	{
-		times.push(to_time);
+		push_constraint_bake_sample(allocator, times, poses, to_time, to);
 		return;
 	}
 
@@ -775,47 +790,65 @@ fn void append_constraint_bake_span(
 	if (!constrained_midpoint_misses(skeleton, constraints, from, &middle, to,
 		template.ground.solves()))
 	{
-		times.push(to_time);
+		push_constraint_bake_sample(allocator, times, poses, to_time, to);
 		return;
 	}
 
-	append_constraint_bake_span(allocator, times, skeleton, names, template,
+	append_constraint_bake_span(allocator, times, poses, skeleton, names, template,
 		constraints, from_time, from, middle_time, &middle, depth + 1);
-	append_constraint_bake_span(allocator, times, skeleton, names, template,
+	append_constraint_bake_span(allocator, times, poses, skeleton, names, template,
 		constraints, middle_time, &middle, to_time, to, depth + 1);
 }
 
+<*
+ @param poses : `When not null, receives the evaluated pose at every returned time — the same poses poses_at_times would compute for them with grounding on. The caller owns them.`
+*>
 fn float[] refine_constraint_bake_times(
 	Allocator allocator,
 	rig::Skeleton* skeleton,
 	String[] names,
 	AnimTemplate template,
 	ConstraintRig constraints,
-	float[] seed) @local
+	float[] seed,
+	rig::Pose[]* poses = null) @local
 {
 	if (seed.len == 0) return {};
 
 	List{float} refined;
 	refined.init(allocator);
 	defer refined.free();
-	refined.push(seed[0]);
+	List{rig::Pose} evaluated;
+	if (poses) evaluated.init(allocator);
+	List{rig::Pose}* collected = poses ? &evaluated : null;
 
+	// Each seed time is evaluated once: a span's end is the next span's start.
+	rig::Pose from = evaluated_export_pose(allocator, skeleton, names, template,
+		seed[0], true, constraints);
+	push_constraint_bake_sample(allocator, &refined, collected, seed[0], &from);
 	for (usz span = 0; span + 1 < seed.len; span++)
 	{
 		float from_time = seed[span];
 		float to_time = seed[span + 1];
-		rig::Pose from = evaluated_export_pose(allocator, skeleton, names, template,
-			from_time, true, constraints);
 		rig::Pose to = evaluated_export_pose(allocator, skeleton, names, template,
 			to_time, true, constraints);
-		append_constraint_bake_span(allocator, &refined, skeleton, names, template,
+		append_constraint_bake_span(allocator, &refined, collected, skeleton, names, template,
 			constraints, from_time, &from, to_time, &to, 0);
 		from.free(allocator);
-		to.free(allocator);
+		from = to;
+	}
+	from.free(allocator);
+
+	if (poses)
+	{
+		*poses = evaluated.to_array(allocator);
+		evaluated.free();
 	}
 	return refined.to_array(allocator);
 }
 
+<*
+ @param poses : `When not null, receives the evaluated pose at each returned time if the bake had to evaluate them anyway (the constrained path), or an empty array when it did not — the caller then samples them itself with poses_at_times. The caller owns them.`
+*>
 fn float[] export_bake_times(
 	Allocator allocator,
 	rig::Skeleton* skeleton,
@@ -823,8 +856,10 @@ fn float[] export_bake_times(
 	AnimTemplate template,
 	bool baked,
 	ConstraintRig constraints,
-	bool force_dense = false) @local
+	bool force_dense = false,
+	rig::Pose[]* poses = null) @local
 {
+	if (poses) *poses = {};
 	bool constrained = baked && constraints.constrains_pose();
 	// The seed is deliberately sparse on the constrained path: the adaptive
 	// `refine_constraint_bake_times` below places a sample only where the
@@ -855,7 +890,7 @@ fn float[] export_bake_times(
 	if (plain_linear) seed = decimate_below_floor(seed, ANIM_CONSTRAINT_BAKE_MIN_SPAN);
 
 	float[] refined = refine_constraint_bake_times(allocator, skeleton, names,
-		template, constraints, seed);
+		template, constraints, seed, poses);
 	alloc::free(allocator, seed);
 	return refined;
 }
@@ -1254,9 +1289,13 @@ fn void write_animation(
 	bool aligned = rest.len >= joints;
 	if (!baked || timing.active) motion = {};
 
+	// The constrained bake evaluates every pose it keeps while placing the samples;
+	// those are reused below rather than sampled a second time.
+	rig::Pose[] prebaked;
 	float[] times = timing.active
 		? timing.grid(allocator)
-		: export_bake_times(allocator, skeleton, names, template, baked, constraints, motion.dense());
+		: export_bake_times(allocator, skeleton, names, template, baked, constraints, motion.dense(),
+			&prebaked);
 	defer alloc::free(allocator, times);
 
 	// On a scene's clock the file is keyed at the scene's instants and the clip is
@@ -1275,8 +1314,10 @@ fn void write_animation(
 	// itself, and solving on the way out would bake this rig's leg proportions
 	// into the library; a file for someone else's engine has neither the solver
 	// nor the curve, so both have to be resolved here.
-	rig::Pose[] posed = poses_at_times(allocator, skeleton, names, template, sampled,
-		baked, constraints);
+	rig::Pose[] posed = prebaked.len == sampled.len && sampled.len > 0
+		? prebaked
+		: poses_at_times(allocator, skeleton, names, template, sampled, baked, constraints);
+	if (posed.ptr != prebaked.ptr) free_poses(allocator, prebaked);
 	defer free_poses(allocator, posed);
 	usz baked_keys = times.len;
 	if (!timing.active)
@@ -1632,14 +1673,22 @@ fn gltf_edit::ReskinClip[] reskin_clips(
 
 	foreach (template : templates)
 	{
+		rig::Pose[] prebaked;
 		float[] times = export_bake_times(allocator, skeleton, names, template, true,
-			constraints, motion.dense());
+			constraints, motion.dense(), &prebaked);
 		bool kept = false;
 		defer if (!kept) alloc::free(allocator, times);
-		if (times.len == 0) continue;
+		if (times.len == 0)
+		{
+			free_poses(allocator, prebaked);
+			continue;
+		}
 
-		rig::Pose[] posed = poses_at_times(allocator, skeleton, names, template,
-			times, true, constraints);
+		// Already evaluated by a constrained bake; sampled here only otherwise.
+		rig::Pose[] posed = prebaked.len == times.len
+			? prebaked
+			: poses_at_times(allocator, skeleton, names, template, times, true, constraints);
+		if (posed.ptr != prebaked.ptr) free_poses(allocator, prebaked);
 		defer free_poses(allocator, posed);
 		usz baked_keys = times.len;
 		shape_export_samples(allocator, skeleton, names, template, constraints, true,

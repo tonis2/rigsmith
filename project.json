@@ -12,6 +12,7 @@
 	"targets": {
 		"rigsmith": {
 			"type": "executable",
+			"opt": "O1",
 			"sources": [
 				"src/**",
 				"libs/three/src/app/**",
