@@ -105,12 +105,18 @@
         // applyClip bakes it. See the targets doc topic.
         solveTargets: spec("solve_targets"),
 
-        // Baking stance feet still so a clip stops skating. See the ground topic.
-        plantFeet: one("plant_feet", "clip"),
-
         // Offsetting a few joints of a clip over a range, the rest untouched. See
         // the editing topic.
         patchClip: spec("patch_clip"),
+
+        // Whole-clip repairs, each one undo step. See the repair topic.
+        trimClip: spec("trim_clip"),
+        retimeClip: spec("retime_clip"),
+        optimizeClip: one("optimize_clip", "clip"),
+        removeMovement: one("remove_movement", "clip"),
+        closeLoop: one("close_loop", "clip"),
+        smoothClip: one("smooth_clip", "clip"),
+        makeLoop: one("make_loop", "clip"),
 
         // A whole locomotion cycle from foot paths. See the gaits topic.
         authorGait: spec("author_gait"),
@@ -126,6 +132,9 @@
         getPins: spec("get_pins"),
         setPins: (pins) => call("set_pins", Array.isArray(pins) ? { pins } : pins),
         poseJoint: spec("pose_joint"),
+        // Feet held on the floor as live clip pins: pinFeet("walk") reads the
+        // windows off the clip; pinFeet({clip, travel: [0,0,v]}) for a treadmill.
+        pinFeet: one("pin_feet", "clip"),
 
         // Taking a clip off the character, or out of the loaded model for good.
         unbindClip: one("unbind_clip", "clip"),

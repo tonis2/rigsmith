@@ -104,9 +104,9 @@ fn float worst_slide(Fixture* f)
 	return worst;
 }
 
-// Check reads the feet off a clip that declares none, marks their slide on the
-// ruler, and Plant feet takes most of it away in one undo step.
-fn void check_marks_sliding_feet_and_plant_feet_holds_them() @test
+// Check reads the feet off a clip that declares none and marks their slide on the
+// ruler; a row goes to its issue.
+fn void check_marks_sliding_feet() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -130,16 +130,6 @@ fn void check_marks_sliding_feet_and_plant_feet_holds_them() @test
 	// A row puts the playhead on its issue.
 	crig::anim_check_go(f.ui, 0);
 	test::@check(math::abs(f.app.edit_time - f.app.anim_check.issues[0].time) < 1e-4f, "the row did not go to its issue");
-
-	sz history = f.app.undo_stack.cursor;
-	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_PLANT_FEET_ID);
-	f.feed({ 0, 0 });
-	test::eq(f.app.undo_stack.cursor, history + 1);
-	float after = worst_slide(&f);
-	test::@check(after < before * 0.6f, "Plant feet did not hold the feet (%s -> %s)", before, after);
-
-	test::@check(f.app.undo(), "Plant feet did not undo");
-	test::eq(f.app.clip(f.app.editing).keyframes.len, (sz)3);
 }
 
 // Fix mapping, from the ⋯ menu: a library clip's joint sent to (none) stops

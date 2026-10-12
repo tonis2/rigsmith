@@ -99,8 +99,11 @@ fn void AnimGround.free(&self, Allocator allocator)
 *>
 fn bool AnimFoot.planted(self, float phase)
 {
+	// A window that runs to the end of the cycle holds its end too: a clip that
+	// does not loop reads its last frame as phase 1 (`phase_at`), and a landing
+	// held to the end must still be down there.
 	return self.up > self.down
-		? phase >= self.down && phase < self.up
+		? phase >= self.down && (phase < self.up || self.up >= 1.0f)
 		: phase >= self.down || phase < self.up;
 }
 

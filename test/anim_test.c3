@@ -657,6 +657,26 @@ fn AnimTemplate stance_clip(float left, float right, AnimGround ground)
 }
 
 <*
+ A clip that does not loop ends at phase 1, in its last contact window: a jump's
+ final frame is on the landing, not back on the takeoff. A loop still wraps.
+*>
+fn void a_clip_that_does_not_loop_ends_in_its_last_window() @test
+{
+	crig::AnimTemplate once = { .duration = 2.0f, .loop = false };
+	crig::AnimTemplate cycle = { .duration = 2.0f, .loop = true };
+	test::@check(once.phase_at(2.0f) == 1.0f, "the last frame of a one-shot is at phase %f", once.phase_at(2.0f));
+	test::@check(math::abs(once.phase_at(1.0f) - 0.5f) < 1e-6f, "the middle moved");
+	test::@check(cycle.phase_at(2.0f) == 0.0f, "a loop's end is its start again");
+
+	crig::AnimFoot takeoff = { .joint = "foot", .down = 0.0f, .up = 0.3f };
+	crig::AnimFoot landing = { .joint = "foot", .down = 0.7f, .up = 1.0f };
+	float last = once.phase_at(once.duration);
+	test::@check(!takeoff.planted(last), "the last frame fell back into the takeoff");
+	test::@check(landing.planted(last), "the landing does not hold the last frame");
+	test::@check(!landing.planted(0.5f), "the landing holds outside its window");
+}
+
+<*
  The defect this whole mechanism exists for.
 
  One clip, two rigs whose legs differ by half again, and the stance foot has to

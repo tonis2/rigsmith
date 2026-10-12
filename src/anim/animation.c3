@@ -1132,10 +1132,15 @@ fn AnimKeyDot AnimTemplate.entry_at(self, String joint, float time)
  What a ground spec's contact windows are stated in, so a clip keeps its footing
  when its duration is retimed. A clip with no duration has no cycle and answers
  zero.
+
+ **A clip that does not loop ends at 1, not back at 0.** Its last frame is the
+ end of the motion, not the start of another cycle: read as 0 it fell back into
+ the first contact window, so a jump's last frame was grounded by its takeoff.
 *>
 fn float AnimTemplate.phase_at(self, float time)
 {
 	if (self.duration <= 0.0f) return 0.0f;
+	if (!self.loop && time >= self.duration) return 1.0f;
 	float turns = time / self.duration;
 	return turns - math::floor(turns);
 }

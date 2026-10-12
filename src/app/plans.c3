@@ -163,9 +163,10 @@ fn bool AppState.apply_pack_rig(&self, usz index)
  off the rig itself, since a Turn around after the fit changed it: the source's
  left joints on the other side of X from this rig's means it is turned half round.
 
+ @param commit : `Close the undo group; false leaves it to a caller with a larger one open.`
  @return `How many joints took a limit; -1 when the rig has no body plan with limits.`
 *>
-fn sz AppState.reapply_plan_limits(&self)
+fn sz AppState.reapply_plan_limits(&self, bool commit = true)
 {
 	int found = self.plan_pack(self.doc.plan);
 	if (found < 0) return -1;
@@ -206,7 +207,7 @@ fn sz AppState.reapply_plan_limits(&self)
 	sz before = self.undo_stack.edits.len();
 	ConstraintApplyReport report = self.adopt_preset_constraints(
 		pack.constraints, derived, fitted, ids, reversed, pack.rest);
-	if (self.undo_stack.edits.len() != before) self.undo_stack.commit();
+	if (commit && self.undo_stack.edits.len() != before) self.undo_stack.commit();
 	self.mark_rig_stale();
 	return (sz)report.applied;
 }

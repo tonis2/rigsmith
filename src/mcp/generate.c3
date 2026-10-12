@@ -6,7 +6,7 @@
  the window still, so the call starts it and answers at once; the same tool with
  no prompt answers with the progress, and once the job is done, with the clip it
  bound — which is from then on an ordinary bound clip, for play, measure_clip,
- plant_feet and the rest.
+ make_loop, smooth_clip, pin_feet and the rest.
 *>
 module crig;
 
@@ -21,7 +21,8 @@ const String GENERATE_MOTION_SCHEMA = `{"type":"object","properties":{
 	"seconds":{"type":"number","description":"Length, 1 to 10. Default 5."},
 	"seed":{"type":"number","description":"Which take: the same prompt and seed give the same motion. Default 0."},
 	"steps":{"type":"number","description":"Diffusion steps. Default 100; fewer is faster and rougher."},
-	"poses_from":{"type":"string","description":"A clip bound to the character to guide the motion: every instant it has a key becomes a pose the generated motion passes through at that time, and Kimodo makes the motion between. An instant keyed only on arm and leg joints holds just those hands and feet (and where the hips stand); one with a key on the hips, spine or head holds the whole body. Keys past the length are left out. Make one with apply_clip or solve_targets — a start, an end and a pose or two between — for a motion the prompt alone gets wrong."}
+	"poses_from":{"type":"string","description":"A clip bound to the character to guide the motion: every instant it has a key becomes a pose the generated motion passes through at that time, and Kimodo makes the motion between. An instant keyed only on arm and leg joints holds just those hands and feet (and where the hips stand); one with a key on the hips, spine or head holds the whole body. Keys past the length are left out. Make one with apply_clip or solve_targets — a start, an end and a pose or two between — for a motion the prompt alone gets wrong."},
+	"dense":{"type":"boolean","description":"Land every generated frame as a key (about 120 a second, every joint on each). Default false: the clip lands with the keys it can lose at Optimize keys' Light tolerance dropped, so it can be edited."}
 }}`;
 
 fn String? tool_generate_motion(Object* args, void* user_data, DString* detail) @private
@@ -37,6 +38,7 @@ fn String? tool_generate_motion(Object* args, void* user_data, DString* detail) 
 	MotionRequest request = { .prompt = prompt };
 	if (try name = args.get_string("name")) request.name = name;
 	if (try guide = args.get_string("poses_from")) request.guide = guide;
+	request.dense = args.get_bool("dense") ?? false;
 	if (try seconds = args.get_float("seconds"))
 	{
 		if (!(seconds >= MOTION_MIN_SECONDS && seconds <= MOTION_MAX_SECONDS))
@@ -131,7 +133,7 @@ fn String generation_status_json(AppState* app)
 			out.append_string(`,"clip":`);
 			gltf_edit::escape_json_string(&out, clip ? clip.name : job.name);
 			if (clip) out.appendf(`,"duration":%.4g,"keyframes":%d`, clip.duration, clip.keyframes.len);
-			out.append_string(`,"note":"Added to the character as its own clip, in place (the importer takes travel off the hips), and written into the model on save. play, measure_clip and plant_feet take it by name."`);
+			out.append_string(`,"note":"Added to the character as its own clip, in place (the importer takes travel off the hips), not looping, with its keys thinned to the ones the motion needs, and written into the model on save. play, measure_clip, make_loop, smooth_clip and pin_feet take it by name; get_crig_docs topic repair is the workflow for fixing it."`);
 		}
 		out.append_char('}');
 	}

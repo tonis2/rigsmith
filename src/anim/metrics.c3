@@ -261,8 +261,16 @@ fn ClipMetrics clip_metrics(
 			? (float)s / (float)out.samples
 			: (float)s / (float)(out.samples - 1);
 
-		rig::Pose pose = template.pose(allocator, skeleton, names, phase * template.duration);
+		float at_time = phase * template.duration;
+		rig::Pose pose = template.pose(allocator, skeleton, names, at_time);
 		defer pose.free(allocator);
+		// The clip's pins hold its feet when it plays and when it is exported, so
+		// they are part of what it does: a planted foot measured without its pin
+		// would report the slide the pin exists to take away.
+		if (template.plays_pins())
+		{
+			pin_pose(allocator, skeleton, names, template.pins, at_time, template.duration, template.loop, &pose, skeleton.height());
+		}
 
 		Matrix4f[]? built = rig::joint_palette(allocator, skeleton, pose);
 		if (catch built) continue;
@@ -455,7 +463,7 @@ fn void collect_issues(
 	// finite differences need. Positions are made horizontally root-relative first,
 	// which is what "account for intended root travel" means: the root's forward
 	// carry across the seam is removed, its vertical bob and every limb kept.
-	if (template.loop && samples >= 4 && template.duration > 0.0f && count + 2 <= ISSUE_MOST)
+	if (template.loop && samples >= 6 && template.duration > 0.0f && count + 2 <= ISSUE_MOST)
 	{
 		float step_time = template.duration / (float)samples;
 		float worst_pos = 0.0f;
@@ -464,15 +472,22 @@ fn void collect_issues(
 		usz worst_vel_joint = 0;
 		for (usz j = 0; j < joints; j++)
 		{
+			Vec3 n3 = seam_relative(tracked, samples, j, root, samples - 3);
 			Vec3 n2 = seam_relative(tracked, samples, j, root, samples - 2);
 			Vec3 n1 = seam_relative(tracked, samples, j, root, samples - 1);
 			Vec3 z0 = seam_relative(tracked, samples, j, root, 0);
 			Vec3 z1 = seam_relative(tracked, samples, j, root, 1);
+			Vec3 z2 = seam_relative(tracked, samples, j, root, 2);
 			Vec3 incoming = n1 - n2;
 			Vec3 outgoing = z1 - z0;
 			Vec3 across = z0 - n1;
 			float position_gap = (across - (incoming + outgoing) * 0.5f).length() / height;
-			float velocity_gap = (outgoing - incoming).length() / (step_time * height);
+			// The speed change across the seam beyond what the motion's own
+			// acceleration either side of it accounts for: a swing foot speeding up
+			// through the seam is motion, a speed that jumps there is a fault.
+			Vec3 before = (n1 - n2) - (n2 - n3);
+			Vec3 after = (z2 - z1) - (z1 - z0);
+			float velocity_gap = (outgoing - incoming - (before + after)).length() / (step_time * height);
 			if (position_gap > worst_pos) { worst_pos = position_gap; worst_pos_joint = j; }
 			// A foot touching down or lifting at the seam is an impulse, not a fault:
 			// the contact joint and what hangs off it (the toes) are let off.

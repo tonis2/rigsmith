@@ -203,12 +203,6 @@ fn void anim_tools_check(Ui* ui)
 	anim_check_clicked(ui);
 }
 
-fn void anim_tools_plant_feet(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
-	anim_plant_feet_clicked(ui);
-}
-
 fn void anim_tools_contact(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
@@ -228,7 +222,7 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	bool none = app.clip(app.editing) == null;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Plant feet", "Add contact", "Remove movement…", "Optimize keys…", "Prevent intersections" })
+	foreach (label : (String[]) { "Check", "Add contact", "Remove movement…", "Optimize keys…", "Smooth jitter", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -238,14 +232,14 @@ fn Element* build_anim_tools_menu(Ui* ui)
 		{
 			@node((PopupMenuItem) { .item = { .label = "Check", .on_select = &anim_tools_check, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CHECK_ID);
-			@node((PopupMenuItem) { .item = { .label = "Plant feet", .on_select = &anim_tools_plant_feet, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_PLANT_FEET_ID);
 			@node((PopupMenuItem) { .item = { .label = "Add contact", .on_select = &anim_tools_contact,
 				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_ADD_CONTACT_ID);
 			@node((PopupMenuItem) { .item = { .label = "Remove movement…", .on_select = &anim_tools_motion, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MOTION_ID);
 			@node((PopupMenuItem) { .item = { .label = "Optimize keys…", .on_select = &anim_tools_optimize, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_OPTIMIZE_ID);
+			@node((PopupMenuItem) { .item = { .label = "Smooth jitter", .on_select = &anim_tools_smooth, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_SMOOTH_ID);
 			// The one normal collision control; the rest is behind the clip menu's
 			// Collision — and none of it with the system switched off in Settings.
 			if (app.config.self_collision)
@@ -509,66 +503,6 @@ fn void anim_duplicate_clicked(Ui* ui)
 	app.show_edited();
 }
 
-const String ANIM_DELETE_ID = "anim-delete";
-const String ANIM_DELETE_CONFIRM_ID = "anim-delete-confirm";
-
-<*
- Delete the clip being edited, after asking.
-
- Only a clip the project owns: one read from a library file belongs to that
- file, and Remove from character is how it comes off this character.
-*>
-fn void anim_delete_clicked(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	if (!anim_can_rewrite(ui)) return;
-	AnimTemplate* clip = app.clip(app.editing);
-	if (!clip)
-	{
-		app.@notice("pick an animation to delete");
-		return;
-	}
-	if (app.editing.pack != app.authored_pack)
-	{
-		AnimPack* pack = app.pack((usz)app.editing.pack);
-		app.@notice("%s is read from %s, so it is not deleted here — Remove from character takes it off this character.",
-			clip.name, pack ? base_name(pack.path) : "a library file");
-		return;
-	}
-
-	Element*? panel = ui.find_id(ANIM_DELETE_CONFIRM_ID);
-	if (catch panel)
-	{
-		app.@notice("nowhere to confirm deleting the animation");
-		return;
-	}
-	anim_clip_menu_closed(ui);
-	panel.widget_as(ConfirmDialog).ask(panel,
-		string::tformat("Delete %s and its keys? Ctrl+Z brings it back.", clip.name),
-		&anim_delete_confirmed);
-}
-
-<*
- The confirm's answer: take the edited clip out of the project, one undo step
- that also takes its row off the character.
-*>
-fn void anim_delete_confirmed(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	AnimTemplate* clip = app.clip(app.editing);
-	if (!clip || app.editing.pack != app.authored_pack) return;
-
-	String named = clip.name.copy(mem);
-	defer named.free(mem);
-
-	app.let_go_of_clip(app.editing);
-	if (!app.delete_authored_clip(named)) return;
-	app.undo_stack.commit();
-	app.refresh_bound_rows();
-	app.@notice("deleted %s · Ctrl+Z brings it back", named);
-	app.refresh_ui();
-}
-
 fn bool anim_can_rewrite(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -652,7 +586,7 @@ fn Element* build_anim_clip_menu(Ui* ui)
 	sz bound = app.doc.animations.len();
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Rename / duration…", "Remove from character", "Delete animation…" })
+	foreach (label : (String[]) { "Rename / duration…", "Remove from character" })
 	{
 		float wanted = widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x;
 		width = math::max(width, wanted);
@@ -673,6 +607,8 @@ fn Element* build_anim_clip_menu(Ui* ui)
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-mirror-clip");
 			@node((PopupMenuItem) { .item = { .label = "Close loop", .on_select = &anim_menu_close_loop,
 				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
+			@node((PopupMenuItem) { .item = { .label = "Make loop", .on_select = &anim_menu_make_loop,
+				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
 			@node((PopupMenuItem) { .item = { .label = "Fix mapping…", .on_select = &anim_fix_mapping_clicked,
 				.disabled = !app.clip_mappable(app.editing) }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FIX_MAPPING_ID);
 			if (app.config.self_collision)
@@ -688,8 +624,6 @@ fn Element* build_anim_clip_menu(Ui* ui)
 			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
 			@node((PopupMenuItem) { .item = { .label = "Remove from character", .on_select = &anim_menu_unbind,
 				.disabled = row < 0 }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_UNBIND_ID);
-			@node((PopupMenuItem) { .item = { .label = "Delete animation…", .on_select = &anim_delete_clicked,
-				.disabled = none }, .style = DANGER_MENU_STYLE, .width = width }).with_id(ANIM_DELETE_ID);
 		};
 	};
 }

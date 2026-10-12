@@ -298,7 +298,7 @@ fn bool AppState.is_trunk_joint(&self, uint dot_id)
 }
 
 <*
- The feet, by the canonical names every body plan and `plant_feet` use.
+ The feet, by the canonical names every body plan and `pin_feet` use.
  @return `How many of the two there are.`
 *>
 fn usz AppState.foot_ids(&self, uint[2]* out)

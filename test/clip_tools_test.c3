@@ -1,6 +1,6 @@
 <*
- Small fixes and clip tools: the plan tag surviving a sidecar without one, a smooth
- clip planted without ringing, bare clip names ranked, footfall impulses left out of
+ Small fixes and clip tools: the plan tag surviving a sidecar without one, bare
+ clip names ranked, footfall impulses left out of
  the loop seam, unbind_clip / delete_model_clip, `extras.clips` surviving a save
  and a deferred read, and the root's pivot turn.
 
@@ -82,59 +82,6 @@ fn void a_plan_only_the_glb_declares_survives_the_open() @test
 	defer pack.free(mem);
 	test::@check(pack.plan == "biped", "the saved file lost its plan (got '%s')", pack.plan);
 }
-
-// ---------------------------------------------------------------------------
-// 2. plant_feet on a smooth clip
-
-<*
- A smooth clip with sparse swing keys, planted: the foot slides far less after,
- and the keys it added are linear.
-*>
-fn void planting_a_smooth_clip_does_not_ring() @test
-{
-	io::printn("plant_feet on a smooth sparse clip cuts foot_slide and keys linearly");
-	mcp::Fixture fixture;
-	if (!fixture.open_model(QUADRUPED)) return;
-	defer fixture.close();
-	mcp::Fixture* f = &fixture;
-
-	Object*? authored = f.call_tool("apply_clip", SMOOTH_STEP);
-	if (catch authored) { test::@check(false, "the smooth clip authors"); return; }
-	authored.free();
-
-	Object*? planted = f.call_tool("plant_feet", `{"clip":"smooth_step"}`);
-	if (catch planted) { test::@check(false, "plant_feet answers"); return; }
-	defer planted.free();
-
-	Object* slide = planted.get("foot_slide")!!;
-	double before = slide.get_float("before")!!;
-	double after = slide.get_float("after")!!;
-	test::@check(before > 0.01, "the clip skated to begin with (%.6g)", before);
-	test::@check(after < before * 0.4, "planting cut foot_slide clearly (%.6g -> %.6g)", before, after);
-
-	// Every rotation key it wrote into the leg is linear, not inherited.
-	crig::AnimRef ref = crig::resolve_clip(&f.app, "smooth_step")!!;
-	crig::AnimTemplate* clip = f.app.clip(ref);
-	usz linear = 0;
-	usz inherited = 0;
-	foreach (frame : clip.keyframes)
-	{
-		foreach (dot : frame.dots)
-		{
-			if (dot.joint_name != "hip_L" && dot.joint_name != "hind_knee_L") continue;
-			if (dot.rotation_interpolation == LINEAR) linear++;
-			if (dot.rotation_interpolation == INHERIT) inherited++;
-		}
-	}
-	test::@check(linear > 10, "the planted leg keys are linear (%d linear)", linear);
-	test::@check(clip.blend == SMOOTH, "the clip itself stays smooth");
-	(void)inherited;
-}
-
-// A smooth hind-left swing over sparse keys, with the hoof down for the first half.
-// The quadruped faces −X, so its legs swing about Z.
-const String SMOOTH_STEP @local = `{"name":"smooth_step","duration":1.0,"loop":true,"blend":"smooth","keyframes":[{"time":0,"joints":[{"name":"hip_L","rotation":{"axis":[0,0,1],"angle":0.5}},{"name":"hind_knee_L","rotation":{"axis":[0,0,1],"angle":0.2}}]},{"time":0.5,"joints":[{"name":"hip_L","rotation":{"axis":[0,0,1],"angle":-0.5}},{"name":"hind_knee_L","rotation":{"axis":[0,0,1],"angle":-0.2}}]}],"ground":{"feet":[{"joint":"hind_hoof_L","down":0.0,"up":0.5}]}}`;
-
 
 // ---------------------------------------------------------------------------
 // 3. Bare names ranked

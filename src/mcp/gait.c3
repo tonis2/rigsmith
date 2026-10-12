@@ -1,7 +1,7 @@
 <*
  author_gait: a walking, trotting or galloping cycle, written from the rig's legs.
 
- The layer above `solve_targets` and `plant_feet` for the commonest thing an
+ The layer above `solve_targets` and `pin_feet` for the commonest thing an
  animator asks of a character: make it walk. The caller names a gait (or gives each
  foot its own place in the cycle) and a duration; `anim/gait.c3` draws every foot's
  path — stance back along the floor at a constant speed, swing forward through an
@@ -181,7 +181,7 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 		(JsonFloat)report.speed, (JsonFloat)(height > 0.0f ? report.speed / height : report.speed), report.keys);
 	out.append_string(`,"travel":[0,0,`);
 	out.appendf(`%s]`, (JsonFloat)report.speed);
-	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a plant_feet argument."`);
+	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a pin_feet argument."`);
 	out.append_string(`,"landed":`);
 	out.append_string(applied);
 	out.append_string(`,"metrics":`);

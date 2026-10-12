@@ -270,7 +270,7 @@ const MenuStyle VIEW_MENU_STYLE = {
 	.pad_x = 12.0,
 };
 
-// A menu row that throws something away — Delete animation, Delete layer — in
+// A menu row that throws something away — Delete layer — in
 // the red the destructive buttons use. Same metrics as VIEW_MENU_STYLE so it
 // lines up with the rows beside it.
 const MenuStyle DANGER_MENU_STYLE = {

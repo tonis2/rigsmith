@@ -174,7 +174,7 @@ fn void AppState.replay_pin_stroke(&self, Edit edit, bool forwards)
 fn void AppState.swap_clip_edit(&self, Edit edit)
 {
 	AnimTemplate parked = self.undo_stack.clips[(usz)edit.id];
-	AnimTemplate came_back = self.swap_authored_clip(edit.name, parked);
+	AnimTemplate came_back = self.swap_authored_clip(edit.name, parked, slot: (int)edit.other - 1);
 	*self.undo_stack.clips.get_ref((sz)edit.id) = came_back;
 }
 

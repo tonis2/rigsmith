@@ -78,6 +78,95 @@ fn void AppState.refresh_categories(&self)
 }
 
 <*
+ List the authored pack's clips that the model file does not hold yet, as the
+ index's authored rows (`AssetIndex.set_authored`). Leaves positions into the
+ index to the caller.
+*>
+fn void AppState.list_authored_clips(&self)
+{
+	self.authored_index_stale = false;
+	AnimPack* pack = self.authored();
+	AuthoredAssetList listed;
+	listed.init(tmem);
+	if (pack)
+	{
+		foreach (clip : pack.clips)
+		{
+			if (self.model_file_holds(clip.name)) continue;
+			listed.push({ .name = clip.name, .duration = clip.duration });
+		}
+	}
+	self.assets.set_authored(mem, listed.array_view());
+}
+
+<*
+ Bring the index's authored rows up to date with the authored pack.
+
+ What `refresh_ui` runs after `swap_authored_clip` marks the pack changed. The
+ cell selected and the settings panel open are found again by what they showed,
+ since re-sorting moves every position — a clip written while the browser has a
+ cell selected must not leave the selection on its neighbour.
+*>
+fn void AppState.reindex_authored_clips(&self)
+{
+	String sel_name;
+	String sel_file;
+	int sel_library;
+	bool had_selected = self.selected_asset >= 0 && (usz)self.selected_asset < self.assets.entries.len;
+	if (had_selected)
+	{
+		AssetEntry* was = &self.assets.entries[(usz)self.selected_asset];
+		sel_name = was.name.tcopy();
+		sel_file = was.file.tcopy();
+		sel_library = was.library;
+	}
+	String set_name;
+	String set_file;
+	int set_library;
+	AssetEntry* open = self.settings_entry();
+	if (open)
+	{
+		set_name = open.name.tcopy();
+		set_file = open.file.tcopy();
+		set_library = open.library;
+	}
+
+	self.list_authored_clips();
+	self.refresh_categories();
+	self.refresh_visible_assets();
+
+	self.selected_asset = had_selected ? self.asset_position(sel_name, sel_file, sel_library) : -1;
+	self.settings_asset = open ? self.asset_position(set_name, set_file, set_library) : -1;
+	self.refresh_asset_sidebar();
+}
+
+// Where an entry of this name, file and library sits in the index, or -1.
+fn int AppState.asset_position(&self, String name, String file, int library)
+{
+	foreach (usz i, entry : self.assets.entries)
+	{
+		if (entry.name == name && entry.file == file && entry.library == library) return (int)i;
+	}
+	return -1;
+}
+
+<*
+ Whether the loaded model's file holds an animation of this name, by the index.
+
+ The index is what the browser shows, so it is the question the browser's Delete
+ has to agree with: a clip it lists under the file is one a save re-writes.
+*>
+fn bool AppState.model_file_holds(&self, String name)
+{
+	if (self.source_path.len == 0) return false;
+	foreach (entry : self.assets.entries)
+	{
+		if (entry.kind == AssetKind.ANIMATION && entry.file == self.source_path && entry.name == name) return true;
+	}
+	return false;
+}
+
+<*
  Mark every index entry that came from the loaded model's own file.
 
  What the "Current file" group reads. Kept here rather than on the entries as they
@@ -91,7 +180,7 @@ fn void AppState.mark_current_entries(&self)
 {
 	foreach (&entry : self.assets.entries)
 	{
-		entry.current = self.source_path.len > 0 && entry.file == self.source_path;
+		entry.current = entry.authored() || (self.source_path.len > 0 && entry.file == self.source_path);
 		// Every model in the scene, not only the one being edited, is open.
 		if (entry.kind == AssetKind.MODEL && !entry.current) entry.current = self.character_from(entry.file) >= 0;
 	}
@@ -112,6 +201,7 @@ fn void AppState.mark_current_entries(&self)
 fn void AppState.reindex_current_model(&self)
 {
 	self.assets.set_current_model(mem, self.source_path);
+	self.list_authored_clips();
 	self.refresh_categories();
 	self.refresh_visible_assets();
 	self.selected_asset = -1;
@@ -369,58 +459,25 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 }
 
 <*
- Delete an animation from the loaded model on disk.
+ Delete the animation an asset-browser entry stands for: one of the loaded model's
+ own, or an authored clip of the project's (`AssetEntry.authored`).
 
- Un-binds the clip and re-saves the model: since Save writes only the bound clips,
- dropping the binding drops the clip, and `reskin_glb` compacts the file it leaves.
- For an ANIMATION entry of the current model only — a library file is not this
- model's to rewrite, so the caller gates the action and this refuses anything else.
-
- Goes through `save_session`, the same path Ctrl+S takes, so owns-path, copy-aside,
- the sidecar write and the reindex all behave exactly as an ordinary save. A model
- that cannot take a skin in place (no mesh, a `.gltf` with an external `.bin`)
- leaves the clip in the file and `save_session` says so — the caller gates the
- button on `has_mesh`.
+ What the browser's Delete calls; the work is `delete_animation`'s, which takes the
+ clip off the character, out of the authored pack and — for a clip in the model's
+ file — out of the file by re-saving it. A library file is not this model's to
+ rewrite, so anything else is refused.
 
  @param which : `A position in the whole index, not the visible list.`
- @return `Whether this was a current-model animation it acted on.`
+ @param why : `Receives the reason on refusal, if given.`
+ @return `Whether the clip was deleted.`
 *>
-fn bool AppState.delete_model_animation(&self, usz which)
+fn bool AppState.delete_model_animation(&self, usz which, DString* why = null)
 {
-	if (self.source_path.len == 0) return false;
 	if (which >= self.assets.entries.len) return false;
 	AssetEntry* entry = &self.assets.entries[which];
-	if (entry.kind != AssetKind.ANIMATION || entry.file != self.source_path) return false;
-
-	// Copied before the save moves the index this points into.
-	String name = entry.name.copy(mem);
-	defer name.free(mem);
-
-	// Un-bind it if the character holds it — as a file binding, or as an authored
-	// clip under the empty file. A clip in the file but never bound needs no un-bind;
-	// the save drops it either way. Mirrors `anim_unbind_clicked`'s care for the clip
-	// that happens to be the one open in the editor.
-	sz at = self.doc.bound_index(self.source_path, name);
-	if (at < 0) at = self.doc.bound_index("", name);
-	bool editing = at >= 0 && self.resolve_bound(at).same(self.editing);
-	if (editing)
-	{
-		self.stop_animation();
-		self.clear_animation_key_selection();
-		self.editing = NO_ANIM;
-		self.edit_time = 0;
-	}
-	if (at >= 0) self.doc.unbind_at(at);
-
-	// A clip authored here (generated, keyed) lives in the project's authored pack
-	// as well as in the file, and the sidecar writes that pack whole — so un-binding
-	// alone kept its keys, megabytes of them, beside a model that no longer has it.
-	// Delete means gone: take it out of the pack too, one undo step.
-	if (self.delete_authored_clip(name)) self.undo_stack.commit();
-
-	// Rewrites the model without the clip; `save_session` reindexes the group.
-	self.save_session();
-	return true;
+	if (entry.kind != AssetKind.ANIMATION) return false;
+	if (!entry.authored() && (self.source_path.len == 0 || entry.file != self.source_path)) return false;
+	return self.delete_animation(entry.name, why);
 }
 
 <*
@@ -606,7 +663,7 @@ fn MenuItemFlags AppState.asset_flags(&self, usz row)
 	// until a model is open.
 	if (entry.kind != AssetKind.ANIMATION) return { .disabled = self.geometry.positions.len == 0 };
 
-	int pack = self.loaded_pack_for(entry.file);
+	int pack = entry.authored() ? self.authored_pack : self.loaded_pack_for(entry.file);
 	if (pack < 0) return { };
 	return clip_flags(self, self.ref_for_asset(pack, entry));
 }

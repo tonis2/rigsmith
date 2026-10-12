@@ -60,7 +60,7 @@ fn bool AppState.optimize_clip_keys(&self, AnimRef ref, KeyReduction level)
 }
 
 // Every channel a clip keys, counting a joint keyed on both as two.
-fn usz channel_keys(AnimTemplate clip) @local
+fn usz channel_keys(AnimTemplate clip)
 {
 	usz count = 0;
 	foreach (frame : clip.keyframes)

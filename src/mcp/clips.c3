@@ -139,6 +139,11 @@ fn String? tool_delete_model_clip(Object* args, void* user_data, DString* detail
 	if (!takes_object(args, detail, `delete_model_clip takes an object: {"clip": name}`)) return CLIPS_REFUSED~;
 	String name;
 	if (!required_string(args, "clip", &name, detail, `delete_model_clip needs "clip": the name of one of the loaded model's clips.`)) return CLIPS_REFUSED~;
+	// "Pack/Clip" names the clip as every other tool does; the file's entry is by name.
+	if (try AnimRef ref = resolve_clip(app, name))
+	{
+		if (AnimTemplate* clip = app.clip(ref)) name = clip.name;
+	}
 
 	if (app.source_path.len == 0)
 	{
@@ -178,9 +183,9 @@ fn String? tool_delete_model_clip(Object* args, void* user_data, DString* detail
 
 	String taken = name.copy(mem);
 	defer taken.free(mem);
-	if (!app.delete_model_animation(which))
+	if (!app.delete_model_animation(which, detail))
 	{
-		detail.appendf(`could not delete "%s" from the model.`, name);
+		if (detail.len() == 0) detail.appendf(`could not delete "%s" from the model.`, taken);
 		return CLIPS_REFUSED~;
 	}
 	return clip_management_json(app, "deleted", taken);

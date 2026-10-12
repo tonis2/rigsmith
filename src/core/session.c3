@@ -210,7 +210,12 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // 25 added a joint's pose weight (`dots[i].pose_weight`), a multiplier on how
 // much the joint's body part holds its ground when a pose is pulled. Written only
 // when set; a version 24 file reads as every joint at the mesh's own weight.
-const uint SESSION_VERSION = 25;
+//
+// 26 let one joint hold several clip pins whose windows do not overlap (a jump's
+// takeoff and landing), and gave a pin `travel`, the speed its held point slides
+// at — a stance foot on an in-place cycle's treadmill. Written only when moving; a
+// version 25 file reads as pins that stand still.
+const uint SESSION_VERSION = 26;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -688,9 +693,11 @@ fn String session_text(
 				{
 					if (n > 0) text.append_char(',');
 					text.append_string(`{"joint":`); append_json_string(&text, pin.joint);
-					text.appendf(`,"position":%s,"rotation":%s,"at":%s,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s}`,
+					text.appendf(`,"position":%s,"rotation":%s,"at":%s,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s`,
 						pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
 						(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
+					if (pin.travel.length_sq() > 0.0f) text.appendf(`,"travel":%s`, (JsonVec3)pin.travel)!!;
+					text.append_char('}');
 				}
 				text.append_char(']');
 			}
@@ -1059,7 +1066,8 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 			{
 				pins[n] = session_pin(allocator, found.get_at((sz)n))!;
 				used = n + 1;
-				for (usz q = 0; q < n; q++) if (pins[q].joint == pins[n].joint) return SESSION_SHAPE~;
+				// One joint may hold several pins, never two at once.
+				for (usz q = 0; q < n; q++) if (pins[q].joint == pins[n].joint && pins_overlap(&pins[q], &pins[n])) return SESSION_SHAPE~;
 			}
 			adopted = true;
 			clip.pins = pins;
@@ -1083,8 +1091,15 @@ fn AnimPin? session_pin(Allocator allocator, Object* entry) @private
 	if (joint.len == 0 || !math::is_finite(at.x) || !math::is_finite(at.y) || !math::is_finite(at.z)
 		|| !math::is_finite(from) || !math::is_finite(to) || !math::is_finite(blend)
 		|| from < 0.0f || to < from || blend < 0.0f || orient.v.length_sq() < 1.0e-12f) return SESSION_SHAPE~;
+	Vec3 travel;
+	if (try Object* moving = entry.get("travel"))
+	{
+		travel = session_vec3(moving)!;
+		if (!math::is_finite(travel.x) || !math::is_finite(travel.y) || !math::is_finite(travel.z)) return SESSION_SHAPE~;
+	}
 	return {
 		.joint = joint.copy(allocator),
+		.travel = travel,
 		.position = entry.get_bool("position") ?? true,
 		.rotation = entry.get_bool("rotation") ?? false,
 		.at = at,

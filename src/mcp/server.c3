@@ -165,7 +165,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "measure_clip",
-		.description = "What a clip does, as numbers: how much a planted foot skates, how fast the figure has to travel for it not to, how deep anything gets below the floor, the stride, the root's bob, and every joint's travel and height range. All as fractions of rig height, sampled against the live rig. A locomotion cycle runs in place, so its stance foot is meant to travel a whole stride backward — foot_slide is the departure from doing that steadily, which is what skating is, and ground_speed is the rate it implies. Beside the aggregates it answers with an issues list that localizes each fault to a joint and a phase: a foot's worst slide, the joint that sinks deepest through the floor, each bone-local axis an animated rotation runs past its rotation limit (with the radians over), and — on a looping clip — the joint whose position or velocity jumps hardest across the seam, measured with the root's intended forward travel removed. Each issue carries its unit, and a tolerances object states the threshold each had to clear to be named. So the aggregates say a cycle is wrong and the issues say where to edit; solve_targets, plant_feet and patch_clip are how to fix each.",
+		.description = "What a clip does, as numbers: how much a planted foot skates, how fast the figure has to travel for it not to, how deep anything gets below the floor, the stride, the root's bob, and every joint's travel and height range. All as fractions of rig height, sampled against the live rig. A locomotion cycle runs in place, so its stance foot is meant to travel a whole stride backward — foot_slide is the departure from doing that steadily, which is what skating is, and ground_speed is the rate it implies. Beside the aggregates it answers with an issues list that localizes each fault to a joint and a phase: a foot's worst slide, the joint that sinks deepest through the floor, each bone-local axis an animated rotation runs past its rotation limit (with the radians over), and — on a looping clip — the joint whose position or velocity jumps hardest across the seam, measured with the root's intended forward travel removed. Each issue carries its unit, and a tolerances object states the threshold each had to clear to be named. So the aggregates say a cycle is wrong and the issues say where to edit; pin_feet, solve_targets and patch_clip are how to fix each.",
 		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"samples":{"type":"number","description":"Instants to look at, spread over the cycle","default":32}},"required":["clip"]}`,
 		.handler = &tool_measure_clip,
 		.user_data = app,
@@ -241,8 +241,8 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "delete_clip",
-		.description = "Take a clip out of the authored pack. Only the authored pack — every other one is a file. This is how a scratch clip stops being something save_pack would ship.",
-		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"The clip's name, as apply_clip wrote it."}},"required":["clip"]}`,
+		.description = "Delete one of the project's own animations for good — what the asset browser's Delete does: it comes off the character, out of the authored pack, and, for a clip saved into the loaded model, out of the model's file, which is re-saved. A library file's clips are refused; unbind_clip takes any clip off the character instead. Ctrl+Z (undo) brings the clip and its binding back.",
+		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"The clip's name, or \"Pack/Clip\"."}},"required":["clip"]}`,
 		.handler = &tool_delete_clip,
 		.user_data = app,
 		.hidden = true,
@@ -462,14 +462,6 @@ fn ToolTable new_tool_table(AppState* app)
 	// and lands it, so a clip stops skating. Hidden — it is the second step of a
 	// ground workflow measure_clip and the ground docs point at, not an orientation
 	// call.
-	server.add_tool({
-		.name = "plant_feet",
-		.description = "Bake a clip's stance feet still, so they stop skating. ground_pose already sets the root's height for the stance foot to reach the floor; this sets the horizontal half it cannot — it holds each foot's place across the window it is down by bending the leg with Rigsmith's limit-aware IK, and keys the result, which is what stops a planted foot sliding under a leg that looks planted (exactly measure_clip's foot_slide). Give it a clip with a ground spec (apply_clip's ground argument sets one). travel is the gait speed an in-place cycle is not actually moving at, so a stance foot creeps backward by it — a treadmill; omit it, or [0,0,0], for a foot fixed in the world, which is right for a clip that travels and for any plain no-skate plant. It edits the whole clip and lands it in the authored pack as one undo step, and answers with the foot_slide it removed. Heel/toe roll, a swing foot's clearance, and a pelvis distinct from the locomotion root are not here yet.",
-		.input_schema = PLANT_FEET_SCHEMA,
-		.handler = &tool_plant_feet,
-		.user_data = app,
-		.hidden = true,
-	});
 	// The additive counterpart to apply_clip: a few joints offset over a range,
 	// every other track left alone, in one undo step. Hidden — it is a step inside
 	// an editing loop (read a clip, offset one arm, measure), reached by name or from
@@ -487,7 +479,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// and the tools that measure and fix one are where a session goes next.
 	server.add_tool({
 		.name = "generate_motion",
-		.description = "Generate an animation from a sentence and bind it to the character. Rigsmith runs NVIDIA's Kimodo text-to-motion model on its own GPU through the built-in llm pipeline (the weights are chosen in File › Settings › AI), and the clip it writes comes in like any downloaded clip: matched onto this rig's body plan by shape and bound, in place. It takes ten to thirty seconds, so the call starts the job and answers at once with state running; call it again with no prompt to follow it, until state is done (the clip's name, now playable by play, measurable by measure_clip, fixable by plant_feet and patch_clip) or failed (the reason). One job runs at a time. When the prompt alone gives a broken motion, key the poses it has to hit in a clip and pass that clip as poses_from: Kimodo passes through each keyed pose at its time and makes the motion between.",
+		.description = "Generate an animation from a sentence and bind it to the character. Rigsmith runs NVIDIA's Kimodo text-to-motion model on its own GPU through the built-in llm pipeline (the weights are chosen in File › Settings › AI), and the clip it writes comes in like any downloaded clip: matched onto this rig's body plan by shape and bound, in place. It takes ten to thirty seconds, so the call starts the job and answers at once with state running; call it again with no prompt to follow it, until state is done (the clip's name, now playable by play, measurable by measure_clip, repairable with make_loop, smooth_clip, pin_feet and patch_clip — see get_crig_docs topic repair) or failed (the reason). One job runs at a time. When the prompt alone gives a broken motion, key the poses it has to hit in a clip and pass that clip as poses_from: Kimodo passes through each keyed pose at its time and makes the motion between.",
 		.input_schema = GENERATE_MOTION_SCHEMA,
 		.handler = &tool_generate_motion,
 		.user_data = app,
@@ -579,6 +571,70 @@ fn ToolTable new_tool_table(AppState* app)
 		.hidden = true,
 	});
 	server.add_tool({
+		.name = "trim_clip",
+		.description = "Cut a clip down: keep [start, end] seconds and drop the rest (the clip then starts at start), or cut [start, end] out and close the gap. Contact windows, pins and layers move with the keys. One undo step; answers with the clip and measure_clip's numbers. What the Animations pane's Trim does — the first repair for a generated take that starts from a stand or trails off.",
+		.input_schema = TRIM_CLIP_SCHEMA,
+		.handler = &tool_trim_clip,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "retime_clip",
+		.description = "Stretch or squeeze a whole clip to a new length in seconds: every key, contact window and pin moves with it, so a walk's footfalls stay where they fall in the cycle. One undo step.",
+		.input_schema = RETIME_CLIP_SCHEMA,
+		.handler = &tool_retime_clip,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "optimize_clip",
+		.description = "Drop the keys a clip can lose without moving differently: whole keys first, then single joints' keys, checked against the clip as it was within a quarter of a degree (light) or a degree (strong). One undo step; answers with the keys left.",
+		.input_schema = OPTIMIZE_CLIP_SCHEMA,
+		.handler = &tool_optimize_clip,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "remove_movement",
+		.description = "Stop a clip travelling: hold the hips over where they start (or move the travel onto a root joint), optionally taking out its turn about the vertical too — what the Clip tools' Remove movement does. One undo step.",
+		.input_schema = REMOVE_MOVEMENT_SCHEMA,
+		.handler = &tool_remove_movement,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "close_loop",
+		.description = "Restate a looping clip's first pose at its end, so the seam does not jump. One undo step.",
+		.input_schema = CLOSE_LOOP_SCHEMA,
+		.handler = &tool_close_loop,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "smooth_clip",
+		.description = "Filter jitter out of a clip: every key's value becomes a Gaussian average of the curve round it over window seconds, the keys staying where they are. Rotations are averaged as rotations. Planted feet and pinned joints are left alone while held (hold_contacts), a joints list or a range narrows it, and the filter eases in and out at a range's edges. The fix for a generated clip whose hands tremble or whose spine buzzes. One undo step; answers with measure_clip's numbers.",
+		.input_schema = SMOOTH_CLIP_SCHEMA,
+		.handler = &tool_smooth_clip,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "make_loop",
+		.description = "Cut a seamless cycle out of a take — a generated walk, run or climb — as a new looping clip: it finds the start and period whose two poses match best (in pose and in speed), crossfades the last stretch into what led into the start so the seam flows, closes it, takes the root's sideways drift off and thins the keys. Give period as the range a cycle may last (a walk's two steps are about 0.9 to 1.3 s). Answers with where it cut, how far apart the seam's poses were, and measure_clip's numbers for the cycle.",
+		.input_schema = MAKE_LOOP_SCHEMA,
+		.handler = &tool_make_loop,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "pin_feet",
+		.description = "Hold feet on the floor while a clip plays: each window a foot is down becomes a live clip pin that bends the leg to keep the foot in place — on the floor, flat, and still (or sliding back at travel, the treadmill speed of an in-place cycle). The pins stay editable (get_pins, set_pins, the pin lanes on the sheet) and bake into keys only on export, so nothing is lost if they are wrong; clear takes them off. windows \"auto\" (the default) reads them from the clip's ground spec, or, for a foot it does not name, off the motion itself — every time the foot comes down, so a jump's takeoff and landing are two windows. One undo step. Answers with each pin written and the worst distance its foot strayed from it inside the window (a fraction of rig height): a large one means the leg cannot reach — a limit, or a window that runs into the swing.",
+		.input_schema = PIN_FEET_SCHEMA,
+		.handler = &tool_pin_feet,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
 		.name = "pose_joint",
 		.description = "Drag or turn one joint of a clip at a time and key the result — the viewport gesture, made from a script. It runs the very calls the mouse does (the Pose stage, the same whole-body solve with pins, balance and joint limits, and a grounded clip's floor solve) and, with key (the default), keys it as releasing the mouse does with Auto-key on. move is [x,y,z] model units to move the joint by, target an absolute point; turn is {axis, angle} in radians about a world axis and follows a move. With pins set (set_pins) a move of the hips or pelvis carries the body over them. The answer gives where the joint ended against where it was asked to go (miss, in model units and as a share of rig height), whether the pose was keyed, and get_pins' state, whose residuals say how far each pin held. key false leaves the pose showing unkeyed; a later call with key true and nothing else keys it. The clip and time default to the ones open in the timeline; a library clip is forked into the authored pack when keyed.",
 		.input_schema = POSE_JOINT_SCHEMA,
@@ -605,9 +661,6 @@ fn String? tool_save_project(Object* args, void* user_data, DString* detail) @pr
 
 fn String? tool_solve_targets(Object* args, void* user_data, DString* detail) @private
 	=> solve_targets_json((AppState*)user_data, args, detail);
-
-fn String? tool_plant_feet(Object* args, void* user_data, DString* detail) @private
-	=> plant_feet_json((AppState*)user_data, args, detail);
 
 fn String? tool_patch_clip(Object* args, void* user_data, DString* detail) @private
 	=> patch_clip_json((AppState*)user_data, args, detail);
@@ -706,42 +759,38 @@ fn String? tool_measure_clip(Object* args, void* user_data, DString* detail) @pr
 }
 
 <*
- delete_clip: a clip taken out of the authored pack.
+ delete_clip: an animation deleted for good — `AppState.delete_animation`, the same
+ work the asset browser's Delete does.
 
- Only the authored pack, which is `AppState.delete_authored_clip`'s rule rather
- than this file's: a clip in a disk pack is part of a file, and removing it would
- mean rewriting that file, which is a different operation with different ways to
- fail.
+ Named as every clip tool names one (`resolve_named`): a bare name, or "Pack/Clip".
+ The clip must be the project's own — authored, or one of the loaded model's file —
+ since a library file is not this model's to rewrite; `unbind_clip` takes any clip
+ off the character.
 *>
 fn String? tool_delete_clip(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 
 	if (!takes_object(args, detail, `delete_clip takes an object: {"clip": name}`)) return CLIP_NOT_FOUND~;
-	String named;
-	if (!required_string(args, "clip", &named, detail, `delete_clip needs "clip": the name apply_clip wrote it under.`)) return CLIP_NOT_FOUND~;
+	String asked;
+	if (!required_string(args, "clip", &asked, detail, `delete_clip needs "clip": the clip's name, or "Pack/Clip".`)) return CLIP_NOT_FOUND~;
 
-	if (!app.delete_authored_clip(named))
+	AnimRef ref = resolve_named(app, asked, detail)!;
+	AnimTemplate* clip = app.clip(ref);
+	if (!clip) return CLIP_NOT_FOUND~;
+	bool own_file = app.source_path.len > 0 && ref.pack == app.loaded_pack_for(app.source_path);
+	if (ref.pack != app.authored_pack && !own_file)
 	{
-		AnimPack* pack = app.authored();
-		detail.appendf(`the authored pack holds no clip called "%s"`, named);
-		if (pack == null || pack.clips.len == 0)
-		{
-			detail.append_string(". Nothing has been written with apply_clip in this session, and a clip read off a file is part of that file rather than something to delete.");
-		}
-		else
-		{
-			detail.append_string(". It holds: ");
-			foreach (usz i, held : pack.clips)
-			{
-				if (i > 0) detail.append_string(", ");
-				detail.append_string(held.name);
-			}
-		}
+		AnimPack* pack = app.pack((usz)ref.pack);
+		detail.appendf(`"%s" is in %s, a library file, which is not this project's to rewrite. `
+			`delete_clip deletes the project's own clips (authored, or the loaded model's); unbind_clip takes this one off the character.`,
+			clip.name, pack ? base_name(pack.path) : "another pack");
 		return CLIP_NOT_FOUND~;
 	}
 
-	app.undo_stack.commit();
+	String named = clip.name.copy(mem);
+	defer named.free(mem);
+	if (!app.delete_animation(named, detail)) return CLIP_NOT_FOUND~;
 	return deleted_json(app, named);
 }
 

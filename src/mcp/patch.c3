@@ -15,8 +15,7 @@
  rather than replacing it: a rotation turns the joint further from where the clip
  already had it, a move slides it further. The value it composes onto is read from
  the source clip (`entry_at`), so the offsets of one call are independent of each
- other and of the order they are applied in — the same reason `plant_feet`
- computes against the source.
+ other and of the order they are applied in.
 
  A range is a span of the cycle. Over the whole clip the offset is uniform: every
  key of the named joint is turned by the same amount. Over a sub-range it is a
@@ -39,10 +38,10 @@
 
  ## It lands as one undo step
 
- Like apply_clip and plant_feet, the rewritten clip is authored in one commit, so
+ Like apply_clip, the rewritten clip is authored in one commit, so
  a patch is one Ctrl+Z. What it does not do: resample a channel a joint does not
  key (a rotation-only patch never invents a translation key), retime, or touch the
- ground spec — those are apply_clip's and plant_feet's jobs.
+ ground spec — those are apply_clip's job, and holding a foot is pin_feet's.
 *>
 module crig;
 

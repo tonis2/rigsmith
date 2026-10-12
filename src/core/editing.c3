@@ -335,13 +335,14 @@ fn void UndoStack.record(&self, Edit edit)
 
  @param name : `The clip's name, owned from here — the stack frees it.`
  @param parked : `The side of the swap that is not in the pack. Owned from here; an empty one is "there was no clip of this name", which is what a fresh write parks.`
+ @param slot : `The clip's position in the authored pack, so a replay that puts it back puts it there; -1 appends.`
 *>
-fn void UndoStack.record_clip_swap(&self, String name, AnimTemplate parked)
+fn void UndoStack.record_clip_swap(&self, String name, AnimTemplate parked, int slot = -1)
 {
 	drop_redo_tail(self);
 	uint at = (uint)self.clips.len();
 	self.clips.push(parked);
-	self.record({ .kind = REPLACE_CLIP, .id = at, .name = name });
+	self.record({ .kind = REPLACE_CLIP, .id = at, .name = name, .other = (uint)(slot + 1) });
 }
 
 fn void UndoStack.record_binding_swap(&self, uint index, BoundClip before, BoundClip after, bool browse = false)

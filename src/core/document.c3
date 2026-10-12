@@ -1365,7 +1365,7 @@ struct Edit
 	// dot at all. A payload too big to sit inline gets a slot and is named from
 	// here; see `UndoStack`.
 	uint id;
-	uint other; // the edge's or exclusion's second endpoint, the previous root, or ATTACH_SHELL's previous dot
+	uint other; // the edge's or exclusion's second endpoint, the previous root, ATTACH_SHELL's previous dot, or REPLACE_CLIP's authored slot plus one (0: unknown)
 	uint shell; // ATTACH_SHELL: which piece of the mesh
 	Vec3 before; // MOVE_DOT / DELETE_DOT: where it was
 	Vec3 after; // MOVE_DOT / ADD_DOT: where it is

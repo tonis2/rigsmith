@@ -51,6 +51,16 @@ const String SET_PINS_SCHEMA = `{"type":"object","properties":{
 	"time":{"type":"number","description":"Seconds into the clip to put on show. Default: the playhead."}
 }}`;
 
+const String PIN_FEET_SCHEMA = `{"type":"object","properties":{
+	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."},
+	"joints":{"type":"array","items":{"type":"string"},"description":"The joints to hold. Default: ankle_L and ankle_R."},
+	"windows":{"description":"\"auto\" (default): the clip's ground spec windows for each joint, else every run it spends down. Or a list of {joint, from, to} in seconds; a window may run past the end of a looping clip, round the loop point.","anyOf":[{"type":"string","enum":["auto"]},{"type":"array","items":{"type":"object","properties":{"joint":{"type":"string"},"from":{"type":"number"},"to":{"type":"number"}},"required":["joint","from","to"]}}]},
+	"blend":{"type":"number","description":"Seconds each pin eases in and out at its window's ends. Default 0.05."},
+	"flat":{"type":"boolean","description":"Hold the foot level as well, turned only about the vertical. Default true."},
+	"travel":{"description":"[x,y,z] the velocity, model units a second, an in-place clip leaves out — author_gait reports it as ground_speed along the facing. A held foot slides back by it, a treadmill. \"auto\" reads it off the feet: how fast they move along the floor while down, which is what an in-place generated cycle needs. Default [0,0,0]: the foot stands still, right for a clip that travels, a jump, or a stance.","anyOf":[{"type":"array","items":{"type":"number"}},{"type":"string","enum":["auto"]}]},
+	"clear":{"type":"boolean","description":"Take every pin off these joints instead, and write none."}
+}}`;
+
 const String POSE_JOINT_SCHEMA = `{"type":"object","properties":{
 	"joint":{"type":"string","description":"The joint to pose. A dragged joint goes to the point and keeps the angle it had, softly, so a hip pulled down drops the body with the chest still upright."},
 	"move":{"type":"array","items":{"type":"number"},"description":"[x,y,z] to move the joint by, in model units along the model's world axes: the drag of a joint by that much."},
@@ -126,6 +136,11 @@ fn void append_pin_state(AppState* app, DString* out)
 			out.appendf(`,"position":%s,"rotation":%s,"from":%.6g,"to":%.6g,"blend":%.6g,"mute":%s,"at":`,
 				pin.position, pin.rotation, pin.from, pin.to, pin.blend, pin.mute);
 			append_vec3(out, pin.at);
+			if (pin.travel.length_sq() > 0.0f)
+			{
+				out.append_string(`,"travel":`);
+				append_vec3(out, pin.travel);
+			}
 			out.append_char('}');
 		}
 		out.append_char(']');
@@ -466,5 +481,149 @@ fn String pose_joint_answer(AppState* app, Dot* dot, Vec3 asked, bool asked_posi
 	out.appendf(`"keyed":%s,"state":`, !app.pose_edit_pending);
 	append_pin_state(app, &out);
 	out.append_char('}');
+	return out.copy_str(mem);
+}
+
+// ---------------------------------------------------------------------------
+// pin_feet
+
+fn String? tool_pin_feet(Object* args, void* user_data, DString* detail) @private
+{
+	AppState* app = (AppState*)user_data;
+	if (!takes_object(args, detail, `pin_feet takes an object: {"clip": name, "joints": [names], "windows": "auto" | [{joint, from, to}], "travel": [x,y,z]}`)) return PINS_REFUSED~;
+
+	AnimRef ref = app.editing;
+	Object* named = member(args, "clip");
+	if (named != null)
+	{
+		if (!named.is_string())
+		{
+			detail.append_string(`"clip" must be a clip's name, or "Pack/Clip".`);
+			return PINS_REFUSED~;
+		}
+		ref = resolve_named(app, named.s, detail)!;
+	}
+	if (!ref.valid() || !app.clip(ref))
+	{
+		detail.append_string(`no clip is open. Give "clip": the clip whose feet to hold.`);
+		return PINS_REFUSED~;
+	}
+
+	StringList joints;
+	joints.init(tmem);
+	Object* listed = member(args, "joints");
+	if (listed != null)
+	{
+		if (!listed.is_array() || listed.get_len() == 0)
+		{
+			detail.append_string(`"joints" must be a non-empty list of joint names.`);
+			return PINS_REFUSED~;
+		}
+		for (sz i = 0; i < listed.get_len(); i++)
+		{
+			Object* one = listed.get_at(i);
+			if (!one.is_string())
+			{
+				detail.appendf(`joints[%d] must be a joint's name.`, i);
+				return PINS_REFUSED~;
+			}
+			joints.push(one.s);
+		}
+	}
+	else
+	{
+		foreach (dot : app.doc.dots.array_view())
+		{
+			if (dot.name == "ankle_L" || dot.name == "ankle_R") joints.push(dot.name);
+		}
+		if (joints.len() == 0)
+		{
+			detail.append_string(`the rig has no ankle_L or ankle_R. Give "joints": the joints the floor meets.`);
+			return PINS_REFUSED~;
+		}
+	}
+
+	if (args.get_bool("clear") ?? false)
+	{
+		usz gone = app.unpin_clip_joints(ref, joints.array_view());
+		DString out = dstring::new(mem);
+		defer out.free();
+		out.appendf(`{"cleared":%d}`, gone);
+		return out.copy_str(mem);
+	}
+
+	bool auto = true;
+	FootWindowList windows;
+	windows.init(tmem);
+	Object* given = member(args, "windows");
+	if (given != null && !(given.is_string() && given.s == "auto"))
+	{
+		if (!given.is_array() || given.get_len() == 0)
+		{
+			detail.append_string(`"windows" is "auto" or a non-empty list of {"joint": name, "from": seconds, "to": seconds}.`);
+			return PINS_REFUSED~;
+		}
+		auto = false;
+		for (sz i = 0; i < given.get_len(); i++)
+		{
+			Object* entry = given.get_at(i);
+			String joint;
+			if (!takes_object(entry, detail, `each window is {"joint": name, "from": seconds, "to": seconds}`)
+				|| !required_string(entry, "joint", &joint, detail, `each window needs "joint".`)) return PINS_REFUSED~;
+			double? from = entry.get_float("from");
+			double? to = entry.get_float("to");
+			if (catch from) { detail.appendf(`windows[%d] needs "from", in seconds.`, i); return PINS_REFUSED~; }
+			if (catch to) { detail.appendf(`windows[%d] needs "to", in seconds.`, i); return PINS_REFUSED~; }
+			if (from < 0.0 || to < from)
+			{
+				detail.appendf(`windows[%d] runs from %.4g to %.4g: from must be 0 or more and to no earlier.`, i, from, to);
+				return PINS_REFUSED~;
+			}
+			windows.push({ .joint = joint, .from = (float)from, .to = (float)to });
+		}
+	}
+
+	float blend = (float)(args.get_float("blend") ?? (double)FOOT_PIN_BLEND);
+	if (!(blend >= 0.0f))
+	{
+		detail.append_string(`"blend" must be 0 or more seconds.`);
+		return PINS_REFUSED~;
+	}
+	Vec3 travel;
+	bool travel_auto = false;
+	Object* moving = member(args, "travel");
+	if (moving != null && moving.is_string() && moving.s == "auto")
+	{
+		travel_auto = true;
+	}
+	else if (moving != null && !as_vec3(moving, &travel))
+	{
+		detail.append_string(`"travel" must be [x, y, z] in model units a second, or "auto".`);
+		return PINS_REFUSED~;
+	}
+	bool flat = args.get_bool("flat") ?? true;
+
+	Vec3 used;
+	FootPinReport[] done = app.pin_clip_feet(ref, joints.array_view(), windows.array_view(), auto, blend, flat, travel, detail,
+		travel_auto, &used)!;
+
+	DString out = dstring::new(mem);
+	defer out.free();
+	AnimTemplate* clip = app.clip(app.editing);
+	out.append_string(`{"clip":`);
+	append_json_string(&out, clip ? clip.name : "");
+	out.append_string(`,"travel":`);
+	append_vec3(&out, used);
+	out.append_string(`,"pins":[`);
+	float worst = 0.0f;
+	foreach (usz i, report : done)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_string(`{"joint":`);
+		append_json_string(&out, report.joint);
+		out.appendf(`,"from":%s,"to":%s,"residual":%.4g}`, (JsonFloat)report.from, (JsonFloat)report.to, report.residual)!!;
+		worst = math::max(worst, report.residual);
+	}
+	out.appendf(`],"worst_residual":%.4g,"note":"residual is how far the foot strayed from its pin while fully held, a fraction of rig height. Above about 0.01 the leg cannot reach: check limit_saturation in measure_clip, or shorten the window."}`, worst)!!;
 	return out.copy_str(mem);
 }

@@ -526,10 +526,11 @@ fn AnimPack* AppState.ensure_authored(&self)
  @param landed : `Where the clip put in ended up, if given. Left NO_ANIM by a removal.`
  @return `What was there, or an empty template when nothing was. The caller's to free.`
 *>
-fn AnimTemplate AppState.swap_authored_clip(&self, String name, AnimTemplate clip, AnimRef* landed = null)
+fn AnimTemplate AppState.swap_authored_clip(&self, String name, AnimTemplate clip, AnimRef* landed = null, int slot = -1)
 {
 	bool putting = clip.name.len > 0;
 	self.authored_dirty = true;
+	self.authored_index_stale = true;
 
 	AnimPack* pack = self.authored();
 	// Nothing to take out and nothing a removal could be recorded in. Creating the
@@ -550,6 +551,14 @@ fn AnimTemplate AppState.swap_authored_clip(&self, String name, AnimTemplate cli
 	if (at < 0)
 	{
 		if (!putting) return {};
+		// Back where it was taken out of, when that is known and still in reach —
+		// an undone delete restores the list as it was, not with the clip at the end.
+		if (slot >= 0 && (usz)slot < pack.clips.len)
+		{
+			if (landed) *landed = { self.authored_pack, slot };
+			self.insert_authored(pack, (usz)slot, clip);
+			return {};
+		}
 		if (landed) *landed = { self.authored_pack, (int)pack.clips.len };
 		self.append_authored(pack, clip);
 		return {};
@@ -596,13 +605,30 @@ fn void AppState.append_authored(&self, AnimPack* pack, AnimTemplate clip)
 	pack.clips = grown;
 }
 
+// Open a slot at `at` and put the clip in it. Every reference past it shifts up.
+fn void AppState.insert_authored(&self, AnimPack* pack, usz at, AnimTemplate clip)
+{
+	usz count = pack.clips.len;
+	AnimTemplate[] grown = alloc::new_array(mem, AnimTemplate, (sz)(count + 1));
+	usz put = 0;
+	foreach (usz i, held : pack.clips)
+	{
+		if (i == at) grown[put++] = clip;
+		grown[put++] = held;
+	}
+	if (at >= count) grown[put++] = clip;
+	if (count > 0) alloc::free(mem, pack.clips);
+	pack.clips = grown;
+	self.shift_authored_refs((int)at, 1);
+}
+
 <*
  Take the slot out of the pack and close the gap. The template itself is the
  caller's problem — this only unhooks it.
 
- Every `AnimRef` into this pack past the gap shifts down by one. The player's is
- the one crig holds across the call, so it is the one fixed here; refs into other
- packs are untouched, since the pack's own index does not move.
+ Every `AnimRef` into this pack past the gap shifts down by one, and every one
+ naming the slot itself lets go; see `shift_authored_refs`. Refs into other packs
+ are untouched, since the pack's own index does not move.
 *>
 fn void AppState.remove_authored(&self, AnimPack* pack, usz at)
 {
@@ -616,15 +642,36 @@ fn void AppState.remove_authored(&self, AnimPack* pack, usz at)
 	}
 	alloc::free(mem, pack.clips);
 	pack.clips = left;
+	self.shift_authored_refs((int)at, -1);
+}
 
-	if (self.current_ref.pack == self.authored_pack && self.current_ref.clip > (int)at)
+<*
+ Keep every reference crig holds across calls into the authored pack pointing at
+ the clip it named, after a slot opened (`by` 1) or closed (`by` -1) at `at`.
+
+ A reference to the closed slot itself has nothing left to name: the clip being
+ edited and the active layer let go, a check about it is dropped, and a finished
+ generation forgets what it landed. The player's is left alone there — whoever
+ removes the clip playing stops it first, see `swap_authored_clip`.
+*>
+fn void AppState.shift_authored_refs(&self, int at, int by)
+{
+	int pack = self.authored_pack;
+	AnimRef*[4] held = { &self.current_ref, &self.editing, &self.active_layer_ref, &self.motion_job.landed };
+	foreach (usz i, ref : held)
 	{
-		self.current_ref.clip--;
+		if (ref.pack != pack || ref.clip < at) continue;
+		if (by < 0 && ref.clip == at)
+		{
+			if (i > 0) *ref = NO_ANIM;
+			continue;
+		}
+		ref.clip += by;
 	}
-	if (self.editing.pack == self.authored_pack)
+	if (self.anim_check.ref.pack == pack && self.anim_check.ref.clip >= at)
 	{
-		if (self.editing.clip == (int)at) { self.editing = NO_ANIM; }
-		else if (self.editing.clip > (int)at) self.editing.clip--;
+		if (by < 0 && self.anim_check.ref.clip == at) { self.anim_check.free(); }
+		else { self.anim_check.ref.clip += by; }
 	}
 }
 
@@ -660,12 +707,14 @@ fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced =
 	AnimRef landed = NO_ANIM;
 	clip.compile_tracks(mem);
 	AnimTemplate had = self.swap_authored_clip(name, clip, &landed);
+	// Taken before the record, which may run past the pack: the slot the clip is in.
+	int slot = landed.clip;
 	// Clip replacement can also come from MCP/import, not only land_clip.
 	// Group edits restore their transformed selection after landing; other
 	// replacements must not leave selected times pointing at unrelated poses.
 	self.clear_animation_key_selection();
 	if (replaced) *replaced = had.name.len > 0;
-	self.undo_stack.record_clip_swap(name.copy(mem), had);
+	self.undo_stack.record_clip_swap(name.copy(mem), had, slot);
 	return landed;
 }
 
@@ -721,29 +770,129 @@ fn AnimRef AppState.author_clip(&self, AnimTemplate clip, bool* replaced = null)
  the scratch clips accumulate that `save_pack` would otherwise ship.
 
  The removed clip goes to the undo stack rather than being freed, so undo puts
- back the clip itself and not a reconstruction of it. The caller closes the
- group — see `tool_delete_clip`.
+ back the clip itself, in the slot it had, and not a reconstruction of it. The
+ binding is taken off **before** the clip and recorded first, so the replay in
+ reverse puts the clip back before its row: a row restored onto a clip that is not
+ there yet resolves to nothing, and that is what used to leave nothing being
+ edited after an undo. The caller closes the group — see `delete_animation`.
 
  @return `False when there is no authored pack or no clip of that name.`
 *>
 fn bool AppState.delete_authored_clip(&self, String name)
 {
-	AnimTemplate had = self.swap_authored_clip(name, {});
-	if (had.name.len == 0) return false;
-	// Removal shifts numeric clip references, including selections in other clips.
-	self.clear_animation_key_selection();
-	self.undo_stack.record_clip_swap(name.copy(mem), had);
-	// A deleted project clip must not leave a missing binding behind. Keep the
-	// removal in the same transaction so undo restores both clip and membership.
+	AnimPack* pack = self.authored();
+	if (!pack) return false;
+	int slot = -1;
+	foreach (usz i, held : pack.clips)
+	{
+		if (held.name == name)
+		{
+			slot = (int)i;
+			break;
+		}
+	}
+	if (slot < 0) return false;
+
+	AnimRef going = { self.authored_pack, slot };
+	bool edited = going.same(self.editing);
+	self.let_go_of_clip(going);
+
+	// A deleted project clip must not leave a missing binding behind. Kept in the
+	// same transaction so undo restores both clip and membership — and, for the
+	// clip that was open, puts it back in the editor (`browse` false).
 	sz row = self.doc.bound_index("", name);
 	if (row >= 0)
 	{
 		BoundClip removed = self.doc.swap_bound((uint)row, {});
-		self.undo_stack.record_binding_swap((uint)row, removed, {});
+		self.undo_stack.record_binding_swap((uint)row, removed, {}, browse: !edited);
 	}
+
+	AnimTemplate had = self.swap_authored_clip(name, {});
+	// Removal shifts numeric clip references, including selections in other clips.
+	self.clear_animation_key_selection();
+	self.undo_stack.record_clip_swap(name.copy(mem), had, slot);
 
 	// A card open on the authored pack is showing a row that has gone, and the
 	// selection below it has shifted; both are the library card's to redraw.
+	self.refresh_ui();
+	return true;
+}
+
+<*
+ Delete an animation for good, wherever the project keeps it.
+
+ 	`if (!app.delete_animation("Walk", &why)) app.@notice("%s", why.str_view());`
+
+ **The one place a clip is deleted** rather than taken off the character — the
+ asset browser's Delete and MCP's `delete_clip` both come here. A clip may live in
+ the authored pack (made this session, or kept in the sidecar), in the loaded
+ model's file, or both, which is what a generated clip is after a save; all of it
+ goes:
+
+ - every binding of it is taken off, recorded, and the clip let go if it was open;
+ - the authored copy leaves the pack, recorded in its slot;
+ - one undo step closes both;
+ - a clip in the file is then written out of it by re-saving the model, and the
+   model's own pack re-read so the clip is gone from memory as well.
+
+ Ctrl+Z brings back the authored copy and the binding. The file was re-saved, so
+ the next Save is what writes a clip brought back into it again.
+
+ @param name : `The clip's own name. Borrowed for the call; it may point into an index this moves.`
+ @param why : `Receives the reason on refusal, if given.`
+ @return `False when nothing of that name is held, or an edit is in flight.`
+*>
+fn bool AppState.delete_animation(&self, String name, DString* why = null)
+{
+	if (self.pose_edit_pending)
+	{
+		if (why) why.append_string("a pose is being edited — key it or cancel it first");
+		return false;
+	}
+	String named = name.copy(mem);
+	defer named.free(mem);
+
+	AnimPack* pack = self.authored();
+	bool authored = false;
+	if (pack)
+	{
+		foreach (held : pack.clips)
+		{
+			if (held.name == named) authored = true;
+		}
+	}
+	bool in_file = self.has_mesh() && self.model_file_holds(named);
+	if (!authored && !in_file)
+	{
+		if (why) why.appendf("no animation called %s is in the project%s", named,
+			self.has_mesh() ? " or in the model's file" : "")!!;
+		return false;
+	}
+
+	// A binding of the file's own clip. The authored one is `delete_authored_clip`'s.
+	sz at = self.source_path.len > 0 ? self.doc.bound_index(self.source_path, named) : -1;
+	if (at >= 0)
+	{
+		AnimRef going = self.resolve_bound(at);
+		bool edited = going.valid() && going.same(self.editing);
+		self.let_go_of_clip(going);
+		BoundClip removed = self.doc.swap_bound((uint)at, {});
+		self.undo_stack.record_binding_swap((uint)at, removed, {}, browse: !edited);
+	}
+	if (authored) self.delete_authored_clip(named);
+	self.undo_stack.commit();
+
+	if (in_file)
+	{
+		// Rewrites the model without the clip; `save_session` reindexes the group.
+		self.save_session();
+		// The loaded copy of the file's own pack still holds it; `reload_pack`
+		// frees the path it is given, so it gets its own.
+		String file = self.source_path.copy(mem);
+		defer file.free(mem);
+		self.reload_pack(file);
+	}
+	self.refresh_bound_rows();
 	self.refresh_ui();
 	return true;
 }

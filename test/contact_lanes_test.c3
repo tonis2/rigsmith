@@ -175,31 +175,6 @@ fn void contact_windows_persist_and_survive_a_trim() @test
 	}
 }
 
-// Plant feet writes the windows it read off the motion into the clip, and a
-// second plant uses the lanes as edited.
-fn void plant_feet_writes_its_windows_and_replants_from_the_lanes() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	contact_workspace(&f);
-	test::@check(!contact_ground(&f).solves(), "the clip starts with contacts");
-
-	crig::PlantOutcome outcome;
-	test::@check(f.app.plant_feet(f.app.editing, &outcome), "Plant feet did nothing");
-	outcome.free();
-	AnimGround ground = contact_ground(&f);
-	test::@check(ground.feet.len >= 2, "Plant feet wrote %d windows", ground.feet.len);
-	if (ground.feet.len == 0) return;
-
-	test::@check(f.app.set_contact_window(f.app.editing, 0, 0.2f, 0.3f), "the lane did not change");
-	test::@check(f.app.plant_feet(f.app.editing, &outcome), "the re-plant did nothing");
-	defer outcome.free();
-	test::@check(outcome.foot_count >= 1 && near_phase(outcome.feet[0].down, 0.2f) && near_phase(outcome.feet[0].up, 0.5f),
-		"the re-plant did not use the edited lane");
-	test::@check(contact_ground(&f).feet.len == ground.feet.len, "the re-plant changed the lanes");
-}
-
 fn Timeline* contact_sheet(Fixture* f, Element** elem)
 {
 	*elem = f.ui.find(Timeline)!!;

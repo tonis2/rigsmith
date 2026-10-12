@@ -109,6 +109,9 @@ struct MotionRequest
 	// A clip bound to the character whose keyed poses the motion passes
 	// through; "" for none. Borrowed.
 	String guide;
+	// Land every generated frame as a key rather than the fewest that move the
+	// same; see `generated_clip_on_rig`.
+	bool dense;
 }
 
 <*
@@ -146,6 +149,8 @@ struct MotionJob
 	// and play it; `take_generated_clip` hands it over once.
 	AnimRef landed;
 	bool landed_pending;
+	// The request's `dense`, carried to the landing.
+	bool dense;
 }
 
 <*
@@ -703,6 +708,7 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 	self.motion_job.guide_keys = keyed;
 	self.motion_job.guide_dropped = dropped;
 	self.motion_job.guide_partial = partial;
+	self.motion_job.dense = request.dense;
 
 	llm::pipeline::Job* engine = mem::new(llm::pipeline::Job);
 	self.motion_job.engine = engine;
@@ -781,7 +787,7 @@ fn void AppState.finish_motion_job(&self, bool ok)
 		self.@notice("Generating \"%s\" failed: %s", job.name, job.last());
 		return;
 	}
-	AnimRef landed = self.land_generated_motion(job.glb, job.name);
+	AnimRef landed = self.land_generated_motion(job.glb, job.name, job.dense);
 	if (!landed.valid())
 	{
 		job.failed = true;
@@ -826,9 +832,9 @@ fn bool AppState.stop_motion_generation(&self)
 
  @return `The clip, or NO_ANIM when the file holds none this rig can take.`
 *>
-fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name)
+fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, bool dense = false)
 {
-	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name);
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name, dense);
 	if (catch sampled) return NO_ANIM;
 	AnimRef landed = self.author_clip(sampled);
 	if (!landed.valid()) return NO_ANIM;
@@ -846,11 +852,20 @@ fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name)
  Sampled raw: the rig's joint limits and the ground solve are applied when it
  plays, as for every clip, so they are carried rather than baked in.
 
+ **Landed editable.** The file is keyed at 30 frames a second and the import
+ slices each frame in four, so taken whole a five-second clip is six hundred keys
+ with every joint on every one — a sheet nobody can edit and a curve nobody can
+ shape. So it lands with the keys it can lose at Optimize keys' Light tolerance
+ dropped (`clip_keys_reduced`), which moves the same within a quarter of a degree;
+ `dense` keeps every one. And it lands **not looping**: a generated motion starts
+ and ends where it likes, and `make_loop` is how a cycle is cut out of it.
+
  @param name : `The clip's name, made unique against the authored pack.`
+ @param dense : `Keep every key the import made.`
  @return? RIG_EMPTY : `There is no rig to put it on.`
  @return? MOTION_NOT_STARTED : `The file holds no clip, or one for a skeleton this rig does not relate to.`
 *>
-fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name)
+fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, bool dense = false)
 {
 	RigView view = self.open_rig(mem)!;
 	defer view.free(mem);
@@ -900,11 +915,11 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name)
 	}
 
 	String unique = self.unused_clip_name(mem, name.len > 0 ? name : source.name);
-	return {
+	AnimTemplate built = {
 		.name = unique,
 		.duration = source.duration,
 		.keyframes = frames,
-		.loop = source.loop,
+		.loop = false,
 		.blend = source.blend,
 		.ground = {
 			.feet = feet.len() > 0 ? feet.to_array(mem) : (AnimFoot[]){},
@@ -913,6 +928,14 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name)
 		},
 		.owned = true,
 	};
+	if (dense) return built;
+	// Compiled first: sampling an uncompiled clip finds each joint's keys by walking
+	// every key, which is most of the cost on a clip this dense.
+	built.compile_tracks(mem);
+	AnimTemplate reduced;
+	if (!clip_keys_reduced(mem, built, &view.skeleton, view.names, LIGHT, &reduced)) return built;
+	built.free(mem);
+	return reduced;
 }
 
 <*

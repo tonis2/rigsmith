@@ -37,7 +37,7 @@ faultdef RIG_REFUSED;
 *>
 const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 	"ops":{"type":"array","description":"Applied in order, as one undo step. An op that fails takes the whole call back with it.","items":{"type":"object","properties":{
-		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","attach","detach","limits","exclude","include","symmetry"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline."},
+		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands — the fix for a rig whose limits were carried over by an older build and fold a knee or a hip the wrong way (measure_clip reports limit_saturation on every natural clip, and pins and IK fight the motion)."},
 		"joint":{"type":"string","description":"Which dot, by the name get_skeleton reports; bone_<id> reaches an unnamed one. Used by move, name, remove, root, reach, attach and limits."},
 		"name":{"type":"string","description":"The name to give a dot — place and name. Empty un-names it, which is the hand-placed state; only named dots can be animated."},
 		"position":{"type":"array","description":"[x,y,z] in model space, the space get_skeleton reports positions in — not a fraction of anything. Used by place and move.","items":{"type":"number"}},
@@ -63,7 +63,7 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 
 // Every `op` edit_rig answers to, for the refusals that list them. Keep it in
 // step with the schema's enum and the switch in `apply_op`.
-const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, attach, detach, limits, exclude, include, symmetry";
+const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, attach, detach, limits, exclude, include, symmetry, plan_limits";
 
 <*
  Apply a batch of rig edits, or none of them.
@@ -159,6 +159,7 @@ fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detai
 		case "exclude": return op_exclusion(app, op, index, true, detail);
 		case "include": return op_exclusion(app, op, index, false, detail);
 		case "symmetry": return op_symmetry(app, op, index, detail);
+		case "plan_limits": return op_plan_limits(app, index, detail);
 		default:
 			detail.appendf(
 				`ops[%d].op is "%s". It has to be one of %s.`,
@@ -418,6 +419,21 @@ fn bool op_sharpness(AppState* app, Object* op, usz index, DString* detail) @loc
 	// Already at that sharpness is not a failure, for the same reason a redundant
 	// rename is not: the batch asked for a state, and the state holds.
 	app.set_sharpness_recorded((float)want);
+	return true;
+}
+
+<*
+ plan_limits: the body plan's joint limits, re-read onto the rig as it stands —
+ `AppState.reapply_plan_limits`, inside this call's undo group.
+*>
+fn bool op_plan_limits(AppState* app, usz index, DString* detail) @local
+{
+	sz landed = app.reapply_plan_limits(commit: false);
+	if (landed < 0)
+	{
+		detail.appendf(`ops[%d]: the rig has no body plan with limits to re-apply ("%s").`, index, app.doc.plan);
+		return false;
+	}
 	return true;
 }
 

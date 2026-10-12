@@ -438,17 +438,18 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[56] tool_names @local = {
+String[63] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
 	"delete_clip", "apply_plan", "edit_rig", "set_secondary_motion", "build_body",
 	"undo", "redo", "play", "stop", "show_weights", "save_pack", "screenshot",
 	"render", "set_camera", "get_api_docs", "get_crig_docs", "save_project",
-	"solve_targets", "plant_feet", "patch_clip", "list_poses", "get_saved_pose",
+	"solve_targets", "patch_clip", "trim_clip", "retime_clip", "optimize_clip", "remove_movement",
+	"close_loop", "smooth_clip", "make_loop", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
-	"get_pins", "set_pins", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
+	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
 };
 
@@ -1112,7 +1113,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 42;
+const int DOCS_VERSION @local = 43;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -1165,9 +1166,9 @@ fn void the_api_docs_resource() @test
 
 // Every section, in the order the index reports them. By hand, like `tool_names`:
 // a section added without a line here fails rather than passing unnoticed.
-String[17] doc_topics @local = {
+String[18] doc_topics @local = {
 	"clips", "authoring", "turning", "targets", "editing", "playback", "cycles",
-	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "pins",
+	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "pins", "repair",
 };
 
 <*
@@ -1831,136 +1832,6 @@ fn void solve_targets_pole_notes_a_straight_limb() @test
 }
 
 // ---------------------------------------------------------------------------
-// plant_feet
-//
-// The horizontal half of a ground contact (animation_plan.md, MCP2): holding a
-// stance foot in place while the pelvis moves, baked by leg IK. The fixture's
-// foot -> knee -> hips leg over a root that sways +X and back gives a foot that
-// slides; planting it bends the leg to hold the foot, dropping measure_clip's
-// foot_slide.
-
-// A clip whose root sways out and back while the foot is meant to be down the
-// whole cycle — a foot that skates, for plant_feet to still.
-const String SKATING_CLIP @local = `{"name":"step","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"hips","move":[0,0,0]}]},{"time":0.5,"joints":[{"name":"hips","move":[0.2,0,0]}]},{"time":1.0,"joints":[{"name":"hips","move":[0,0,0]}]}],"ground":{"feet":[{"joint":"foot","down":0.0,"up":1.0}]}}`;
-
-<*
- A skating foot is planted still: foot_slide falls and the leg is keyed to do it.
-*>
-fn void plant_feet_stops_a_foot_skating() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? authored = f.call_tool("apply_clip", SKATING_CLIP);
-	if (catch authored)
-	{
-		test::@check(false, "the skating clip authors");
-		return;
-	}
-	authored.free();
-
-	Object*? planted = f.call_tool("plant_feet", `{"clip":"step"}`);
-	if (catch planted)
-	{
-		test::@check(false, "plant_feet answers");
-		return;
-	}
-	defer planted.free();
-
-	Object* slide = planted.get("foot_slide")!!;
-	double before = slide.get_float("before")!!;
-	double after = slide.get_float("after")!!;
-	test::@check(before > 0.02, "the clip was skating to begin with (foot_slide %.6g)", before);
-	test::@check(after < before * 0.6, "and planting cut it down (%.6g -> %.6g)", before, after);
-	test::@check((planted.get_int("keys_added") ?? 0) > 0, "and it keyed the leg to do it");
-	test::@check(planted.get("feet")!!.get_at(0).get_bool("planted")!! == true,
-		"the foot had a leg to bend");
-}
-
-<*
- planting lands: the clip in the pack skates less than it did before.
-
- A separate measure_clip against the replaced clip, so what is asserted is that the
- bake reached the pack, not just that the tool's own before/after says so.
-*>
-fn void plant_feet_lands_the_planted_clip() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? authored = f.call_tool("apply_clip", SKATING_CLIP);
-	if (catch authored)
-	{
-		test::@check(false, "the skating clip authors");
-		return;
-	}
-	authored.free();
-
-	Object*? m0 = f.call_tool("measure_clip", `{"clip":"step"}`);
-	if (catch m0)
-	{
-		test::@check(false, "measure_clip reads the skating clip");
-		return;
-	}
-	double before = m0.get_float("foot_slide") ?? 0.0;
-	m0.free();
-
-	Object*? planted = f.call_tool("plant_feet", `{"clip":"step"}`);
-	if (catch planted)
-	{
-		test::@check(false, "plant_feet answers");
-		return;
-	}
-	planted.free();
-
-	Object*? m1 = f.call_tool("measure_clip", `{"clip":"step"}`);
-	if (catch m1)
-	{
-		test::@check(false, "measure_clip reads the planted clip");
-		return;
-	}
-	double after = m1.get_float("foot_slide") ?? 0.0;
-	m1.free();
-
-	test::@check(after < before * 0.6, "the landed clip skates less (%.6g -> %.6g)", before, after);
-}
-
-<*
- A clip with no ground spec has no stance feet, and is refused by saying so.
-*>
-fn void plant_feet_refuses_a_clip_with_no_ground() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? authored = f.call_tool("apply_clip",
-		`{"name":"flat","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"x":0,"y":0,"z":0,"w":1}}]}]}`);
-	if (catch authored)
-	{
-		test::@check(false, "the no-ground clip authors");
-		return;
-	}
-	authored.free();
-
-	Object*? root = f.request(
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"plant_feet","arguments":{"clip":"flat"}}}`);
-	if (catch root)
-	{
-		test::@check(false, "plant_feet answers a no-ground clip");
-		return;
-	}
-	defer root.free();
-	test::@check(error_message_contains(root, "no ground spec"),
-		"a clip with no feet is refused, and says why");
-}
-
-// ---------------------------------------------------------------------------
 // patch_clip
 //
 // The additive counterpart to apply_clip (animation_plan.md, MCP3): a few joints
@@ -2208,6 +2079,10 @@ fn Object* find_issue(Object* metrics, String kind) @local
 	return null;
 }
 
+// A clip whose root sways out and back while the foot is meant to be down the
+// whole cycle — a foot that skates.
+const String SKATING_CLIP @local = `{"name":"step","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"hips","move":[0,0,0]}]},{"time":0.5,"joints":[{"name":"hips","move":[0.2,0,0]}]},{"time":1.0,"joints":[{"name":"hips","move":[0,0,0]}]}],"ground":{"feet":[{"joint":"foot","down":0.0,"up":1.0}]}}`;
+
 <*
  A skating foot is named to the foot and a phase, not just summed into foot_slide.
 *>
@@ -2325,6 +2200,29 @@ fn void measure_clip_localizes_a_loop_seam() @test
 	if (seam == null) return;
 	test::@check(seam.get_string("joint")!! == "foot", "named to the joint that swings");
 	test::@check((seam.get_float("phase") ?? -1.0) == 0.0, "at the seam");
+}
+
+<*
+ A smooth swing whose seam falls where it turns round — its speed changing
+ fastest — is motion, not a break: the seam check allows for the acceleration
+ either side of it.
+*>
+fn void a_smooth_turn_at_the_seam_is_not_a_velocity_break() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"swing","duration":1.0,"loop":true,"blend":"smooth","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.8}}]},{"time":0.25,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.0}}]},{"time":0.5,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":-0.8}}]},{"time":0.75,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.0}}]}]}`);
+	if (catch authored) { test::@check(false, "the swinging clip authors"); return; }
+	authored.free();
+
+	Object*? m = f.call_tool("measure_clip", `{"clip":"swing","samples":64}`);
+	if (catch m) { test::@check(false, "measure_clip answers"); return; }
+	defer m.free();
+	test::@check(find_issue(m, "loop_velocity") == null, "a smooth turn at the seam was reported as a velocity break");
 }
 
 <*
@@ -6624,7 +6522,7 @@ fn void delete_clip_stops_a_clip_it_is_playing() @test
 
 	test::@check(!f.app.animating, "deleting the running clip left the player running over it");
 	test::@check((gone.get_int("remaining") ?? -1) == 0, "the authored pack still holds the clip");
-	test::@check(f.refuses_tool("delete_clip", `{"clip":"Bend"}`, "no clip called"),
+	test::@check(f.refuses_tool("delete_clip", `{"clip":"Bend"}`, "no clip is called"),
 		"deleting it twice is refused and says the pack does not hold it");
 }
 
@@ -6721,7 +6619,7 @@ fn void undoing_a_first_write_takes_the_clip_out() @test
 
 	test::@check(f.app.undo(), "the write is on the ledger");
 	test::@check(held_clip(f, "Solo") == null, "undoing a first write leaves the clip gone");
-	test::@check(f.refuses_tool("delete_clip", `{"clip":"Solo"}`, "no clip called"),
+	test::@check(f.refuses_tool("delete_clip", `{"clip":"Solo"}`, "no clip is called"),
 		"and the pack agrees it does not hold it");
 
 	test::@check(f.app.redo() && held_clip(f, "Solo") != null, "redo writes it again");
@@ -6758,6 +6656,115 @@ fn void a_deleted_clip_comes_back_whole() @test
 		"undoing a delete puts the clip back whole");
 
 	test::@check(f.app.redo() && held_clip(f, "Gone") == null, "redo takes it out again");
+}
+
+<*
+ delete_clip names a clip the way every clip tool does, "Pack/Clip" included, and
+ an undo puts the clip back in the slot it left — the clips after it keep their
+ references, and one open below it stays open.
+*>
+fn void delete_clip_takes_a_qualified_name_and_undo_keeps_the_order() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	if (!write_timed(f, "First", "1")) return;
+	if (!write_timed(f, "Middle", "2")) return;
+	if (!write_timed(f, "Last", "3")) return;
+	AnimRef last = f.app.clip_named_in_authored("Last");
+	f.app.editing = last;
+
+	Object*? removed = f.call_tool("delete_clip", `{"clip":"Authored/Middle"}`);
+	if (catch removed)
+	{
+		test::@check(false, "delete_clip refused a Pack/Clip name");
+		return;
+	}
+	removed.free();
+	test::@check(held_clip(f, "Middle") == null, "the qualified delete left the clip");
+	AnimRef shifted = f.app.clip_named_in_authored("Last");
+	test::@check(f.app.editing.same(shifted), "the clip open after the deleted one lost its place");
+
+	test::@check(f.app.undo(), "the delete is on the ledger");
+	test::@check(f.app.clip_named_in_authored("Middle").clip == last.clip - 1, "undo did not put the clip back in its slot");
+	test::@check(f.app.editing.same(last), "the open clip did not follow the restored slot");
+	test::@check(f.app.clip(f.app.editing).name == "Last", "the editor points at another clip after undo");
+
+	test::@check(f.refuses_tool("delete_clip", `{"clip":"Authored/Nobody"}`, "Nobody"),
+		"delete_clip accepted a clip that is not there");
+}
+
+// A three-second take keyed sixty times a second: the knee strides with a period
+// of 0.75 s and trembles frame to frame, the hips drift forward.
+fn String dense_take_json(String name)
+{
+	DString out = dstring::new(mem);
+	out.appendf(`{"name":"%s","duration":3.0,"keyframes":[`, name);
+	for (int k = 0; k <= 180; k++)
+	{
+		float t = (float)k / 60.0f;
+		float angle = 0.5f * (float)math::sin(t * (float)math::PI * 2.0f / 0.75f) + (k % 2 == 0 ? 0.03f : -0.03f);
+		if (k > 0) out.append_char(',');
+		out.appendf(`{"time":%.6f,"joints":[{"name":"knee","rotation":[%.6f,0,0]},{"name":"hips","move":[0,0,%.6f]}]}`, t, angle, 0.02f * t);
+	}
+	out.append_string("]}");
+	String json = out.copy_str(mem);
+	out.free();
+	return json;
+}
+
+<*
+ The clip tools an agent repairs a take with, over the wire: trim and retime
+ reshape it, close_loop refuses a clip that does not loop, smooth_clip keeps the
+ keys and calms the tremble, and make_loop cuts a looping stride out of it as a
+ clip of its own. Each answers with the clip and its measurements.
+*>
+fn void the_repair_tools_reshape_a_take() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	String take = dense_take_json("take");
+	defer alloc::free(mem, take);
+	Object*? applied = f.call_tool("apply_clip", take);
+	if (catch applied) { test::@check(false, "the take did not author"); return; }
+	applied.free();
+
+	Object*? looped = f.call_tool("make_loop", `{"clip":"take","name":"stride","period":[0.6,0.9]}`);
+	if (catch looped) { test::@check(false, "make_loop refused the take"); return; }
+	defer looped.free();
+	double period = looped.get("cut")!!.get_float("period")!!;
+	test::@check(math::abs(period - 0.75) < 0.03, "the cycle is %.3f s, not the stride's 0.75", period);
+	Object* cycle = looped.get("cycle")!!;
+	test::@check(cycle.get_string("clip")!! == "stride" && (cycle.get_bool("loop") ?? false), "the cycle is not a looping clip called stride");
+	test::@check(held_clip(f, "take") != null, "make_loop consumed the take");
+
+	Object*? smoothed = f.call_tool("smooth_clip", `{"clip":"take","window":0.1}`);
+	if (catch smoothed) { test::@check(false, "smooth_clip refused"); return; }
+	defer smoothed.free();
+	test::@check((smoothed.get_int("keyframes") ?? 0) == 181, "smoothing changed the keys");
+
+	Object*? kept = f.call_tool("trim_clip", `{"clip":"take","keep":[0.5,2.0]}`);
+	if (catch kept) { test::@check(false, "trim_clip refused"); return; }
+	defer kept.free();
+	test::@check(math::abs((kept.get_float("duration") ?? 0.0) - 1.5) < 1e-4, "the trimmed take is not 1.5 s long");
+
+	Object*? stretched = f.call_tool("retime_clip", `{"clip":"take","duration":3.0}`);
+	if (catch stretched) { test::@check(false, "retime_clip refused"); return; }
+	defer stretched.free();
+	test::@check(math::abs((stretched.get_float("duration") ?? 0.0) - 3.0) < 1e-4, "the retimed take is not 3 s long");
+
+	test::@check(f.refuses_tool("close_loop", `{"clip":"take"}`, "does not loop"), "close_loop closed a clip that does not loop");
+	test::@check(f.refuses_tool("trim_clip", `{"clip":"take","keep":[1,2],"cut":[0,1]}`, "one of them"), "trim took keep and cut at once");
+
+	Object*? thin = f.call_tool("optimize_clip", `{"clip":"stride","strength":"strong"}`);
+	if (catch thin) { test::@check(false, "optimize_clip refused"); return; }
+	defer thin.free();
+	test::@check((thin.get("metrics") ?? null) != null, "optimize_clip did not answer with the measurements");
 }
 
 <*

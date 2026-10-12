@@ -31,10 +31,3 @@ fn void a_clip_is_named_by_either_spelling() @test
 	defer none.free();
 	test::@check(!crig::required_string(none, "clip", &got, &detail, "x"), "neither spelling is still a refusal");
 }
-
-fn void planting_takes_more_keys_for_a_longer_cycle() @test
-{
-	test::@check(crig::plant_samples_for(0.3f) == 24, "a short clip keeps the floor");
-	test::@check(crig::plant_samples_for(1.0f) == 48, "a second of clip is 48 keys");
-	test::@check(crig::plant_samples_for(60.0f) == crig::PLANT_SAMPLES_MOST, "and it stops at the most");
-}

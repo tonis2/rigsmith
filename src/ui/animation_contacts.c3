@@ -85,17 +85,7 @@ fn void anim_pin_bar_edited(AppState* app, AnimTemplate* clip, TimelineBar bar, 
 		case FROM: from = math::clamp(from + delta, 0.0f, to);
 		case TO: to = math::clamp(to + delta, from, clip.duration);
 	}
-	String joint = pin.joint.tcopy();
-	RigView? opened = app.open_rig(mem);
-	if (catch opened) return;
-	RigView view = opened;
-	defer view.free(mem);
-	foreach (usz j, name : app.names_for(&view, app.editing))
-	{
-		if (name != joint || j >= view.dot_ids.len) continue;
-		(void)app.set_clip_pin_window(view.dot_ids[j], from, to, -1.0f);
-		break;
-	}
+	(void)app.set_clip_pin_window_at(bar.window, from, to, -1.0f);
 	app.refresh_ui();
 }
 

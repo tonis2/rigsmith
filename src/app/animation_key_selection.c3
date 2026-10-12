@@ -566,7 +566,7 @@ fn bool AppState.delete_selected_animation_keys(&self, AnimRef ref)
 		if (changed.keyframes.len == 0)
 		{
 			changed.free(mem);
-			self.@notice("an animation needs one key — to be rid of it, use ⋯ > Delete animation…");
+			self.@notice("an animation needs one key — to be rid of it, delete it in the Assets panel (Current file)");
 			return false;
 		}
 		AnimRef landed = self.land_key_edit(ref, changed);
@@ -580,7 +580,7 @@ fn bool AppState.delete_selected_animation_keys(&self, AnimRef ref)
 	if (remove == 0) return false;
 	if (remove >= clip.keyframes.len)
 	{
-		self.@notice("an animation needs one key — to be rid of it, use ⋯ > Delete animation…");
+		self.@notice("an animation needs one key — to be rid of it, delete it in the Assets panel (Current file)");
 		return false;
 	}
 

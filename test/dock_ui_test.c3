@@ -130,7 +130,7 @@ fn void dock_splits_into_clips_and_layers() @test
 	test::@check(f.ui.find(Timeline)!!.absolute.x < divider.absolute.x, "the sheet is not in the clip manager");
 
 	// The retired buttons are gone from the header.
-	foreach (id : (String[]) { "anim-pin-feet", crig::ANIM_CHECK_ID, crig::ANIM_PLANT_FEET_ID, crig::ANIM_ADD_CONTACT_ID,
+	foreach (id : (String[]) { "anim-pin-feet", crig::ANIM_CHECK_ID, "anim-plant-feet", crig::ANIM_ADD_CONTACT_ID,
 		"anim-ghosts", "anim-path" })
 	{
 		test::@check(!f.in_tree(id), "the dock still shows %s", id);

@@ -92,36 +92,62 @@ fn void binding_clips_undoes_and_redoes() @test
 }
 
 <*
- The clip menu's Delete animation… asks first, then deletes the project clip and its
- row as one undo step.
+ The clip menu only takes a clip off the character; deleting is the asset
+ browser's. An authored clip is listed under Current file, its settings panel
+ deletes it with its row as one undo step, and undo puts both back with the clip
+ open again in its old slot.
 *>
-fn void the_clip_menu_deletes_an_animation_after_asking() @test
+fn void the_asset_browser_deletes_an_authored_clip() @test
 {
 	Fixture f;
 	f.open()!!;
 	defer f.close();
-	io::printn("clip menu > Delete animation asks, deletes and undoes");
+	io::printn("the clip menu has no Delete; the asset browser deletes and undoes");
 	multi_pose_workspace(&f);
-	sz history = f.app.undo_stack.cursor;
 
 	f.click(f.center_of("anim-more")!!);
-	f.click(f.center_of(crig::ANIM_DELETE_ID)!!);
 	f.ui.flush();
-	Element* panel = f.ui.find_id(crig::ANIM_DELETE_CONFIRM_ID)!!;
-	ConfirmDialog* ask = panel.widget_as(ConfirmDialog);
-	test::@check(ask.asking(panel), "Delete animation did not ask first");
-	test::@check(ask.message.str_view().contains("Multiple poses"), "the question does not name the clip");
-	test::@check(f.app.clip_named_in_authored("Multiple poses").valid(), "the clip went before the answer");
+	test::@check(!f.in_tree("anim-delete"), "the clip menu still offers Delete animation");
+	f.click({ 4, crig::WIN_H - 4 });
+	f.ui.flush();
 
-	panel.widget_as(ConfirmDialog).withdraw(panel);
-	crig::anim_delete_confirmed(f.ui);
+	AnimRef open = f.app.editing;
+	test::@check(open.valid(), "the workspace has no clip open");
+	sz history = f.app.undo_stack.cursor;
+
+	f.app.refresh_ui();
+	f.app.asset_filter = crig::ALL_ASSETS;
+	f.app.refresh_visible_assets();
+	sz row = -1;
+	foreach (usz i, which : f.app.visible_assets)
+	{
+		crig::AssetEntry entry = f.app.assets.entries[which];
+		if (entry.authored() && entry.name == "Multiple poses") row = (sz)i;
+	}
+	test::@check(row >= 0, "the authored clip is not listed in the asset browser");
+	if (row < 0) return;
+	test::@check(f.app.visible_asset((usz)row).current, "an authored clip is not under Current file");
+
+	crig::open_asset_settings(f.ui, (usz)row);
 	f.ui.flush();
+	test::@check(f.in_tree(crig::ASSET_SETTINGS_DELETE_ID), "the settings panel has no Delete for an authored clip");
+	f.click(f.center_of(crig::ASSET_SETTINGS_DELETE_ID)!!);
+	f.ui.flush();
+
 	test::@check(!f.app.clip_named_in_authored("Multiple poses").valid(), "the clip survived the delete");
 	test::eq(f.app.doc.bound_index("", "Multiple poses"), (sz)-1);
+	test::@check(!f.app.editing.valid(), "the deleted clip is still open");
 	test::@check(f.app.undo_stack.cursor > history, "the delete was not recorded");
+	foreach (entry : f.app.assets.entries)
+	{
+		test::@check(!(entry.authored() && entry.name == "Multiple poses"), "the browser still lists the deleted clip");
+	}
 
 	test::@check(f.app.undo(), "the delete did not undo");
 	test::eq(f.app.undo_stack.cursor, history);
-	test::@check(f.app.clip_named_in_authored("Multiple poses").valid(), "undo did not bring the clip back");
+	AnimRef back = f.app.clip_named_in_authored("Multiple poses");
+	test::@check(back.valid(), "undo did not bring the clip back");
+	test::@check(back.same(open), "undo did not put the clip back in its slot");
+	test::@check(f.app.editing.same(back), "undo did not open the clip again");
 	test::@check(f.app.doc.bound_index("", "Multiple poses") >= 0, "undo did not bring the row back");
 }

@@ -920,6 +920,11 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 			append_json_string(&out, pin.joint);
 			out.appendf(`,"position":%s,"rotation":%s,"at":`, pin.position ? "true" : "false", pin.rotation ? "true" : "false")!!;
 			append_vec3(&out, pin.at);
+			if (pin.travel.length_sq() > 0.0f)
+			{
+				out.append_string(`,"travel":`);
+				append_vec3(&out, pin.travel);
+			}
 			out.appendf(`,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s}`, (JsonQuat)pin.orient,
 				(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute ? "true" : "false")!!;
 		}

@@ -369,7 +369,8 @@ fn bool AppState.toggle_bound_row(&self, usz row)
 	// Binding goes through the pack so the name stored is the pack's own, which is
 	// what `resolve_bound` will look for — and the two have to be the same string,
 	// which is what the guard below is about.
-	int pack = self.pack_for_file(entry.file);
+	// An authored row's clip is in the authored pack, which no file names.
+	int pack = entry.authored() ? self.authored_pack : self.pack_for_file(entry.file);
 	if (pack < 0)
 	{
 		self.@notice("could not read %s", base_name(entry.file));

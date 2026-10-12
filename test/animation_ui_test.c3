@@ -677,7 +677,7 @@ fn void the_clip_menu_and_from_library() @test
 	f.click(f.center_of(crig::ANIM_MORE_ID)!!);
 	f.ui.flush();
 	foreach (id : (String[]) { "anim-properties", "anim-duplicate", "anim-retime", "anim-trim",
-		"anim-mirror-clip", "anim-close-loop", "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID, crig::ANIM_DELETE_ID })
+		"anim-mirror-clip", "anim-close-loop", crig::ANIM_MAKE_LOOP_ID, "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID })
 	{
 		test::@check(f.in_tree(id), "the clip menu has no %s", id);
 	}

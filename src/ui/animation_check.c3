@@ -1,6 +1,5 @@
 // Check: what is wrong with the edited clip, as flags on the sheet's ruler and
-// a short list in a small dialog, with the one-click fix (Close loop). Plant feet
-// lives in the Clip tools menu beside it.
+// a short list in a small dialog, with the one-click fix (Close loop).
 module crig;
 import cui;
 import cui::widgets;
@@ -8,7 +7,6 @@ import std::math;
 
 const String ANIM_CHECK_ID = "anim-check";
 const String ANIM_CHECK_LIST_ID = "anim-check-list";
-const String ANIM_PLANT_FEET_ID = "anim-plant-feet";
 const String ANIM_CHECK_CLOSE_LOOP_ID = "anim-check-close-loop";
 const String ANIM_CHECK_HIDE_ID = "anim-check-hide";
 const String ANIM_CHECK_DIALOG_ID = "anim-check-dialog";
@@ -65,25 +63,6 @@ fn void anim_check_go(Ui* ui, usz index)
 	CheckIssue issue = app.anim_check.issues[index];
 	anim_seek(ui, issue.time);
 	app.@notice("%s at %.2f s", issue.label, issue.time);
-}
-
-fn void anim_plant_feet_clicked(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	if (!anim_can_rewrite(ui)) return;
-	if (!app.clip(app.editing)) return;
-	PlantOutcome outcome;
-	defer outcome.free();
-	if (!app.plant_feet(app.editing, &outcome))
-	{
-		refresh_anim_check(ui);
-		return;
-	}
-	app.show_edited();
-	app.check_clip(app.editing);
-	app.@notice("Planted the feet · sliding %.1f%% → %.1f%% of the height · Ctrl+Z undoes it",
-		outcome.before.foot_slide * 100, outcome.after.foot_slide * 100);
-	refresh_anim_check(ui);
 }
 
 fn void anim_check_close_loop(Ui* ui)

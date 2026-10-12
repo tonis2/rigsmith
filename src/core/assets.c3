@@ -393,6 +393,66 @@ fn void read_file(Allocator allocator, AssetEntryList* found, String file, int l
 // distinct from -1 so `set_current_model` can find and drop its own past entries.
 const int CURRENT_MODEL_LIBRARY = -2;
 
+// The `library` of a clip that lives in the project's authored pack and in no file
+// yet — generated, keyed or written over MCP and not saved into the model. Its
+// `file` is "", which is the file an authored binding names. See `set_authored`.
+const int AUTHORED_LIBRARY = -3;
+
+// One authored clip as `set_authored` takes it: borrowed for the call.
+struct AuthoredAsset
+{
+	String name;
+	float duration;
+}
+
+alias AuthoredAssetList = List{AuthoredAsset};
+
+fn bool AssetEntry.authored(&self) => self.library == AUTHORED_LIBRARY;
+
+<*
+ Put the project's unsaved authored clips into the index, under "Current file".
+
+ The browser is where a clip is deleted, and a clip that is only in the authored
+ pack is in no file a scan could find — so without these rows a clip made this
+ session could be taken off the character but never deleted. Drops the previous
+ authored rows, adds one per clip given, and re-sorts.
+
+ @param clips : `The clips to list, borrowed; the caller leaves out any the model file already holds.`
+*>
+fn void AssetIndex.set_authored(&self, Allocator allocator, AuthoredAsset[] clips)
+{
+	AssetEntryList kept;
+	kept.init(allocator);
+	foreach (&entry : self.entries)
+	{
+		if (entry.authored())
+		{
+			free_entry(allocator, entry);
+			continue;
+		}
+		kept.push(*entry);
+	}
+	foreach (clip : clips)
+	{
+		kept.push({
+			.kind = ANIMATION,
+			.name = clip.name.copy(allocator),
+			.file = "",
+			.plan = "",
+			.tags = "",
+			.library = AUTHORED_LIBRARY,
+			.duration = clip.duration,
+			.current = true,
+		});
+	}
+
+	if (self.entries.len > 0) alloc::free(allocator, self.entries);
+	self.entries = kept.to_array(allocator);
+	kept.free();
+
+	sort::quicksort(self.entries, &by_asset);
+}
+
 <*
  The loaded model's own animations, as entries — the reader behind the "Current
  file" group for a model that lives outside every library and so is in no scan.

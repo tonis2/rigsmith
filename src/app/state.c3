@@ -647,6 +647,10 @@ struct AppState
 	*>
 	int settings_asset;
 
+	// The authored pack changed since its clips were last listed in the asset index.
+	// Set by `swap_authored_clip`, read by `refresh_ui`; see `reindex_authored_clips`.
+	bool authored_index_stale;
+
 	<*
 	 The dot whose name is open in the Joint card's field, or 0 when the title
 	 is a title.
@@ -1704,6 +1708,9 @@ fn bool AppState.grab_screenshot(&self, String path)
 *>
 fn void AppState.refresh_ui(&self)
 {
+	// Before the tree check: the index is state, not paint, and a headless check
+	// deletes from it like the browser does.
+	if (self.authored_index_stale) self.reindex_authored_clips();
 	if (!self.ui) return;
 
 	// Repaints every match rather than the first: each split pane holds its own

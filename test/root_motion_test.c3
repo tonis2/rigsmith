@@ -724,6 +724,64 @@ fn void optimize_keys_drops_joints_a_key_does_not_need() @test
 }
 
 <*
+ A dense clip of straight segments — every joint keyed at 120 a second, as a
+ generated clip lands — thins on its own values: a gently curving arm keeps a key
+ every so often, still joints keep their ends, and the clip plays within the
+ tolerance at every one of its keys and midway between.
+*>
+fn void optimize_keys_thins_a_dense_linear_clip() @test
+{
+	rig::Skeleton skeleton = rooted_skeleton();
+	defer skeleton.free(mem);
+	String[] names = alloc::new_array(mem, String, 8);
+	defer alloc::free(mem, names);
+	foreach (usz j, name : ROOTED_JOINTS) names[j] = name;
+
+	const usz KEYS = 241;
+	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, KEYS);
+	for (usz k = 0; k < KEYS; k++)
+	{
+		float t = (float)k / 120.0f;
+		crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 8);
+		foreach (usz j, name : ROOTED_JOINTS)
+		{
+			switch (j)
+			{
+				case 1: dots[j] = dot("hips", { 0, 1, 0 }, 0.0f, { 0.0f, 0.02f * (float)math::sin(t * 6.0f), 0.1f * t });
+				case 4: dots[j] = dot("arm_L", { 0, 0, 1 }, 0.6f * (float)math::sin(t * 3.0f));
+				default: dots[j] = dot(name, { 0, 1, 0 }, 0.0f);
+			}
+		}
+		frames[k] = { .time = t, .dots = dots };
+	}
+	crig::AnimTemplate clip = { .name = "dense".copy(mem), .duration = 2.0f, .keyframes = frames, .owned = true };
+	defer clip.free(mem);
+	clip.compile_tracks(mem);
+
+	crig::AnimTemplate reduced;
+	test::@check(crig::clip_keys_reduced(mem, clip, &skeleton, names, LIGHT, &reduced), "nothing was reduced");
+	defer reduced.free(mem);
+	reduced.compile_tracks(mem);
+
+	usz arm = reduced.channel_count("arm_L", true);
+	test::@check(arm > 2 && arm < KEYS / 4, "the curving arm kept %d of %d keys", arm, KEYS);
+	test::@check(reduced.channel_count("leg_L", true) == 2, "a still leg kept %d keys", reduced.channel_count("leg_L", true));
+
+	for (usz c = 0; c < 2 * KEYS - 1; c++)
+	{
+		float t = (float)c / 240.0f;
+		rig::Pose a = clip.pose(mem, &skeleton, names, t, false);
+		rig::Pose b = reduced.pose(mem, &skeleton, names, t, false);
+		defer { a.free(mem); b.free(mem); }
+		for (usz j = 0; j < skeleton.len(); j++)
+		{
+			Vec3 gap = joint_at(&skeleton, a, j) - joint_at(&skeleton, b, j);
+			test::@check(gap.length() < 0.005f * skeleton.height(), "joint %d moved by %f at %f", j, gap.length(), t);
+		}
+	}
+}
+
+<*
  A model written beside its sidecar keeps an authored clip's keys in the sidecar
  alone: the model's `extras.clips` says how long the clip is and whether it
  loops, and nothing about which joints each key keys.

@@ -2455,12 +2455,6 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.style = DIALOG_STYLE,
 				.buttons = CONFIRM_BUTTONS,
 			}).with_id(CONFIRM_DIALOG_ID);
-			@node((ConfirmDialog) {
-				.title = "Delete animation",
-				.confirm_label = "Delete",
-				.style = DIALOG_STYLE,
-				.buttons = CONFIRM_BUTTONS,
-			}).with_id(ANIM_DELETE_CONFIRM_ID);
 
 			// ---- window menu bar ----
 			// Painted after the pane tree, so the bar and an open dropdown win

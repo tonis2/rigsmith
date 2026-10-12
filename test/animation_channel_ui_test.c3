@@ -165,9 +165,8 @@ fn void animation_delete_removes_clip_and_binding_and_releases_name() @test
 	defer f.close();
 	multi_pose_workspace(&f);
 	sz history = f.app.undo_stack.cursor;
-	// The animation view no longer deletes project clips — that moved out with the
-	// "Delete animation..." dialog. Exercise the surviving engine directly, the way
-	// MCP `tool_delete_clip` does.
+	// The animation view no longer deletes project clips — the asset browser and
+	// MCP `delete_clip` do, through `delete_animation`. Exercise the authored half.
 	test::@check(f.app.delete_authored_clip("Multiple poses"), "delete_authored_clip refused");
 	f.app.undo_stack.commit();
 	test::@check(!f.app.clip_named_in_authored("Multiple poses").valid(), "clip survived deletion");

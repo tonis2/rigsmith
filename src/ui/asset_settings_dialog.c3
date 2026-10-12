@@ -68,12 +68,14 @@ fn Element* build_asset_settings_body(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 
 	// Fetched before the subtree, so the footer can gate its Delete on it. Delete is
-	// for the loaded model's own animations alone: a library file is not this model's
-	// to rewrite, and a model that cannot take a skin in place cannot be re-saved
-	// without the clip.
+	// for the project's own animations alone — the loaded model's and the authored
+	// clips not saved into it yet: a library file is not this model's to rewrite, and
+	// a model that cannot take a skin in place cannot be re-saved without the clip.
 	AssetEntry* entry = app.settings_entry();
+	// An authored clip is in no file, so there is no name, plan or tags to write.
+	bool authored = entry != null && entry.authored();
 	bool can_delete = entry != null && entry.kind == AssetKind.ANIMATION
-		&& app.source_path.len > 0 && entry.file == app.source_path && app.has_mesh();
+		&& (authored || (app.source_path.len > 0 && entry.file == app.source_path && app.has_mesh()));
 
 	Element* body = @subtree(ui)
 	{
@@ -81,39 +83,44 @@ fn Element* build_asset_settings_body(Ui* ui)
 		{
 			@node((AssetSettingsHead) { });
 
-			@node((Label) { .text = "Name", .size = ASSET_SETTINGS_TEXT, .color = TEXT_DIM });
-			@node((TextField) {
-				.placeholder = "unnamed",
-				.style = TEXT_FIELD_STYLE,
-				.width = ASSET_SETTINGS_W,
-			}).with_id(ASSET_SETTINGS_NAME_ID);
+			if (!authored)
+			{
+				@node((Label) { .text = "Name", .size = ASSET_SETTINGS_TEXT, .color = TEXT_DIM });
+				@node((TextField) {
+					.placeholder = "unnamed",
+					.style = TEXT_FIELD_STYLE,
+					.width = ASSET_SETTINGS_W,
+				}).with_id(ASSET_SETTINGS_NAME_ID);
 
-			@node((Label) {
-				.text = "Body plan — the whole file's. Blank leaves it untagged.",
-				.size = ASSET_SETTINGS_TEXT,
-				.color = TEXT_DIM,
-			});
-			@node((TextField) {
-				.placeholder = "biped",
-				.style = TEXT_FIELD_STYLE,
-				.width = ASSET_SETTINGS_W,
-			}).with_id(ASSET_SETTINGS_PLAN_ID);
+				@node((Label) {
+					.text = "Body plan — the whole file's. Blank leaves it untagged.",
+					.size = ASSET_SETTINGS_TEXT,
+					.color = TEXT_DIM,
+				});
+				@node((TextField) {
+					.placeholder = "biped",
+					.style = TEXT_FIELD_STYLE,
+					.width = ASSET_SETTINGS_W,
+				}).with_id(ASSET_SETTINGS_PLAN_ID);
 
-			@node((Label) {
-				.text = "Tags — the whole file's, comma separated. Searched by the box above the grid.",
-				.size = ASSET_SETTINGS_TEXT,
-				.color = TEXT_DIM,
-			});
-			@node((TextField) {
-				.placeholder = "walking, slow",
-				.style = TEXT_FIELD_STYLE,
-				.width = ASSET_SETTINGS_W,
-			}).with_id(ASSET_SETTINGS_TAGS_ID);
+				@node((Label) {
+					.text = "Tags — the whole file's, comma separated. Searched by the box above the grid.",
+					.size = ASSET_SETTINGS_TEXT,
+					.color = TEXT_DIM,
+				});
+				@node((TextField) {
+					.placeholder = "walking, slow",
+					.style = TEXT_FIELD_STYLE,
+					.width = ASSET_SETTINGS_W,
+				}).with_id(ASSET_SETTINGS_TAGS_ID);
+			}
 
 			if (can_delete)
 			{
 				@node((Label) {
-					.text = "Delete takes this animation out of the model on disk and re-saves it.",
+					.text = authored
+						? "Delete removes this animation from the project. Ctrl+Z brings it back."
+						: "Delete takes this animation out of the model on disk and re-saves it.",
 					.size = ASSET_SETTINGS_TEXT,
 					.color = TEXT_DIM,
 				});
@@ -126,7 +133,7 @@ fn Element* build_asset_settings_body(Ui* ui)
 					@node(danger_button("Delete", &asset_settings_delete)).with_id(ASSET_SETTINGS_DELETE_ID);
 				}
 				@node(panel_button("Cancel", &asset_settings_cancelled));
-				@node(accent_button("Save", &asset_settings_saved));
+				if (!authored) @node(accent_button("Save", &asset_settings_saved));
 			};
 		};
 	};
@@ -180,7 +187,9 @@ fn void AssetSettingsHead.paint(&self, Element* elem, Painter* painter) @dynamic
 	AssetEntry* entry = app.settings_entry();
 	if (!entry) return;
 
-	String line = string::tformat("%s in %s", entry.kind.label(), file_stem(entry.file));
+	String line = entry.authored()
+		? string::tformat("%s in this project · not saved into the model yet", entry.kind.label())
+		: string::tformat("%s in %s", entry.kind.label(), file_stem(entry.file));
 	painter.text({ 0, 0 }, elide(elem, line, elem.size.x, ASSET_SETTINGS_TEXT), {
 		.size = ASSET_SETTINGS_TEXT,
 		.color = TEXT_DIM,
@@ -211,6 +220,12 @@ fn void asset_settings_saved(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	if (app.settings_asset < 0) return;
 	usz which = (usz)app.settings_asset;
+	AssetEntry* entry = app.settings_entry();
+	if (!entry || entry.authored())
+	{
+		close_asset_settings(ui);
+		return;
+	}
 
 	String name = field_text(ui, ASSET_SETTINGS_NAME_ID).copy(mem);
 	defer name.free(mem);
@@ -226,7 +241,8 @@ fn void asset_settings_saved(Ui* ui) @private
 }
 
 <*
- Delete the animation this panel is open on from the loaded model.
+ Delete the animation this panel is open on: from the loaded model, or from the
+ project when it is an authored clip.
 
  Closes first, for `asset_settings_saved`'s reason: the re-save `delete_model_animation`
  does rereads the index this panel is drawn from. The position is read before the
@@ -237,10 +253,19 @@ fn void asset_settings_delete(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	if (app.settings_asset < 0) return;
 	usz which = (usz)app.settings_asset;
+	String name = app.assets.entries[which].name.tcopy();
 
 	close_asset_settings(ui);
 
-	app.delete_model_animation(which);
+	DString why = dstring::temp();
+	if (app.delete_model_animation(which, &why))
+	{
+		app.@notice("deleted %s · Ctrl+Z brings it back", name);
+	}
+	else if (why.len() > 0)
+	{
+		app.@notice("%s", why.str_view());
+	}
 	app.refresh_ui();
 }
 

@@ -7,7 +7,13 @@
 *>
 module crig;
 
+import rig;
+import std::collections::list;
 import std::math;
+import std::math::matrix;
+
+// The most feet `derived_contacts` reads off one clip.
+const usz CONTACT_FEET_MOST = 8;
 
 // A new contact covers this much of the cycle.
 const float CONTACT_NEW_SPAN = 0.25f;
@@ -287,4 +293,113 @@ fn bool AppState.add_contact_for_selected(&self, AnimRef ref)
 	if (!self.add_contact_window(ref, joint, down, span)) return false;
 	self.@notice("%s is planted from here · drag the bar's ends on the timeline to adjust", joint);
 	return true;
+}
+
+<*
+ Feet and stance windows read off a clip that declares none.
+
+ A foot is the uppermost of a run of joints resting near the floor (an ankle over
+ its toe); it is down while it is within a small height of the lowest it ever
+ gets, and its window is the longest such run, wrapping on a looping clip. A
+ joint down less than three samples is not a foot of this clip.
+
+ `every_run` keeps each run rather than the longest, one window apiece — a jump's
+ takeoff and its landing, or each step of a walk that is several cycles long. That
+ is what pinning the feet wants; Check measures by the longest.
+
+ @return `Owned; free with AnimGround.free. Empty when the rig has no such joint.`
+*>
+fn AnimGround derived_contacts(rig::Skeleton* skeleton, String[] names, AnimTemplate clip, bool every_run = false)
+{
+	usz joints = skeleton.len();
+	if (joints == 0 || clip.duration <= 0.0f) return {};
+	float height = skeleton.height();
+	if (height <= 0.0f) return {};
+	float floor = skeleton.joints[0].y;
+	foreach (joint : skeleton.joints) floor = math::min(floor, joint.y);
+
+	const float NEAR_FLOOR = 0.12f;
+	const float DOWN_BAND = 0.02f;
+	const usz SAMPLES = 48;
+
+	usz[CONTACT_FEET_MOST] feet;
+	usz count = 0;
+	for (usz j = 0; j < joints && count < CONTACT_FEET_MOST; j++)
+	{
+		if (j >= names.len || names[j].len == 0) continue;
+		if (skeleton.joints[j].y > floor + NEAR_FLOOR * height) continue;
+		int parent = skeleton.parents[j];
+		if (parent >= 0 && skeleton.joints[(usz)parent].y <= floor + NEAR_FLOOR * height) continue;
+		feet[count++] = j;
+	}
+	if (count == 0) return {};
+
+	float[SAMPLES * CONTACT_FEET_MOST] heights;
+	for (usz s = 0; s < SAMPLES; s++)
+	{
+		float t = clip.loop ? (float)s / (float)SAMPLES * clip.duration : (float)s / (float)(SAMPLES - 1) * clip.duration;
+		rig::Pose pose = clip.pose(mem, skeleton, names, t);
+		defer pose.free(mem);
+		Matrix4f[]? built = rig::joint_palette(mem, skeleton, pose);
+		if (catch built) return {};
+		defer alloc::free(mem, built);
+		for (usz f = 0; f < count; f++) heights[f * SAMPLES + s] = skeleton.joints[feet[f]].transform(built[feet[f]]).y;
+	}
+
+	AnimFootList out;
+	out.init(mem);
+	defer out.free();
+	for (usz f = 0; f < count; f++)
+	{
+		float low = heights[f * SAMPLES];
+		for (usz s = 1; s < SAMPLES; s++) low = math::min(low, heights[f * SAMPLES + s]);
+		bool[SAMPLES] down;
+		usz total = 0;
+		for (usz s = 0; s < SAMPLES; s++)
+		{
+			down[s] = heights[f * SAMPLES + s] <= low + DOWN_BAND * height;
+			if (down[s]) total++;
+		}
+		if (total == SAMPLES)
+		{
+			out.push({ .joint = names[feet[f]].copy(mem), .down = 0.0f, .up = 1.0f });
+			continue;
+		}
+		float span = clip.loop ? (float)SAMPLES : (float)(SAMPLES - 1);
+		usz best = 0;
+		usz best_start = 0;
+		for (usz start = 0; start < SAMPLES; start++)
+		{
+			if (!down[start]) continue;
+			usz before = (start + SAMPLES - 1) % SAMPLES;
+			if (clip.loop ? down[before] : (start > 0 && down[start - 1])) continue;
+			usz length = 0;
+			while (length < SAMPLES && down[(start + length) % SAMPLES]
+				&& (clip.loop || start + length < SAMPLES)) length++;
+			if (length < 3) continue;
+			if (every_run)
+			{
+				out.push({ .joint = names[feet[f]].copy(mem) });
+				contact_window_of(out.get_ref(out.len() - 1), start, length, span, clip.loop);
+				continue;
+			}
+			if (length > best) { best = length; best_start = start; }
+		}
+		if (every_run || best < 3) continue;
+		out.push({ .joint = names[feet[f]].copy(mem) });
+		contact_window_of(out.get_ref(out.len() - 1), best_start, best, span, clip.loop);
+	}
+	if (out.len() == 0) return {};
+	return { .feet = out.to_array(mem) };
+}
+
+// A run of `length` samples from `start` as a window in cycle phase.
+fn void contact_window_of(AnimFoot* foot, usz start, usz length, float span, bool loop) @local
+{
+	float from = (float)start / span;
+	float until = (float)(start + length) / span;
+	if (until >= 1.0f && loop) until -= 1.0f;
+	if (!loop) until = math::min(until, 1.0f);
+	foot.down = from;
+	foot.up = until;
 }

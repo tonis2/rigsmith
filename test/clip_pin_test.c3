@@ -293,7 +293,7 @@ fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
 	AnimTemplate[1] source = { *p.app.clip(p.ref) };
 	String text = crig::session_text(mem, &p.app.doc, "hero.glb", source[..]);
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 25`) && text.contains(`"pins"`), "the session did not write version 25 pins");
+	test::@check(text.contains(`"version": 26`) && text.contains(`"pins"`), "the session did not write version 26 pins");
 
 	AnimTemplate[]? read = crig::parse_session_clips(mem, text);
 	if (catch fault error = read)
@@ -313,7 +313,7 @@ fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
 	}
 
 	// A version 23 file has no pins and reads as a clip with none.
-	String old = bare.replace(mem, `"version": 25`, `"version": 23`);
+	String old = bare.replace(mem, `"version": 26`, `"version": 23`);
 	defer old.free(mem);
 	AnimTemplate[]? older = crig::parse_session_clips(mem, old);
 	if (catch fault error = older)
@@ -385,4 +385,121 @@ fn void export_bakes_the_pin_into_keys_and_leaves_none() @test
 	crig::AnimTemplate quiet = crig::clip_aims_flattened(mem, *p.app.clip(p.ref), skeleton, p.names);
 	defer quiet.free(mem);
 	test::@check(quiet.pins.len == 0 && quiet.keyframes.len == clip.keyframes.len, "a muted pin was baked");
+}
+
+<*
+ One ankle holds two pins whose windows do not overlap — a takeoff and a landing —
+ each at its own place; a pin written over both takes their place.
+*>
+fn void one_joint_holds_a_pin_per_window() @test
+{
+	Person p;
+	if (!p.open()) return;
+	defer p.close();
+	io::printn("an ankle holds a takeoff pin and a landing pin, each in its own window");
+
+	Vec3 later = p.rest + (Vec3){ 0.0f, 0.0f, 0.03f };
+	p.pin(p.hold_ankle(0.0f, 0.3f, 0.0f));
+	crig::AnimPin landing = crig::pin_defaults(mem, "ankle_L", later, 0.6f, 1.0f);
+	p.pin(landing);
+	test::@check(p.app.clip(p.ref).pins.len == 2, "expected 2, got %d", p.app.clip(p.ref).pins.len);
+	test::@check(p.miss(0.15f) < 0.003f, "the takeoff pin did not hold (%.4f)", p.miss(0.15f));
+	float off = (p.ankle_at(0.9f) - later * p.height).length() / p.height;
+	test::@check(off < 0.003f, "the landing pin did not hold its own place (%.4f)", off);
+
+	// The pin under the time asked is the one meant.
+	sz under = crig::pin_index_at(p.app.clip(p.ref).pins, "ankle_L", 0.8f, 1.0f, false);
+	test::@check(under >= 0 && p.app.clip(p.ref).pins[(usz)under].from == 0.6f, "the pin under 0.8 s is not the landing");
+
+	// A window over both replaces both: a joint holds one pin at a time.
+	p.pin(p.hold_ankle(0.2f, 0.7f, 0.0f));
+	test::@check(p.app.clip(p.ref).pins.len == 1, "expected 1, got %d", p.app.clip(p.ref).pins.len);
+}
+
+<*
+ A travelling pin slides its foot at the speed asked from the window's start —
+ the stance foot of an in-place cycle on its treadmill — and the session keeps it.
+*>
+fn void a_travelling_pin_slides_its_foot_back() @test
+{
+	Person p;
+	if (!p.open()) return;
+	defer p.close();
+	io::printn("a pin with travel slides its foot steadily back");
+
+	crig::AnimPin pin = p.hold_ankle(0.0f, 1.0f, 0.0f);
+	pin.travel = { 0.0f, 0.0f, -0.04f };
+	p.pin(pin);
+	Vec3 want = (p.rest + (Vec3){ 0.0f, 0.0f, -0.02f }) * p.height;
+	float off = (p.ankle_at(0.5f) - want).length() / p.height;
+	test::@check(off < 0.003f, "the foot is %.4f of the height from where the travel takes it", off);
+
+	AnimTemplate[1] source = { *p.app.clip(p.ref) };
+	String text = crig::session_text(mem, &p.app.doc, "hero.glb", source[..]);
+	defer text.free(mem);
+	AnimTemplate[] back = crig::parse_session_clips(mem, text)!!;
+	defer crig::free_animations(mem, back);
+	test::@check(back.len == 1 && back[0].pins.len == 1 && back[0].pins[0].travel == pin.travel,
+		"the session did not keep the travel");
+}
+
+<*
+ Feet pinned to the floor from windows given by hand: one pin per window, the
+ foot held in each, as one undo step; clearing takes them off again.
+*>
+fn void pinning_feet_holds_each_window_and_clears() @test
+{
+	Person p;
+	if (!p.open()) return;
+	defer p.close();
+	io::printn("pin_clip_feet writes a pin per window and the foot holds in each");
+
+	p.app.editing = p.ref;
+	sz cursor = p.app.undo_stack.cursor;
+	String[1] joints = { "ankle_L" };
+	crig::FootWindow[2] windows = { { .joint = "ankle_L", .from = 0.0f, .to = 0.4f }, { .joint = "ankle_L", .from = 0.6f, .to = 1.0f } };
+	DString why = dstring::temp();
+	crig::FootPinReport[]? done = p.app.pin_clip_feet(p.ref, joints[..], windows[..], false, 0.05f, true, {}, &why);
+	if (catch done)
+	{
+		test::@check(false, "pin_clip_feet refused: %s", why.str_view());
+		return;
+	}
+	p.ref = p.app.editing;
+	test::@check(done.len == 2, "expected 2, got %d", done.len);
+	foreach (report : done) test::@check(report.residual < 0.005f, "a foot strayed %.4f from its pin", report.residual);
+	test::@check(p.app.clip(p.ref).pins.len == 2, "expected 2, got %d", p.app.clip(p.ref).pins.len);
+	test::@check(p.app.undo_stack.cursor > cursor, "the pins were not recorded");
+
+	// Each held foot rests on the floor where the clip had it when its window opened.
+	crig::AnimPin first = p.app.clip(p.ref).pins[0];
+	test::@check(math::abs(first.at.y - p.rest.y) < 1e-4f, "the foot is not held at its rest height");
+	test::@check(first.rotation, "a flat foot pin does not hold the angle");
+
+	usz gone = p.app.unpin_clip_joints(p.ref, joints[..]);
+	test::@check(gone == 2, "expected 2 pins off, got %d", gone);
+	p.ref = p.app.editing;
+	test::@check(p.app.clip(p.ref).pins.len == 0, "expected 0, got %d", p.app.clip(p.ref).pins.len);
+}
+
+<*
+ With windows "auto" and no ground spec, the feet's windows are read off the
+ motion; a foot that never leaves the floor is held for the whole clip.
+*>
+fn void pinning_feet_reads_the_windows_off_the_motion() @test
+{
+	Person p;
+	if (!p.open()) return;
+	defer p.close();
+
+	p.app.editing = p.ref;
+	String[2] joints = { "ankle_L", "ankle_R" };
+	DString why = dstring::temp();
+	crig::FootPinReport[]? done = p.app.pin_clip_feet(p.ref, joints[..], {}, true, 0.05f, true, {}, &why);
+	if (catch done)
+	{
+		test::@check(false, "pin_clip_feet refused: %s", why.str_view());
+		return;
+	}
+	test::@check(done.len >= 2, "the feet were not both found (%d pins)", done.len);
 }

@@ -28,7 +28,14 @@
 
  **Where a pin lives.** `at` is a fraction of the rig's height like an aim
  target, so the same clip holds the same place on a rig in metres or in
- centimetres. `orient` is a world rotation.
+ centimetres. `orient` is a world rotation. `travel` slides the held point at a
+ steady speed (fractions of the rig's height a second) from `from` on — how a
+ stance foot of an in-place cycle runs back on its treadmill rather than being
+ nailed to one spot while the body walks off it.
+
+ **Several pins on one joint**, as long as their windows do not overlap: a jump
+ holds a foot for its takeoff and again for its landing, and a long walk holds each
+ step. Writing a pin replaces the pins on its joint whose window it overlaps.
 *>
 module crig;
 
@@ -40,15 +47,17 @@ import std::math::quaternion;
 
 <*
  One pin. `joint` is in the clip's vocabulary (resolved with `names_for`) and is
- owned by the clip's allocator; see `AnimPin.free`. A joint has at most one pin.
- `position` and `rotation` say what is held; a pin holding neither does nothing.
+ owned by the clip's allocator; see `AnimPin.free`. A joint may hold several pins
+ whose windows do not overlap. `position` and `rotation` say what is held; a pin
+ holding neither does nothing.
 *>
 struct AnimPin
 {
 	String joint;
 	bool position;
 	bool rotation;
-	Vec3 at;           // model space, fraction of rig height
+	Vec3 at;           // model space, fraction of rig height, where it is held at `from`
+	Vec3 travel;       // fraction of rig height a second the held point slides by
 	Quaternionf orient; // world orientation held when `rotation`
 	float from;        // seconds into the clip
 	float to;
@@ -79,8 +88,38 @@ fn AnimPin AnimPin.copy(&self, Allocator allocator, float scale = 1.0f, float sh
 	out.from = math::max(0.0f, self.from * scale + shift);
 	out.to = math::max(0.0f, self.to * scale + shift);
 	out.blend = self.blend * scale;
+	// A retime stretches the window, so the same slide takes longer: the speed
+	// shrinks by what the time grew by.
+	if (scale > 0.0f) out.travel = self.travel / scale;
 	return out;
 }
+
+<*
+ Where the pin holds its joint at `time`, a fraction of the rig's height: `at`,
+ carried by `travel` for as long as the window has run. On a looping clip a time
+ the window reaches across the loop point is read from the side it covers.
+*>
+fn Vec3 AnimPin.held_at(&self, float time, float duration, bool loop)
+{
+	if (self.travel.length_sq() == 0.0f) return self.at;
+	float local = time;
+	if (loop && duration > 0.0f)
+	{
+		float now = pin_window_weight(self, time);
+		if (pin_window_weight(self, time + duration) > now)
+		{
+			local = time + duration;
+		}
+		else if (pin_window_weight(self, time - duration) > now)
+		{
+			local = time - duration;
+		}
+	}
+	return self.at + self.travel * math::max(0.0f, local - self.from);
+}
+
+// Whether two pins' windows share more than an instant.
+fn bool pins_overlap(AnimPin* a, AnimPin* b) => a.from < b.to && b.from < a.to;
 
 fn void AnimPin.free(&self, Allocator allocator)
 {
@@ -149,15 +188,39 @@ fn AnimPin[] pins_mirrored(Allocator allocator, AnimPin[] source)
 	{
 		pin.joint = twin_or_same(allocator, pin.joint);
 		pin.at.x = -pin.at.x;
+		pin.travel.x = -pin.travel.x;
 		pin.orient = reflected_rotation(pin.orient);
 	}
 	return out;
 }
 
-// Where in `pins` the joint's pin is, or -1.
+// Where in `pins` the joint's first pin is, or -1.
 fn sz pin_index_of(AnimPin[] pins, String joint)
 {
 	foreach (usz i, &pin : pins) if (pin.joint == joint) return (sz)i;
+	return -1;
+}
+
+<*
+ Where in `pins` the joint's pin whose window covers `time` is, or -1 — the one a
+ joint's pin means when it has several. A looping clip's window reaches round the
+ loop point.
+*>
+fn sz pin_index_at(AnimPin[] pins, String joint, float time, float duration, bool loop)
+{
+	foreach (usz i, &pin : pins)
+	{
+		if (pin.joint != joint || !(pin.to >= pin.from)) continue;
+		if (pin.weight_at(time, duration, loop) > 0.0f || (time >= pin.from && time <= pin.to)) return (sz)i;
+	}
+	return -1;
+}
+
+// Where in `pins` a pin on `joint` overlapping `from`..`to` is, or -1.
+fn sz pin_index_overlapping(AnimPin[] pins, String joint, float from, float to)
+{
+	AnimPin probe = { .from = from, .to = to };
+	foreach (usz i, &pin : pins) if (pin.joint == joint && pins_overlap(pin, &probe)) return (sz)i;
 	return -1;
 }
 
@@ -174,24 +237,44 @@ fn AnimTemplate clip_with_pins(Allocator allocator, AnimTemplate source, AnimPin
 }
 
 <*
- The clip with `pin` added, or replacing the pin already on its joint. `pin` is
- taken over.
+ The clip with `pin` written in: in place of the pin at `at` when that is one,
+ added otherwise. Any other pin on the same joint whose window `pin` now overlaps
+ gives way, so a joint never holds two pins at once. `pin` is taken over.
 *>
-fn AnimTemplate clip_with_pin(Allocator allocator, AnimTemplate source, AnimPin pin)
+fn AnimTemplate clip_with_pin_at(Allocator allocator, AnimTemplate source, sz at, AnimPin pin)
 {
-	sz at = pin_index_of(source.pins, pin.joint);
-	usz count = at >= 0 ? source.pins.len : source.pins.len + 1;
-	AnimPin[] next = alloc::new_array(allocator, AnimPin, (sz)count);
-	foreach (usz i, &held : source.pins) next[i] = (sz)i == at ? pin : held.copy(allocator);
-	if (at < 0) next[count - 1] = pin;
-	return clip_with_pins(allocator, source, next);
+	AnimPin[] next = alloc::new_array(allocator, AnimPin, (sz)(source.pins.len + 1));
+	usz write;
+	bool placed;
+	foreach (usz i, &held : source.pins)
+	{
+		if ((sz)i == at)
+		{
+			next[write++] = pin;
+			placed = true;
+			continue;
+		}
+		if (held.joint == pin.joint && pins_overlap(held, &pin)) continue;
+		next[write++] = held.copy(allocator);
+	}
+	if (!placed) next[write++] = pin;
+	AnimPin[] kept = alloc::new_array(allocator, AnimPin, (sz)write);
+	foreach (usz i, held : next[:write]) kept[i] = held;
+	alloc::free(allocator, next);
+	return clip_with_pins(allocator, source, kept);
 }
 
-// The clip without the pin on `joint`; a plain copy when there is none.
-fn AnimTemplate clip_without_pin(Allocator allocator, AnimTemplate source, String joint)
+<*
+ The clip with `pin` added, replacing the pins on its joint whose window it
+ overlaps. `pin` is taken over.
+*>
+fn AnimTemplate clip_with_pin(Allocator allocator, AnimTemplate source, AnimPin pin)
+	=> clip_with_pin_at(allocator, source, -1, pin);
+
+// The clip without the pin at `at`; a plain copy when there is none.
+fn AnimTemplate clip_without_pin_at(Allocator allocator, AnimTemplate source, sz at)
 {
-	sz at = pin_index_of(source.pins, joint);
-	if (at < 0) return clip_copy(allocator, source);
+	if (at < 0 || (usz)at >= source.pins.len) return clip_copy(allocator, source);
 	AnimPin[] next = alloc::new_array(allocator, AnimPin, (sz)(source.pins.len - 1));
 	usz write;
 	foreach (usz i, &held : source.pins)
@@ -199,6 +282,18 @@ fn AnimTemplate clip_without_pin(Allocator allocator, AnimTemplate source, Strin
 		if ((sz)i == at) continue;
 		next[write++] = held.copy(allocator);
 	}
+	return clip_with_pins(allocator, source, next);
+}
+
+// The clip without any pin on `joint`; a plain copy when there is none.
+fn AnimTemplate clip_without_pin(Allocator allocator, AnimTemplate source, String joint)
+{
+	usz kept;
+	foreach (&held : source.pins) if (held.joint != joint) kept++;
+	if (kept == source.pins.len) return clip_copy(allocator, source);
+	AnimPin[] next = alloc::new_array(allocator, AnimPin, (sz)kept);
+	usz write;
+	foreach (&held : source.pins) if (held.joint != joint) next[write++] = held.copy(allocator);
 	return clip_with_pins(allocator, source, next);
 }
 
@@ -603,9 +698,10 @@ fn void pin_pose(
 		for (usz k = 0; k < count; k++) before[k] = pose.rotations[run[k]];
 		before[count] = pose.rotations[joint];
 
-		if (count > 0 && pin_finite(pin.at))
+		Vec3 held = pin.held_at(time, duration, loop);
+		if (count > 0 && pin_finite(held))
 		{
-			(void)pin_reach(allocator, skeleton, pose, run[:count], joint, pin.at * scale,
+			(void)pin_reach(allocator, skeleton, pose, run[:count], joint, held * scale,
 				PIN_TOLERANCE * scale, clamp, ctx);
 		}
 		if (pin.rotation && math::is_finite(pin.orient.v.x) && pin.orient.v.length_sq() > 1.0e-12f)

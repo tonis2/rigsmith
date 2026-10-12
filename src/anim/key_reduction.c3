@@ -344,6 +344,13 @@ fn bool clip_keys_reduced(Allocator allocator, AnimTemplate source, rig::Skeleto
 	AnimKeyframe[] trial_frames = alloc::new_array(mem, AnimKeyframe, (sz)n);
 	defer alloc::free(mem, trial_frames);
 
+	// A clip that keys every joint's channels on every key — a generated or baked
+	// one — has nothing outside a stretch reaching into it: a dropped key changes the
+	// curve only between the kept keys round it, and a smooth curve only two keys
+	// further. So its trial is those keys alone rather than the whole clip, which is
+	// what keeps a clip of six hundred keys from costing six hundred whole-clip
+	// compiles. A loop reads round its seam, so it is always whole.
+	bool local = !source.loop && keys_uniform(source);
 	usz dropped = 0;
 	for (usz k = 1; k + 1 < n; k++)
 	{
@@ -354,9 +361,27 @@ fn bool clip_keys_reduced(Allocator allocator, AnimTemplate source, rig::Skeleto
 		usz hi = k + 1;
 		while (!kept[hi]) hi++;
 
+		usz from = 0;
+		usz to = n - 1;
+		if (local)
+		{
+			from = lo;
+			for (usz reach = 0; reach < 2 && from > 0; reach++)
+			{
+				from--;
+				while (from > 0 && !kept[from]) from--;
+			}
+			to = hi;
+			for (usz reach = 0; reach < 2 && to + 1 < n; reach++)
+			{
+				to++;
+				while (to + 1 < n && !kept[to]) to++;
+			}
+		}
+
 		// A clip that shares the original's curves and skips the dropped keys.
 		usz count = 0;
-		for (usz i = 0; i < n; i++) if (kept[i]) trial_frames[count++] = source.keyframes[i];
+		for (usz i = from; i <= to; i++) if (kept[i]) trial_frames[count++] = source.keyframes[i];
 		AnimTemplate trial = source;
 		trial.keyframes = trial_frames[:count];
 		trial.owned = false;
@@ -443,8 +468,27 @@ fn bool clip_keys_reduced(Allocator allocator, AnimTemplate source, rig::Skeleto
 	return true;
 }
 
+<*
+ Whether every key of the clip keys the same channels of the same joints, in the
+ same order — so the curve at any time depends only on the keys round it.
+*>
+fn bool keys_uniform(AnimTemplate clip) @local
+{
+	if (clip.keyframes.len == 0) return false;
+	AnimKeyDot[] first = clip.keyframes[0].dots;
+	foreach (frame : clip.keyframes)
+	{
+		if (frame.dots.len != first.len) return false;
+		foreach (usz i, dot : frame.dots)
+		{
+			if (dot.joint_name != first[i].joint_name || dot.channels != first[i].channels) return false;
+		}
+	}
+	return true;
+}
+
 // Frees tracks `compile_tracks(mem)` built on a borrowed template.
-fn void free_tracks(AnimTemplate clip) @local
+fn void free_tracks(AnimTemplate clip)
 {
 	foreach (track : clip.tracks)
 	{
@@ -489,6 +533,7 @@ fn usz thin_channels(Allocator allocator, AnimTemplate source, AnimTemplate redu
 	usz n = reduced.keyframes.len;
 	if (n <= 2 || key_times.len == 0) return 0;
 	float height = skeleton.height() > 0.0f ? skeleton.height() : 1.0f;
+	if (keys_linear(source) && keys_linear(reduced)) return thin_linear(allocator, source, reduced, height, tolerance, out);
 
 	usz checks = 2 * key_times.len - 1;
 	float[] check_at = alloc::new_array(mem, float, (sz)checks);
@@ -616,7 +661,21 @@ fn usz thin_channels(Allocator allocator, AnimTemplate source, AnimTemplate redu
 		}
 	}
 	if (removed == 0) return 0;
+	String[] track_names = alloc::new_array(mem, String, (sz)tracks);
+	defer alloc::free(mem, track_names);
+	foreach (usz t, track : compiled[:tracks]) track_names[t] = track.joint_name;
+	*out = keys_without_channels(allocator, reduced, track_names, gone);
+	return removed;
+}
 
+<*
+ `reduced`'s keys with the channel keys `gone` marks left out — indexed
+ [key * tracks * 2 + track * 2 + channel], channel 0 the rotation — and a key left
+ with no channel dropped. Owned.
+*>
+fn AnimKeyframe[] keys_without_channels(Allocator allocator, AnimTemplate reduced, String[] track_names, bool[] gone) @local
+{
+	usz tracks = track_names.len;
 	List{AnimKeyframe} kept;
 	kept.init(allocator);
 	defer kept.free();
@@ -628,7 +687,7 @@ fn usz thin_channels(Allocator allocator, AnimTemplate source, AnimTemplate redu
 		foreach (dot : frame.dots)
 		{
 			usz t = 0;
-			while (t < tracks && compiled[t].joint_name != dot.joint_name) t++;
+			while (t < tracks && track_names[t] != dot.joint_name) t++;
 			bool turns = dot.keys_rotation() && !(t < tracks && gone[k * tracks * 2 + t * 2]);
 			bool slides = dot.keys_translation() && !(t < tracks && gone[k * tracks * 2 + t * 2 + 1]);
 			if (!turns && !slides) continue;
@@ -650,6 +709,144 @@ fn usz thin_channels(Allocator allocator, AnimTemplate source, AnimTemplate redu
 		if (dots.len() == 0) continue;
 		kept.push({ .time = frame.time, .dots = dots.to_array(allocator) });
 	}
-	*out = kept.to_array(allocator);
+	return kept.to_array(allocator);
+}
+
+<*
+ Whether every key of the clip moves its channels in straight lines: the same
+ channels of the same joints on every key (`keys_uniform`), each leaving linearly
+ and with no ease, on a clip that does not loop. Then a channel key's drop is
+ decided by the straight segment over the gap it leaves alone — what
+ `thin_linear` does without evaluating the clip.
+*>
+fn bool keys_linear(AnimTemplate clip) @local
+{
+	if (clip.loop || !keys_uniform(clip)) return false;
+	foreach (frame : clip.keyframes)
+	{
+		foreach (dot : frame.dots)
+		{
+			if (dot.keys_rotation() && (dot.interpolation(true, clip.blend) != LINEAR || !dot.ease(true).none())) return false;
+			if (dot.keys_translation() && (dot.interpolation(false, clip.blend) != LINEAR || !dot.ease(false).none())) return false;
+		}
+	}
+	return true;
+}
+
+<*
+ `thin_channels` for a clip of straight segments (`keys_linear`): each channel
+ key, in order, goes when the straight segment from the last key kept to the next
+ one stays within tolerance of `source` at every source key and midway between
+ them inside it. Read off the keys' own values, with no clip evaluated, so a
+ generated clip of six hundred keys thins in a moment rather than minutes.
+
+ @return `How many channel keys went; zero when the reduced keys are not a subset of the source's.`
+*>
+fn usz thin_linear(Allocator allocator, AnimTemplate source, AnimTemplate reduced, float height,
+	ReductionTolerance tolerance, AnimKeyframe[]* out) @local
+{
+	usz n = reduced.keyframes.len;
+	usz s = source.keyframes.len;
+	if (n <= 2 || s < n) return 0;
+	AnimKeyDot[] layout = reduced.keyframes[0].dots;
+	usz tracks = layout.len;
+	if (source.keyframes[0].dots.len != tracks) return 0;
+	foreach (usz t, dot : layout) if (source.keyframes[0].dots[t].joint_name != dot.joint_name) return 0;
+
+	// Where each kept key is among the source's.
+	usz[] at = alloc::new_array(mem, usz, (sz)n);
+	defer alloc::free(mem, at);
+	usz cursor = 0;
+	foreach (usz k, frame : reduced.keyframes)
+	{
+		while (cursor < s && source.keyframes[cursor].time < frame.time - ANIM_SAME_TIME) cursor++;
+		if (cursor >= s || math::abs(source.keyframes[cursor].time - frame.time) > ANIM_SAME_TIME) return 0;
+		at[k] = cursor;
+	}
+
+	// Every source key's value per track, read once.
+	Quaternionf[] turns = alloc::new_array(mem, Quaternionf, (sz)(s * tracks));
+	defer alloc::free(mem, turns);
+	Vec3[] moves = alloc::new_array(mem, Vec3, (sz)(s * tracks));
+	defer alloc::free(mem, moves);
+	foreach (usz i, frame : source.keyframes)
+	{
+		foreach (usz t, dot : frame.dots)
+		{
+			turns[i * tracks + t] = quaternion::from_axis_angle{float}(dot.axis.normalize(), dot.angle);
+			moves[i * tracks + t] = dot.move;
+		}
+	}
+
+	float[] times = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, times);
+	foreach (usz k, frame : reduced.keyframes) times[k] = frame.time;
+	bool[] protect = protected_samples(mem, reduced, times);
+	defer alloc::free(mem, protect);
+
+	bool[] gone = alloc::new_array(mem, bool, (sz)(n * tracks * 2));
+	defer alloc::free(mem, gone);
+	usz removed = 0;
+	for (usz t = 0; t < tracks; t++)
+	{
+		for (usz ch = 0; ch < 2; ch++)
+		{
+			bool rotation = ch == 0;
+			if (rotation ? !layout[t].keys_rotation() : !layout[t].keys_translation()) continue;
+			usz before = 0;
+			for (usz r = 1; r + 1 < n; r++)
+			{
+				if (protect[r])
+				{
+					before = r;
+					continue;
+				}
+				usz a = at[before];
+				usz b = at[r + 1];
+				float from = source.keyframes[a].time;
+				float span = source.keyframes[b].time - from;
+				bool holds = span > 0.0f;
+				for (usz i = a; i < b && holds; i++)
+				{
+					// The source key itself, then midway to the next.
+					for (usz half = 0; half < 2 && holds; half++)
+					{
+						if (i == a && half == 0) continue;
+						float time = half == 0 ? source.keyframes[i].time
+							: 0.5f * (source.keyframes[i].time + source.keyframes[i + 1].time);
+						float u = (time - from) / span;
+						if (rotation)
+						{
+							Quaternionf truth = half == 0 ? turns[i * tracks + t]
+								: slerp_short(turns[i * tracks + t], turns[(i + 1) * tracks + t], 0.5f);
+							Quaternionf straight = slerp_short(turns[a * tracks + t], turns[b * tracks + t], u);
+							holds = turn_gap(straight, truth) <= tolerance.angle;
+						}
+						else
+						{
+							Vec3 truth = half == 0 ? moves[i * tracks + t]
+								: (moves[i * tracks + t] + moves[(i + 1) * tracks + t]) * 0.5f;
+							Vec3 straight = moves[a * tracks + t] + (moves[b * tracks + t] - moves[a * tracks + t]) * u;
+							holds = (straight - truth).length() * height <= tolerance.move;
+						}
+					}
+				}
+				if (holds)
+				{
+					gone[r * tracks * 2 + t * 2 + ch] = true;
+					removed++;
+				}
+				else
+				{
+					before = r;
+				}
+			}
+		}
+	}
+	if (removed == 0) return 0;
+	String[] track_names = alloc::new_array(mem, String, (sz)tracks);
+	defer alloc::free(mem, track_names);
+	foreach (usz t, dot : layout) track_names[t] = dot.joint_name;
+	*out = keys_without_channels(allocator, reduced, track_names, gone);
 	return removed;
 }
