@@ -3,9 +3,13 @@
  Animations › Export, in numbers the guide bar and the hint bar turn into words.
 
  Cheap per frame. Counting names is a walk over the dots; the bound-clip count
- resolves every binding, so it is kept until the history moves; and which joints
- hold no skin needs a bind, so that is surveyed once the rig has been still for
- `GUIDE_SURVEY_DELAY`, over the same cached base bind the weight views share.
+ resolves every binding, so it is kept until the history moves; and whether the
+ skin is the model's own needs its weights read, so that is surveyed once the
+ rig has been still for `GUIDE_SURVEY_DELAY`.
+
+ A joint that holds no skin is not flagged: a control joint, a bone end or a
+ helper holding nothing is usually on purpose, and a step that stayed amber for
+ it was a warning nobody could act on.
 *>
 module crig;
 
@@ -34,11 +38,7 @@ enum GuideState : char
 }
 
 <*
- Which joints hold no skin, as of the last survey.
-
- Only joints with a parent and a child count: a tip joint (head_top, a finger
- end) closes the bone before it, and a root is often a control joint on the
- floor, so both hold nothing by design.
+ Whether the skin is the model's own, as of the last survey.
 *>
 struct SkinSurvey
 {
@@ -49,8 +49,6 @@ struct SkinSurvey
 	uint revision;
 	uint geometry;
 	float due;
-	usz skinless;
-	uint first_skinless; // dot id, 0 = none
 	bool from_file; // the model's own weights are in use: what they leave empty was the artist's choice
 }
 
@@ -72,8 +70,6 @@ struct GuideStatus
 	uint first_unnamed;
 	bool skin_known;
 	bool skin_from_file;
-	usz skinless;
-	uint first_skinless;
 	usz clips;
 	usz clips_found;
 	bool unsaved;
@@ -186,51 +182,25 @@ fn void AppState.tick_guide(&self, float dt)
 fn bool AppState.guide_pending(&self) => !self.config.hide_guide && !self.skin_survey.ready;
 
 <*
- Bind (through the shared cache) and count the joints with a child that hold no
- skin. An empty rig or mesh is surveyed as nothing to report.
+ Whether the model's own weights are in use. An empty rig or mesh is surveyed
+ as nothing to report.
 *>
 fn void AppState.survey_skin(&self)
 {
 	SkinSurvey* s = &self.skin_survey;
 	s.ready = true;
 	s.surveyed = true;
-	s.skinless = 0;
-	s.first_skinless = 0;
 	s.from_file = false;
-	if (!self.has_mesh() || self.doc.dots.len() == 0) return;
+	if (!self.has_mesh() || self.doc.dots.len() == 0 || !self.doc.skin_from_file) return;
 
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return;
 	RigView view = opened;
 	defer view.free(mem);
 
-	float[] dense = self.painted_bind(mem, &view);
-	if (dense.len == 0) return;
-	defer alloc::free(mem, dense);
-
-	if (self.doc.skin_from_file)
-	{
-		float[] taken = self.imported_dense(mem, &view);
-		s.from_file = taken.len > 0;
-		if (taken.len > 0) alloc::free(mem, taken);
-	}
-
-	usz joints = view.len();
-	bool[] idle = skinless_joints(mem, dense, self.geometry.positions.len, joints, SKIN_INFLUENCES);
-	defer alloc::free(mem, idle);
-
-	bool[] parent_of = alloc::new_array(mem, bool, (sz)joints);
-	defer alloc::free(mem, parent_of);
-	foreach (parent : view.skeleton.parents)
-	{
-		if (parent >= 0 && (usz)parent < joints) parent_of[parent] = true;
-	}
-	for (usz j = 0; j < joints; j++)
-	{
-		if (!idle[j] || !parent_of[j] || view.skeleton.parents[j] < 0) continue;
-		if (s.skinless == 0) s.first_skinless = view.dot_ids[j];
-		s.skinless++;
-	}
+	float[] taken = self.imported_dense(mem, &view);
+	s.from_file = taken.len > 0;
+	if (taken.len > 0) alloc::free(mem, taken);
 }
 
 <*
@@ -260,8 +230,6 @@ fn GuideStatus AppState.guide_status(&self)
 		.has_mesh = self.has_mesh(),
 		.joints = (usz)self.doc.dots.len(),
 		.skin_known = self.skin_survey.surveyed,
-		.skinless = self.skin_survey.skinless,
-		.first_skinless = self.skin_survey.first_skinless,
 		.skin_from_file = self.skin_survey.from_file,
 		.unsaved = self.unsaved(),
 		.saved = self.saves_in_place,
@@ -287,7 +255,7 @@ fn GuideState GuideStatus.state(self, GuideStep step)
 			return self.unnamed > 0 && self.clips > 0 ? ATTENTION : DONE;
 		case SKIN:
 			if (!self.has_mesh || self.joints == 0 || !self.skin_known) return NOT_YET;
-			return self.skinless > 0 && !self.skin_from_file ? ATTENTION : DONE;
+			return DONE;
 		case ANIMATIONS:
 			if (self.clips == 0) return NOT_YET;
 			return self.clips_found < self.clips ? ATTENTION : DONE;

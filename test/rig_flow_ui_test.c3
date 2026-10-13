@@ -69,9 +69,9 @@ fn void auto_connect_shows_where_the_next_joint_chains() @test
 
 <*
  The weight brush opens from the Weights card (it has no tool column cell), and
- while it is open an options strip gives its size and Add / Remove as controls:
- a plain drag on the mesh then paints in the chosen direction with no modifier
- held. Closing it hands the card its Area tool back with no part picked, so the
+ while it is open an options strip gives its size, strength and Add / Remove as
+ controls: a plain drag on the mesh then paints in the chosen direction with no
+ modifier held. Closing it hands the card its Area tool back with no part picked, so the
  strokes stay on show and Apply has nothing to write over them.
 *>
 fn void the_brush_button_and_strip_paint_without_a_modifier() @test
@@ -101,8 +101,8 @@ fn void the_brush_button_and_strip_paint_without_a_modifier() @test
 	fixture.feed(VIEWPORT_CENTER);
 	Element* button = fixture.ui.find_id(crig::WEIGHTS_BRUSH_ID)!!;
 	test::@check(button.widget_as(Button).label == "Stop painting", "the brush button does not say it stops painting");
-	test::@check(fixture.in_tree(crig::BRUSH_MODE_ID) && fixture.in_tree(crig::BRUSH_SIZE_ID),
-		"the options strip did not appear with the brush");
+	test::@check(fixture.in_tree(crig::BRUSH_MODE_ID) && fixture.in_tree(crig::BRUSH_SIZE_ID)
+		&& fixture.in_tree(crig::BRUSH_STRENGTH_ID), "the options strip did not appear with the brush");
 
 	// The size slider sets the radius.
 	Element* size = fixture.ui.find_id(crig::BRUSH_SIZE_ID)!!;
@@ -110,6 +110,13 @@ fn void the_brush_button_and_strip_paint_without_a_modifier() @test
 	fixture.click(size.absolute + (Vec2){ size.size.x * 0.6f, size.size.y * 0.5f });
 	test::@check(fixture.app.brush_radius != was, "the size slider did not change the brush");
 	fixture.app.set_brush_radius(was);
+
+	// The strength slider starts full and sets how far a stroke carries.
+	test::@check(fixture.app.brush_strength == crig::BRUSH_STRENGTH_DEFAULT, "the brush did not open at full strength");
+	Element* strength = fixture.ui.find_id(crig::BRUSH_STRENGTH_ID)!!;
+	fixture.click(strength.absolute + (Vec2){ strength.size.x * 0.55f, strength.size.y * 0.5f });
+	test::@check(fixture.app.brush_strength < crig::BRUSH_STRENGTH_DEFAULT, "the strength slider did not change the brush");
+	fixture.app.set_brush_strength(crig::BRUSH_STRENGTH_DEFAULT);
 
 	// Remove on the strip.
 	Element* mode = fixture.ui.find_id(crig::BRUSH_MODE_ID)!!;

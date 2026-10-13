@@ -14958,17 +14958,18 @@ fn float brush_share_of(Fixture* f, uint vertex, uint dot)
 }
 
 <*
- One tap of the brush does not finish the job, all the way through the gesture.
+ The strength sets how far one tap goes, all the way through the gesture: part
+ of the way when it is low, the whole way at full.
 
  The arithmetic is asserted headlessly in `crig_tests::weights`; what this covers
- is the half that test cannot reach — that the cap is actually applied where the
- circle's falloff is computed, rather than only where a unit test hands the
- constant in itself. Dropping `BRUSH_STRENGTH` from `brush_vertices` leaves that
+ is the half that test cannot reach — that the strength is actually applied where
+ the circle's falloff is computed, rather than only where a unit test hands the
+ number in itself. Dropping `brush_strength` from `brush_vertices` leaves that
  one passing and this one failing, which is the whole reason it is here.
 *>
-fn void one_tap_of_the_brush_does_not_finish_the_job() @test
+fn void the_strength_slider_sets_how_far_one_tap_goes() @test
 {
-	io::printn("one tap of the weight brush carries a vertex part of the way, not all of it");
+	io::printn("one tap of the weight brush carries a vertex as far as its strength says");
 
 	Fixture fixture;
 	if (catch fault error = fixture.open())
@@ -15011,17 +15012,31 @@ fn void one_tap_of_the_brush_does_not_finish_the_job() @test
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.W);
 	test::@check(fixture.app.brushing, "the brush did not open");
 
+	defer fixture.app.set_brush_strength(crig::BRUSH_STRENGTH_DEFAULT);
+
 	// One tap, dead centre, ctrl held so it adds rather than takes away.
 	Key[1] adding = { Key.LEFT_CTRL };
+	fixture.app.set_brush_strength(0.25f);
 	fixture.feed(corner, keys: adding[..]);
 	fixture.feed(corner, left: true, keys: adding[..]);
 	fixture.feed(corner, keys: adding[..]);
 
 	float after = brush_share_of(&fixture, 4, chest);
-	test::@check(after > 0.05f, "one tap moved the corner not at all, measured %s", after);
+	test::@check(after > 0.05f, "one gentle tap moved the corner not at all, measured %s", after);
 	test::@check(after < 0.6f,
-		"one centred tap took the corner most of the way to full (%s) — the brush is a switch, not a brush",
-		after);
+		"one tap at a quarter strength took the corner most of the way to full (%s)", after);
+
+	// Back to nothing — the tap is one undo step — and the same tap at full
+	// strength finishes it.
+	test::@check(fixture.app.undo(), "the tap did not undo");
+	test::@check(brush_share_of(&fixture, 4, chest) < 0.01f, "the corner did not go back to nothing");
+	fixture.app.set_brush_strength(crig::BRUSH_STRENGTH_MAX);
+	fixture.feed(corner, keys: adding[..]);
+	fixture.feed(corner, left: true, keys: adding[..]);
+	fixture.feed(corner, keys: adding[..]);
+
+	after = brush_share_of(&fixture, 4, chest);
+	test::@check(after > 0.95f, "one tap at full strength left the corner at %s", after);
 }
 
 // ---------------------------------------------------------------------------

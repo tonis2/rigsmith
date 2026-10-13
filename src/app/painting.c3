@@ -58,25 +58,30 @@ const float BRUSH_RADIUS_MAX = 220.0;
 const float BRUSH_RADIUS_STEP = 0.12;
 
 <*
- The most one stroke can carry a vertex, at the very centre of the circle.
+ The most one stroke can carry a vertex — the strip's Strength slider, as a
+ fraction of the way to the target.
 
- **Under 1 on purpose, and this is not a flow rate.** A pull of 1 would take the
- middle of the circle all the way to the target on the first dab, which makes the
- brush a switch: one tap and the vertex is fully red, with every value in between
- reachable only by clipping it with the rim. Capping what a *stroke* can give
- turns "how much" into "how many passes", which is a thing a hand can aim.
+ **Full by default.** A drag at 1 puts the joint on, or takes it off, everywhere
+ the core of the circle passes, which is what a hand sliding over a part
+ expects; a lower setting is for blending, where a stroke carries only that much
+ and the values in between are reached a pass at a time.
 
- The distinction from a per-frame flow matters and is the whole reason the
- earlier attempt was wrong. A flow makes the result depend on how long the
- pointer lingered, so the same gesture twice gives two answers. This is spent
- once per stroke however slowly it is drawn — dwelling still buys nothing — and
- it is *lifting the button and going again* that carries further.
-
- At this rate a centred pass lands on about a third, two on three fifths, and
- four on four fifths: a handful of deliberate strokes from grey to orange, and no
- way to get there by accident.
+ **Not a flow rate.** A flow makes the result depend on how long the pointer
+ lingered, so the same gesture twice gives two answers. This is spent once per
+ stroke however slowly it is drawn — dwelling buys nothing — and it is *lifting
+ the button and going again* that carries further. At a third, a centred pass
+ lands on about a third, two on three fifths, and four on four fifths.
 *>
-const float BRUSH_STRENGTH = 0.35;
+const float BRUSH_STRENGTH_DEFAULT = 1.0;
+const float BRUSH_STRENGTH_MIN = 0.05;
+const float BRUSH_STRENGTH_MAX = 1.0;
+
+<*
+ How much of the radius paints at the full strength. The rest fades to nothing
+ at the ring, so the circle on screen is what a stroke paints and its edge still
+ leaves no step.
+*>
+const float BRUSH_CORE = 0.5;
 
 <*
  Begin a stroke: forget how far each vertex has already been carried.
@@ -254,6 +259,37 @@ fn bool AppState.set_brush_radius(&self, float pixels)
 }
 
 <*
+ Set the brush strength, clamped to what a stroke can usefully carry.
+
+ @return `True when it moved, so the caller knows to repaint.`
+*>
+fn bool AppState.set_brush_strength(&self, float fraction)
+{
+	float was = self.brush_strength;
+	float want = fraction;
+	want = math::clamp(want, BRUSH_STRENGTH_MIN, BRUSH_STRENGTH_MAX);
+	self.brush_strength = want;
+	return want != was;
+}
+
+<*
+ How hard the brush hits at a point in its circle, 1 inside `BRUSH_CORE` and
+ fading to 0 at the ring along `(1 - u²)²` — the curve `reach_bias` uses, smooth
+ at both ends so a stroke leaves no visible step where the core or the circle
+ stopped.
+
+ @param closeness : `1 - d²/r²: 1 at the centre, 0 at the ring.`
+*>
+fn float brush_falloff(float closeness)
+{
+	float t = math::sqrt(math::clamp(1.0f - closeness, 0.0f, 1.0f));
+	if (t <= BRUSH_CORE) return 1.0f;
+	float u = (t - BRUSH_CORE) / (1.0f - BRUSH_CORE);
+	float fade = 1.0f - u * u;
+	return fade * fade;
+}
+
+<*
  Size the brush by a scroll.
 
  **Only while the sizing key is held**, which the caller decides — the wheel and
@@ -385,13 +421,9 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
 
  	`usz n = app.brush_vertices(verts, strength, vp, size, eye, at, radius);`
 
- **A brush is not a stencil.** Strongest at the centre and fading to nothing at
- the rim is what lets one tool make every value between 0 and 1 without a second
- control to set them with: clip a vertex with the edge and it barely moves, run
- the middle over it and it goes as far as one stroke is allowed to carry it —
- `BRUSH_STRENGTH`, which is well short of the whole way. `(1 - t²)²` is the same
- curve `reach_bias` uses, for the same reason: smooth at both ends, so a stroke
- leaves no visible step where the circle stopped.
+ **A brush is not a stencil.** The core of the circle carries a vertex as far as
+ one stroke is allowed — `brush_strength` — and the rim fades to nothing, so
+ clipping a vertex with the edge barely moves it — see `brush_falloff`.
 
  **Front faces only, always, and it is not a preference.** A brush that painted
  through a limb onto the one behind it would manufacture exactly the bleed crig
@@ -410,7 +442,7 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
  circle test comes first and the expensive half only runs on what it lets through.
 
  @param vertices : `Filled with the vertices hit. Must be at least as long as the mesh.`
- @param strength : `Filled alongside, 1 at the centre to 0 at the rim. Same length rule.`
+ @param strength : `Filled alongside: the brush strength in the core, fading to 0 at the rim. Same length rule.`
  @param view_projection : `From OrbitCamera.view_projection, for this viewport's aspect.`
  @param viewport : `Size of the region the camera renders into, in pixels.`
  @param eye : `Camera position in model space, for the visibility test.`
@@ -438,12 +470,15 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 		if (span > reach) continue;
 		if (self.mesh_hidden_surface(eye, position)) continue;
 
-		float fade = 1.0f - span / reach;
+		// Closeness for now, not the hit: `brush_surface` finds the vertex under
+		// the cursor as the closest, and the falloff's flat core would tie it.
 		vertices[kept] = (uint)v;
-		strength[kept] = fade * fade * BRUSH_STRENGTH;
+		strength[kept] = 1.0f - span / reach;
 		kept++;
 	}
-	return self.brush_surface(vertices, strength, kept, view_projection, viewport, eye, radius);
+	kept = self.brush_surface(vertices, strength, kept, view_projection, viewport, eye, radius);
+	for (usz i = 0; i < kept; i++) strength[i] = brush_falloff(strength[i]) * self.brush_strength;
+	return kept;
 }
 
 // How far past the circle's own radius, in the model, a vertex may sit from the

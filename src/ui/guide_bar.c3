@@ -86,18 +86,9 @@ fn void guide_words(AppState* app, GuideStatus g, GuideStep step, GuideText* out
 		case SKIN:
 			if (!g.has_mesh || g.joints == 0) { *detail = "Fit a skeleton first"; break; }
 			if (!g.skin_known) { *detail = "Checking the skin…"; break; }
-			if (g.skin_from_file)
-			{
-				*detail = g.skinless > 0
-					? format_into(out.detail[..], "The model's own weights · %d joint%s hold none · click to show the weights",
-						g.skinless, plural(g.skinless))
-					: "The model's own weights · click to show the weights";
-				break;
-			}
-			*detail = state == ATTENTION
-				? format_into(out.detail[..], "%d joint%s hold no skin · click to show the weights and select one",
-					g.skinless, plural(g.skinless))
-				: "Every joint holds skin · click to show the weights";
+			*detail = g.skin_from_file
+				? "The model's own weights · click to show the weights"
+				: "Weights ready · click to show the weights";
 		case ANIMATIONS:
 			if (g.clips > 0) *note = format_into(out.note[..], "(%d)", g.clips);
 			if (g.clips == 0) { *detail = "No animations yet · click to create or add one"; break; }
@@ -138,9 +129,8 @@ fn String guide_next_line(AppState* app)
 			}
 			return "Next: fit a skeleton — Rig › Apply body plan, or click the model to place joints";
 		case SKIN:
-			if (!g.skin_known) return "";
-			return format_into(guide_next_buffer[..], "Next: %d joint%s hold no skin — click Skin above to see them",
-				g.skinless, plural(g.skinless));
+			// Next only while the skin is being checked; it is done once known.
+			return "";
 		case ANIMATIONS:
 			if (state == ATTENTION)
 			{
@@ -191,7 +181,7 @@ fn bool GuideBar.differs(&self, AppState* app, GuideStatus g)
 {
 	GuideStatus s = self.shown;
 	return s.has_mesh != g.has_mesh || s.joints != g.joints || s.unnamed != g.unnamed
-		|| s.skin_known != g.skin_known || s.skin_from_file != g.skin_from_file || s.skinless != g.skinless || s.first_skinless != g.first_skinless
+		|| s.skin_known != g.skin_known || s.skin_from_file != g.skin_from_file
 		|| s.first_unnamed != g.first_unnamed || s.clips != g.clips || s.clips_found != g.clips_found
 		|| s.unsaved != g.unsaved || s.saved != g.saved
 		|| self.source != app.source_path.ptr || self.source_len != app.source_path.len
@@ -335,7 +325,6 @@ fn void guide_step_clicked(Ui* ui, usz index)
 				return;
 			}
 			if (app.tint_mode != TintMode.TERRITORY) app.toggle_weights();
-			if (g.state(SKIN) == ATTENTION && app.doc.find(g.first_skinless)) app.select(g.first_skinless);
 		case ANIMATIONS:
 			show_pane_view(ui, ANIMATION_VIEW, SplitAxis.VERTICAL, 0.65f);
 			if (g.clips == 0 && (find_leaf_showing(area_layout.root, LIBRARY_VIEW)

@@ -1455,19 +1455,21 @@ fn void the_brush_keeps_the_frame_loop_awake() @test
 }
 
 <*
- One centred pass is not enough; several are.
+ A gentle stroke goes part of the way and builds up a pass at a time; a full one
+ lands in one.
 
- The complaint this answers: a pull of 1 at the centre made the brush a switch —
- one tap and the vertex was fully red, with the values in between reachable only
- by clipping it with the rim. Capping what a *stroke* can give turns "how much"
- into "how many passes".
+ The brush strength is a cap on what one *stroke* can give, so below full "how
+ much" becomes "how many passes" — and holding the brush still adds nothing at
+ any strength. At full, the one pass a user slides over a part is enough.
 
  Written as the arithmetic the brush actually performs, since the geometry that
  produces the falloff needs a camera and this does not: a centred vertex gets
- `BRUSH_STRENGTH` and each stroke starts the memory over.
+ the strength and each stroke starts the memory over.
 *>
-fn void one_centred_pass_does_not_finish_the_job() @test
+fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 {
+	const float GENTLE = 0.35f;
+
 	crig::AppState app = chained();
 	defer app.free();
 
@@ -1484,7 +1486,7 @@ fn void one_centred_pass_does_not_finish_the_job() @test
 	// `paint_share` would leave the stroke memory empty and the checks below
 	// would be measuring a path nothing takes.
 	app.begin_stroke();
-	float[1] centred = { app.stroke_pull(0, crig::BRUSH_STRENGTH) };
+	float[1] centred = { app.stroke_pull(0, GENTLE) };
 	app.paint_share(hips, one[..], target, centred[..]);
 	float first = share_of(&app, 0, hips);
 	test::@check(first > 0.2f && first < 0.45f,
@@ -1493,7 +1495,7 @@ fn void one_centred_pass_does_not_finish_the_job() @test
 	// Held there, the same stroke gives nothing more however many frames arrive.
 	for (usz i = 0; i < 20; i++)
 	{
-		float[1] again = { app.stroke_pull(0, crig::BRUSH_STRENGTH) };
+		float[1] again = { app.stroke_pull(0, GENTLE) };
 		app.paint_share(hips, one[..], target, again[..]);
 	}
 	test::@check(math::abs(share_of(&app, 0, hips) - first) < 1.0e-5f,
@@ -1504,7 +1506,7 @@ fn void one_centred_pass_does_not_finish_the_job() @test
 	for (usz pass = 0; pass < 3; pass++)
 	{
 		app.begin_stroke();
-		float[1] pull = { app.stroke_pull(0, crig::BRUSH_STRENGTH) };
+		float[1] pull = { app.stroke_pull(0, GENTLE) };
 		app.paint_share(hips, one[..], target, pull[..]);
 
 		float now = share_of(&app, 0, hips);
@@ -1513,6 +1515,14 @@ fn void one_centred_pass_does_not_finish_the_job() @test
 	}
 	test::@check(last > 0.75f, "four centred passes should be most of the way, measured %s", last);
 	test::@check(last < target, "and never past what was asked for");
+
+	// At full strength one pass is the whole way.
+	app.paint_share(hips, one[..], 0.0f);
+	app.begin_stroke();
+	float[1] full = { app.stroke_pull(0, crig::BRUSH_STRENGTH_MAX) };
+	app.paint_share(hips, one[..], target, full[..]);
+	test::@check(share_of(&app, 0, hips) > target - 1.0e-3f,
+		"one full-strength pass stopped short, measured %s", share_of(&app, 0, hips));
 }
 
 // ---------------------------------------------------------------------------

@@ -93,13 +93,14 @@ fn void the_guide_asks_for_a_skeleton_on_a_bare_mesh() @test
 }
 
 <*
- A rig whose middle joint sits far outside the mesh: Skin needs attention with
- the count in its tip, and a click turns the weight view on and selects that
+ A rig whose middle joint sits far outside the mesh holds no skin there, and the
+ guide does not flag it: Skin is done, its tip and the next-step line say
+ nothing about it, and a click turns the weight view on without picking a
  joint. Skeleton selects the Skeleton row.
 *>
-fn void the_guide_flags_a_joint_holding_no_skin() @test
+fn void the_guide_does_not_flag_a_joint_holding_no_skin() @test
 {
-	io::printn("the workflow guide flags a joint holding no skin");
+	io::printn("the workflow guide leaves a joint holding no skin alone");
 	Fixture f;
 	f.open()!!;
 	defer f.close();
@@ -123,30 +124,18 @@ fn void the_guide_flags_a_joint_holding_no_skin() @test
 
 	test::@check(f.app.skin_survey.ready, "the skin survey never ran");
 	test::@check(guide_state(&f, SKELETON) == DONE, "a named rig is not a done skeleton");
-	test::@check(guide_state(&f, SKIN) == ATTENTION, "a joint outside the mesh did not flag Skin");
-	test::eq(f.app.skin_survey.skinless, (usz)1);
-	test::eq(f.app.skin_survey.first_skinless, far);
-	test::@check(guide_steps(&f).steps[(usz)GuideStep.SKIN.ordinal].detail.starts_with("1 joint hold no skin")
-		|| guide_steps(&f).steps[(usz)GuideStep.SKIN.ordinal].detail.contains("hold no skin"),
-		"the Skin tip does not say what is wrong: \"%s\"", guide_steps(&f).steps[(usz)GuideStep.SKIN.ordinal].detail);
-	test::@check(crig::bar_line(&f.app).contains("hold no skin"), "the next line is not about the skin: \"%s\"", crig::bar_line(&f.app));
+	test::@check(guide_state(&f, SKIN) == DONE, "a joint outside the mesh flagged Skin");
+	String detail = guide_steps(&f).steps[(usz)GuideStep.SKIN.ordinal].detail;
+	test::@check(!detail.contains("no skin"), "the Skin tip still warns about it: \"%s\"", detail);
+	test::@check(!crig::bar_line(&f.app).contains("no skin"), "the next line still warns about it: \"%s\"", crig::bar_line(&f.app));
 
 	f.app.select(0);
 	f.click(guide_step_point(&f, SKIN));
 	test::@check(f.app.tint_mode == TintMode.TERRITORY, "clicking Skin did not turn the weight view on");
-	test::eq(f.app.selected, far);
+	test::eq(f.app.selected, (uint)0);
 
 	f.click(guide_step_point(&f, SKELETON));
 	test::@check(f.app.scene_selection == SceneSelection.SKELETON, "clicking Skeleton did not select the Skeleton");
-
-	// The far joint gone: the survey follows the edit.
-	f.app.select(0);
-	f.doc().remove_dot(tip);
-	f.doc().remove_dot(far);
-	f.app.mark_rig_stale();
-	f.app.refresh_ui();
-	settle_guide(&f);
-	test::@check(guide_state(&f, SKIN) == DONE, "Skin still needs attention with every joint inside (%d, first %d, dots %d)", f.app.skin_survey.skinless, f.app.skin_survey.first_skinless, f.doc().dots.len());
 }
 
 <*

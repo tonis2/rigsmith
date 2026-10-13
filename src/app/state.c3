@@ -230,6 +230,10 @@ struct AppState
 	float brush_radius;
 	TintMode brush_tint;
 
+	// How far one stroke carries a vertex toward the target, 0 to 1 — the
+	// strip's Strength slider. See `BRUSH_STRENGTH_DEFAULT`.
+	float brush_strength;
+
 	// The joint a click on the mesh would chain a new joint from, while the
 	// pointer is over the mesh in a 3D View and auto-connect would bond it; 0
 	// otherwise. Set by the viewport's hover probe, read by the hint bar.
@@ -942,6 +946,7 @@ fn AppState new_app_with_geometry(
 		// A zero radius would open the brush unable to touch anything, which reads
 		// as the mode being broken rather than as a setting wanting a scroll.
 		.brush_radius = BRUSH_RADIUS_DEFAULT,
+		.brush_strength = BRUSH_STRENGTH_DEFAULT,
 
 		// A generated clip comes with a key every frame; Light is what makes it one
 		// that can be edited, so it is what the Generate pane starts on.
