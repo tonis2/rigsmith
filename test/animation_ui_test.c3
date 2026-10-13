@@ -881,3 +881,92 @@ fn void the_timeline_shades_the_ghosts_reach() @test
 	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
 	test::@check(timeline.ghost_past == 0.0f && timeline.ghost_future == 0.0f, "the shade stayed with Ghosts off");
 }
+
+fn void the_pending_banner_says_a_pose_keys_onto_the_selected_keys() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	test::@check(f.app.new_clip("Spread", 2).valid(), "could not start a clip");
+	f.app.show_edited();
+	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
+	f.ui.flush();
+	uint joint = f.app.doc.dots[0].id;
+	f.app.auto_key = false;
+	foreach (time : (float[2]){ 1.0f, 2.0f })
+	{
+		f.app.edit_time = time;
+		test::@check(f.app.pose_from_clip(f.app.editing, time), "could not sample the pose at %f", time);
+		f.app.set_working_pose(joint, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.1f * time), {});
+		test::@check(f.app.key_pose_edit(), "could not key the pose at %f", time);
+	}
+	test::eq(f.app.select_animation_keys_between(f.app.editing, 0.0f, 2.0f), (usz)3);
+
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not sample the middle pose");
+	f.app.set_working_pose(joint, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.5f), {});
+	f.app.pose_edit_pending = true;
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(f.ui.find_id(crig::ANIM_PENDING_TEXT_ID)!!.widget_as(Label).text == "Pose changed · keys onto all 3 selected keys",
+		"the banner does not say the pose keys onto the selection");
+
+	sz before = f.app.undo_stack.cursor;
+	f.click(f.center_of("anim-pending-save")!!);
+	f.ui.flush();
+	test::@check(!f.app.pose_edit_pending && f.app.undo_stack.cursor == before + 1, "Key pose was not one edit");
+	test::@check(f.app.notice().contains("on 3 selected keys"), "the notice does not count the keys: %s", f.app.notice());
+	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)3);
+}
+
+fn void ctrl_a_in_the_sheet_picks_every_key_and_the_status_says_edits_spread() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	test::@check(f.app.new_clip("Every", 2).valid(), "could not start a clip");
+	f.app.show_edited();
+	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
+	f.ui.flush();
+	uint joint = f.app.doc.dots[0].id;
+	foreach (time : (float[2]){ 1.0f, 2.0f })
+	{
+		f.app.edit_time = time;
+		test::@check(f.app.pose_from_clip(f.app.editing, time), "could not sample the pose at %f", time);
+		f.app.set_working_pose(joint, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.1f * time), {});
+		test::@check(f.app.key_pose_edit(), "could not key the pose at %f", time);
+	}
+	f.app.refresh_ui();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+
+	// A click on a key focuses the sheet, so Ctrl+A is its own rather than the joints'.
+	Element* sheet = f.ui.find(Timeline)!!;
+	Timeline* timeline = sheet.widget_as(Timeline);
+	Vec2 key = sheet.absolute + (Vec2){ timeline.x_of(sheet, 0), timeline.lane_y(0) };
+	f.click(key);
+	sz history = f.app.undo_stack.cursor;
+	f.feed(key, keys: { Key.LEFT_CTRL, Key.A });
+	f.feed(key);
+	f.ui.flush();
+	usz keys = (usz)f.app.clip(f.app.editing).keyframes.len;
+	test::@check(keys >= 3, "the clip has too few keys to pick");
+	test::eq(f.app.animation_key_selection_count(f.app.editing), keys);
+	test::eq(f.app.undo_stack.cursor, history);
+	test::@check(f.app.selection_count() < (usz)f.app.doc.dots.len(), "Ctrl+A in the sheet selected the joints");
+
+	test::@check(has_id(&f, crig::ANIM_SPREAD_HINT_ID), "no hint that pose edits spread");
+	String hint = f.ui.find_id(crig::ANIM_SPREAD_HINT_ID)!!.widget_as(Label).text;
+	test::@check(hint == string::tformat("Pose edits go to the %d selected keys", keys), "the hint reads: %s", hint);
+
+	// A playhead outside the picked span keys only itself, and the line goes back to saving.
+	test::eq(f.app.select_animation_keys_between(f.app.editing, 1.0f, 2.0f), (usz)2);
+	f.app.edit_time = 0.5f;
+	f.app.refresh_ui();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(!has_id(&f, crig::ANIM_SPREAD_HINT_ID), "the hint stayed with the playhead outside the span");
+	test::@check(has_id(&f, crig::ANIM_SAVE_STATUS_ID), "the save status did not come back");
+}

@@ -260,7 +260,7 @@ struct Timeline (Widget)
 	OnTimelineContext on_context; // a marker was right-pressed
 	OnTimelineSpace on_space_context; // a right press off every marker
 	OnTimelineMarkDrag on_mark_drag; // a marker is being moved; `done` on release
-	OnTimelineRange on_range; // an empty-lane drag selected this time range
+	OnTimelineRange on_range; // an empty-lane drag, or Ctrl+A over the whole sheet, selected this time range
 	OnTimelineMark on_cancel_drag; // Escape restored a held marker without committing
 	OnClick on_copy;
 	OnClick on_paste;
@@ -1021,6 +1021,13 @@ fn bool Timeline.on_key(&self, Element* elem, KeyEvent event) @dynamic
 	bool control = elem.ui.input.ctrl_down();
 	if (control && event.key == Key.C && self.on_copy) { self.on_copy(elem.ui); return true; }
 	if (control && event.key == Key.V && self.on_paste) { self.on_paste(elem.ui); return true; }
+	// Every key: the box a drag over the whole sheet would draw, which a dense
+	// lane leaves no empty spot to start.
+	if (control && event.key == Key.A && self.on_range && self.lanes.len > 0)
+	{
+		self.on_range(elem.ui, self.lanes, 0, self.lanes.len - 1, 0.0f, self.duration, false);
+		return true;
+	}
 	if (event.key == Key.DELETE && self.on_delete) { self.on_delete(elem.ui); return true; }
 	return false;
 }

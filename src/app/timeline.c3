@@ -123,7 +123,10 @@ fn bool AppState.key_pose_edit(&self, AnimKeyScope scope = ALL)
 {
 	if (!self.pose_edit_active || !self.editing.valid()) return false;
 	float time = self.edit_time;
-	AnimRef landed = self.key_here(self.editing, time, scope);
+	// Keys picked in the sheet around the playhead take the edit with it.
+	AnimRef landed = self.spread_key_count(self.editing, time) >= 2
+		? self.key_onto_selected(self.editing, time, scope)
+		: self.key_here(self.editing, time, scope);
 	if (!landed.valid()) return false;
 	self.editing = landed;
 	self.edit_time = time;

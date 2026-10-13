@@ -42,6 +42,8 @@ const String ANIM_FROM_LIBRARY_ID = "anim-from-library";
 const String ANIM_RATE_ID = "anim-rate";
 const String ANIM_SPEED_ID = "anim-speed";
 const String ANIM_PENDING_BANNER_ID = "anim-pending-banner";
+const String ANIM_PENDING_TEXT_ID = "anim-pending-text";
+const String ANIM_SPREAD_HINT_ID = "anim-spread-hint";
 
 const float ANIM_PAD = 12.0;
 const float ANIM_GAP = 8.0;
@@ -192,6 +194,8 @@ struct AnimSnapshot
 	bool mask_collapsed;
 	bool pending_pose;
 	bool pending_asked;
+	// How many selected keys a pose edit would land on, which the status line says.
+	usz spread;
 	bool authored_dirty;
 	uint revision;
 
@@ -270,6 +274,7 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.mask_collapsed = app.layer_mask_collapsed,
 		.pending_pose = app.pose_edit_pending,
 		.pending_asked = app.anim_pending_action != 0,
+		.spread = app.spread_key_count(app.editing, app.edit_time),
 		.authored_dirty = app.authored_dirty,
 		.revision = app.undo_stack.revision,
 		.edit_pack = app.editing.pack,
@@ -317,6 +322,7 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.mask_collapsed != other.mask_collapsed
 		|| self.pending_pose != other.pending_pose
 		|| self.pending_asked != other.pending_asked
+		|| self.spread != other.spread
 		|| self.authored_dirty != other.authored_dirty
 		|| self.revision != other.revision
 		|| self.edit_pack != other.edit_pack
@@ -785,18 +791,29 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 							// The slim bar at the bottom. The pending-pose banner takes the
 							// save status's place, so nothing above it moves when it appears
 							// under a pose being dragged.
+							// Said before it happens: a keyed pose here changes every selected key.
+							usz spread = app.spread_key_count(app.editing, app.edit_time);
 							if (app.pose_edit_pending)
 							{
 								Element* banner = @tree((Row) { .gap = ANIM_GAP, .cross_align = CENTER })
 								{
 									@node((Label) {
 										.text = app.anim_pending_action != 0 ? "Pose changed · move again to drop it"
+											: spread >= 2 ? string::tformat("Pose changed · keys onto all %d selected keys", spread)
 											: "Pose changed",
-										.size = ANIM_TEXT_SIZE, .color = ACCENT });
+										.size = ANIM_TEXT_SIZE, .color = ACCENT }).with_id(ANIM_PENDING_TEXT_ID);
 									@node(accent_button("Key pose", &anim_pending_save)).with_id("anim-pending-save");
 									@node(panel_button("Revert", &anim_pending_discard)).with_id("anim-pending-discard");
 								};
 								banner.with_id(ANIM_PENDING_BANNER_ID);
+							}
+							else if (spread >= 2)
+							{
+								// Before the edit too, as Auto-key keys it the moment the drag ends.
+								@node((Label) {
+									.text = string::tformat("Pose edits go to the %d selected keys", spread),
+									.size = ANIM_TEXT_SIZE, .color = ACCENT,
+								}).with_id(ANIM_SPREAD_HINT_ID);
 							}
 							else
 							{
