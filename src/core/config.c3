@@ -137,7 +137,7 @@ const float DEFAULT_UI_SCALE = 1.0;
 // Ghosts (onion skin): how many either side of the playhead, how many frames
 // apart, and how strong the nearest one is.
 const int MAX_GHOST_SIDE = 30;
-const int MAX_GHOST_STEP = 10;
+const int MAX_GHOST_STEP = 50;
 const int DEFAULT_GHOST_SIDE = 3;
 const float DEFAULT_GHOST_OPACITY = 0.35;
 const float MIN_GHOST_OPACITY = 0.05;

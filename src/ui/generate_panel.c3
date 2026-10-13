@@ -5,7 +5,8 @@
 
  A workspace view of its own rather than a dialog behind a button, so it is
  found by its tab and so a run's progress stays on screen while the rest of the
- window is used. The default workspace opens it under the Scene outliner.
+ window is used. The default workspace keeps it a tab away, beside Assets under
+ the Scene outliner.
 
  While a job runs the pane shows its progress and a Stop rather than a second
  Generate — there is one GPU and one job at a time. The MCP `generate_motion`

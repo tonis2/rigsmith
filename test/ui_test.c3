@@ -11100,7 +11100,7 @@ fn usz count_viewports(Fixture* fixture)
 }
 
 <*
- Text to motion has a pane of its own, open from the start under the Scene
+ Text to motion has a pane of its own, a tab beside Assets under the Scene
  outliner: it says what is missing until a generator is configured, then offers
  the prompt — and what is typed there survives the pane rebuilding.
 *>
@@ -11117,8 +11117,13 @@ fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
 	fixture.reset();
 	crig::build_ui(fixture.ui, &fixture.app);
 	fixture.ui.flush();
+	// A tab away in the default workspace, beside Assets.
+	test::@check(!@ok(fixture.ui.find_id(crig::GENERATE_PANEL_ID)), "the default workspace opened on Generate");
+	crig::show_pane_view(fixture.ui, crig::GENERATE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
 
-	test::@check(@ok(fixture.ui.find_id(crig::GENERATE_PANEL_ID)), "the default workspace has no Generate pane");
+	test::@check(@ok(fixture.ui.find_id(crig::GENERATE_PANEL_ID)), "Generate did not open");
 	test::@check(!@ok(fixture.ui.find_id(crig::GENERATE_PROMPT_ID)), "a prompt is offered with no generator configured");
 
 	crig::MotionGenerator* g = &fixture.app.config.motion_generator;
@@ -11193,6 +11198,9 @@ fn void the_generate_pane_names_an_unnamed_clip_generated_n() @test
 	g.text_model = "/nowhere/text.gguf".copy(mem);
 	g.model = "/nowhere/motion.gguf".copy(mem);
 	crig::build_ui(fixture.ui, &fixture.app);
+	fixture.ui.flush();
+	crig::show_pane_view(fixture.ui, crig::GENERATE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
 
 	Element* field = fixture.ui.find_id(crig::GENERATE_NAME_ID)!!;
@@ -12471,9 +12479,9 @@ fn void a_clip_brings_its_own_rig() @test
 }
 
 <*
- The default workspace keeps the model, Scene Outliner, Generate pane and
- animation controls visible together. Assets remains available from the pane's tabs. Check both
- the split tree and actual widget bounds at the startup size and a larger window.
+ The default workspace keeps the model, Scene Outliner, Assets and animation
+ controls visible together. Generate remains available from the pane's tabs. Check
+ both the split tree and actual widget bounds at the startup size and a larger window.
 *>
 fn void the_default_workspace_opens_four_panes() @test
 {
@@ -12492,8 +12500,8 @@ fn void the_default_workspace_opens_four_panes() @test
 	AreaNode* column = root.first.second;
 	test::@check(root.first.first.active == TAB_3D && !column.is_leaf() && column.axis == SplitAxis.VERTICAL,
 		"the model must be left of a column of panes");
-	test::@check(column.first.active == crig::SCENE_VIEW && column.second.active == crig::GENERATE_VIEW,
-		"the column must hold the Scene Outliner over the Generate pane");
+	test::@check(column.first.active == crig::SCENE_VIEW && column.second.active == crig::LIBRARY_VIEW,
+		"the column must hold the Scene Outliner over Assets");
 	foreach (size : (Vec2[]) { { crig::WIN_W, crig::WIN_H }, { 1920, 1080 } })
 	{
 		f.ui.resize(size);
@@ -12501,10 +12509,10 @@ fn void the_default_workspace_opens_four_panes() @test
 		Element* model = f.ui.find(Viewport)!!;
 		Element* outliner = f.ui.find_id(crig::SCENE_OUTLINER_ID)!!;
 		Element* animation = f.ui.find_id(crig::ANIM_PANEL_ID)!!;
-		Element* generate = f.ui.find_id(crig::GENERATE_PANEL_ID)!!;
-		test::@check(generate.absolute.x >= model.absolute.x + model.size.x
-			&& generate.absolute.y > outliner.absolute.y,
-			"the Generate pane must sit right of the model, under the Scene Outliner");
+		Element* assets = f.ui.find_id(crig::ASSETS_GRID_ID)!!;
+		test::@check(assets.absolute.x >= model.absolute.x + model.size.x
+			&& assets.absolute.y > outliner.absolute.y,
+			"Assets must sit right of the model, under the Scene Outliner");
 		// The narrow column's strips give up padding, then shorten the long
 		// names, rather than push the last tab — this pane's own — off the end.
 		f.ui.@each(AreaTabStrip; strip)
@@ -12515,8 +12523,8 @@ fn void the_default_workspace_opens_four_panes() @test
 			test::@check(last == (int)crig::GENERATE_VIEW + 1,
 				"a %.0f px strip ends on tab %d, not on Generate", strip.size.x, last - 1);
 		};
-		test::@check(model.size.x > size.x * 0.6f && model.size.x < size.x * 0.7f,
-			"the model should occupy roughly two thirds of the width");
+		test::@check(model.size.x > size.x * 0.68f && model.size.x < size.x * 0.76f,
+			"the model should occupy nearly three quarters of the width");
 		test::@check(outliner.absolute.x >= model.absolute.x + model.size.x,
 			"the Scene Outliner must sit to the right of the model");
 		test::@check(animation.absolute.y >= model.absolute.y + model.size.y,
@@ -14588,10 +14596,7 @@ fn void a_brush_stroke_paints_under_the_circle() @test
 	// near the middle covers none and the stroke would land on nothing.
 	//
 	// Found by projecting a dot placed there and taking it away again — the dot
-	// and the vertex share a position, so they share a pixel, and removing it
-	// leaves the press clear of every dot. A press *on* a dot selects it rather
-	// than painting, so that the dot being painted can be switched without
-	// leaving the mode.
+	// and the vertex share a position, so they share a pixel.
 	// Head-on, so which corners are in sight is knowable: the front face is
 	// z = +1. A three-quarter view hides some corners and nothing in the test
 	// could say which.
@@ -14665,6 +14670,56 @@ fn void a_brush_stroke_paints_under_the_circle() @test
 	test::@check(fixture.app.undo_stack.cursor > before, "the stroke left nothing on the ledger");
 	test::@check(fixture.app.undo(), "the stroke did not undo");
 	test::@check(fixture.app.doc.pins.len() == 0, "one undo left part of the stroke behind");
+}
+
+<*
+ A stroke begun on another joint's dot paints the joint being painted: with the
+ brush open a left press looks through the dots. A right-click still picks one.
+*>
+fn void a_brush_stroke_on_a_joint_paints_instead_of_picking_it() @test
+{
+	io::printn("a brush stroke begun on a joint's dot paints rather than selecting that joint");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+
+	uint hips = fixture.doc().add_dot({ 0, -0.2f, 0 }, "hips");
+	uint chest = fixture.doc().add_dot({ 0, 0.2f, 0 }, "chest");
+	fixture.doc().connect(hips, chest);
+	// On a cube corner, the fixture mesh's only vertices, so the dot sits on what
+	// the stroke paints.
+	uint corner_dot = fixture.doc().add_dot({ -1, -1, 1 }, "corner");
+	fixture.doc().connect(hips, corner_dot);
+	fixture.app.camera.snapping = false;
+	fixture.app.camera.yaw = 0.0f;
+	fixture.app.camera.pitch = 0.0f;
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+
+	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.W);
+	test::@check(fixture.app.brushing, "the brush did not open");
+	Vec2? corner = fixture.pixel_of(corner_dot);
+	if (catch corner)
+	{
+		test::@check(false, "the corner dot does not project into the viewport");
+		return;
+	}
+
+	fixture.drag(corner, corner + (Vec2){ 4, 0 });
+	test::@check(fixture.app.selected == chest, "the press on a dot picked it instead of painting");
+	test::@check(fixture.app.brushing, "the press on a dot closed the brush");
+	bool chest_painted;
+	foreach (pin : fixture.app.doc.pins.array_view()) chest_painted |= pin.dot_id == chest;
+	test::@check(chest_painted, "the stroke begun on a dot did not paint the selected joint");
+
+	fixture.right_click(corner);
+	test::@check(fixture.app.selected == corner_dot, "a right-click on a dot did not pick it with the brush open");
+	test::@check(fixture.app.brushing, "picking a joint by right-click closed the brush");
 }
 
 <*

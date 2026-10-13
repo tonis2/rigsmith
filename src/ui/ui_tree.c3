@@ -1467,9 +1467,8 @@ const float ANIMATION_DOCK_H = 260.0f;
 
 <*
  Open the default workspace: model beside a column of the Scene Outliner over
- the Generate pane, above a full-width animation dock. Assets remains one tab
- away in the right column. Every pane keeps the ordinary draggable dividers and
- tabs.
+ Assets, above a full-width animation dock. Generate remains one tab away in the
+ right column. Every pane keeps the ordinary draggable dividers and tabs.
 
  @require areas.root != null : `An uninitialised layout has no leaf to split.`
  @require areas.root.is_leaf() : `Only a fresh single-pane workspace can be opened this way.`
@@ -1480,11 +1479,11 @@ fn void open_default_workspace(AreaLayout* areas)
 	areas.root.ratio = 1.0f - ANIMATION_DOCK_H / (WIN_H - BAR_H - AREA_STYLE.splitter_px);
 	areas.root.second.active = ANIMATION_VIEW;
 	areas.split_leaf(areas.root.first, SplitAxis.HORIZONTAL);
-	areas.root.first.ratio = 2.0f / 3.0f;
+	areas.root.first.ratio = 0.72f;
 	areas.root.first.second.active = SCENE_VIEW;
 	areas.split_leaf(areas.root.first.second, SplitAxis.VERTICAL);
-	areas.root.first.second.ratio = 0.4f;
-	areas.root.first.second.second.active = GENERATE_VIEW;
+	areas.root.first.second.ratio = 0.5f;
+	areas.root.first.second.second.active = LIBRARY_VIEW;
 }
 
 <*

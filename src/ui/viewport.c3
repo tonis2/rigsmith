@@ -1329,7 +1329,11 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						return true;
 					}
 
-					uint hit = self.pick_dot(elem, event.pos);
+					// The brush looks through the joints: a dot drawn over the mesh is
+					// where the stroke was aimed, and picking it would switch the joint
+					// being painted instead of painting. Another joint is chosen in the
+					// Scene outliner, or with a right-click.
+					uint hit = app.brushing ? 0 : self.pick_dot(elem, event.pos);
 
 					// Another character's joint or body under the pointer, in front of
 					// this one's: the click is about that character, so it becomes the
@@ -1357,12 +1361,11 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						return true;
 					}
 
-					// The brush selects only for a reason of its own: it paints the
-					// *selected* dot, so switching which one has to stay possible
-					// without leaving the mode — and a press that both dragged a dot
-					// and painted around it would do two things at once, neither of
-					// them asked for. The lasso is the same sentence with a region in
-					// place of a circle.
+					// The lasso and the Area tool select only for a reason of their
+					// own: they work on the *selected* dot, so switching which one has
+					// to stay possible without leaving the mode — and a press that both
+					// dragged a dot and drew around it would do two things at once,
+					// neither of them asked for.
 					if (app.sketching && !input.shift_down())
 					{
 						self.sketch_now = true;
@@ -1377,7 +1380,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						return true;
 					}
 
-					if ((app.brushing || app.lassoing || app.areaing) && hit != 0)
+					if ((app.lassoing || app.areaing) && hit != 0)
 					{
 						app.select(hit);
 						app.refresh_ui();
