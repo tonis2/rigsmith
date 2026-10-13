@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build dist/Rigsmith-<version>-macos-arm64.dmg from build/rigsmith: a
+# Build dist/Rigsmith-macos-arm64.dmg from build/rigsmith: a
 # Rigsmith.app to drag into Applications.
 #
 #     c3c build rigsmith && packaging/package-macos.sh
@@ -64,7 +64,7 @@ PLIST
 codesign --force --deep --sign - "$app"
 
 ln -s /Applications "$stage/Applications"
-out="dist/Rigsmith-${version}-macos-arm64.dmg"
+out="dist/Rigsmith-macos-arm64.dmg"
 rm -f "$out"
 hdiutil create -volname Rigsmith -srcfolder "$stage" -ov -format UDZO "$out" >/dev/null
 echo "$out"

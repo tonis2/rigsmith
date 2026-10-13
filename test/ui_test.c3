@@ -8973,6 +8973,46 @@ fn void help_toggles_the_controls_dialog() @test
 	test::@check(fixture.app.selected == 0, "and the shortcuts have the key back");
 }
 
+<*
+ Help ends on the build's version: `dev` from a checkout, the tag's number from
+ a release. Greyed, so it reads as a note and a click on it does nothing, the
+ dropdown staying open around it.
+*>
+fn void help_shows_the_version() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("Help names the version");
+	fixture.reset();
+
+	Vec2? help_title = fixture.center_of("Help");
+	if (catch help_title)
+	{
+		test::@check(false, "SKIPPED — the Help title is not on the bar");
+		return;
+	}
+	fixture.click(help_title);
+	Element*? row = fixture.ui.find_id(crig::VERSION_LABEL);
+	if (catch row)
+	{
+		test::@check(false, "the dropdown has no %s row", crig::VERSION_LABEL);
+		return;
+	}
+	test::@check(crig::VERSION_LABEL.starts_with("Rigsmith "), "the row names the app");
+	test::@check(row.widget_as(MenuItemRow).item.disabled, "and is greyed");
+
+	fixture.click(row.absolute + row.size * 0.5f);
+	fixture.ui.flush();
+	test::@check(fixture.in_tree(crig::VERSION_LABEL), "a click on it leaves the dropdown open");
+	test::@check(fixture.in_tree(widgets::DIALOG_CLOSE_ID) == false, "and opens nothing");
+}
+
 // ---------------------------------------------------------------------------
 // The Select widget — cui's dropdown chooser, in its own little tree. crig has
 // no consumer for it yet (presets and the falloff picker will be); this pins

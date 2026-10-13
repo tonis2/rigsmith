@@ -1425,9 +1425,12 @@ MenuItem[26] view_items = {
 	{ .label = "Clear sketches", .on_select = &menu_clear_sketches, .state = &query_has_sketches },
 };
 
-MenuItem[2] help_items = {
+// The last row is the version, greyed: something to read, not to click.
+MenuItem[4] help_items = {
 	{ .label = "Tutorial", .on_select = &menu_start_tutorial },
 	{ .label = "Controls", .on_select = &menu_toggle_controls, .state = &query_controls_shown },
+	{ .separator = true },
+	{ .label = VERSION_LABEL, .disabled = true },
 };
 
 // The window bar.

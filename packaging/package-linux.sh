@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build dist/Rigsmith-<version>-x86_64.AppImage from build/rigsmith.
+# Build dist/Rigsmith-x86_64.AppImage from build/rigsmith.
 #
 #     c3c build rigsmith && packaging/package-linux.sh
 #
@@ -8,7 +8,6 @@
 # all dlopened from the system at runtime, the same as an unpackaged build.
 source "$(dirname "$0")/common.sh"
 
-version="$(rigsmith_version)"
 appdir="dist/Rigsmith.AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/rigsmith"
@@ -39,7 +38,7 @@ if [ ! -x "$tool" ]; then
 	chmod +x "$tool"
 fi
 
-out="dist/Rigsmith-${version}-x86_64.AppImage"
+out="dist/Rigsmith-x86_64.AppImage"
 # Extract-and-run: CI runners have no FUSE to mount the tool itself.
 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" --no-appstream "$appdir" "$out"
 echo "$out"

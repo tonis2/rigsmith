@@ -16,9 +16,11 @@ Get the latest build from **[Releases](https://github.com/tonis2/rigsmith/releas
 
 | Platform | File | How to run it |
 |---|---|---|
-| Linux | `Rigsmith-<version>-x86_64.AppImage` | Make it executable (`chmod +x`), then double-click it. |
-| Windows | `Rigsmith-<version>-windows-x64.zip` | Portable: unzip anywhere and run `rigsmith.exe`. |
-| macOS 26+ (Apple Silicon) | `Rigsmith-<version>-macos-arm64.dmg` | Drag Rigsmith to Applications. The app isn't notarized, so the first time, right-click it and choose **Open**. |
+| Linux | [`Rigsmith-x86_64.AppImage`](https://github.com/tonis2/rigsmith/releases/download/latest/Rigsmith-x86_64.AppImage) | Make it executable (`chmod +x`), then double-click it. |
+| Windows | [`Rigsmith-windows-x64.zip`](https://github.com/tonis2/rigsmith/releases/download/latest/Rigsmith-windows-x64.zip) | Portable: unzip anywhere and run `rigsmith.exe`. |
+| macOS 26+ (Apple Silicon) | [`Rigsmith-macos-arm64.dmg`](https://github.com/tonis2/rigsmith/releases/download/latest/Rigsmith-macos-arm64.dmg) | Drag Rigsmith to Applications. The app isn't notarized, so the first time, right-click it and choose **Open**. |
+
+The links always point at the newest build. **Help** in the menu bar shows which version you have.
 
 The first time it starts, Rigsmith copies its built-in animations to
 `Documents/Rigsmith/animations`. They show up in the asset browser, and that is

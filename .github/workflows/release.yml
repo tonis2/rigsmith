@@ -7,16 +7,18 @@
 #
 # What a user downloads:
 #
-#   Rigsmith-<v>-x86_64.AppImage       Linux: chmod +x and run
-#   Rigsmith-<v>-windows-x64.zip       Windows: portable folder, run rigsmith.exe
-#   Rigsmith-<v>-macos-arm64.dmg       macOS 26+ on Apple Silicon: drag to Applications
+#   Rigsmith-x86_64.AppImage       Linux: chmod +x and run
+#   Rigsmith-windows-x64.zip       Windows: portable folder, run rigsmith.exe
+#   Rigsmith-macos-arm64.dmg       macOS 26+ on Apple Silicon: drag to Applications
 #
-# The newest tagged build is always at
+# The names carry no version, so the newest tagged build is always at the same
 #
 #   https://github.com/tonis2/rigsmith/releases/download/latest/<file>
 #
-# e.g. .../download/latest/Rigsmith-0.0.2-windows-x64.zip. The `latest` tag is
-# moved to the newest v* tag's commit and its release holds only that build.
+# e.g. .../download/latest/Rigsmith-windows-x64.zip. The `latest` tag is moved
+# to the newest v* tag's commit and its release holds only that build. The
+# version is in the app instead: the build is stamped with the tag
+# (packaging/stamp-version.sh), and the Help menu shows it.
 #
 # The packaging itself lives in packaging/package-*.sh, so a release can be
 # rebuilt locally the same way. Each bundle carries assets/ beside the
@@ -97,6 +99,12 @@ jobs:
         if: matrix.os == 'macos'
         run: ./libs/three/setup.sh driver
 
+      # The tag's version into src/version.c3; a branch run gets a dev stamp.
+      - name: Stamp the version
+        run: |
+          version="$(./packaging/stamp-version.sh)"
+          echo "RIGSMITH_VERSION=$version" >> "$GITHUB_ENV"
+
       - name: Build
         run: c3c build rigsmith --trust=full --safe=no -O3
 
@@ -109,12 +117,14 @@ jobs:
           case "${{ matrix.os }}" in
             macos)   exe=dist/macos/Rigsmith.app/Contents/MacOS/rigsmith ;;
             linux)   exe="$(ls dist/*.AppImage)"; export APPIMAGE_EXTRACT_AND_RUN=1 ;;
-            windows) exe="$(ls -d dist/Rigsmith-*-windows-x64)/rigsmith.exe" ;;
+            windows) exe=dist/Rigsmith-windows-x64/rigsmith.exe ;;
           esac
           "$exe" --help > help.log 2>&1 || true
           cat help.log
           grep -q -- '--mcp' help.log || {
             echo "::error::the packaged rigsmith did not start"; exit 1; }
+          grep -qF "Rigsmith ${RIGSMITH_VERSION} " help.log || {
+            echo "::error::the packaged rigsmith does not report ${RIGSMITH_VERSION}"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -148,10 +158,10 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-      # Delete and recreate rather than edit: the old release still holds the
-      # previous version's files, whose names differ, so uploading over it would
-      # leave them behind. --cleanup-tag drops the old `latest` tag and create
-      # puts it back on this commit.
+      # Delete and recreate rather than edit: one step moves the tag to this
+      # commit and drops any file this build no longer makes. --cleanup-tag
+      # drops the old `latest` tag and create puts it back. The links are down
+      # for the few seconds the upload takes.
       - name: Replace the rolling latest release
         env:
           GH_TOKEN: ${{ github.token }}

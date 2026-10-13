@@ -363,7 +363,7 @@ fn bool grab_frame(void* ctx, String path) @local
 
 fn void usage() @local
 {
-	io::printn("Rigsmith — a joint-based rigger");
+	io::printfn("%s — a joint-based rigger", VERSION_LABEL);
 	io::printn();
 	io::printn("  rigsmith [model.glb] [options]");
 	io::printn();
