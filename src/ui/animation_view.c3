@@ -747,6 +747,7 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 											.with_id("anim-selected-joints-only");
 									}
 								}
+								@node(panel_button("Optimize…", &anim_cleanup_clicked)).with_id(ANIM_CLEANUP_ID);
 								@node(panel_button("Clip tools ▾", &anim_tools_menu_clicked)).with_id(ANIM_TOOLS_BUTTON_ID);
 							};
 							if (app.anim_show_curves)
@@ -1407,7 +1408,8 @@ fn void anim_play_pause_clicked(Ui* ui) @private
 
 // Workspace shortcuts share the transport's implementation. They only claim
 // the keys while a clip is open in the sheet, leaving arrows available to
-// focused controls in every other workflow.
+// focused controls in every other workflow — and a focused text field takes
+// them before they bubble here, so its caret still moves.
 fn bool animation_transport_key(Ui* ui, Key key)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -1417,8 +1419,11 @@ fn bool animation_transport_key(Ui* ui, Key key)
 		case Key.SPACE: anim_play_pause_clicked(ui);
 		case Key.HOME: anim_start_clicked(ui);
 		case Key.END: anim_end_clicked(ui);
-		case Key.COMMA: anim_seek(ui, anim_live_time(app) - 1.0f / (float)app.anim_fps);
-		case Key.PERIOD: anim_seek(ui, anim_live_time(app) + 1.0f / (float)app.anim_fps);
+		case Key.COMMA:
+		case Key.PERIOD:
+		case Key.LEFT_ARROW:
+		case Key.RIGHT_ARROW:
+			anim_seek(ui, anim_live_time(app) + (float)transport_step(key) / (float)app.anim_fps);
 		case Key.LEFT_BRACKET:
 		case Key.RIGHT_BRACKET:
 			// Remembering an edited clip does not put the viewport in animation
@@ -1429,6 +1434,84 @@ fn bool animation_transport_key(Ui* ui, Key key)
 			else { anim_next_key_clicked(ui); }
 		default: return false;
 	}
+	return true;
+}
+
+// Which way a frame-step key moves the playhead: back, forward, or 0 for any
+// other key.
+fn int transport_step(Key key) @private
+{
+	switch (key)
+	{
+		case Key.COMMA:
+		case Key.LEFT_ARROW: return -1;
+		case Key.PERIOD:
+		case Key.RIGHT_ARROW: return 1;
+		default: return 0;
+	}
+}
+
+// How long a frame-step key is held before it starts repeating: the pause a
+// text field gives its own arrows.
+const float TRANSPORT_REPEAT_DELAY = 0.4f;
+
+<*
+ A frame-step key being held down.
+
+ cui delivers one key event per press, so on its own a held arrow would step
+ once and stop. The root's update keeps it going: after TRANSPORT_REPEAT_DELAY
+ it steps one frame per frame of the clip's rate, so holding an arrow plays the
+ clip that way at its own speed.
+*>
+struct TransportRepeat
+{
+	Key key;
+	// Seconds until the next step.
+	float wait;
+}
+
+<*
+ Start repeating `key` if it is a frame-step key, and stop repeating whatever
+ was held before — the last arrow pressed is the one that steps.
+*>
+fn void TransportRepeat.press(&self, Key key)
+{
+	self.key = transport_step(key) != 0 ? key : Key.EMPTY;
+	self.wait = TRANSPORT_REPEAT_DELAY;
+}
+
+<*
+ Step on while the key is still down.
+
+ Stops instead of stepping while an unkeyed pose edit is waiting: a seek then
+ raises the keep-or-drop banner, and moving again is the answer that drops the
+ edit, so a repeat would throw away the pose the user had just made.
+
+ @return `Whether the key is still held, so the caller keeps frames coming.`
+*>
+fn bool TransportRepeat.advance(&self, Ui* ui, float dt)
+{
+	if (self.key == Key.EMPTY) return false;
+	AppState* app = ui.inherit(AppState)!!;
+	AnimTemplate* clip = app.clip(app.editing);
+	if (!ui.input.key_down(self.key) || !clip || app.pose_edit_pending)
+	{
+		self.key = Key.EMPTY;
+		return false;
+	}
+	self.wait -= dt;
+	if (self.wait > 0.0f) return true;
+
+	// One seek for however many frames have come due, so a slow frame catches
+	// up in a single move rather than posing the body once per frame missed.
+	float frame = 1.0f / (float)app.anim_fps;
+	int steps = (int)(-self.wait / frame) + 1;
+	self.wait += (float)steps * frame;
+	float now = anim_live_time(app);
+	float to = math::clamp(now + (float)(steps * transport_step(self.key)) * frame, 0.0f, clip.duration);
+	// Held against either end there is nowhere to go, and a seek would only
+	// repaint the same frame.
+	if (to != now) anim_seek(ui, to);
 	return true;
 }
 

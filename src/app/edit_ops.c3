@@ -83,7 +83,7 @@ fn Vec3 reflect_across(Vec3 v, Vec3 point, Vec3 normal) @local
 fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
 {
 	MirrorSurvey survey = self.mirror_survey();
-	Vec3 n = survey.normal();
+	Vec3 n              = survey.normal();
 	if (plane_is_square(n))
 	{
 		// World-aligned: a bare x, snapped to the stored plane when the centre
@@ -97,9 +97,18 @@ fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
 
 	// Tilted: any point the plane passes through — the centre line, or the pairs'
 	// own midline when the rig carries no centre joint.
-	if (survey.centres > 0) { *point = survey.plane_point(); }
-	else if (survey.pairs > 0) { *point = survey.midpoint(); }
-	else { *point = { self.doc.sym_x, 0, 0 }; }
+	if (survey.centres > 0)
+	{
+		*point = survey.plane_point();
+	}
+	else if (survey.pairs > 0)
+	{
+		*point = survey.midpoint();
+	}
+	else
+	{
+		*point = { self.doc.sym_x, 0, 0 };
+	}
 	*normal = n;
 }
 
@@ -112,9 +121,9 @@ fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
 *>
 struct MirrorSurvey
 {
-	Vec3 axis;        // each pair's direction oriented to +x, summed (unit-weighted)
-	Vec3 centre;      // centre-joint positions, summed
-	Vec3 midpoints;   // pair midpoints, summed
+	Vec3 axis; // each pair's direction oriented to +x, summed (unit-weighted)
+	Vec3 centre; // centre-joint positions, summed
+	Vec3 midpoints; // pair midpoints, summed
 	usz pairs;
 	usz centres;
 	// Every centre joint's position: what `plane_point` takes the median of.
@@ -122,7 +131,7 @@ struct MirrorSurvey
 	List{Vec3} on_plane;
 }
 
-fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = {})
+fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = { })
 {
 	MirrorSurvey out;
 	out.on_plane.init(tmem);
@@ -151,7 +160,7 @@ fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = {})
 		// Unit-weighted, so a long limb and a short one count the same and one
 		// crooked pair cannot swing the axis far.
 		Vec3 dir = span.normalize();
-		if (dir.x < 0.0f) dir = dir * -1.0f;  // orient every pair to the +x side
+		if (dir.x < 0.0f) dir = dir * -1.0f; // orient every pair to the +x side
 		out.axis = out.axis + dir;
 		out.midpoints = out.midpoints + (dot.position + other.position) * 0.5f;
 		out.pairs++;
@@ -180,7 +189,7 @@ fn Vec3 MirrorSurvey.midpoint(self) => self.midpoints * (1.0f / (float)self.pair
 fn Vec3 MirrorSurvey.plane_point(self)
 {
 	usz n = (usz)self.on_plane.len();
-	if (n == 0) return {};
+	if (n == 0) return { };
 	float[] axis = alloc::new_array(tmem, float, (sz)n);
 	Vec3 out;
 	for (usz c = 0; c < 3; c++)
@@ -204,8 +213,9 @@ fn Vec3 MirrorSurvey.normal(self)
 	return math::abs(avg.x) < MIRROR_SQUARE_COS ? avg : { 1, 0, 0 };
 }
 
-fn bool plane_is_square(Vec3 n) @local
-	=> math::abs(n.x) >= MIRROR_SQUARE_COS && math::abs(n.y) < 1.0e-6f && math::abs(n.z) < 1.0e-6f;
+fn bool plane_is_square(
+	Vec3 n
+) @local => math::abs(n.x) >= MIRROR_SQUARE_COS && math::abs(n.y) < 1.0e-6f && math::abs(n.z) < 1.0e-6f;
 
 <*
  The mirror plane for BUILDING a new side, read off the rig's existing symmetric
@@ -230,15 +240,24 @@ fn bool plane_is_square(Vec3 n) @local
 fn void AppState.mirror_plane_for_new(&self, uint[] exclude, Vec3* point, Vec3* normal, float on_plane)
 {
 	MirrorSurvey survey = self.mirror_survey(exclude);
-	Vec3 n = survey.normal();
+	Vec3 n              = survey.normal();
 
 	// The point: the pairs' own midline first — a square pair's midpoint is on the
 	// plane and no un-sided joint can pull it off — then the centre joints, then the
 	// stored plane.
 	Vec3 base;
-	if (survey.pairs > 0) { base = survey.midpoint(); }
-	else if (survey.centres > 0) { base = survey.centre_point(); }
-	else { base = { self.doc.sym_x, 0, 0 }; }
+	if (survey.pairs > 0)
+	{
+		base = survey.midpoint();
+	}
+	else if (survey.centres > 0)
+	{
+		base = survey.centre_point();
+	}
+	else
+	{
+		base = { self.doc.sym_x, 0, 0 };
+	}
 
 	if (plane_is_square(n))
 	{
@@ -330,9 +349,7 @@ const float SHARPNESS_STEP = 1.25;
 fn void AppState.step_sharpness(&self, bool sharper)
 {
 	float had = self.doc.sharpness > 0.0f ? self.doc.sharpness : 1.0f;
-	float want = math::clamp(
-		sharper ? had * SHARPNESS_STEP : had / SHARPNESS_STEP,
-		1.0f, SHARPNESS_MAX);
+	float want = math::clamp(sharper ? had * SHARPNESS_STEP : had / SHARPNESS_STEP, 1.0f, SHARPNESS_MAX);
 
 	// The floor is the binder's own blend, which is stored as unset — so a model
 	// softened all the way back writes no session key rather than one saying 1.
@@ -452,7 +469,7 @@ fn usz AppState.select_branch(&self, uint id)
 {
 	if (self.doc.find(id) == null) return 0;
 	TransformTarget one = { .kind = JOINT_TARGETS, .active_joint = id, .joint_count = 1 };
-	uint[] branch = self.rotation_branch(one);
+	uint[] branch       = self.rotation_branch(one);
 	defer if (branch.len > 0) alloc::free(mem, branch.ptr);
 
 	self.select(id);
@@ -518,11 +535,11 @@ fn usz AppState.select_all(&self)
  The three readings, from the modifiers the press latched:
 
  - plain — the region *replaces* the selection, the way a click does. A region
-   that caught nothing therefore empties it, which is what "replace with what I
-   circled" means when nothing was circled.
+ that caught nothing therefore empties it, which is what "replace with what I
+ circled" means when nothing was circled.
  - `lasso_removes` (ctrl) — the caught dots come out and the rest stay.
  - `lasso_adds` (alt) — the caught dots go in on top of what was already there,
-   so a selection can be built from several strokes.
+ so a selection can be built from several strokes.
 
  @param view_projection : `From OrbitCamera.view_projection, for this viewport's aspect.`
  @param viewport : `Size of the region the camera renders into, in pixels.`
@@ -581,7 +598,7 @@ fn usz AppState.lasso_select_commit(&self, Matrix4f view_projection, Vec2 viewpo
 fn uint[] AppState.selection_ids(&self, Allocator allocator)
 {
 	usz count = self.selection_count();
-	if (count == 0) return {};
+	if (count == 0) return { };
 
 	uint[] ids = alloc::new_array(allocator, uint, (sz)count);
 	ids[0] = self.selected;
@@ -644,10 +661,10 @@ fn bool AppState.remove_recorded(&self, uint id)
 {
 	Dot* dot = self.doc.find(id);
 	if (!dot) return false;
-	Vec3 position = dot.position;
-	float reach = dot.reach;
+	Vec3 position     = dot.position;
+	float reach       = dot.reach;
 	float pose_weight = dot.pose_weight;
-	String dot_name = (String)@clone_slice((char[])dot.name);
+	String dot_name   = (String)@clone_slice((char[])dot.name);
 
 	foreach (edge : self.doc.edges.array_view())
 	{
@@ -659,22 +676,24 @@ fn bool AppState.remove_recorded(&self, uint id)
 
 	uint previous_root = self.doc.root_id;
 	self.doc.remove_dot(id);
-	self.undo_stack.record({
-		.kind = DELETE_DOT,
-		.id = id,
-		.before = position,
-		.other = previous_root,
-		.name = dot_name,
-		.reach_before = reach,
-		.pose_weight_before = pose_weight,
-	});
+	self.undo_stack.record(
+		{
+			.kind = DELETE_DOT,
+			.id = id,
+			.before = position,
+			.other = previous_root,
+			.name = dot_name,
+			.reach_before = reach,
+			.pose_weight_before = pose_weight,
+		}
+	);
 	return true;
 }
 
 <*
  Deletes every selected dot as one edit.
 
- 	`usz gone = app.remove_selection();`
+ `usz gone = app.remove_selection();`
 
  One commit for the whole group, so deleting five dots is one Ctrl+Z — the same
  bargain a body plan makes when it places seventeen. The ids are taken as a
@@ -704,7 +723,7 @@ fn usz AppState.remove_selection(&self)
 <*
  Lines the rest of the selection up with the anchor on one axis (Align X/Y/Z).
 
- 	`usz moved = app.align_selection_to_anchor(0); // onto the anchor's X`
+ `usz moved = app.align_selection_to_anchor(0); // onto the anchor's X`
 
  Every other selected dot takes the anchor's coordinate on `component` and keeps
  its own on the other two, so a row of spine joints snaps onto the anchor's
@@ -727,7 +746,7 @@ fn usz AppState.align_selection_to_anchor(&self, int component)
 	if (!anchor || self.also_selected.len() == 0) return 0;
 
 	float target = anchor.position[component];
-	usz moved = 0;
+	usz moved    = 0;
 	foreach (id : self.also_selected.array_view())
 	{
 		Dot* dot = self.doc.find(id);
@@ -779,12 +798,11 @@ fn bool AppState.center_selected_on_mesh(&self)
 fn usz AppState.rotate_skeleton(&self, int axis, float radians)
 {
 	if (axis < 0 || axis > 2 || !math::is_finite(radians) || self.doc.dots.len() == 0) return 0;
-	Vec3 pivot = self.geometry.positions.len > 0
-		? self.geometry.bounds().center()
-		: self.doc.dots[0].position;
+	Vec3 pivot             = self.geometry.positions.len > 0 ? self.geometry.bounds()
+		.center() : self.doc.dots[0].position;
 	TransformTarget target = { .kind = SKELETON_TARGET, .joint_count = (usz)self.doc.dots.len() };
 	if (!self.begin_transform_target(ROTATE_TRANSFORM, target, GLOBAL_SPACE, MEDIAN_PIVOT, &pivot)) return 0;
-	Vec3 turn_axis = {};
+	Vec3 turn_axis = { };
 	turn_axis[axis] = 1.0f;
 	if (!self.update_transform_rotation_axis(turn_axis, radians))
 	{
@@ -812,10 +830,10 @@ fn usz AppState.rotate_skeleton(&self, int axis, float radians)
 struct MirrorPair @local
 {
 	uint source;
-	uint twin;     // 0 when no twin was found — the source is left alone and warned about
-	Vec3 at;       // where the twin belongs
-	bool squared;  // an existing twin that something had to be written to
-	bool made;     // created here rather than moved into place — see mirror_create_selection
+	uint twin; // 0 when no twin was found — the source is left alone and warned about
+	Vec3 at; // where the twin belongs
+	bool squared; // an existing twin that something had to be written to
+	bool made; // created here rather than moved into place — see mirror_create_selection
 	bool name_sides; // a source with no side in its name: both get one by where they fall
 }
 
@@ -835,8 +853,16 @@ alias MirrorPairList = List{MirrorPair};
  and no side in its name is marked `name_sides`: it and its new twin are named by
  which side of the plane they fall on — see `side_names`.
 *>
-fn void AppState.plan_mirror(&self, MirrorPairList* plan, uint[] ids, Vec3 plane_point, Vec3 plane_normal,
-	float on_plane, bool create, usz* no_side)
+fn void AppState.plan_mirror(
+	&self,
+	MirrorPairList* plan,
+	uint[] ids,
+	Vec3 plane_point,
+	Vec3 plane_normal,
+	float on_plane,
+	bool create,
+	usz* no_side
+)
 {
 	foreach (id : ids)
 	{
@@ -852,7 +878,7 @@ fn void AppState.plan_mirror(&self, MirrorPairList* plan, uint[] ids, Vec3 plane
 		foreach (planned : plan.array_view()) if (planned.twin == id) claimed = true;
 		if (claimed) continue;
 
-		Vec3 at = reflect_across(dot.position, plane_point, plane_normal);
+		Vec3 at   = reflect_across(dot.position, plane_point, plane_normal);
 		uint twin = self.twin_of(*dot, at, on_plane);
 
 		// No twin to move and no side in the name to build one under: both sides
@@ -937,8 +963,13 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
 	bool paint_touched = false;
 	if (self.doc.paint.len() > 0 || self.doc.pins.len() > 0)
 	{
-		rig::MirrorLookup across = rig::build_mirror_lookup(mem, self.geometry.positions,
-			plane_point, plane_normal, on_plane);
+		rig::MirrorLookup across = rig::build_mirror_lookup(
+			mem,
+			self.geometry.positions,
+			plane_point,
+			plane_normal,
+			on_plane
+		);
 		defer across.free(mem);
 		foreach (&pair : plan)
 		{
@@ -958,7 +989,7 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
  already exists into line — and warning about a source that has none, never
  placing a joint.
 
- 	`usz moved, unmatched; app.mirror_selection(&moved, null, &unmatched);`
+ `usz moved, unmatched; app.mirror_selection(&moved, null, &unmatched);`
 
  The repair a symmetry plane is for: select a side of a rig that already has
  both and this squares the other side up against it — which no amount of weight
@@ -1037,8 +1068,13 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
  @param painted : `Receives whether any paint or pins crossed, if given, so a notice can say so.`
  @return `How many twins were pulled into line, which is 0 when nothing was selected, every twin was already in place, or no twin was found.`
 *>
-fn usz AppState.mirror_selection(&self, usz* moved = null, usz* square = null, usz* unmatched = null,
-	bool* painted = null)
+fn usz AppState.mirror_selection(
+	&self,
+	usz* moved = null,
+	usz* square = null,
+	usz* unmatched = null,
+	bool* painted = null
+)
 {
 	if (square) *square = 0;
 	if (unmatched) *unmatched = 0;
@@ -1087,13 +1123,24 @@ fn usz AppState.mirror_selection(&self, usz* moved = null, usz* square = null, u
 
 	bool paint_touched = self.mirror_crossings(plan.array_view(), on_plane, plane_point, plane_normal);
 
-	usz pulled = 0;
+	usz pulled  = 0;
 	usz already = 0;
 	usz missing = 0;
 	foreach (pair : plan.array_view())
 	{
-		if (pair.twin == 0) { missing++; continue; }
-		if (pair.squared) { pulled++; } else { already++; }
+		if (pair.twin == 0)
+		{
+			missing++;
+			continue;
+		}
+		if (pair.squared)
+		{
+			pulled++;
+		}
+		else
+		{
+			already++;
+		}
 	}
 
 	if (square) *square = already;
@@ -1114,7 +1161,7 @@ fn usz AppState.mirror_selection(&self, usz* moved = null, usz* square = null, u
  Builds the other side of every selected dot — creating the twin where the rig
  has none yet, and moving one into line where it does.
 
- 	`usz made, moved, skipped; app.mirror_create_selection(&made, &moved, null, &skipped);`
+ `usz made, moved, skipped; app.mirror_create_selection(&made, &moved, null, &skipped);`
 
  The making counterpart to `mirror_selection`, and the deliberate act that one
  deliberately is not: where the M-key mirror lines an existing twin up and
@@ -1151,8 +1198,15 @@ fn usz AppState.mirror_selection(&self, usz* moved = null, usz* square = null, u
  @param named : `Receives how many sources were given a side in their name, if given.`
  @return `How many dots were created or moved — 0 when nothing was.`
 *>
-fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = null, usz* already = null,
-	usz* skipped = null, bool* painted = null, usz* named = null)
+fn usz AppState.mirror_create_selection(
+	&self,
+	usz* made = null,
+	usz* moved = null,
+	usz* already = null,
+	usz* skipped = null,
+	bool* painted = null,
+	usz* named = null
+)
 {
 	if (named) *named = 0;
 	if (made) *made = 0;
@@ -1194,7 +1248,7 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
 	{
 		Dot* dot = self.doc.find(pair.source);
 		if (!dot) continue;
-		float reach = dot.reach;
+		float reach       = dot.reach;
 		float pose_weight = dot.pose_weight;
 
 		if (pair.twin == 0)
@@ -1273,13 +1327,22 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
 	bool paint_touched = self.mirror_crossings(plan.array_view(), on_plane, plane_point, plane_normal);
 
 	usz created = 0;
-	usz pulled = 0;
+	usz pulled  = 0;
 	usz settled = 0;
 	foreach (pair : plan.array_view())
 	{
-		if (pair.made) { created++; }
-		else if (pair.squared) { pulled++; }
-		else if (pair.twin != 0) { settled++; }
+		if (pair.made)
+		{
+			created++;
+		}
+		else if (pair.squared)
+		{
+			pulled++;
+		}
+		else if (pair.twin != 0)
+		{
+			settled++;
+		}
 	}
 
 	if (already) *already = settled;
@@ -1303,7 +1366,7 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
  Names for a joint with no side in its name and for the twin about to be built
  for it, by which side of the plane it falls on.
 
- 	`joint_7` on the left → `joint_7_L`, twin `joint_7_R`; an unnamed joint → `joint_<id>_L`
+ `joint_7` on the left → `joint_7_L`, twin `joint_7_R`; an unnamed joint → `joint_<id>_L`
 
  Which side is "left" and the letter case are read off the rig's own sided names
  (a rig spelled `hand_l` gets `_l`); with none, `fit_preset`'s `_L` on +X. A base
@@ -1314,7 +1377,7 @@ fn usz AppState.mirror_create_selection(&self, usz* made = null, usz* moved = nu
 *>
 fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal, String* source, String* twin)
 {
-	int votes = 0;
+	int votes  = 0;
 	bool lower = false;
 	bool cased = false;
 	foreach (dot : self.doc.dots.array_view())
@@ -1333,22 +1396,21 @@ fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal,
 	}
 	bool left_positive = votes >= 0;
 
-	Dot* dot = self.doc.find(id);
-	float s = dot ? (dot.position - plane_point).dot(plane_normal) : 0.0f;
-	bool on_left = (s > 0.0f) == left_positive;
-	String own_letter = lower ? (on_left ? "l" : "r") : (on_left ? "L" : "R");
+	Dot* dot           = self.doc.find(id);
+	float s            = dot ? (dot.position - plane_point).dot(plane_normal) : 0.0f;
+	bool on_left       = (s > 0.0f) == left_positive;
+	String own_letter  = lower ? (on_left ? "l" : "r") : (on_left ? "L" : "R");
 	String twin_letter = lower ? (on_left ? "r" : "l") : (on_left ? "R" : "L");
 
-	String base = dot && dot.name.len > 0
-		? (String)alloc::clone_slice(mem, (char[])dot.name)
+	String base = dot && dot.name.len > 0 ? (String)alloc::clone_slice(mem, (char[])dot.name)
 		: string::format(mem, "joint_%d", id);
 	defer alloc::free(mem, base.ptr);
 
 	for (int n = 1;; n++)
 	{
 		String suffix = n == 1 ? "" : string::tformat("_%d", n);
-		String a = string::format(mem, "%s%s_%s", base, suffix, own_letter);
-		String b = string::format(mem, "%s%s_%s", base, suffix, twin_letter);
+		String a      = string::format(mem, "%s%s_%s", base, suffix, own_letter);
+		String b      = string::format(mem, "%s%s_%s", base, suffix, twin_letter);
 		if (self.dot_named(a) == null && self.dot_named(b) == null)
 		{
 			*source = a;
@@ -1363,7 +1425,7 @@ fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal,
 <*
  The rig's own left-right symmetry plane, read off its centre joints.
 
- 	`if (app.symmetry_plane(&x)) { … }`
+ `if (app.symmetry_plane(&x)) { … }`
 
  The mesh's bounding-box centre is a poor guess at the midline — a tail, a wing
  or an off-centre export throws it off, and a hand-built rig on no mesh has none.
@@ -1392,7 +1454,7 @@ fn bool AppState.symmetry_plane(&self, float* out)
 <*
  Cross one dot's paint and pins onto its twin, as the mirror's own strokes.
 
- 	`if (app.mirror_paint_recorded(&across, thigh_L, thigh_R)) …`
+ `if (app.mirror_paint_recorded(&across, thigh_L, thigh_R)) …`
 
  Two batches, one per layer, each recorded through the layer's own stroke
  record and left chained — the caller commits, so the paint undoes with the
@@ -1424,8 +1486,9 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 	bool moved = false;
 
 	// --- dabs ----------------------------------------------------------------
+
 	{
-		sz held = self.doc.paint.len();
+		sz held          = self.doc.paint.len();
 		PaintDab[] batch = alloc::new_array(mem, PaintDab, held);
 		defer alloc::free(mem, batch);
 		usz asked = 0;
@@ -1460,8 +1523,9 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 
 	// --- pins ----------------------------------------------------------------
 	wanted[..] = false;
+
 	{
-		sz held = self.doc.pins.len();
+		sz held           = self.doc.pins.len();
 		VertexPin[] batch = alloc::new_array(mem, VertexPin, held);
 		defer alloc::free(mem, batch);
 		usz asked = 0;
@@ -1498,13 +1562,13 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 }
 
 // The dot on the other side that already answers to this one, or 0 for none.
-//
+// 
 // By name first and at any distance, since a twin that has drifted is exactly
 // what a snap is for. A name that names no side is no handle at all — whether it
 // is empty or spelled some way `mirror_name` cannot read — and falls back to
 // position, then only within the tolerance a mirrored placement would have used:
 // a wider net would start claiming the neighbouring joint.
-//
+// 
 // The narrow net is also what keeps that fallback from crossing back over. The
 // caller has already skipped every dot within `tolerance` of the plane, so the
 // reflection sits further than `tolerance` from it on the far side and nothing
@@ -1524,7 +1588,7 @@ fn uint AppState.twin_of(&self, Dot dot, Vec3 at, float tolerance)
 	}
 
 	uint nearest = 0;
-	float best = tolerance;
+	float best   = tolerance;
 	foreach (other : self.doc.dots.array_view())
 	{
 		if (other.id == dot.id) continue;
@@ -1578,7 +1642,7 @@ fn uint AppState.mirrored_end(&self, uint other, MirrorPair[] plan, float on_pla
 	if (!dot) return other;
 	if (math::abs((dot.position - plane_point).dot(plane_normal)) <= on_plane) return other;
 
-	Vec3 at = reflect_across(dot.position, plane_point, plane_normal);
+	Vec3 at   = reflect_across(dot.position, plane_point, plane_normal);
 	uint twin = self.twin_of(*dot, at, on_plane);
 	return twin != 0 ? twin : other;
 }
@@ -1588,9 +1652,18 @@ fn uint AppState.mirrored_end(&self, uint other, MirrorPair[] plan, float on_pla
 // setup, absence included, so a source with no table clears the twin's. A
 // source whose axes cannot be derived carries nothing — see
 // `mirrored_rotation_limits` — and the twin keeps what it had.
-//
+// 
 // @return `True when the twin's limits changed.`
-fn bool AppState.mirror_limits_recorded(&self, RigView* view, uint source, uint twin, MirrorPair[] plan, float on_plane, Vec3 plane_point, Vec3 plane_normal)
+fn bool AppState.mirror_limits_recorded(
+	&self,
+	RigView* view,
+	uint source,
+	uint twin,
+	MirrorPair[] plan,
+	float on_plane,
+	Vec3 plane_point,
+	Vec3 plane_normal
+)
 {
 	JointRotationLimits held = self.doc.rotation_limits_of(source);
 	if (held.same(unconstrained_rotation(source)))
@@ -1598,7 +1671,14 @@ fn bool AppState.mirror_limits_recorded(&self, RigView* view, uint source, uint 
 		return self.set_rotation_limits_recorded(twin, unconstrained_rotation(twin));
 	}
 
-	uint primary = held.primary_child != 0 ? self.mirrored_end(held.primary_child, plan, on_plane, plane_point, plane_normal) : 0;
+	uint primary = held.primary_child != 0 ? self.mirrored_end(
+		held.primary_child,
+		plan,
+		on_plane,
+		plane_point,
+		plane_normal
+	)
+		: 0;
 	JointRotationLimits mirrored;
 	if (!mirrored_rotation_limits(&view.skeleton, view.dot_ids, held, twin, primary, &mirrored)) return false;
 	return self.set_rotation_limits_recorded(twin, mirrored);
@@ -1667,7 +1747,7 @@ fn void AppState.finish_move(&self)
 <*
  Rename a dot, as one undoable edit.
 
- 	`app.rename(id, "thigh_L");`
+ `app.rename(id, "thigh_L");`
 
  A name is the only way a clip can reach a joint — templates key on names, not on
  ids — so this is what turns a hand-placed chain into one an animation can drive,
@@ -1691,11 +1771,11 @@ fn bool AppState.rename(&self, uint id, String name)
 
 // ---------------------------------------------------------------------------
 // A move, from the grab to the release.
-//
+// 
 // The verbs below are the whole vocabulary: the viewport starts and ends one,
 // the shortcut layer locks and cancels it, and the HUD reads it. Nothing else
 // writes `drag`, so "is a move in progress" has one answer.
-//
+// 
 // There are three ways in — `begin_drag` moves a dot, `begin_pose` and
 // `begin_turn` move a joint — and one way out either side, `cancel_drag` and
 // `end_drag`, each branching on the verb. The axis lock and the escape are
@@ -1856,8 +1936,7 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 	// one, and the visual change does not wait for another mouse move.
 	if (self.drag.verb == DragVerb.TURN)
 	{
-		Vec3 about = next == DragAxis.FREE
-			? self.model_direction((self.camera.eye() - self.camera.target).normalize())
+		Vec3 about = next == DragAxis.FREE ? self.model_direction((self.camera.eye() - self.camera.target).normalize())
 			: direction;
 		self.turn_joint(about, self.drag.turned);
 		return true;
@@ -1872,7 +1951,7 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 	if (next.is_direction())
 	{
 		Vec3 delta = dot.position - self.drag.from;
-		Vec3 onto = self.drag.from + direction * delta.dot(direction);
+		Vec3 onto  = self.drag.from + direction * delta.dot(direction);
 		self.doc.move_dot(self.drag.dot, clamp_inside(&self.voxels.grid, self.drag.from, onto));
 		self.mark_rig_stale();
 	}
@@ -1921,7 +2000,7 @@ fn bool AppState.cancel_drag(&self)
 		{
 			self.doc.move_dot(mate.dot, mate.from);
 		}
-		self.drag = {};
+		self.drag = { };
 		self.drag_mates.clear();
 		self.mark_rig_stale();
 		self.refresh_pose_display();
@@ -1951,7 +2030,7 @@ fn bool AppState.cancel_drag(&self)
 	self.pose_before_count = 0;
 	self.locked_before_count = 0;
 	self.pose_mate_count = 0;
-	self.drag = {};
+	self.drag = { };
 	// The palette, not the binder: a pose moves no rest position, so the weights
 	// underneath are the ones they always were.
 	self.refresh_posed();
@@ -1979,7 +2058,7 @@ fn void AppState.end_drag(&self)
 	if (self.drag.verb == DragVerb.PLACE)
 	{
 		self.finish_move();
-		self.drag = {};
+		self.drag = { };
 		self.drag_mates.clear();
 		self.refresh_pose_display();
 		return;
@@ -2023,7 +2102,7 @@ fn void AppState.end_drag(&self)
 	self.pose_before_count = 0;
 	self.locked_before_count = 0;
 	self.pose_mate_count = 0;
-	self.drag = {};
+	self.drag = { };
 	if (banked && self.is_anchored(moved)) self.refresh_lock_target(moved);
 	if (banked)
 	{
@@ -2048,13 +2127,13 @@ fn void AppState.end_drag(&self)
 *>
 fn Vec3 AppState.drag_delta(&self)
 {
-	if (self.drag.dot == 0) return {};
+	if (self.drag.dot == 0) return { };
 	if (self.drag.verb == DragVerb.AIM)
 	{
-		return self.drag.aim < self.posed_aims.len ? self.posed_aims[self.drag.aim].at - self.drag.from : (Vec3){};
+		return self.drag.aim < self.posed_aims.len ? self.posed_aims[self.drag.aim].at - self.drag.from : (Vec3) { };
 	}
 	Dot* dot = self.doc.find(self.drag.dot);
-	if (!dot) return {};
+	if (!dot) return { };
 	return dot.position - self.drag.from;
 }
 
@@ -2099,7 +2178,7 @@ fn void AppState.pin_shell(&self, int shell)
 	}
 
 	uint before = self.doc.attachment_of((uint)shell);
-	uint after = before == self.selected ? 0 : self.selected;
+	uint after  = before == self.selected ? 0 : self.selected;
 
 	if (!self.attach_recorded((uint)shell, after)) return;
 
@@ -2113,7 +2192,7 @@ fn void AppState.pin_shell(&self, int shell)
 		return;
 	}
 
-	Dot* dot = self.doc.find(after);
+	Dot* dot    = self.doc.find(after);
 	String name = dot != null && dot.name.len > 0 ? dot.name : "that joint";
 	self.@notice("%d vertices ride %s", vertices, name);
 }
@@ -2122,7 +2201,7 @@ fn void AppState.pin_shell(&self, int shell)
  Bonds the selected dots into a chain, or takes that chain apart when it is
  already whole.
 
- 	`bool removed; usz bones = app.connect_selection(&removed);`
+ `bool removed; usz bones = app.connect_selection(&removed);`
 
  The chain runs in selection order — the anchor first, then the others in the
  order they were shift-clicked. Nothing about a set of positions says which end

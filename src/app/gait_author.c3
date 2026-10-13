@@ -19,7 +19,7 @@ faultdef GAIT_REFUSED, GAIT_BAD_FOOT;
 // Keys per cycle when the caller does not say: 40 is dense enough that a linear
 // blend between two keys is the path itself.
 const usz GAIT_SAMPLES_DEFAULT = 40;
-const usz GAIT_SAMPLES_MOST = 240;
+const usz GAIT_SAMPLES_MOST    = 240;
 
 // One foot as the caller names it. `offset` is honoured only when `has_offset`;
 // otherwise the gait's own pattern places the foot.
@@ -83,12 +83,21 @@ fn float gait_leg_height(rig::Skeleton* skeleton, usz[] feet)
  @param feet : `Named feet, or empty to have them found.`
  @return? GAIT_REFUSED : `The reason is in detail.`
 *>
-fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double lift_fraction, GaitFootRequest[] feet, DString* detail)
+fn GaitAuthored? AppState.author_gait(
+	&self,
+	String name,
+	GaitSpec spec,
+	double lift_fraction,
+	GaitFootRequest[] feet,
+	DString* detail
+)
 {
 	RigView? opened = self.open_rig(mem);
 	if (catch opened)
 	{
-		detail.append_string(`this document has no dots, so there are no legs to walk on. apply_plan fits a rig; get_scene reports what is loaded.`);
+		detail.append_string(
+			`this document has no dots, so there are no legs to walk on. apply_plan fits a rig; get_scene reports what is loaded.`
+		);
 		return GAIT_REFUSED~;
 	}
 	RigView view = opened;
@@ -109,7 +118,11 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 		{
 			if (!self.has_dot_named(entry.joint))
 			{
-				detail.appendf(`feet[%d].joint is "%s", which is not a dot on this rig. get_skeleton lists every joint by name.`, i, entry.joint);
+				detail.appendf(
+					`feet[%d].joint is "%s", which is not a dot on this rig. get_skeleton lists every joint by name.`,
+					i,
+					entry.joint
+				);
 				return GAIT_REFUSED~;
 			}
 			sz at = view.joint_of(self.dot_named(entry.joint).id);
@@ -131,7 +144,10 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 			}
 			else if (spec.kind == CUSTOM)
 			{
-				detail.appendf(`feet[%d] needs "offset" for gait custom: the phase of the cycle the foot lands at, 0 to 1.`, i);
+				detail.appendf(
+					`feet[%d] needs "offset" for gait custom: the phase of the cycle the foot lands at, 0 to 1.`,
+					i
+				);
 				return GAIT_REFUSED~;
 			}
 			count++;
@@ -141,13 +157,17 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 	{
 		if (spec.kind == CUSTOM)
 		{
-			detail.append_string(`gait custom needs "feet": every foot's joint and offset, since there is no pattern to read them from.`);
+			detail.append_string(
+				`gait custom needs "feet": every foot's joint and offset, since there is no pattern to read them from.`
+			);
 			return GAIT_REFUSED~;
 		}
 		count = gait_find_feet(&view.skeleton, view.names, joints[:GAIT_FEET_MAX]);
 		if (count == 0)
 		{
-			detail.append_string(`no feet found: a foot is the lowest joint of a left/right pair of limbs that end in a toe, two or more bones below a fork. Name them in "feet".`);
+			detail.append_string(
+				`no feet found: a foot is the lowest joint of a left/right pair of limbs that end in a toe, two or more bones below a fork. Name them in "feet".`
+			);
 			return GAIT_REFUSED~;
 		}
 	}
@@ -162,15 +182,26 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 
 	if (lift_fraction > 0.0) spec.lift = (float)lift_fraction * gait_leg_height(&view.skeleton, joints[:count]);
 
-	GaitAuthored out = { .kind = spec.kind, .rig_height = view.skeleton.height() };
+	GaitAuthored out  = { .kind = spec.kind, .rig_height = view.skeleton.height() };
 	GaitLimits limits = { .app = self, .view = &view };
-	AnimTemplate? made = gait_clip(mem, &view.skeleton, view.names, name, spec, driven[:count], &out.report,
-		&gait_limit_clamp, &limits);
+	AnimTemplate? made = gait_clip(
+		mem,
+		&view.skeleton,
+		view.names,
+		name,
+		spec,
+		driven[:count],
+		&out.report,
+		&gait_limit_clamp,
+		&limits
+	);
 	if (catch problem = made)
 	{
 		if (problem == GAIT_BAD_LEG)
 		{
-			detail.append_string(`a foot has no leg this can bend: it needs two or more named bones between it and the first fork above. get_skeleton shows the rig's joints and parents.`);
+			detail.append_string(
+				`a foot has no leg this can bend: it needs two or more named bones between it and the first fork above. get_skeleton shows the rig's joints and parents.`
+			);
 		}
 		else
 		{
@@ -206,7 +237,17 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 		// The treadmill's speed and direction are read off the stance feet, as
 		// pin_feet's travel "auto" does. The reports are on the temporary
 		// allocator; only whether it held is kept.
-		if (try self.pin_clip_feet(out.landed, feet_named[:count], {}, true, FOOT_PIN_BLEND, true, {}, &why, travel_auto: true))
+		if (try self.pin_clip_feet(
+			out.landed,
+			feet_named[:count],
+			{ },
+			true,
+			FOOT_PIN_BLEND,
+			true,
+			{ },
+			&why,
+			travel_auto: true
+		))
 		{
 			// Kept only if they hold the feet better than the keys alone: a foot
 			// the leg cannot reach is not reached by pinning it either, and a pin
@@ -257,7 +298,11 @@ fn void AppState.hold_keys_inside_limits(&self, RigView* view, AnimTemplate* cli
 			sz joint = -1;
 			foreach (usz j, name : view.names)
 			{
-				if (name == dot.joint_name) { joint = (sz)j; break; }
+				if (name == dot.joint_name)
+				{
+					joint = (sz)j;
+					break;
+				}
 			}
 			if (joint < 0 || (usz)joint >= view.dot_ids.len) continue;
 			JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[(usz)joint]);
@@ -282,7 +327,7 @@ struct GaitLimits @local
 fn Quaternionf gait_limit_clamp(void* context, usz joint, Quaternionf local) @local
 {
 	GaitLimits* limits = (GaitLimits*)context;
-	RigView* view = limits.view;
+	RigView* view      = limits.view;
 	if (joint >= view.dot_ids.len) return local;
 	JointRotationLimits table = limits.app.doc.rotation_limits_of(view.dot_ids[joint]);
 	if (!table.constrained) return local;

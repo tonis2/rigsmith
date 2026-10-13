@@ -604,7 +604,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "remove_movement",
-		.description = "Stop a clip travelling: hold the hips over where they start (or move the travel onto a root joint), optionally taking out its turn about the vertical too — what the Clip tools' Remove movement does. One undo step.",
+		.description = "Stop a clip travelling: hold the hips over where they start (or move the travel onto a root joint), optionally taking out its turn about the vertical too — what the Animations pane's Optimize does with translation and rotation ticked. One undo step.",
 		.input_schema = REMOVE_MOVEMENT_SCHEMA,
 		.handler = &tool_remove_movement,
 		.user_data = app,

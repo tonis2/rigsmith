@@ -197,6 +197,7 @@ fn Element* build_anim_new_menu(Ui* ui)
 }
 
 // The Clip tools menu: what is done to the clip as a whole, apart from its keys.
+// Taking out travel, turn and jitter is the pane's Optimize button instead.
 fn void anim_tools_check(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
@@ -222,7 +223,7 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	bool none = app.clip(app.editing) == null;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Add contact", "Remove movement…", "Optimize keys…", "Smooth jitter", "Prevent intersections" })
+	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -234,12 +235,8 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CHECK_ID);
 			@node((PopupMenuItem) { .item = { .label = "Add contact", .on_select = &anim_tools_contact,
 				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_ADD_CONTACT_ID);
-			@node((PopupMenuItem) { .item = { .label = "Remove movement…", .on_select = &anim_tools_motion, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MOTION_ID);
 			@node((PopupMenuItem) { .item = { .label = "Optimize keys…", .on_select = &anim_tools_optimize, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_OPTIMIZE_ID);
-			@node((PopupMenuItem) { .item = { .label = "Smooth jitter", .on_select = &anim_tools_smooth, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_SMOOTH_ID);
 			// The one normal collision control; the rest is behind the clip menu's
 			// Collision — and none of it with the system switched off in Settings.
 			if (app.config.self_collision)

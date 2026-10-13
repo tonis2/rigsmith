@@ -1709,6 +1709,8 @@ struct AppRoot (Widget)
 	// children are laid out loosely either way. Present because C3 forbids a
 	// zero-sized struct, so a widget with nothing to hold has to hold this.
 	Vec2 size;
+	// A held arrow or , / . stepping through the open clip; see `TransportRepeat`.
+	TransportRepeat step_repeat;
 }
 
 <*
@@ -1774,6 +1776,10 @@ fn void AppRoot.update(&self, Element* elem, float dt) @dynamic
 
 	// A text-to-motion job: its progress, and the clip it lands.
 	tick_generation(elem.ui, app);
+
+	// A frame-step key held down keeps stepping. Its own frame request: holding
+	// a key is not something `ticking` can see.
+	if (self.step_repeat.advance(elem.ui, dt)) elem.ui.request_frame();
 
 	// The render loop sleeps as soon as a frame ends with nothing scheduled, and
 	// the ticks above are advanced by frames — so anything mid-flight has
@@ -1933,9 +1939,14 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 		return true;
 	}
 
-	// The animation sheet's universal transport: arrows step one blocking frame
-	// and Space toggles its clock. Text fields consume these before bubbling here.
-	if (animation_transport_key(elem.ui, event.key)) return true;
+	// The animation sheet's universal transport: arrows and , / . step one frame,
+	// and keep stepping while held, and Space toggles its clock. Text fields
+	// consume these before bubbling here.
+	if (animation_transport_key(elem.ui, event.key))
+	{
+		self.step_repeat.press(event.key);
+		return true;
+	}
 	// I opens the interpolation popover while a clip is open; text fields took
 	// their own letters before this.
 	if (animation_interp_key(elem.ui, event.key)) return true;
@@ -2440,8 +2451,8 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(VIEWPORT_CONTEXT_ID);
 			@node((Dialog) { .title = "Stretch animation timing", .body = &build_anim_retime_body,
 				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_RETIME_DIALOG_ID);
-			@node((Dialog) { .title = "Remove movement", .body = &build_anim_motion_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_MOTION_DIALOG_ID);
+			@node((Dialog) { .title = "Optimize animation", .body = &build_anim_cleanup_body,
+				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_CLEANUP_DIALOG_ID);
 			@node((Dialog) { .title = "Optimize keys", .body = &build_anim_optimize_body,
 				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_OPTIMIZE_DIALOG_ID);
 			@node((Dialog) { .title = "Trim animation", .body = &build_anim_trim_body,

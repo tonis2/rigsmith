@@ -1774,6 +1774,28 @@ fn void the_dopesheet_draws_the_clip_being_edited() @test
 	test::@check(math::abs(fixture.app.edit_time - 1.0f) < 0.001f,
 		"End left the playhead at %s", fixture.app.edit_time);
 
+	// The arrows step a frame the way , and . do.
+	fixture.feed_key(Key.LEFT_ARROW);
+	test::@check(math::abs(fixture.app.edit_time - (1.0f - 1.0f / 30.0f)) < 0.001f,
+		"Left stepped to %s rather than one frame back", fixture.app.edit_time);
+	fixture.feed_key(Key.RIGHT_ARROW);
+	test::@check(math::abs(fixture.app.edit_time - 1.0f) < 0.001f,
+		"Right stepped to %s rather than one frame on", fixture.app.edit_time);
+
+	// Held, an arrow keeps stepping once the repeat delay is up — at the clip's
+	// frame rate, so never further than the time it was held — and stops on release.
+	fixture.feed_key(Key.HOME);
+	Vec2 where = fixture.ui.input.mouse;
+	for (int i = 0; i < 40; i++) fixture.feed(where, keys: { Key.RIGHT_ARROW });
+	float held = fixture.app.edit_time;
+	test::@check(held > 3.0f / 30.0f, "holding Right for %s s stepped only to %s", 40 * DT, held);
+	test::@check(held <= 40 * DT + 0.001f, "holding Right ran ahead of the clock, to %s", held);
+	fixture.feed(where);
+	fixture.feed(where);
+	fixture.feed(where);
+	test::@check(math::abs(fixture.app.edit_time - held) < 0.0001f,
+		"the playhead kept moving after Right came up: %s from %s", fixture.app.edit_time, held);
+
 	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, 0));
 	fixture.viewport = fixture.ui.find(Viewport)!!;
 	fixture.app.stop_animation();

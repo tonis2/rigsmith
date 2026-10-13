@@ -1,7 +1,7 @@
 <*
  Text to motion: a prompt in, a clip on the character out.
 
- 	`app.start_motion_generation({ .prompt = "a person waves", .seconds = 5 })!;`
+ `app.start_motion_generation({ .prompt = "a person waves", .seconds = 5 })!;`
 
  NVIDIA's Kimodo runs as llm-runner's `kimodo` pipeline, which crig links as
  the `llm` library (`lib/llm.c3l`) and runs on its own GPU through
@@ -59,8 +59,15 @@ import three;
 import llm::pipeline;
 import rig;
 
-faultdef MOTION_NO_GENERATOR, MOTION_NO_GPU, MOTION_BUSY, MOTION_NO_PROMPT, MOTION_NOT_STARTED,
-	MOTION_GUIDE_MISSING, MOTION_GUIDE_UNMATCHED, MOTION_GUIDE_EMPTY;
+faultdef
+	MOTION_NO_GENERATOR,
+	MOTION_NO_GPU,
+	MOTION_BUSY,
+	MOTION_NO_PROMPT,
+	MOTION_NOT_STARTED,
+	MOTION_GUIDE_MISSING,
+	MOTION_GUIDE_UNMATCHED,
+	MOTION_GUIDE_EMPTY;
 
 <*
  What the motion model setting still lacks: "" when the pipeline can load it,
@@ -82,13 +89,13 @@ fn String motion_checkpoint_gap(String setting)
 	return file::exists(weights) ? "" : weights;
 }
 
-const float MOTION_FPS = 30.0f;
-const float MOTION_MIN_SECONDS = 1.0f;
+const float MOTION_FPS             = 30.0f;
+const float MOTION_MIN_SECONDS     = 1.0f;
 // Kimodo is trained on clips of a few seconds; past ten the motion wanders.
-const float MOTION_MAX_SECONDS = 10.0f;
+const float MOTION_MAX_SECONDS     = 10.0f;
 const float MOTION_DEFAULT_SECONDS = 5.0f;
-const uint MOTION_DEFAULT_STEPS = 100;
-const uint MOTION_MAX_STEPS = 1000;
+const uint MOTION_DEFAULT_STEPS    = 100;
+const uint MOTION_MAX_STEPS        = 1000;
 // The rest skeleton guide poses are matched against, under the plugins folder.
 // The SOMA models are the human ones; their joint names are what the pipeline
 // reads a guide pose's names as.
@@ -159,7 +166,7 @@ struct MotionJob
 *>
 struct MotionDraft
 {
-	String name;   // the clip's name as typed; "" = `next_generated_name`
+	String name; // the clip's name as typed; "" = `next_generated_name`
 	String prompt;
 	String seconds;
 	String seed;
@@ -169,11 +176,11 @@ struct MotionDraft
 
 fn void MotionDraft.free(&self)
 {
-	foreach (held : (String[]){ self.name, self.prompt, self.seconds, self.seed, self.steps, self.guide })
+	foreach (held : (String[]) { self.name, self.prompt, self.seconds, self.seed, self.steps, self.guide })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	*self = {};
+	*self = { };
 }
 
 fn String MotionJob.last(&self) => (String)self.last_line[:self.last_length];
@@ -181,13 +188,13 @@ fn String MotionJob.last(&self) => (String)self.last_line[:self.last_length];
 fn void MotionJob.clear(&self)
 {
 	self.close_engine();
-	foreach (held : (String[]){ self.name, self.prompt })
+	foreach (held : (String[]) { self.name, self.prompt })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
 	self.name = self.prompt = "";
 	if (self.glb.len > 0) alloc::free(mem, self.glb);
-	self.glb = {};
+	self.glb = { };
 	self.running = false;
 	self.failed = false;
 	self.landed = NO_ANIM;
@@ -270,11 +277,11 @@ const String GENERATED_NAME_PREFIX = "Generated";
  The name the Generate pane gives a clip left unnamed: "Generated 1", then 2, and
  so on — the lowest number no clip on this character already has.
 
- 	`String name = app.next_generated_name(mem);`
+ `String name = app.next_generated_name(mem);`
 *>
 fn String AppState.next_generated_name(&self, Allocator allocator)
 {
-	for (int n = 1; ; n++)
+	for (int n = 1;; n++)
 	{
 		String name = string::tformat("%s %d", GENERATED_NAME_PREFIX, n);
 		if (!self.has_bound_clip_named(name)) return name.copy(allocator);
@@ -302,13 +309,13 @@ fn bool parse_motion_step(String line, uint* step, uint* steps)
 	String text = line.trim();
 	if (!text.starts_with("step ")) return false;
 	String rest = text[5..];
-	sz? found = rest.index_of_char('/');
+	sz? found   = rest.index_of_char('/');
 	if (catch found) return false;
 	usz slash = (usz)found;
-	usz end = slash + 1;
+	usz end   = slash + 1;
 	while (end < rest.len && rest[end] >= '0' && rest[end] <= '9') end++;
-	uint? done = rest[:slash].to_uint();
-	uint? total = rest[slash + 1 : end - slash - 1].to_uint();
+	uint? done  = rest[:slash].to_uint();
+	uint? total = rest[slash + 1:end - slash - 1].to_uint();
 	if (catch done) return false;
 	if (catch total) return false;
 	if (total == 0) return false;
@@ -331,8 +338,7 @@ fn String AppState.motion_plugins_directory(&self)
  The pipeline's settings for one request, as JSON. `poses` is the guide, as
  `motion_guide_json` writes it; "" for none. Owned.
 *>
-fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String name, uint frames,
-	String poses = "")
+fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String name, uint frames, String poses = "")
 {
 	DString out;
 	out.init(mem);
@@ -356,8 +362,12 @@ fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String nam
 		out.append_string(",\n  \"poses\": ");
 		out.append_string(poses);
 	}
-	out.appendf(",\n  \"frames\": %d,\n  \"steps\": %d,\n  \"seed\": %d,\n  \"progress\": true\n}\n",
-		frames, request.steps == 0 ? MOTION_DEFAULT_STEPS : request.steps, request.seed);
+	out.appendf(
+		",\n  \"frames\": %d,\n  \"steps\": %d,\n  \"seed\": %d,\n  \"progress\": true\n}\n",
+		frames,
+		request.steps == 0 ? MOTION_DEFAULT_STEPS : request.steps,
+		request.seed
+	);
 	String json = out.copy_str(mem);
 	out.free();
 	return json;
@@ -395,15 +405,15 @@ fn void append_json_point(DString* out, Vec3 p) @local
 *>
 fn String kimodo_limb(String joint)
 {
-	foreach (side : (String[]){ "Left", "Right" })
+	foreach (side : (String[]) { "Left", "Right" })
 	{
 		if (!joint.starts_with(side)) continue;
 		String part = joint[side.len..];
-		foreach (arm : (String[]){ "Shoulder", "Arm", "ForeArm", "Hand" })
+		foreach (arm : (String[]) { "Shoulder", "Arm", "ForeArm", "Hand" })
 		{
 			if (part.starts_with(arm)) return side == "Left" ? "LeftHand" : "RightHand";
 		}
-		foreach (leg : (String[]){ "Leg", "Shin", "Foot", "Toe" })
+		foreach (leg : (String[]) { "Leg", "Shin", "Foot", "Toe" })
 		{
 			if (part.starts_with(leg)) return side == "Left" ? "LeftFoot" : "RightFoot";
 		}
@@ -422,10 +432,17 @@ const String[4] KIMODO_EFFECTORS = { "LeftHand", "RightHand", "LeftFoot", "Right
  A key's joint counts as the nearest joint at or above it that answers to a
  Kimodo joint (`sent`), so a finger keyed on its own holds its hand.
 *>
-fn bool AppState.guide_effectors(&self, AnimTemplate* clip, float time, RigView* view, PackReach* reach,
-	bool[] sent, bool[4]* held)
+fn bool AppState.guide_effectors(
+	&self,
+	AnimTemplate* clip,
+	float time,
+	RigView* view,
+	PackReach* reach,
+	bool[] sent,
+	bool[4]* held
+)
 {
-	*held = {};
+	*held = { };
 	bool touched;
 	foreach (key : clip.keyframes)
 	{
@@ -435,7 +452,11 @@ fn bool AppState.guide_effectors(&self, AnimTemplate* clip, float time, RigView*
 			int joint = -1;
 			foreach (usz i, name : view.names)
 			{
-				if (name.len > 0 && name == dot.joint_name) { joint = (int)i; break; }
+				if (name.len > 0 && name == dot.joint_name)
+				{
+					joint = (int)i;
+					break;
+				}
 			}
 			while (joint >= 0 && !sent[joint]) joint = view.skeleton.parents[joint];
 			if (joint < 0) return false;
@@ -500,10 +521,10 @@ fn float rig_heading_by_names(RigView* view) @local
 fn float matched_heading(rig::Skeleton* skeleton, PackReach* reach, bool[] sent) @local
 {
 	Vec3 across;
-	foreach (pair : (String[2][]){ { "RightLeg", "LeftLeg" }, { "RightArm", "LeftArm" } })
+	foreach (pair : (String[2][]) { { "RightLeg", "LeftLeg" }, { "RightArm", "LeftArm" } })
 	{
 		int right = -1;
-		int left = -1;
+		int left  = -1;
 		foreach (usz i, name : reach.names)
 		{
 			if (i >= sent.len || !sent[i]) continue;
@@ -543,8 +564,15 @@ fn Vec3 turned_about_y(Vec3 p, float angle) @local
  @return? MOTION_GUIDE_UNMATCHED : `The rig does not match Kimodo's human skeleton.`
  @return? MOTION_GUIDE_EMPTY : `The clip has no key inside the generated length.`
 *>
-fn String? AppState.motion_guide_json(&self, String guide, uint frames, String skeleton, usz* keyed, usz* dropped,
-	usz* partial = null)
+fn String? AppState.motion_guide_json(
+	&self,
+	String guide,
+	uint frames,
+	String skeleton,
+	usz* keyed,
+	usz* dropped,
+	usz* partial = null
+)
 {
 	*keyed = *dropped = 0;
 	if (partial) *partial = 0;
@@ -562,18 +590,18 @@ fn String? AppState.motion_guide_json(&self, String guide, uint frames, String s
 
 	// Matched stood facing +Z; the rig itself is posed where it stands, since
 	// its keys turn about world axes, and only the points sent are turned.
-	float named = rig_heading_by_names(&view);
+	float named  = rig_heading_by_names(&view);
 	Vec3[] stood = alloc::new_array(mem, Vec3, (sz)view.skeleton.len());
 	defer alloc::free(mem, stood);
 	foreach (usz i, joint : view.skeleton.joints) stood[i] = turned_about_y(joint, -named);
 	rig::Skeleton facing_forward = { .joints = stood, .parents = view.skeleton.parents };
-	PackReach reach = measure_reach(mem, &kimodo, &facing_forward, view.names);
+	PackReach reach              = measure_reach(mem, &kimodo, &facing_forward, view.names);
 	defer reach.free(mem);
 	if (!reach.usable) return MOTION_GUIDE_UNMATCHED~;
 
 	// Which rig joints are sent: those answering to a Kimodo joint, each Kimodo
 	// joint once.
-	usz joints = view.skeleton.len();
+	usz joints  = view.skeleton.len();
 	bool[] sent = mem::new_array(bool, (sz)joints);
 	defer alloc::free(mem, sent);
 	usz answered;
@@ -609,7 +637,11 @@ fn String? AppState.motion_guide_json(&self, String guide, uint frames, String s
 	foreach (t : times)
 	{
 		int frame = (int)math::round(t * MOTION_FPS);
-		if (frame < 0 || frame >= (int)frames) { (*dropped)++; continue; }
+		if (frame < 0 || frame >= (int)frames)
+		{
+			(*dropped)++;
+			continue;
+		}
 		rig::Pose pose = self.evaluated_clip_pose(mem, &view, *clip, ref, t, aimed: true);
 		defer pose.free(mem);
 		Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
@@ -725,13 +757,20 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 		self.@notice("Generating \"%s\"…", name);
 		return;
 	}
-	String held = partial == 0 ? "" : partial == keyed
-		? " (hands and feet only)"
+	String held = partial == 0 ? ""
+		: partial == keyed ? " (hands and feet only)"
 		: string::tformat(" (%d of them hands and feet only)", partial);
 	if (dropped > 0)
 	{
-		self.@notice("Generating \"%s\" through %d pose(s) of \"%s\"%s; %d keyed past %.1f s left out…",
-			name, keyed, request.guide, held, dropped, (float)frames / MOTION_FPS);
+		self.@notice(
+			"Generating \"%s\" through %d pose(s) of \"%s\"%s; %d keyed past %.1f s left out…",
+			name,
+			keyed,
+			request.guide,
+			held,
+			dropped,
+			(float)frames / MOTION_FPS
+		);
 	}
 	else
 	{
@@ -778,7 +817,7 @@ fn void AppState.finish_motion_job(&self, bool ok)
 	defer
 	{
 		if (job.glb.len > 0) alloc::free(mem, job.glb);
-		job.glb = {};
+		job.glb = { };
 	}
 	if (!ok || job.glb.len == 0)
 	{
@@ -876,7 +915,11 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, 
 	AnimTemplate source = pack.clips[0];
 	foreach (clip : pack.clips)
 	{
-		if (clip.name == name) { source = clip; break; }
+		if (clip.name == name)
+		{
+			source = clip;
+			break;
+		}
 	}
 	if (source.keyframes.len == 0) return MOTION_NOT_STARTED~;
 
@@ -922,7 +965,7 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, 
 		.loop = false,
 		.blend = source.blend,
 		.ground = {
-			.feet = feet.len() > 0 ? feet.to_array(mem) : (AnimFoot[]){},
+			.feet = feet.len() > 0 ? feet.to_array(mem) : (AnimFoot[]) { },
 			.floor = source.ground.floor,
 			.floor_set = source.ground.floor_set,
 		},

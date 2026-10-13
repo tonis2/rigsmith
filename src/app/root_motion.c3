@@ -48,20 +48,11 @@ fn bool AppState.move_clip_travel(&self, AnimRef ref, RootMotionPolicy policy)
 	String[] names = self.names_for(&view, ref);
 
 	AnimTemplate moved;
-	switch (clip_root_moved(mem, *clip, &view.skeleton, names, policy, &moved))
+	RootMotionOutcome outcome = clip_root_moved(mem, *clip, &view.skeleton, names, policy, &moved);
+	if (outcome != MOVED)
 	{
-		case MOVED:
-			break;
-		case NO_ROOT_JOINT:
-			self.@notice("This rig has no root joint under the hips to carry the travel. Use Make in place, or add a root joint at the floor.");
-			return false;
-		case UNNAMED:
-			self.@notice("The hips or root joint has no name, so its keys can't be written.");
-			return false;
-		default:
-			self.@notice(mode == IN_PLACE ? "%s already stays in place." : "%s has no hips travel to move.",
-				clip.name);
-			return false;
+		self.notice_travel_refusal(outcome, mode, clip.name);
+		return false;
 	}
 	String name = clip.name.copy(mem);
 	defer name.free(mem);
@@ -73,4 +64,22 @@ fn bool AppState.move_clip_travel(&self, AnimRef ref, RootMotionPolicy policy)
 	if (!forked) self.@notice(mode == IN_PLACE ? "%s now stays in place · Ctrl+Z undoes it"
 		: "%s now travels on the root joint · Ctrl+Z undoes it", name);
 	return true;
+}
+
+<*
+ Say why `clip_root_moved` left a clip as it was.
+*>
+fn void AppState.notice_travel_refusal(&self, RootMotionOutcome outcome, RootMotionMode mode, String name)
+{
+	switch (outcome)
+	{
+		case MOVED:
+			return;
+		case NO_ROOT_JOINT:
+			self.@notice("This rig has no root joint under the hips to carry the travel. Use Make in place, or add a root joint at the floor.");
+		case UNNAMED:
+			self.@notice("The hips or root joint has no name, so its keys can't be written.");
+		default:
+			self.@notice(mode == IN_PLACE ? "%s already stays in place." : "%s has no hips travel to move.", name);
+	}
 }

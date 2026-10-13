@@ -2,13 +2,13 @@
  Whole-clip rewrites over MCP: `trim_clip`, `retime_clip`, `optimize_clip`,
  `remove_movement`, `close_loop`, `smooth_clip` and `make_loop`.
 
- The first five are what the Animations pane's ⋯ and Clip tools menus do, and
- run the same rewriters (`clip_cropped`, `clip_range_cut`, `clip_retimed`,
- `optimize_clip_keys`, `move_clip_travel`, `clip_seam_closed`); until these an
- agent repairing a generated clip could see what was wrong and had no way to
- cut it. The last two are the repairs a generated clip needs most and no menu
- had: a filter for jitter (`clip_smoothed`) and a cycle cut out of a take
- (`clip_cycle`).
+ The first five are what the Animations pane's ⋯ and Clip tools menus and its
+ Optimize dialog do, and run the same rewriters (`clip_cropped`,
+ `clip_range_cut`, `clip_retimed`, `optimize_clip_keys`, `move_clip_travel`,
+ `clip_seam_closed`); until these an agent repairing a generated clip could see
+ what was wrong and had no way to cut it. The last two are the repairs a
+ generated clip needs most: a filter for jitter (`clip_smoothed`, Optimize's
+ Remove jitter) and a cycle cut out of a take (`clip_cycle`, Make loop).
 
  Each lands as one undo step in the authored pack — a library clip becomes the
  project's copy first, as every edit does — becomes the clip being edited, and

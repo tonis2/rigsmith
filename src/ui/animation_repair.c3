@@ -1,29 +1,11 @@
-// Repairing a take from the Animations pane: Smooth jitter (Clip tools) and Make
-// loop (⋯). Each is one click and one undo step; the work is app/repair.c3's.
+// Repairing a take from the Animations pane: Make loop (⋯). One click and one
+// undo step; the work is app/repair.c3's. Smoothing jitter is one of Optimize's
+// boxes (animation_motion.c3).
 module crig;
 
 import cui;
 
-const String ANIM_SMOOTH_ID = "anim-smooth";
 const String ANIM_MAKE_LOOP_ID = "anim-make-loop";
-
-fn void anim_tools_smooth(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
-	if (!anim_can_rewrite(ui)) return;
-	AnimTemplate* clip = app.clip(app.editing);
-	if (!clip)
-	{
-		app.@notice("pick an animation to smooth first");
-		return;
-	}
-	String name = clip.name.tcopy();
-	if (!app.smooth_clip(app.editing, {}, SMOOTH_DEFAULT_WINDOW).valid()) return;
-	app.@notice("Smoothed %s: the jitter under %.2g s is filtered out, planted feet left as they are · Ctrl+Z undoes it",
-		name, SMOOTH_DEFAULT_WINDOW);
-	app.show_edited();
-}
 
 fn void anim_menu_make_loop(Ui* ui)
 {

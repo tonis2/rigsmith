@@ -557,6 +557,82 @@ fn void make_in_place_is_one_undo_step() @test
 }
 
 <*
+ Optimize with translation and jitter ticked takes both out as one undo step: the
+ hips are held over their start and a sharp twist mid-clip is rounded off. One
+ Ctrl+Z brings the travel and the twist back.
+*>
+fn void optimize_takes_out_travel_and_jitter_in_one_undo_step() @test
+{
+	pose_clipboard::Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+
+	// A sharp twist of the hips halfway, on the way to travel at the end.
+	Quaternionf twist = quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.4f);
+	test::@check(f.app.pose_from_clip(f.app.editing, 0.5f), "could not sample the middle");
+	f.app.edit_time = 0.5f;
+	test::@check(f.app.set_working_pose(f.hips, twist, { 0.15f, 0.0f, 0.25f }), "could not twist the hips");
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(), "could not key the twist");
+	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not sample the end");
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.set_working_pose(f.hips, quaternion::IDENTITY, { 0.3f, 0.0f, 0.5f }), "could not move the hips");
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(), "could not key the travel");
+	f.app.undo_stack.clear();
+	crig::AnimTemplate* clip = f.app.clip(f.app.editing);
+	Vec3 travelled = clip.entry_at("hips", 1.0f).move;
+	float twisted = clip.entry_at("hips", 0.5f).angle;
+	test::@check(travelled.length() > 0.1f && twisted > 0.3f, "the fixture neither travels nor twists");
+
+	sz cursor = f.app.undo_stack.cursor;
+	test::@check(!f.app.clean_clip(f.app.editing, { }), "an empty choice changed the clip");
+	test::eq(f.app.undo_stack.cursor, cursor);
+
+	test::@check(f.app.clean_clip(f.app.editing, { .translation = true, .jitter = true }),
+		"Optimize did nothing: %s", f.app.notice());
+	test::eq(f.app.undo_stack.cursor, cursor + 1);
+	clip = f.app.clip(f.app.editing);
+	Vec3 now = clip.entry_at("hips", 1.0f).move - clip.entry_at("hips", 0.0f).move;
+	test::@check(math::abs(now.x) < 1.0e-4f && math::abs(now.z) < 1.0e-4f, "the hips still travel (%f, %f)", now.x, now.z);
+	float rounded = clip.entry_at("hips", 0.5f).angle;
+	test::@check(rounded < twisted - 1.0e-3f, "the twist was not smoothed (%f from %f)", rounded, twisted);
+	test::@check(f.app.notice().contains("jitter") && f.app.notice().contains("in place"),
+		"the notice does not say what changed: %s", f.app.notice());
+
+	test::@check(f.app.undo(), "Optimize would not undo");
+	clip = f.app.clip(f.app.editing);
+	test::@check((clip.entry_at("hips", 1.0f).move - travelled).length() < 1.0e-6f, "undo did not bring the travel back");
+	test::@check(math::abs(clip.entry_at("hips", 0.5f).angle - twisted) < 1.0e-6f, "undo did not bring the twist back");
+}
+
+<*
+ Optimize's jitter still lands on a clip that already stays in place, and says it
+ was in place; with only travel ticked there is nothing to do, and the history is
+ left alone.
+*>
+fn void optimize_smooths_a_clip_already_in_place() @test
+{
+	pose_clipboard::Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+
+	sz cursor = f.app.undo_stack.cursor;
+	test::@check(!f.app.clean_clip(f.app.editing, { .translation = true, .rotation = true }),
+		"a clip in place lost travel it does not have");
+	test::eq(f.app.undo_stack.cursor, cursor);
+	test::@check(f.app.notice().contains("already stays in place"), "no notice said why: %s", f.app.notice());
+
+	test::@check(f.app.clean_clip(f.app.editing, { .translation = true, .jitter = true }),
+		"the smoothing did not land: %s", f.app.notice());
+	test::eq(f.app.undo_stack.cursor, cursor + 1);
+	test::@check(f.app.notice().contains("jitter") && f.app.notice().contains("already stays in place"),
+		"the notice does not say what changed: %s", f.app.notice());
+}
+
+<*
  Remove movement with height ticked takes the rise out of the hips' travel as
  well; without it the height is left in.
 *>

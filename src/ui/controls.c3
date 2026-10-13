@@ -184,7 +184,7 @@ const ControlRow[*] CONTROLS = {
 
 	{ .heading = "Timeline (while an animation is open)" },
 	{ .binding = "space", .action = "play or pause" },
-	{ .binding = ", / .", .action = "step one frame back or forward" },
+	{ .binding = "left / right, or , / .", .action = "step one frame back or forward; hold to keep going" },
 	{ .binding = "[ / ]", .action = "jump to the previous or next key" },
 	{ .binding = "home / end", .action = "go to the first or last frame" },
 
