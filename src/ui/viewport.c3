@@ -1332,7 +1332,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					// The brush looks through the joints: a dot drawn over the mesh is
 					// where the stroke was aimed, and picking it would switch the joint
 					// being painted instead of painting. Another joint is chosen in the
-					// Scene outliner, or with a right-click.
+					// Scene outliner.
 					uint hit = app.brushing ? 0 : self.pick_dot(elem, event.pos);
 
 					// Another character's joint or body under the pointer, in front of
@@ -1535,6 +1535,10 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					// is selected first, so right-clicking a joint acts on it; a press
 					// inside an existing multi-selection leaves the group whole, so the
 					// menu can mirror or delete all of it at once.
+					//
+					// Not while the brush is open: it leaves the joints alone, so a
+					// right-press is the empty-space one wherever it lands.
+					if (app.brushing) return false;
 					sz aimed_here = self.pick_aim(elem, event.pos);
 					if (aimed_here >= 0)
 					{
@@ -1896,6 +1900,17 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 							app.area_click(vertex);
 						}
 						app.refresh_ui();
+					}
+					else if (self.maybe_place && app.brushing)
+					{
+						// A click the brush found no vertex under — a wide face on a
+						// low-poly part — places nothing: the brush leaves the rig
+						// alone. Said, since a click that did nothing reads as broken.
+						if (self.on_body(elem, self.press_at))
+						{
+							app.@notice("nothing under the brush here — hold F and drag to make it bigger");
+							app.refresh_ui();
+						}
 					}
 					else if (self.maybe_place)
 					{

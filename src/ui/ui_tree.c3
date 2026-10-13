@@ -143,9 +143,21 @@ fn void menu_redo(Ui* ui)
 	app.refresh_ui();
 }
 
+<*
+ The weight brush paints the selected joint and leaves the rig alone: with it
+ open an edit to the joints is refused out loud, never made by a stray key.
+*>
+fn bool brush_holds_joints(AppState* app)
+{
+	if (!app.brushing) return false;
+	app.@notice("painting weights — stop the brush (Esc) to edit joints");
+	return true;
+}
+
 fn void menu_select_all(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (brush_holds_joints(app)) { app.refresh_ui(); return; }
 	app.select_all();
 	app.refresh_ui();
 }
@@ -153,6 +165,7 @@ fn void menu_select_all(Ui* ui)
 fn void menu_delete(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (brush_holds_joints(app)) { app.refresh_ui(); return; }
 	if (app.selected == 0) return;
 	app.remove_selection();
 	app.refresh_ui();
@@ -161,6 +174,7 @@ fn void menu_delete(Ui* ui)
 fn void menu_set_root(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (brush_holds_joints(app)) { app.refresh_ui(); return; }
 	if (app.selected == 0) return;
 	app.set_root(app.selected);
 	app.refresh_ui();
@@ -173,6 +187,7 @@ fn void menu_set_root(Ui* ui)
 fn void menu_connect_selection(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (brush_holds_joints(app)) { app.refresh_ui(); return; }
 
 	bool removed;
 	usz bones = app.connect_selection(&removed);
@@ -200,9 +215,8 @@ fn void menu_weight_brush(Ui* ui)
 
 	if (app.brushing)
 	{
-		app.end_brush();
-		// The Weights card the brush was opened from takes its part back.
-		app.sync_weights_card();
+		// The Weights card the brush was opened from takes its tool back.
+		app.leave_brush();
 	}
 	else if (app.begin_brush())
 	{
@@ -541,6 +555,7 @@ fn void menu_auto_connect(Ui* ui)
 fn void menu_mirror_selection(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (brush_holds_joints(app)) { app.refresh_ui(); return; }
 
 	usz moved;
 	usz square;
@@ -1877,6 +1892,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 				app.copy_pose();
 			case Key.V:
 				if (!app.animation_pose_ready()) return false;
+				if (brush_holds_joints(app)) break;
 				app.paste_pose(flipped: shift);
 			case Key.R:
 				// Set root, which used to be plain R and gave the letter up —
@@ -1970,6 +1986,12 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 	// locking a bone-local axis. One axis at a time by hand is the Joint card's
 	// dials, which is where the rings that used to appear here went — drawn over
 	// the joint they hid the very hand or head being turned.
+	// Neither moves a joint while the brush is open, posed or at rest.
+	if ((event.key == Key.G || event.key == Key.R) && brush_holds_joints(app))
+	{
+		app.refresh_ui();
+		return true;
+	}
 	if (app.animation_pose_ready())
 	{
 		switch (event.key)
@@ -2061,6 +2083,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			// no-op, so the press is still an unclaimed key rather than a command
 			// that silently did nothing. The pose is the exception: with nothing
 			// selected the whole pose is mirrored, as the button does.
+			if (brush_holds_joints(app)) break;
 			if (shift)
 			{
 				anim_pose_op(elem.ui, MIRROR);
@@ -2075,6 +2098,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			// sits. The Joint card's two padlock toggles are the same pair; this is
 			// their keyboard copy (shift+L is rotation). Nothing selected leaves the
 			// press unclaimed rather than a silent no-op, the way M does.
+			if (brush_holds_joints(app)) break;
 			if (app.selected == 0)
 			{
 				app.@notice("select a joint to anchor it");
@@ -2157,8 +2181,9 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			return true;
 		case Key.RETURN:
 		case Key.KP_RETURN:
-			// Apply in the Area tool; otherwise the key is not ours.
-			if (!app.areaing) return false;
+			// Apply in the Area tool, and done with the brush; otherwise the key
+			// is not ours.
+			if (!app.areaing && !app.brushing) return false;
 			app.commit_area();
 			refresh_joint_panel(elem.ui);
 		case Key.ESCAPE:
@@ -2174,9 +2199,8 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			}
 			else if (app.brushing)
 			{
-				app.end_brush();
-				// The Weights card the brush was opened from takes its part back.
-				app.sync_weights_card();
+				// The Weights card the brush was opened from takes its tool back.
+				app.leave_brush();
 			}
 			else if (app.lasso_active)
 			{

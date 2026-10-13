@@ -14674,7 +14674,7 @@ fn void a_brush_stroke_paints_under_the_circle() @test
 
 <*
  A stroke begun on another joint's dot paints the joint being painted: with the
- brush open a left press looks through the dots. A right-click still picks one.
+ brush open a left press looks through the dots, and a right-click does too.
 *>
 fn void a_brush_stroke_on_a_joint_paints_instead_of_picking_it() @test
 {
@@ -14718,8 +14718,92 @@ fn void a_brush_stroke_on_a_joint_paints_instead_of_picking_it() @test
 	test::@check(chest_painted, "the stroke begun on a dot did not paint the selected joint");
 
 	fixture.right_click(corner);
-	test::@check(fixture.app.selected == corner_dot, "a right-click on a dot did not pick it with the brush open");
-	test::@check(fixture.app.brushing, "picking a joint by right-click closed the brush");
+	test::@check(fixture.app.selected == chest, "a right-click on a dot picked it with the brush open");
+	test::@check(fixture.app.brushing, "a right-click on a dot closed the brush");
+}
+
+<*
+ With the brush open the rig is left alone. A click the brush found no vertex
+ under — the face of a low-poly part — places no joint and chains none, and the
+ keys that edit joints are refused out loud. Esc gives them back.
+*>
+fn void the_brush_never_places_or_edits_joints() @test
+{
+	io::printn("the weight brush never places, connects, moves or deletes joints");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+
+	uint hips = fixture.doc().add_dot({ 0, -0.2f, 0 }, "hips");
+	uint chest = fixture.doc().add_dot({ 0, 0.2f, 0 }, "chest");
+	fixture.doc().connect(hips, chest);
+	fixture.app.doc.auto_connect = true;
+	fixture.app.camera.snapping = false;
+	fixture.app.camera.yaw = 0.0f;
+	fixture.app.camera.pitch = 0.0f;
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+
+	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.W);
+	test::@check(fixture.app.brushing, "the brush did not open");
+	test::@check(fixture.app.set_brush_radius(crig::BRUSH_RADIUS_MIN), "the brush did not shrink");
+	sz dots = fixture.doc().dots.len();
+	sz edges = fixture.doc().edges.len();
+	bool anchored = fixture.app.locks_position(chest);
+
+	// A spot on the cube's front face, clear of the bone and of the corners — the
+	// face's only vertices. Found by projecting a dot put there and taken away.
+	uint probe = fixture.doc().add_dot({ -0.6f, -0.5f, 1.0f }, "probe");
+	fixture.app.refresh_ui();
+	Vec2? spot = fixture.pixel_of(probe);
+	fixture.doc().remove_dot(probe);
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+	if (catch spot)
+	{
+		test::@check(false, "the face does not project into the viewport");
+		return;
+	}
+	Vec2 face = spot;
+	fixture.click(face);
+	test::eq(fixture.doc().dots.len(), dots);
+	test::eq(fixture.doc().edges.len(), edges);
+	test::@check(fixture.app.doc.pins.len() == 0, "the click painted though nothing was under the brush");
+	test::@check(fixture.app.selected == chest && fixture.app.brushing, "the click changed the joint or closed the brush");
+	test::@check(fixture.app.notice().contains("nothing under the brush"), "the missed click said \"%s\"", fixture.app.notice());
+
+	Key[1] shifted = { Key.LEFT_SHIFT };
+	fixture.feed(face, keys: shifted[..]);
+	fixture.feed(face, left: true, keys: shifted[..]);
+	fixture.feed(face, keys: shifted[..]);
+	test::eq(fixture.doc().dots.len(), dots);
+
+	fixture.feed(face);
+	foreach (key : (Key[6]){ Key.X, Key.C, Key.M, Key.L, Key.G, Key.R })
+	{
+		fixture.feed_key(key);
+		test::@check(fixture.doc().dots.len() == dots && fixture.doc().edges.len() == edges,
+			"%s edited the rig with the brush open", key);
+		test::@check(fixture.app.selected == chest && fixture.app.brushing, "%s changed the joint or closed the brush", key);
+		test::@check(!fixture.app.transform_interaction.active && fixture.app.drag.dot == 0, "%s started moving a joint", key);
+		test::@check(fixture.app.notice().contains("stop the brush"), "%s said \"%s\"", key, fixture.app.notice());
+	}
+	test::@check(fixture.app.locks_position(chest) == anchored, "L anchored the joint with the brush open");
+	fixture.chord(face, Key.LEFT_SHIFT, Key.M);
+	test::@check(fixture.app.notice().contains("stop the brush"), "shift+M said \"%s\"", fixture.app.notice());
+	fixture.chord(face, Key.LEFT_CTRL, Key.A);
+	test::@check(fixture.app.selection_count() == 1 && fixture.app.selected == chest, "ctrl+A selected the joints with the brush open");
+
+	// Esc closes the brush, and the same click places a joint again.
+	fixture.feed_key(Key.ESCAPE);
+	test::@check(!fixture.app.brushing, "esc did not close the brush");
+	fixture.click(face);
+	test::@check(fixture.doc().dots.len() == dots + 1, "a click with the brush closed placed no joint (%s)", fixture.app.notice());
 }
 
 <*

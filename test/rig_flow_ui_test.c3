@@ -71,7 +71,8 @@ fn void auto_connect_shows_where_the_next_joint_chains() @test
  The weight brush opens from the Weights card (it has no tool column cell), and
  while it is open an options strip gives its size and Add / Remove as controls:
  a plain drag on the mesh then paints in the chosen direction with no modifier
- held. Closing it hands the card its part back.
+ held. Closing it hands the card its Area tool back with no part picked, so the
+ strokes stay on show and Apply has nothing to write over them.
 *>
 fn void the_brush_button_and_strip_paint_without_a_modifier() @test
 {
@@ -149,8 +150,84 @@ fn void the_brush_button_and_strip_paint_without_a_modifier() @test
 	fixture.feed(VIEWPORT_CENTER);
 	test::@check(!fixture.app.brushing, "esc did not close the brush");
 	test::@check(!fixture.in_tree(crig::BRUSH_MODE_ID), "the strip stayed up after the brush closed");
-	test::@check(fixture.app.areaing && fixture.app.area_pending(), "closing the brush did not give the card its part back");
+	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "closing the brush picked a part over the strokes");
 	fixture.app.brush_removes = false;
+}
+
+<*
+ Apply, or Enter, while painting closes the brush and keeps every stroke. The
+ brush writes as it paints; the card's Apply is for a picked part, and the own
+ part it used to pick here would have taken the joint off every partial share
+ the brush gave around it.
+*>
+fn void apply_while_painting_keeps_the_strokes() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("Apply or Enter while painting closes the brush and keeps the strokes");
+	fixture.reset();
+	uint chest = fixture.two_dots();
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+
+	// Head-on, at a cube corner (the fixture cube's only vertices).
+	fixture.app.camera.snapping = false;
+	fixture.app.camera.yaw = 0.0f;
+	fixture.app.camera.pitch = 0.0f;
+	uint probe = fixture.doc().add_dot({ -1, -1, 1 }, "probe");
+	fixture.app.refresh_ui();
+	Vec2? corner = fixture.pixel_of(probe);
+	fixture.doc().remove_dot(probe);
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+	if (catch corner)
+	{
+		test::@check(false, "the cube's corner does not project into the viewport");
+		return;
+	}
+
+	for (int pass = 0; pass < 2; pass++)
+	{
+		bool by_key = pass == 1;
+		fixture.click(fixture.center_of(crig::WEIGHTS_BRUSH_ID)!!);
+		test::@check(fixture.app.brushing, "the brush did not open");
+		fixture.drag(corner, corner + (Vec2){ 4, 0 });
+		crig::VertexPin[] painted = fixture.app.doc.pins.array_view();
+		test::@check(painted.len > 0, "the stroke painted nothing");
+		crig::VertexPin[] kept = alloc::new_array(tmem, crig::VertexPin, painted.len);
+		kept[..] = painted[..];
+		sz cursor = fixture.app.undo_stack.cursor;
+
+		if (by_key)
+		{
+			fixture.feed(VIEWPORT_CENTER);
+			fixture.feed_key(Key.RETURN);
+		}
+		else
+		{
+			fixture.click(fixture.center_of(crig::WEIGHTS_APPLY_ID)!!);
+		}
+		String how = by_key ? "Enter" : "Apply";
+		test::@check(!fixture.app.brushing, "%s while painting left the brush open", how);
+		test::@check(fixture.app.areaing && !fixture.app.area_pending(),
+			"%s while painting picked a part over the strokes", how);
+		test::@check(fixture.app.notice().contains("keeps what you painted"),
+			"%s while painting said \"%s\"", how, fixture.app.notice());
+		test::eq(fixture.app.undo_stack.cursor, cursor);
+		crig::VertexPin[] now = fixture.app.doc.pins.array_view();
+		test::eq(now.len, kept.len);
+		foreach (i, pin : kept)
+		{
+			test::@check(now[i].vertex == pin.vertex && now[i].dot_id == pin.dot_id && now[i].share == pin.share,
+				"%s while painting changed a stroke's pin", how);
+		}
+	}
 }
 
 <*

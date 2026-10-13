@@ -1457,8 +1457,8 @@ fn void joint_limits_reset(Ui* ui) @private
 // What the pending part holds, or how to pick one.
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
-	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size and add or remove. Pick another joint in the Scene outliner, or right-click its dot.";
-	if (!app.areaing || !app.area_pending()) return "Click the mesh, or choose a part above.";
+	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size and add or remove. Pick another joint in the Scene outliner.";
+	if (!app.areaing || !app.area_pending()) return "Click the mesh, or choose a part above. Applying a part replaces this joint's weights, brush strokes too.";
 	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
 	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;

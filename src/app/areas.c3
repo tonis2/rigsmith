@@ -1204,8 +1204,10 @@ fn bool AppState.weights_card_open(&self) => self.show_joint_panel && self.joint
  opens the tool with the joint's own part picked, so Grow, Shrink and the soft
  edge act at once; hiding it closes the tool again if the card was what opened
  it. Called wherever the card is shown or hidden.
+
+ @param pick : `False to open the tool with no part picked — see leave_brush.`
 *>
-fn void AppState.sync_weights_card(&self)
+fn void AppState.sync_weights_card(&self, bool pick = true)
 {
 	if (self.weights_card_open())
 	{
@@ -1218,10 +1220,23 @@ fn void AppState.sync_weights_card(&self)
 			self.area_by_card = true;
 		}
 		self.area_follow_selection();
-		if (!self.area_pending()) self.set_area_part(OWN);
+		if (pick && !self.area_pending()) self.set_area_part(OWN);
 		return;
 	}
 	if (self.areaing && self.area_by_card) self.end_area();
+}
+
+<*
+ Close the brush and give the Weights card its Area tool back with no part
+ picked. The strokes are already on the mesh: a part picked here would show its
+ outline instead of them, and Apply would write it over them — the own part is
+ only where the joint is now strongest, so every partial share the brush gave
+ around it would be taken off.
+*>
+fn void AppState.leave_brush(&self)
+{
+	self.end_brush();
+	self.sync_weights_card(pick: false);
 }
 
 // Whether the mesh has more than one piece for Whole piece to pick between.
@@ -1450,6 +1465,13 @@ fn String AppState.area_joint_name(&self)
 *>
 fn usz AppState.commit_area(&self)
 {
+	// Apply while painting means done: the brush wrote each stroke as it went.
+	if (self.brushing)
+	{
+		self.leave_brush();
+		self.@notice("%s keeps what you painted — brush strokes apply as you paint", self.area_joint_name());
+		return 0;
+	}
 	if (!self.areaing || self.area_mask.len == 0)
 	{
 		self.@notice("pick a part first — click the mesh");
