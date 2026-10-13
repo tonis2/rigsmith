@@ -624,6 +624,8 @@ fn String? tool_pin_feet(Object* args, void* user_data, DString* detail) @privat
 		out.appendf(`,"from":%s,"to":%s,"residual":%.4g}`, (JsonFloat)report.from, (JsonFloat)report.to, report.residual)!!;
 		worst = math::max(worst, report.residual);
 	}
-	out.appendf(`],"worst_residual":%.4g,"note":"residual is how far the foot strayed from its pin while fully held, a fraction of rig height. Above about 0.01 the leg cannot reach: check limit_saturation in measure_clip, or shorten the window."}`, worst)!!;
+	out.appendf(`],"worst_residual":%.4g,"note":"residual is how far the foot strayed from its pin while fully held, a fraction of rig height. Above about 0.01 the leg cannot reach: check limit_saturation in measure_clip, or shorten the window."`, worst)!!;
+	if (clip) append_metrics_member(&out, app, app.editing);
+	out.append_char('}');
 	return out.copy_str(mem);
 }

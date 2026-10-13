@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[63] tool_names @local = {
+String[64] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -446,7 +446,7 @@ String[63] tool_names @local = {
 	"undo", "redo", "play", "stop", "show_weights", "save_pack", "screenshot",
 	"render", "set_camera", "get_api_docs", "get_crig_docs", "save_project",
 	"solve_targets", "patch_clip", "trim_clip", "retime_clip", "optimize_clip", "remove_movement",
-	"close_loop", "smooth_clip", "make_loop", "list_poses", "get_saved_pose",
+	"close_loop", "smooth_clip", "make_loop", "remove_keys", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
@@ -480,8 +480,8 @@ fn void the_boot_server_holds_every_tool() @test
 // Kept as a second table rather than a flag on the first, because the two are
 // asserted against different things: this one against what a client is told, that
 // one against what the server can do.
-String[14] listed_tools @local = {
-	"get_scene", "screenshot", "undo", "redo", "get_api_docs", "get_crig_docs",
+String[15] listed_tools @local = {
+	"get_scene", "screenshot", "undo", "redo", "get_api_docs", "get_crig_docs", "measure_clip",
 	"solve_targets", "get_annotations", "list_poses", "get_saved_pose", "tween_poses",
 	"focus_character", "set_camera", "render",
 };
@@ -1113,7 +1113,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 43;
+const int DOCS_VERSION @local = 45;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -1166,8 +1166,8 @@ fn void the_api_docs_resource() @test
 
 // Every section, in the order the index reports them. By hand, like `tool_names`:
 // a section added without a line here fails rather than passing unnoticed.
-String[18] doc_topics @local = {
-	"clips", "authoring", "turning", "targets", "editing", "playback", "cycles",
+String[19] doc_topics @local = {
+	"quality", "clips", "authoring", "turning", "targets", "editing", "playback", "cycles",
 	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "pins", "repair",
 };
 
@@ -7392,4 +7392,262 @@ fn void a_sketch_is_read_back_as_data() @test
 	if (catch cleared) { test::@check(false, "clear answers"); return; }
 	cleared.free();
 	test::@check(f.app.annotations.len() == 0, "and they can be cleared");
+}
+
+// ---------------------------------------------------------------------------
+// measure_clip as a quality gate
+//
+// What the zidane clips shipped with and nothing reported: a leftover leg key a
+// couple of milliseconds off a whole pose, a loop whose last frame jumps back to
+// its first, a knee the limits hold straight. Each is now named, with the call
+// that mends it, and a clip with none of them reads usable.
+
+// A dense-ish bend in whole poses (hips and knee keyed at every key), with one
+// partial key two milliseconds after the middle one that snaps the knee straight
+// and back — the leftover correction key's shape.
+const String POPPING_CLIP @local = `{"name":"popping","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"hips","move":[0,0,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.2}}]},{"time":0.5,"joints":[{"name":"hips","move":[0,0,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.7}}]},{"time":0.502,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.0}}]},{"time":0.506,"joints":[{"name":"hips","move":[0,0,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.7}}]},{"time":1.0,"joints":[{"name":"hips","move":[0,0,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.2}}]}]}`;
+
+<*
+ A key that juts out of the motion for a few milliseconds is a pop on its joint,
+ named to the key and marked partial, and the fix offered is remove_keys with it.
+*>
+fn void measure_clip_finds_a_partial_key_pop() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip", POPPING_CLIP);
+	if (catch authored) { test::@check(false, "the popping clip authors"); return; }
+	defer authored.free();
+	// apply_clip answers with the verdict itself.
+	Object*? metrics = authored.get("metrics");
+	if (catch metrics) { test::@check(false, "apply_clip answers with metrics"); return; }
+	test::@check((metrics.get_string("verdict") ?? "") == "needs_work", "a popping clip reads usable");
+
+	Object* pop = find_issue(metrics, "pop");
+	test::@check(pop != null, "the snap is reported as a pop");
+	if (pop == null) return;
+	test::@check((pop.get_string("joint") ?? "") == "knee", "named to the knee");
+	test::@check((pop.get_int("key") ?? -1) == 2, "and to the partial key, index 2");
+	test::@check(pop.get_bool("partial") ?? false, "which is marked partial");
+
+	bool offered = false;
+	Object*? fixes = metrics.get("fixes");
+	if (try fixes)
+	{
+		for (sz i = 0; i < fixes.get_len(); i++)
+		{
+			Object* fix = fixes.get_at(i);
+			if ((fix.get_string("tool") ?? "") != "remove_keys") continue;
+			Object*? keys = fix.get("args")!!.get("keys");
+			offered = @ok(keys) && keys!!.get_len() == 1 && (keys!!.get_int_at(0) ?? -1) == 2;
+		}
+	}
+	test::@check(offered, "the fix offered is remove_keys of key 2");
+
+	// Taking the fix leaves the clip usable.
+	Object*? removed = f.call_tool("remove_keys", `{"clip":"popping","partial":true}`);
+	if (catch removed) { test::@check(false, "remove_keys answers"); return; }
+	defer removed.free();
+	test::@check((removed.get_int("keyframes") ?? 0) == 4, "one keyframe went");
+	Object* after = removed.get("metrics")!!;
+	test::@check(find_issue(after, "pop") == null, "the pop is gone");
+	test::@check((after.get_string("verdict") ?? "") == "usable", "and the clip reads usable");
+}
+
+<*
+ A loop whose last frame jumps back to its first is a pop at the seam — between
+ the even samples, where no contact sheet and no seam check looked.
+*>
+fn void measure_clip_finds_a_seam_snap() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"snap","duration":1.0,"loop":true,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.0}}]},{"time":0.5,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.6}}]},{"time":0.992,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.6}}]}]}`);
+	if (catch authored) { test::@check(false, "the snapping clip authors"); return; }
+	authored.free();
+
+	Object*? m = f.call_tool("measure_clip", `{"clip":"snap"}`);
+	if (catch m) { test::@check(false, "measure_clip answers"); return; }
+	defer m.free();
+	Object* pop = find_issue(m, "pop");
+	test::@check(pop != null, "the jump back to the start is reported");
+	if (pop == null) return;
+	test::@check((pop.get_string("joint") ?? "") == "knee", "named to the knee");
+	double phase = pop.get_float("phase") ?? -1.0;
+	test::@check(phase > 0.98 || phase < 0.02, "at the seam, not phase %f", phase);
+	test::@check((m.get_string("verdict") ?? "") == "needs_work", "a snapping loop reads usable");
+}
+
+<*
+ A clean clip reads usable, and says so in apply_clip's own answer.
+*>
+fn void a_clean_clip_reads_usable() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"calm","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"x":0,"y":0,"z":0,"w":1}}]},{"time":1.0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.3}}]}]}`);
+	if (catch authored) { test::@check(false, "the calm clip authors"); return; }
+	defer authored.free();
+	Object*? metrics = authored.get("metrics");
+	if (catch metrics) { test::@check(false, "apply_clip answers with metrics"); return; }
+	test::@check((metrics.get_string("verdict") ?? "") == "usable", "a clean clip reads needs_work");
+	test::@check(metrics.get("fixes")!!.get_len() == 0, "and is offered no fix");
+}
+
+<*
+ get_pose shows the pose as it plays — a knee the limits lock stays straight —
+ and lists the joint the limits changed, with how much.
+*>
+fn void get_pose_shows_what_the_limits_hold() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	uint knee = f.app.dot_named("knee").id;
+	crig::JointRotationLimits lim = crig::unconstrained_rotation(knee);
+	lim.constrained = true;
+	for (usz i = 0; i < 3; i++)
+	{
+		lim.axes[i].allowed = false;
+		lim.axes[i].locked = 0.0f;
+	}
+	test::@check(f.app.doc.set_rotation_limits(knee, lim), "the knee's limit table is set");
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"strain","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":1.0}}]}]}`);
+	if (catch authored) { test::@check(false, "the straining clip authors"); return; }
+	authored.free();
+
+	Object*? pose = f.call_tool("get_pose", `{"clip":"strain","t":0.5}`);
+	if (catch pose) { test::@check(false, "get_pose answers"); return; }
+	defer pose.free();
+
+	// The foot hangs straight below the knee, where the lock holds it.
+	Object* joints = pose.get("joints")!!;
+	for (sz i = 0; i < joints.get_len(); i++)
+	{
+		Object* row = joints.get_at(i);
+		if ((row.get_string("name") ?? "") != "foot") continue;
+		Object* at = row.get("position")!!;
+		test::@check(math::abs((float)(at.get_float_at(2) ?? 1.0)) < 1.0e-4f, "the foot swung forward through a locked knee");
+	}
+
+	Object*? limited = pose.get("limited");
+	if (catch limited) { test::@check(false, "get_pose lists the joints the limits held"); return; }
+	test::@check(limited.get_len() == 1, "one joint was held, not %d", limited.get_len());
+	if (limited.get_len() != 1) return;
+	test::@check((limited.get_at(0).get_string("name") ?? "") == "knee", "the knee");
+	test::@check(math::abs((float)(limited.get_at(0).get_float("removed") ?? 0.0) - 1.0f) < 0.01f, "by the radian keyed");
+}
+
+<*
+ An ease written with apply_clip comes back from get_clip, and changes how the
+ segment is paced without changing where it goes.
+*>
+fn void an_ease_survives_a_get_clip_round_trip() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"eased","duration":1.0,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.0},"rotation_ease":"in_out"}]},{"time":1.0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":1.0}}]}]}`);
+	if (catch authored) { test::@check(false, "the eased clip authors"); return; }
+	authored.free();
+
+	Object*? read = f.call_tool("get_clip", `{"clip":"eased"}`);
+	if (catch read) { test::@check(false, "get_clip answers"); return; }
+	defer read.free();
+	Object* first = read.get("keyframes")!!.get_at(0).get("joints")!!.get_at(0);
+	Object*? ease = first.get("rotation_ease");
+	if (catch ease) { test::@check(false, "get_clip lost the ease"); return; }
+	test::@check(ease.get_len() == 2 && (ease.get_float_at(0) ?? 0) == 1.0 && (ease.get_float_at(1) ?? 0) == 1.0,
+		"the ease came back as something other than [1, 1]");
+
+	// Eased in, a quarter of the way through the segment has covered less than a
+	// quarter of the turn.
+	crig::AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored("eased"));
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = clip.pose(mem, &view.skeleton, view.names, 0.25f, false);
+	defer pose.free(mem);
+	usz knee = 0;
+	foreach (usz j, name : view.names) if (name == "knee") knee = j;
+	float turned = 2.0f * math::acos(math::min(math::abs(pose.rotations[knee].v.w), 1.0f));
+	test::@check(turned < 0.2f, "a quarter in, an eased segment has turned %.3f of 1 radian", turned);
+}
+
+<*
+ A clip whose foot leaves the floor with its stance knee bent does not drop the
+ body back up the instant it lifts: the floor solve's pull fades out through the
+ flight rather than stopping.
+*>
+fn void the_floor_solve_eases_into_a_flight() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? authored = f.call_tool("apply_clip",
+		`{"name":"hop","duration":1.0,"loop":true,"keyframes":[{"time":0,"joints":[{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.6}}]}],"ground":{"feet":[{"joint":"foot","down":0.0,"up":0.5}]}}`);
+	if (catch authored) { test::@check(false, "the hop authors"); return; }
+	authored.free();
+
+	Object*? m = f.call_tool("measure_clip", `{"clip":"hop"}`);
+	if (catch m) { test::@check(false, "measure_clip answers"); return; }
+	defer m.free();
+	test::@check(find_issue(m, "root_pop") == null, "the body pops as the foot lifts");
+
+	// Either side of the lift, a hair apart, the hips stand at the same height.
+	crig::AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored("hop"));
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose before = clip.pose(mem, &view.skeleton, view.names, 0.499f);
+	defer before.free(mem);
+	rig::Pose after = clip.pose(mem, &view.skeleton, view.names, 0.501f);
+	defer after.free(mem);
+	usz hips = 0;
+	foreach (usz j, name : view.names) if (name == "hips") hips = j;
+	test::@check(math::abs(before.offsets[hips].y - after.offsets[hips].y) < 0.005f,
+		"the hips jump %.4f across the lift", math::abs(before.offsets[hips].y - after.offsets[hips].y));
+}
+
+<*
+ A foot pinned further below the hip than the leg is long brings the body down
+ to it, rather than hovering short of the pin.
+*>
+fn void a_pin_out_of_reach_lowers_the_hips() @test
+{
+	Vec3[3] joints = { { 0, 1, 0 }, { 0, 0.5f, 0.02f }, { 0, 0, 0 } };
+	int[3] parents = { -1, 0, 1 };
+	rig::Skeleton skeleton = { .joints = joints[..], .parents = parents[..] };
+	String[3] names = { "hips", "knee", "foot" };
+	rig::Pose pose = rig::rest_pose(mem, 3);
+	defer pose.free(mem);
+
+	crig::AnimPin[1] pins;
+	pins[0] = crig::pin_defaults(mem, "foot", { 0, -0.2f, 0 }, 0.0f, 1.0f);
+	defer pins[0].free(mem);
+	crig::pin_pose(mem, &skeleton, names[..], pins[..], 0.5f, 1.0f, false, &pose, 1.0f);
+
+	Matrix4f[] palette = rig::joint_palette(mem, &skeleton, pose)!!;
+	defer alloc::free(mem, palette);
+	Vec3 foot = joints[2].transform(palette[2]);
+	test::@check(pose.offsets[0].y < -0.15f, "the hips stayed up (%.3f)", pose.offsets[0].y);
+	test::@check((foot - (Vec3){ 0, -0.2f, 0 }).length() < 0.02f, "the foot is %.3f from its pin", (foot - (Vec3){ 0, -0.2f, 0 }).length());
 }

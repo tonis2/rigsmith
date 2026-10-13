@@ -682,6 +682,7 @@ fn void pin_pose(
 	float gain = 1.0f)
 {
 	if (pins.len == 0 || pose.rotations.len != skeleton.len()) return;
+	pin_lower_hips(allocator, skeleton, names, pins, time, duration, loop, pose, scale, gain);
 	foreach (&pin : pins)
 	{
 		if (!pin_plays(pin)) continue;
@@ -718,6 +719,78 @@ fn void pin_pose(
 
 // How long a limb a pin solves: the editor's own bound on a run.
 const usz IK_RUN_MAX = 16;
+
+// How much of a limb's full length a pin may ask it to stretch to before the
+// body is lowered instead: short of locking the knee straight.
+const float PIN_REACH_COMFORT = 0.97f;
+
+<*
+ Lower the whole figure until every position pin below its limb can be reached.
+
+ A limb only turns about the joints above it, so a planted foot further below the
+ hip than the leg is long stays short of its pin however the leg swings — the
+ foot hovers, or the leg locks straight and the knee pops. A body standing on
+ that foot sinks onto it instead. So the root drops by the most any pinned limb
+ needs to reach comfortably (PIN_REACH_COMFORT of its length), each pin's need
+ scaled by how far into its window it is, so the drop eases in and out with the
+ pin. The root is never raised: a target above the hip is a reach, not a stance.
+*>
+fn void pin_lower_hips(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	String[] names,
+	AnimPin[] pins,
+	float time,
+	float duration,
+	bool loop,
+	rig::Pose* pose,
+	float scale,
+	float gain) @local
+{
+	Matrix4f[]? built = rig::joint_palette(allocator, skeleton, *pose);
+	if (catch built) return;
+	Matrix4f[] palette = built;
+	defer alloc::free(allocator, palette);
+
+	float drop = 0.0f;
+	usz root = skeleton.len();
+	foreach (&pin : pins)
+	{
+		if (!pin_plays(pin) || !pin.position) continue;
+		float weight = pin.weight_at(time, duration, loop) * math::clamp(gain, 0.0f, 1.0f);
+		if (!(weight > 0.0f)) continue;
+		sz found = -1;
+		foreach (usz j, name : names) if (j < skeleton.len() && name == pin.joint) { found = (sz)j; break; }
+		if (found < 0) continue;
+		usz joint = (usz)found;
+		usz[IK_RUN_MAX] run;
+		usz count = pin_run(skeleton, joint, run[..]);
+		if (count == 0) continue;
+		Vec3 target = pin.held_at(time, duration, loop) * scale;
+		if (!pin_finite(target)) continue;
+
+		// The limb's length from its top pivot to the pinned joint, at rest.
+		float length = (skeleton.joints[joint] - skeleton.joints[run[0]]).length();
+		for (usz k = 0; k + 1 < count; k++) length += (skeleton.joints[run[k]] - skeleton.joints[run[k + 1]]).length();
+		float reach = PIN_REACH_COMFORT * length;
+
+		usz top = run[count - 1];
+		Vec3 pivot = skeleton.joints[top].transform(palette[top]);
+		if (pivot.y <= target.y) continue;
+		float dx = target.x - pivot.x;
+		float dz = target.z - pivot.z;
+		float flat = dx * dx + dz * dz;
+		if (flat >= reach * reach) continue;
+		float rise = pivot.y - target.y;
+		float allowed = math::sqrt(reach * reach - flat);
+		if (rise <= allowed) continue;
+		drop = math::max(drop, weight * (rise - allowed));
+		usz walk = top;
+		while (skeleton.parents[walk] >= 0) walk = (usz)skeleton.parents[walk];
+		root = walk;
+	}
+	if (drop > 0.0f && root < pose.offsets.len) pose.offsets[root].y -= drop;
+}
 
 fn bool pin_finite(Vec3 v) @local => math::is_finite(v.x) && math::is_finite(v.y) && math::is_finite(v.z);
 

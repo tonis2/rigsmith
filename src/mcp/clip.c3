@@ -232,6 +232,11 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 				}
 			}
 
+			AnimEase rotation_ease;
+			AnimEase translation_ease;
+			if (!read_ease(entry, "rotation_ease", has_rotation, &rotation_ease, f, d, detail)) return CLIP_INVALID~;
+			if (!read_ease(entry, "translation_ease", slide != null, &translation_ease, f, d, detail)) return CLIP_INVALID~;
+
 			if (member(entry, "space") != null)
 			{
 				String? space = entry.get_string("space");
@@ -284,6 +289,8 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 				.channels = has_rotation ? (slide != null ? BOTH : ROTATION) : TRANSLATION,
 				.rotation_interpolation = rotation_interpolation,
 				.translation_interpolation = translation_interpolation,
+				.rotation_ease = rotation_ease,
+				.translation_ease = translation_ease,
 			};
 		}
 
@@ -511,7 +518,7 @@ fn bool parse_ground(AppState* app, Object* ground, AnimGround* into, DString* d
  would actually move this rig — and it can be false on a clip that parsed, since
  a document with no dots accepts nothing to address.
 *>
-fn String applied_json(AppState* app, AnimRef ref, bool replaced)
+fn String applied_json(AppState* app, AnimRef ref, bool replaced, bool measured = true)
 {
 	AnimTemplate* clip = app.clip(ref);
 	AnimPack* pack = app.pack((usz)ref.pack);
@@ -552,9 +559,35 @@ fn String applied_json(AppState* app, AnimRef ref, bool replaced)
 	out.append_string(app.clip_applies(ref) ? "true" : "false");
 	out.append_string(`,"playing":`);
 	out.append_string(app.animating && app.current_ref.same(ref) ? "true" : "false");
+	// What was just written, measured as it plays: whether it is usable, and what
+	// to call to make it so, without a second round trip to ask.
+	if (measured) append_metrics_member(&out, app, ref);
 	out.append_char('}');
 
 	return out.copy_str(mem);
+}
+
+<*
+ measure_clip's answer for a clip, as a `"metrics"` member of another answer — so
+ a tool that writes a clip says at once whether what it wrote is usable. Nothing
+ is written when the clip cannot be measured (a rig with no dots).
+*>
+fn void append_metrics_member(DString* out, AppState* app, AnimRef ref)
+{
+	AnimTemplate* clip = app.clip(ref);
+	AnimPack* pack = app.pack((usz)ref.pack);
+	if (!clip || !pack) return;
+	// Qualified, so a clip of the same name in another pack cannot make the
+	// lookup ambiguous.
+	String qualified = string::format(mem, "%s/%s", pack.name, clip.name);
+	defer qualified.free(mem);
+	DString why = dstring::new(mem);
+	defer why.free();
+	String? metrics = metrics_json(app, qualified, 0, &why);
+	if (catch metrics) return;
+	defer metrics.free(mem);
+	out.append_string(`,"metrics":`);
+	out.append_string(metrics);
 }
 
 <*
@@ -960,6 +993,10 @@ fn void append_keyframes_json(DString* out, AnimKeyframe[] frames)
 				{
 					out.appendf(`,"rotation_interpolation":"%s"`, dot.rotation_interpolation.serialized())!!;
 				}
+				if (!dot.rotation_ease.none())
+				{
+					out.appendf(`,"rotation_ease":[%s,%s]`, (JsonFloat)dot.rotation_ease.start, (JsonFloat)dot.rotation_ease.end)!!;
+				}
 			}
 
 			// Both are omitted when they say nothing, so a clip that only turns
@@ -972,6 +1009,10 @@ fn void append_keyframes_json(DString* out, AnimKeyframe[] frames)
 				{
 					out.appendf(`,"translation_interpolation":"%s"`, dot.translation_interpolation.serialized())!!;
 				}
+				if (!dot.translation_ease.none())
+				{
+					out.appendf(`,"translation_ease":[%s,%s]`, (JsonFloat)dot.translation_ease.start, (JsonFloat)dot.translation_ease.end)!!;
+				}
 			}
 			if (dot.bone.length() > 0.0f)
 			{
@@ -982,4 +1023,54 @@ fn void append_keyframes_json(DString* out, AnimKeyframe[] frames)
 		out.append_string(`]}`);
 	}
 	out.append_char(']');
+}
+
+<*
+ A joint entry's ease for one channel: `[start, end]`, each 0 to 1, or one of the
+ names "in", "out" and "in_out". How the segment leaving this key spends its time
+ — `AnimEase` — so a reach can start slow and settle, rather than move at one
+ rate from key to key.
+
+ @param keyed : `Whether the entry keys the channel the ease is for; an ease on a channel it does not key is refused.`
+*>
+fn bool read_ease(Object* entry, String key, bool keyed, AnimEase* into, usz f, usz d, DString* detail) @local
+{
+	*into = {};
+	Object* given = member(entry, key);
+	if (given == null) return true;
+	if (!keyed)
+	{
+		detail.appendf(`keyframes[%d].joints[%d].%s needs a key on that channel in the same entry.`, f, d, key);
+		return false;
+	}
+	if (given.is_string())
+	{
+		switch (given.s)
+		{
+			case "in": *into = { 1.0f, 0.0f };
+			case "out": *into = { 0.0f, 1.0f };
+			case "in_out": *into = { 1.0f, 1.0f };
+			case "none": *into = {};
+			default:
+				detail.appendf(`keyframes[%d].joints[%d].%s is "%s". It is "in", "out", "in_out", or [start, end] each 0 to 1.`, f, d, key, given.s);
+				return false;
+		}
+		return true;
+	}
+	if (!given.is_array() || given.get_len() != 2)
+	{
+		detail.appendf(`keyframes[%d].joints[%d].%s is [start, end], each 0 to 1, or "in", "out" or "in_out".`, f, d, key);
+		return false;
+	}
+	double? start = given.get_float_at(0);
+	double? end = given.get_float_at(1);
+	if (catch start) { detail.appendf(`keyframes[%d].joints[%d].%s holds two numbers.`, f, d, key); return false; }
+	if (catch end) { detail.appendf(`keyframes[%d].joints[%d].%s holds two numbers.`, f, d, key); return false; }
+	if (!(start >= 0.0 && start <= 1.0 && end >= 0.0 && end <= 1.0))
+	{
+		detail.appendf(`keyframes[%d].joints[%d].%s is [%.4g, %.4g]; each is 0 (untouched) to 1 (a flat tangent at that end).`, f, d, key, start, end);
+		return false;
+	}
+	*into = { (float)start, (float)end };
+	return true;
 }

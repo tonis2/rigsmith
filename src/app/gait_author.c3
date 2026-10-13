@@ -12,6 +12,7 @@ module crig;
 
 import rig;
 import std::math;
+import std::math::quaternion;
 
 faultdef GAIT_REFUSED, GAIT_BAD_FOOT;
 
@@ -45,6 +46,10 @@ struct GaitAuthored
 	float[GAIT_FEET_MAX] offsets;
 	String[GAIT_FEET_MAX] names;
 	float rig_height;
+	// Whether the feet were pinned to their stance paths after the cycle was
+	// written, and how far they slid before.
+	bool pinned;
+	float slide_before;
 }
 
 fn void GaitAuthored.free(&self, Allocator allocator)
@@ -158,7 +163,9 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 	if (lift_fraction > 0.0) spec.lift = (float)lift_fraction * gait_leg_height(&view.skeleton, joints[:count]);
 
 	GaitAuthored out = { .kind = spec.kind, .rig_height = view.skeleton.height() };
-	AnimTemplate? made = gait_clip(mem, &view.skeleton, view.names, name, spec, driven[:count], &out.report);
+	GaitLimits limits = { .app = self, .view = &view };
+	AnimTemplate? made = gait_clip(mem, &view.skeleton, view.names, name, spec, driven[:count], &out.report,
+		&gait_limit_clamp, &limits);
 	if (catch problem = made)
 	{
 		if (problem == GAIT_BAD_LEG)
@@ -172,9 +179,9 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 		return GAIT_REFUSED~;
 	}
 	AnimTemplate clip = made;
+	self.hold_keys_inside_limits(&view, &clip);
 
 	out.landed = self.author_clip(clip, &out.replaced);
-	self.refresh_ui();
 
 	out.count = count;
 	for (usz i = 0; i < count; i++)
@@ -183,6 +190,32 @@ fn GaitAuthored? AppState.author_gait(&self, String name, GaitSpec spec, double 
 		out.offsets[i] = driven[i].offset;
 		out.names[i] = view.names[joints[i]].copy(mem);
 	}
+
+	// The legs were solved for where each foot should be, not for what the rig's
+	// joints allow, and holding the keys inside the limits moves a foot the limits
+	// refused — an ankle that will not flex as far as the stance asks lets the toe
+	// skate. Pins hold each foot on its stance path with a solve that knows the
+	// limits, so a cycle that measures as sliding is pinned before it is handed back.
+	out.slide_before = self.clip_foot_slide(out.landed);
+	if (!spec.no_pins && (spec.always_pin || out.slide_before > ISSUE_SLIDE_TOLERANCE))
+	{
+		String[GAIT_FEET_MAX] feet_named;
+		for (usz i = 0; i < count; i++) feet_named[i] = out.names[i];
+		DString why = dstring::new(mem);
+		defer why.free();
+		// The treadmill's speed and direction are read off the stance feet, as
+		// pin_feet's travel "auto" does. The reports are on the temporary
+		// allocator; only whether it held is kept.
+		if (try self.pin_clip_feet(out.landed, feet_named[:count], {}, true, FOOT_PIN_BLEND, true, {}, &why, travel_auto: true))
+		{
+			// Kept only if they hold the feet better than the keys alone: a foot
+			// the leg cannot reach is not reached by pinning it either, and a pin
+			// blending out of a window it could not hold adds a slide of its own.
+			out.pinned = spec.always_pin || self.clip_foot_slide(out.landed) < out.slide_before;
+			if (!out.pinned) self.undo();
+		}
+	}
+	self.refresh_ui();
 	return out;
 }
 
@@ -202,4 +235,58 @@ fn float AppState.clip_foot_slide(&self, AnimRef ref)
 	ClipMetrics numbers = clip_metrics(mem, &view.skeleton, view.names, *clip, 32, &self.doc, view.dot_ids);
 	defer numbers.free(mem);
 	return numbers.foot_slide;
+}
+
+<*
+ Every rotation key of a clip written on this rig, held inside the rig's limits.
+
+ A generator solves for where a foot should be, not for what the joints allow,
+ and the few degrees it overshoots by — a knee a hair past straight, an ankle
+ rolled further than it goes — are clamped away again when the clip plays. Kept
+ in the keys, they are a clip whose keys say one thing and whose playback another,
+ and measure_clip reports every one as saturating. Keys on this rig are its own
+ local turns, so the clamp is the same one playback runs.
+*>
+fn void AppState.hold_keys_inside_limits(&self, RigView* view, AnimTemplate* clip)
+{
+	foreach (&frame : clip.keyframes)
+	{
+		foreach (&dot : frame.dots)
+		{
+			if (dot.channels == TRANSLATION) continue;
+			sz joint = -1;
+			foreach (usz j, name : view.names)
+			{
+				if (name == dot.joint_name) { joint = (sz)j; break; }
+			}
+			if (joint < 0 || (usz)joint >= view.dot_ids.len) continue;
+			JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[(usz)joint]);
+			if (!limits.constrained) continue;
+			JointLimitFrame limit_frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+			if (!limit_frame.usable()) continue;
+			Quaternionf turn = quaternion::from_axis_angle{float}(dot.axis, dot.angle);
+			Quaternionf held = constrain_joint_rotation(limit_frame, limits, turn);
+			axis_angle_of(held, &dot.axis, &dot.angle);
+		}
+	}
+}
+
+// What `gait_limit_clamp` reads the limits off.
+struct GaitLimits @local
+{
+	AppState* app;
+	RigView* view;
+}
+
+// A joint's turn held inside the document's limits — the gait's `GaitClampFn`.
+fn Quaternionf gait_limit_clamp(void* context, usz joint, Quaternionf local) @local
+{
+	GaitLimits* limits = (GaitLimits*)context;
+	RigView* view = limits.view;
+	if (joint >= view.dot_ids.len) return local;
+	JointRotationLimits table = limits.app.doc.rotation_limits_of(view.dot_ids[joint]);
+	if (!table.constrained) return local;
+	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, table);
+	if (!frame.usable()) return local;
+	return constrain_joint_rotation(frame, table, local);
 }

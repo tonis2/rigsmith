@@ -241,6 +241,10 @@ fn void ground_pose(
 			pose.offsets[root].y += floor - lowest;
 		}
 	}
+	else
+	{
+		pose.offsets[root].y += flight_correction(allocator, skeleton, names, ground, *pose, phase, contact[:feet], floor);
+	}
 
 	float sunk;
 	if (lowest_contact(allocator, skeleton, *pose, contact[:feet], down[:feet], false, &sunk)
@@ -248,6 +252,73 @@ fn void ground_pose(
 	{
 		pose.offsets[root].y += floor - sunk;
 	}
+}
+
+// How much of the cycle, either side of a flight, a foot that has just left the
+// floor or is about to land keeps a share of its plant: under a tenth of a run's
+// cycle, a few frames.
+const float GROUND_FLIGHT_BLEND = 0.08f;
+
+<*
+ The root's height correction while no foot is down.
+
+ With a foot planted, the solve pulls the root down by however far that foot is
+ off the floor — a bent stance knee lowers the body. With none planted there is
+ nothing to plant, and a correction that simply stopped would drop the body back
+ up by the whole stance pull at the instant of take-off, and down again at
+ landing: a run with a flight phase, or a jump, popping twice a stride. So a foot
+ that has just lifted keeps a share of its own plant, fading over
+ GROUND_FLIGHT_BLEND of the cycle, and a foot about to land takes one on as it
+ comes down — weighted by how near each is to its edge, and to nothing in the
+ middle of a long flight, where the clip's own root keys carry the body.
+*>
+fn float flight_correction(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	String[] names,
+	AnimGround ground,
+	rig::Pose pose,
+	float phase,
+	usz[] contact,
+	float floor) @local
+{
+	Matrix4f[]? built = rig::joint_palette(allocator, skeleton, pose);
+	if (catch built) return 0.0f;
+	Matrix4f[] palette = built;
+	defer alloc::free(allocator, palette);
+
+	// The same feet, in the same order, `ground_contacts` found.
+	float share = 0.0f;
+	float sum = 0.0f;
+	usz at = 0;
+	foreach (foot : ground.feet)
+	{
+		if (at >= contact.len) break;
+		if (foot.joint.len == 0 || foot.off_floor) continue;
+		usz joint = contact[at];
+		if (joint >= names.len || names[joint] != foot.joint) continue;
+		at++;
+		float weight = foot.flight_weight(phase);
+		if (weight <= 0.0f) continue;
+		float height = skeleton.joints[joint].transform(palette[joint]).y;
+		sum += weight * (floor - height);
+		share += weight;
+	}
+	return share > 1.0f ? sum / share : sum;
+}
+
+// How much of its plant a lifted foot keeps at `phase`: all of it at its window's
+// edges, none from GROUND_FLIGHT_BLEND of the cycle away, eased between.
+fn float AnimFoot.flight_weight(self, float phase)
+{
+	float after = phase - self.up;
+	after -= math::floor(after);
+	float before = self.down - phase;
+	before -= math::floor(before);
+	float near = math::min(after, before);
+	if (near >= GROUND_FLIGHT_BLEND) return 0.0f;
+	float s = near / GROUND_FLIGHT_BLEND;
+	return 1.0f - s * s * (3.0f - 2.0f * s);
 }
 
 <*

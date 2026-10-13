@@ -863,10 +863,18 @@ fn MenuItemFlags query_generate_motion(Ui* ui) => { .checked = find_leaf_showing
 fn void menu_reapply_plan_limits(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	sz landed = app.reapply_plan_limits();
-	if (landed < 0)
+	sz before = app.undo_stack.edits.len();
+	sz landed = app.reapply_plan_limits(commit: false);
+	// Tables pinned to where a moved bone used to point are carried onto it too.
+	usz mended = app.mend_hinge_limits(carry_stale: true);
+	if (app.undo_stack.edits.len() != before) app.undo_stack.commit();
+	if (landed < 0 && mended == 0)
 	{
 		app.@notice("this rig has no body plan with limits · apply one from Rig › Apply body plan");
+	}
+	else if (landed < 0)
+	{
+		app.@notice("%d joint limits put back on their bones · Ctrl+Z undoes", (int)mended);
 	}
 	else
 	{

@@ -55,6 +55,12 @@ fn String ClipIssueKind.words(self)
 		case LIMIT_SATURATION: return "Past its joint limit";
 		case LOOP_POSITION: return "Loop jumps";
 		case LOOP_VELOCITY: return "Loop changes speed";
+		case POP: return "Pops";
+		case ROOT_POP: return "Body height jumps";
+		case LIMITS_INVERTED: return "Joint limits fold it backward";
+		case LIMITS_BLOCKED: return "Joint limits keep it from bending";
+		case LIMITS_STALE: return "Joint limits no longer follow the bone";
+		case AIM_STARE: return "Looks at a fixed point";
 		default: return "Issue";
 	}
 }
@@ -63,7 +69,7 @@ fn String ClipIssueKind.words(self)
  The feet a clip is measured and planted by: its own ground spec, else the ones
  read off its motion. Owned only in the second case — see `owned`.
 *>
-fn AnimGround clip_contacts(RigView* view, String[] names, AnimTemplate* clip, bool* owned) @local
+fn AnimGround clip_contacts(RigView* view, String[] names, AnimTemplate* clip, bool* owned)
 {
 	*owned = false;
 	if (clip.ground.solves()) return clip.ground;

@@ -61,11 +61,14 @@ const float GAIT_COMFORT = 0.95f;
 // pose, not a side the leg prefers — a straight leg bends forward.
 const float GAIT_BEND_MIN = 0.05f;
 // Foot roll, radians: the distal segment's tilt through a stance, the extra flex
-// a swing adds, and how far the toes lift in a swing. Toes are never pitched down:
-// they rest on the floor with the foot, and a toe turned under it is a sunk one.
+// a swing adds, and how far the toes lift off the foot in a swing. Toes are never
+// pitched down: they rest on the floor with the foot, and a toe turned under it is
+// a sunk one. In the air the toes ride the foot and lift a little against it —
+// held level in the world instead, they would have to bend back a whole radian
+// against a foot flexed for the swing, which no toe does and every limit refuses.
 const float GAIT_STANCE_TILT = 0.25f;
 const float GAIT_SWING_FLEX = 0.6f;
-const float GAIT_TOE_LIFT = 0.3f;
+const float GAIT_TOE_LIFT = 0.15f;
 
 enum GaitKind
 {
@@ -116,6 +119,10 @@ struct LegChain
 	Vec3[GAIT_BONES_MAX + 1] at;                // root first, the foot last
 	Quaternionf[GAIT_BONES_MAX + 1] turn;       // each joint's world rotation
 	Quaternionf parent;                         // the root's parent's world rotation
+	// Which way the knee should stand off the hip-to-foot line, overriding the
+	// rest pose's lean when set. A figure modelled a little bow-legged bends its
+	// knees sideways otherwise, and a knee's limits let it fold only forward.
+	Vec3 bend_hint;
 }
 
 <*
@@ -155,6 +162,12 @@ fn LegPlane leg_plane(LegChain* chain) @local
 	Vec3 knee = chain.at[1] - chain.at[0];
 	Vec3 off = knee - plane.axis * knee.dot(plane.axis);
 	float span = (chain.at[1] - chain.at[0]).length() + (chain.at[2] - chain.at[1]).length();
+	if (chain.bend_hint.length() > 0.0f)
+	{
+		Vec3 hinted = chain.bend_hint - plane.axis * chain.bend_hint.dot(plane.axis);
+		// Kept only if it stands well off the line; a hint along the leg says nothing.
+		if (hinted.length() > 0.2f * chain.bend_hint.length()) off = hinted.normalize() * span;
+	}
 	plane.bent = off.length() > GAIT_BEND_MIN * span;
 	plane.bend = plane.bent ? off.normalize() : (Vec3){ 0, 0, 1 };
 	plane.normal = plane.bent ? unit_or(plane.axis.cross(plane.bend), { 1, 0, 0 }) : (Vec3){ 1, 0, 0 };
@@ -256,6 +269,32 @@ fn LegSolve solve_leg(LegChain* chain, Vec3 target, float tilt = 0.0f)
 
 	Quaternionf w0 = bone_carry(chain.at[1] - chain.at[0], knee - root).mul(chain.turn[0]).normalize();
 	Quaternionf w1 = bone_carry(chain.at[2] - chain.at[1], wrist - knee).mul(chain.turn[1]).normalize();
+	if (chain.bend_hint.length() > 0.0f)
+	{
+		// A leg told which way its knee folds bends it about that hinge alone: the
+		// thigh turns about its own length until the knee's rest hinge lies square
+		// to the plane the leg now bends in, and the knee then turns about nothing
+		// else. Left to the shortest turns, a knee modelled a little bow-legged
+		// takes up the difference as twist — which a knee's limits lock, and
+		// clamping it moves the foot.
+		Vec3 thigh = unit_or(knee - root, plane.axis);
+		Vec3 hinge_now = u.cross(bend);
+		// Built the way hinge_now is, not read off plane.normal, which is turned to
+		// face +X and so can point the other way round.
+		Vec3 hinge_was = w0.mul(chain.turn[0].invert()).rotate_vec3(plane.axis.cross(plane.bend));
+		Vec3 a = hinge_was - thigh * thigh.dot(hinge_was);
+		Vec3 b = hinge_now - thigh * thigh.dot(hinge_now);
+		if (a.length() > 1.0e-4f && b.length() > 1.0e-4f)
+		{
+			float twist = math::atan2(thigh.dot(a.cross(b)), a.dot(b));
+			w0 = quaternion::from_axis_angle{float}(thigh, twist).mul(w0).normalize();
+		}
+		// The knee from the twisted thigh: its rest shin, carried with the thigh,
+		// turned onto where the shin now runs.
+		Quaternionf rest_knee = w0.mul(chain.turn[0].invert()).mul(chain.turn[1]).normalize();
+		Vec3 shin = rest_knee.mul(chain.turn[1].invert()).rotate_vec3(chain.at[2] - chain.at[1]);
+		w1 = bone_carry(shin, wrist - knee).mul(rest_knee).normalize();
+	}
 	out.world[0] = w0;
 	out.world[1] = w1;
 	out.local[0] = chain.parent.invert().mul(w0).normalize();
@@ -282,9 +321,12 @@ fn LegSolve solve_leg(LegChain* chain, Vec3 target, float tilt = 0.0f)
 
  @return `Parent-relative, to key on the foot joint.`
 *>
-fn Quaternionf leg_foot_turn(LegChain* chain, LegSolve* solved, float pitch)
+fn Quaternionf leg_foot_turn(LegChain* chain, LegSolve* solved, float pitch, Quaternionf frame = quaternion::IDENTITY)
 {
 	Quaternionf held = quaternion::from_axis_angle{float}(solved.lateral, pitch).mul(chain.turn[chain.bones]);
+	// A leg solved inside a turned pelvis holds its foot's world orientation in
+	// that pelvis's frame.
+	held = frame.invert().mul(held).normalize();
 	return solved.world[chain.bones - 1].invert().mul(held).normalize();
 }
 
@@ -560,6 +602,14 @@ struct GaitSpec
 	float duration;
 	bool loop;
 	usz samples;
+	// Key the legs and the hips' drop and nothing else. Off, a two-legged figure
+	// gets the rest of a walking body too (`gait_body_of`).
+	bool legs_only;
+	// Never pin the feet, even when the cycle measures as sliding once the rig's
+	// limits hold its keys (`AppState.author_gait`).
+	bool no_pins;
+	// Pin them whether or not it slides.
+	bool always_pin;
 }
 
 // One foot of a gait: a joint of the skeleton, and where in the cycle it lands.
@@ -628,9 +678,10 @@ fn float swing_travel(float s, float duty) @local
 
  The stance slides the foot back at a constant speed along the floor; the swing
  carries it forward on a curve that leaves and meets the ground at the stance's
- speed (`swing_travel`) and lifts it on a sine. The distal segment
+ speed (`swing_travel`) and lifts it on a squared sine. The distal segment
  tilts through the stance (heel down at touchdown, off at the end) and flexes in
- the swing, and the toes stay flat through the stance and lift in the swing.
+ the swing, and the toes stay flat through the stance and in the swing ride the
+ foot, lifted a little against it.
 
  @param tilt : `Radians the distal segment is held at.`
  @param toes : `Radians the toes point down, in the world; negative lifts them.`
@@ -645,16 +696,26 @@ fn Vec3 gait_foot_at(LegPlan* plan, GaitSpec* spec, float floor, float drop, flo
 	{
 		float s = p / spec.duty;
 		z = plan.rest.z + spec.stride * (0.5f - s);
-		*tilt = GAIT_STANCE_TILT * (2.0f * s - 1.0f);
+		// Eased at both ends, as the swing's roll is, so the foot meets the floor
+		// and leaves it without its roll changing speed at once: a roll that
+		// stops dead at a footfall is a foot slapping down.
+		*tilt = GAIT_STANCE_TILT * (2.0f * smooth_step(s) - 1.0f);
 		*toes = 0.0f;
 	}
 	else
 	{
 		float s = (p - spec.duty) / (1.0f - spec.duty);
 		z = plan.rest.z + spec.stride * swing_travel(s, spec.duty);
-		y += spec.lift * (float)math::pow(math::sin((float)math::PI * s), 1.2f);
-		*tilt = GAIT_STANCE_TILT * (1.0f - 2.0f * smooth_step(s)) + GAIT_SWING_FLEX * math::sin((float)math::PI * s);
-		*toes = -GAIT_TOE_LIFT * math::sin((float)math::PI * s);
+		float arc = math::sin((float)math::PI * s);
+		// Up and down on sin²: the foot leaves the floor and lands on it with no
+		// speed toward it, so a footfall is a placement rather than a stamp.
+		y += spec.lift * arc * arc;
+		// The flex rises and falls on sin², which leaves the swing at the speed the
+		// stance ended at — none — and meets the next stance the same way.
+		*tilt = GAIT_STANCE_TILT * (1.0f - 2.0f * smooth_step(s)) + GAIT_SWING_FLEX * arc * arc;
+		// Level with the floor at either end of the swing, as the stance holds them;
+		// riding the foot, lifted a little against it, in the middle.
+		*toes = arc * arc * (*tilt - GAIT_TOE_LIFT);
 	}
 	return { plan.rest.x, y, z };
 }
@@ -681,6 +742,71 @@ fn bool gait_holds(LegPlan[] plans, GaitSpec* spec, float floor, float drop) @lo
 }
 
 <*
+ A joint's parent-relative turn held inside what the rig allows it, for a gait
+ solved against a rig with limits. The joint is a skeleton index.
+*>
+alias GaitClampFn = fn Quaternionf(void* context, usz joint, Quaternionf local);
+
+<*
+ A leg solved against the rig's limits: every joint of it held inside what the
+ rig allows, and the foot still put where the stride asks.
+
+ The stride is drawn for a leg with no limits — a foot rolled heel to toe and
+ flexed through the swing, a knee bending in the plane the stride sweeps. A rig's
+ ankle may not flex that far, and a knee modelled a little bow-legged bends in a
+ plane its hinge does not; held inside the limits as the clip plays, such a leg
+ puts its foot somewhere the solve did not aim it, and the toe skates through
+ the stance and dips through the floor in the swing. So each joint's turn is held
+ inside its limits here, the leg is walked forward from the held turns to see
+ where the foot lands, and the solve is aimed again by the miss — the joints the
+ limits leave free take up what the held ones could not. A few passes settle it.
+
+ Without a clamp, or for a leg the limits do not touch, this is `solve_leg`.
+*>
+fn LegSolve solve_leg_within(LegChain* chain, usz[] joints, Vec3 target, float tilt, GaitClampFn clamp, void* context) @local
+{
+	LegSolve solved = solve_leg(chain, target, tilt);
+	if (!clamp) return solved;
+	float reach = 0.0f;
+	for (usz j = 0; j < chain.bones; j++) reach += (chain.at[j + 1] - chain.at[j]).length();
+
+	LegSolve best = leg_held(chain, joints, &solved, target, clamp, context);
+	Vec3 aim = target;
+	for (uint pass = 0; pass < 6 && best.gap > 1.0e-5f * reach; pass++)
+	{
+		// Aim past the target by what the held leg fell short — but never far: a
+		// joint the limits lock cannot be talked round by aiming wider, and a leg
+		// chasing a runaway aim swings somewhere worse than the miss.
+		aim += target - best.at[chain.bones];
+		Vec3 offset = aim - target;
+		float most = 0.15f * reach;
+		if (offset.length() > most) aim = target + offset.normalize() * most;
+		LegSolve next = solve_leg(chain, aim, tilt);
+		LegSolve held = leg_held(chain, joints, &next, target, clamp, context);
+		if (held.gap >= best.gap) break;
+		best = held;
+	}
+	return best;
+}
+
+// `solved` with every joint held inside the limits and the leg walked forward from
+// the hip, its gap measured against `target`: what the rig will play.
+fn LegSolve leg_held(LegChain* chain, usz[] joints, LegSolve* solved, Vec3 target, GaitClampFn clamp, void* context) @local
+{
+	LegSolve held = *solved;
+	Quaternionf parent = chain.parent;
+	for (usz j = 0; j < chain.bones; j++)
+	{
+		held.local[j] = clamp(context, joints[j], solved.local[j]);
+		held.world[j] = parent.mul(held.local[j]).normalize();
+		held.at[j + 1] = held.at[j] + held.world[j].mul(chain.turn[j].invert()).rotate_vec3(chain.at[j + 1] - chain.at[j]);
+		parent = held.world[j];
+	}
+	held.gap = (target - held.at[chain.bones]).length();
+	return held;
+}
+
+<*
  Write a gait as a looping (or not) clip.
 
  	`AnimTemplate clip = gait_clip(mem, &view.skeleton, view.names, "Trot", spec, feet, &report)!;`
@@ -690,11 +816,14 @@ fn bool gait_holds(LegPlan[] plans, GaitSpec* spec, float floor, float drop) @lo
  linear between — dense enough that the curve between two keys is the path. The
  ground spec names each foot's window (down at its offset, up a duty later) and
  the floor it stands on, so the floor solve finds the root height the clip leaves
- out. Nothing above the legs is keyed.
+ out. A two-legged, upright figure gets the rest of its body too — pelvis, spine,
+ arms and head (`gait_body_of`) — unless `spec.legs_only`; anything else is keyed
+ below the hips only.
 
  @param feet : `The feet and where each lands. Their legs must have two to four bones below a fork.`
  @param spec : `Zero duty, stride and lift take the gait's defaults, scaled to the leg.`
  @param report : `Filled with what the gait turned out to be.`
+ @param clamp : `Holds a joint's turn inside the rig's limits, so each foot is solved where its ankle can put it (solve_leg_within). Null solves as if the rig had none.`
  @return? GAIT_NO_LEGS : `No feet.`
  @return? GAIT_BAD_LEG : `A foot has no two-bone leg below a fork, or a joint of it is unnamed.`
 *>
@@ -705,7 +834,9 @@ fn AnimTemplate? gait_clip(
 	String name,
 	GaitSpec spec,
 	GaitFoot[] feet,
-	GaitReport* report)
+	GaitReport* report,
+	GaitClampFn clamp = null,
+	void* clamp_context = null)
 {
 	*report = {};
 	if (feet.len == 0 || feet.len > GAIT_FEET_MAX) return GAIT_NO_LEGS~;
@@ -732,6 +863,14 @@ fn AnimTemplate? gait_clip(
 	}
 	leg_height /= (float)feet.len;
 	if (!(leg_height > 0.0f)) return GAIT_BAD_LEG~;
+
+	// An upright figure's knees fold straight ahead, whatever lean the rest pose
+	// gave them.
+	if (feet.len == 2 && rig_upright(skeleton, names))
+	{
+		Vec3 ahead;
+		if (rig_facing(skeleton, names, &ahead)) foreach (&plan : plans) plan.chain.bend_hint = ahead;
+	}
 
 	if (!(spec.duty > 0.0f)) spec.duty = gait_default_duty(spec.kind, feet.len);
 	spec.duty = math::clamp(spec.duty, 0.1f, 0.9f);
@@ -765,7 +904,25 @@ fn AnimTemplate? gait_clip(
 	usz root = 0;
 	while (skeleton.parents[root] >= 0) root = (usz)skeleton.parents[root];
 	float height = skeleton.height();
-	bool keys_root = drop > 0.0f && height > 0.0f && root < names.len && names[root].len > 0;
+
+	// Above the legs, for a figure on two of them: the pelvis, spine, arms and head.
+	GaitBody body;
+	if (!spec.legs_only && feet.len == 2)
+	{
+		usz left = 0;
+		if (side_sign(names[plans[1].leg.joints[0]]) > 0.0f
+			|| (side_sign(names[plans[0].leg.joints[0]]) == 0.0f && plans[1].rest.x > plans[0].rest.x)) left = 1;
+		float default_stride = gait_default_stride(spec.kind) * leg_height;
+		float scale = default_stride > 0.0f ? math::clamp(spec.stride / default_stride, 0.5f, 1.6f) : 1.0f;
+		body = gait_body_of(skeleton, names, { plans[0].leg.joints[0], plans[1].leg.joints[0] },
+			plans[left].offset, spec.kind, scale);
+		// The pelvis's names have to be addressable for it to be keyed.
+		if (body.active && (body.pelvis >= names.len || names[body.pelvis].len == 0)) body.active = false;
+	}
+	bool turns_pelvis = body.active;
+	bool keys_root = (drop > 0.0f || turns_pelvis) && height > 0.0f && root < names.len && names[root].len > 0;
+	// The pelvis's own key, when it is not the root the drop is keyed on.
+	bool keys_pelvis = turns_pelvis && body.pelvis != root;
 
 	usz count = spec.loop ? spec.samples : spec.samples + 1;
 	AnimKeyframe[] keyframes = alloc::new_array(allocator, AnimKeyframe, (sz)count);
@@ -774,8 +931,14 @@ fn AnimTemplate? gait_clip(
 		float phase = (float)i / (float)spec.samples;
 		usz dots_made;
 		usz total = keys_root ? 1 : 0;
+		if (keys_pelvis) total++;
+		total += body.dot_count();
 		foreach (&plan : plans) total += plan.leg.bones + 1;
 		AnimKeyDot[] dots = alloc::new_array(allocator, AnimKeyDot, (sz)total);
+
+		float extra = 0.0f;
+		Quaternionf pelvis = turns_pelvis ? body.pelvis_turn(phase, &extra) : quaternion::IDENTITY;
+		float sample_drop = drop + extra;
 		// The hips' drop, keyed on the root rather than left to the floor solve: a
 		// gait with a flight phase (a trot, a gallop) has instants with no foot
 		// down, and there the solve has nothing to plant, so the figure would pop
@@ -783,21 +946,35 @@ fn AnimTemplate? gait_clip(
 		// the solve's correction is nothing.
 		if (keys_root)
 		{
-			dots[dots_made++] = {
+			AnimKeyDot dot = {
 				.joint_name = names[root].copy(allocator),
 				.channels = AnimChannels.TRANSLATION,
-				.move = { 0, -drop / height, 0 },
+				.move = { 0, -sample_drop / height, 0 },
 			};
+			if (turns_pelvis && body.pelvis == root)
+			{
+				dot.channels = AnimChannels.BOTH;
+				axis_angle_of(pelvis, &dot.axis, &dot.angle);
+			}
+			dots[dots_made++] = dot;
 		}
+		if (keys_pelvis)
+		{
+			AnimKeyDot dot = { .joint_name = names[body.pelvis].copy(allocator), .channels = AnimChannels.ROTATION };
+			axis_angle_of(pelvis, &dot.axis, &dot.angle);
+			dots[dots_made++] = dot;
+		}
+		dots_made += gait_body_dots(allocator, &body, skeleton, names, phase, pelvis, dots[dots_made..]);
 		foreach (&plan : plans)
 		{
 			float tilt;
 			float toes;
-			Vec3 target = gait_foot_at(plan, &spec, floor, drop, phase, &tilt, &toes);
-			LegSolve solved = solve_leg(&plan.chain, target, tilt);
+			Vec3 target = gait_foot_at(plan, &spec, floor, sample_drop, phase, &tilt, &toes);
+			if (turns_pelvis) target = body.into_pelvis(pelvis, target);
+			LegSolve solved = solve_leg_within(&plan.chain, plan.leg.joints[..], target, tilt, clamp, clamp_context);
 			Quaternionf[GAIT_BONES_MAX + 1] turns;
 			for (usz j = 0; j < plan.leg.bones; j++) turns[j] = solved.local[j];
-			turns[plan.leg.bones] = leg_foot_turn(&plan.chain, &solved, toes);
+			turns[plan.leg.bones] = leg_foot_turn(&plan.chain, &solved, toes, pelvis);
 			for (usz j = 0; j <= plan.leg.bones; j++)
 			{
 				AnimKeyDot dot = { .joint_name = names[plan.leg.joints[j]].copy(allocator), .channels = AnimChannels.ROTATION };

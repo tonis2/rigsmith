@@ -674,7 +674,7 @@ fn void aim_export_pose(
 	AnimTemplate template,
 	float time,
 	ConstraintRig constraints,
-	rig::Pose* pose) @local
+	rig::Pose* pose)
 {
 	if (!template.plays_live_layers()) return;
 	ConstraintRig held = constraints;

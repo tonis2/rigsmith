@@ -66,6 +66,12 @@ const String MAKE_LOOP_SCHEMA = `{"type":"object","properties":{
 	"crossfade":{"type":"number","description":"Seconds before the seam blended into the motion that led into the start, so the seam matches in speed as well as pose. Default a quarter of the period."}
 }}`;
 
+const String REMOVE_KEYS_SCHEMA = `{"type":"object","properties":{
+	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."},
+	"keys":{"type":"array","items":{"type":"integer"},"description":"Keyframe indices to remove, counted from 0 in the order get_clip lists them — the key a measure_clip pop names."},
+	"partial":{"type":"boolean","description":"Remove every keyframe that keys fewer joints than the clip's fullest one: the leftover correction keys a dense clip should not have. Give this or keys."}
+}}`;
+
 <*
  The clip a rewrite acts on: `clip` when given, else the one being edited — read
  in, and not while a pose is being edited, which a rewrite would throw away.
@@ -149,7 +155,7 @@ fn String? landed_rewrite_json(AppState* app, AnimRef ref, AnimTemplate built, S
 fn String? rewrite_answer(AppState* app, AnimRef ref, String done, DString* detail) @local
 {
 	AnimTemplate* clip = app.clip(ref);
-	String metrics = metrics_json(app, clip.name, 32, detail)!;
+	String metrics = metrics_json(app, clip.name, 0, detail)!;
 	defer metrics.free(mem);
 	DString out = dstring::new(mem);
 	defer out.free();
@@ -297,6 +303,77 @@ fn String? tool_close_loop(Object* args, void* user_data, DString* detail) @priv
 		return REWRITE_REFUSED~;
 	}
 	return landed_rewrite_json(app, ref, clip_seam_closed(mem, *clip), "closed", detail);
+}
+
+<*
+ remove_keys: keyframes gone by index, or every partial one — `clip_without_keys`.
+ A clip left with no keys is refused: that is delete_clip.
+*>
+fn String? tool_remove_keys(Object* args, void* user_data, DString* detail) @private
+{
+	AppState* app = (AppState*)user_data;
+	if (!takes_object(args, detail, `remove_keys takes {"clip": name, "keys": [indices]} or {"clip": name, "partial": true}`)) return REWRITE_REFUSED~;
+	AnimRef ref = rewrite_target(app, args, detail)!;
+	AnimTemplate* clip = app.clip(ref);
+	usz count = clip.keyframes.len;
+
+	Object* listed = member(args, "keys");
+	bool partial = args.get_bool("partial") ?? false;
+	if ((listed != null) == partial)
+	{
+		detail.append_string(`give "keys": [indices] to remove those keyframes, or "partial": true to remove every keyframe that keys fewer joints than the fullest — one of them.`);
+		return REWRITE_REFUSED~;
+	}
+
+	bool[] drop = alloc::new_array(mem, bool, (sz)count);
+	defer alloc::free(mem, drop);
+	usz dropping = 0;
+	if (partial)
+	{
+		usz fullest = 0;
+		foreach (frame : clip.keyframes) if (frame.dots.len > fullest) fullest = frame.dots.len;
+		foreach (usz i, frame : clip.keyframes)
+		{
+			if (frame.dots.len >= fullest) continue;
+			drop[i] = true;
+			dropping++;
+		}
+	}
+	else
+	{
+		if (!listed.is_array())
+		{
+			detail.append_string(`"keys" must be an array of keyframe indices, counted from 0.`);
+			return REWRITE_REFUSED~;
+		}
+		for (sz i = 0; i < listed.get_len(); i++)
+		{
+			double? at = listed.get_float_at((usz)i);
+			if (catch at)
+			{
+				detail.append_string(`"keys" must hold whole numbers: keyframe indices, counted from 0.`);
+				return REWRITE_REFUSED~;
+			}
+			if (at < 0 || at >= (double)count || at != math::floor(at))
+			{
+				detail.appendf(`key %.9g is not one of %s's keyframes, which run 0 to %d.`, at, clip.name, (sz)count - 1);
+				return REWRITE_REFUSED~;
+			}
+			if (!drop[(usz)at]) dropping++;
+			drop[(usz)at] = true;
+		}
+	}
+	if (dropping == 0)
+	{
+		detail.appendf(`every keyframe of %s keys the same joints, so none is partial.`, clip.name);
+		return REWRITE_REFUSED~;
+	}
+	if (dropping >= count)
+	{
+		detail.append_string("that would remove every keyframe. delete_clip removes a clip.");
+		return REWRITE_REFUSED~;
+	}
+	return landed_rewrite_json(app, ref, clip_without_keys(mem, *clip, drop), "keys removed", detail);
 }
 
 fn String? tool_smooth_clip(Object* args, void* user_data, DString* detail) @private

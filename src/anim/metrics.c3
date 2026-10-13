@@ -23,6 +23,9 @@ module crig;
 import rig;
 import std::math;
 import std::math::vector;
+import std::math::quaternion;
+import std::sort;
+import std::collections::list;
 
 
 
@@ -58,6 +61,12 @@ enum ClipIssueKind : int
 	LIMIT_SATURATION,
 	LOOP_POSITION,
 	LOOP_VELOCITY,
+	POP,
+	ROOT_POP,
+	LIMITS_INVERTED,
+	LIMITS_BLOCKED,
+	LIMITS_STALE,
+	AIM_STARE,
 }
 
 fn String ClipIssueKind.tag(self)
@@ -69,6 +78,12 @@ fn String ClipIssueKind.tag(self)
 		case LIMIT_SATURATION: return "limit_saturation";
 		case LOOP_POSITION: return "loop_position";
 		case LOOP_VELOCITY: return "loop_velocity";
+		case POP: return "pop";
+		case ROOT_POP: return "root_pop";
+		case LIMITS_INVERTED: return "limits_inverted";
+		case LIMITS_BLOCKED: return "limits_blocked";
+		case LIMITS_STALE: return "limits_stale";
+		case AIM_STARE: return "aim_stare";
 		default: return "";
 	}
 }
@@ -80,7 +95,38 @@ struct ClipIssue
 	float phase;     // where in the cycle, 0 to 1
 	float magnitude; // the unit is the kind's; see ClipIssueKind
 	int axis;        // 0/1/2 = the bone-local X/Y/Z a limit was hit on; -1 otherwise
+	int key;         // 1 + the keyframe a pop sits on, so 0 is none
 }
+
+<*
+ Whether a fault is a note rather than a defect: something an author may have
+ meant, worth saying, and no reason to call the clip unfinished.
+*>
+fn bool ClipIssueKind.advisory(self) => self == AIM_STARE;
+
+// A limit overshoot past this many radians is worth a fix: the clip plays visibly
+// other than it was keyed. Under it playback holds the joint a few degrees short
+// of its key, which no one watching can see.
+const float ISSUE_LIMIT_NOTABLE = 0.1f;
+
+<*
+ Whether a fault keeps a clip from being usable: every defect past its
+ tolerance, but not a note, and not a limit overshoot. What the limits hold is
+ what plays, and every other measurement is of that — a held joint that snaps,
+ sinks or skates is reported as the pop, sink or slide it makes. The overshoot
+ says the keys ask for something the rig refuses, which is worth knowing and is
+ not on its own a fault anyone sees.
+*>
+fn bool ClipIssue.blocks(self)
+{
+	return !self.kind.advisory() && self.kind != LIMIT_SATURATION;
+}
+
+<*
+ Whether a fault is about the rig rather than the clip: no edit to the keys
+ mends it, and every clip on the rig carries it.
+*>
+fn bool ClipIssueKind.of_rig(self) => self == LIMITS_INVERTED || self == LIMITS_BLOCKED || self == LIMITS_STALE;
 
 // The thresholds below which a fault is not worth an author's attention: a slide
 // or sink under this fraction of rig height, an authored rotation under this many
@@ -93,6 +139,30 @@ const float ISSUE_PENETRATION_TOLERANCE = 0.005f;
 const float ISSUE_LIMIT_TOLERANCE = 0.02f;
 const float ISSUE_LOOP_POSITION_TOLERANCE = 0.01f;
 const float ISSUE_LOOP_VELOCITY_TOLERANCE = 0.25f;
+// A pop: a joint that turns further than this in a blink. Two readings, either
+// enough. A step between neighbouring instants of more than POP_STEP radians at
+// more than POP_SPEED radians per second — no body turns a joint at that rate,
+// so it is a key that snaps or a limit that flips. Or an instant that stands more
+// than ISSUE_POP_TOLERANCE radians off the path its neighbours either side set,
+// with the two no further apart than POP_WINDOW — a key that juts out of the
+// motion around it and back.
+const float ISSUE_POP_TOLERANCE = 0.25f;
+const float POP_STEP = 0.15f;
+const float POP_SPEED = 40.0f;
+const float POP_WINDOW = 0.1f;
+// A root pop: the figure's height stepping by more than ROOT_POP_STEP of rig
+// height at more than ISSUE_ROOT_POP_SPEED rig heights per second — a floor
+// solve changing its mind between one planted foot and the other, not a fall.
+const float ROOT_POP_STEP = 0.01f;
+const float ISSUE_ROOT_POP_SPEED = 4.0f;
+// How finely the clip is walked for pops: this many instants per second, plus
+// every key and both sides of every contact and pin edge, up to MOTION_MOST.
+const float MOTION_RATE = 120.0f;
+const usz MOTION_MOST = 2048;
+// How far before a key, or either side of an edge, the second look is taken: far
+// inside one frame, so a value that steps there is seen to step.
+const float MOTION_EDGE = 2.0e-4f;
+
 // As many localized rows as one answer carries. A saturated limit is one row per
 // axis per joint, so a rig fighting its whole table could name many; past this the
 // aggregate is the better read.
@@ -241,6 +311,10 @@ fn ClipMetrics clip_metrics(
 			limit_active[j] = true;
 		}
 	}
+	// The same table in the form an export evaluates through, so every instant is
+	// measured as it plays: held inside the limits, then grounded, pinned and aimed.
+	ConstraintRig constraints = check_limits ? constraint_rig_of(allocator, doc, skeleton, dot_ids) : (ConstraintRig){};
+	defer constraints.free(allocator);
 
 	// The deepest a joint ever sank below the floor, and where — the aggregate
 	// floor_penetration, localized.
@@ -262,14 +336,17 @@ fn ClipMetrics clip_metrics(
 			: (float)s / (float)(out.samples - 1);
 
 		float at_time = phase * template.duration;
-		rig::Pose pose = template.pose(allocator, skeleton, names, at_time);
-		defer pose.free(allocator);
 		// The clip's pins hold its feet when it plays and when it is exported, so
 		// they are part of what it does: a planted foot measured without its pin
-		// would report the slide the pin exists to take away.
-		if (template.plays_pins())
+		// would report the slide the pin exists to take away. The limits are too: a
+		// knee the table holds straight walks straight, whatever its keys say.
+		rig::Pose authored;
+		rig::Pose pose = played_pose(allocator, skeleton, names, template, at_time, constraints,
+			check_limits ? &authored : null);
+		defer
 		{
-			pin_pose(allocator, skeleton, names, template.pins, at_time, template.duration, template.loop, &pose, skeleton.height());
+			pose.free(allocator);
+			if (check_limits) authored.free(allocator);
 		}
 
 		Matrix4f[]? built = rig::joint_palette(allocator, skeleton, pose);
@@ -304,7 +381,7 @@ fn ClipMetrics clip_metrics(
 			// would remove.
 			if (check_limits && limit_active[j])
 			{
-				Vec3 angles = joint_angles_from_rotation(limit_frame[j], pose.rotations[j]);
+				Vec3 angles = joint_angles_from_rotation(limit_frame[j], authored.rotations[j]);
 				for (usz i = 0; i < 3; i++)
 				{
 					float over = limit_table[j].axes[i].overshoot(angles[i]);
@@ -371,7 +448,41 @@ fn ClipMetrics clip_metrics(
 	out.stride /= height;
 	out.root_bob /= height;
 
-	collect_issues(&out, allocator, tracked, names, foot_slide_worst[:foot_count],
+	// The faults found by their own walks: the rig's hinges first, since no edit to
+	// a clip mends them, then the instants the clip snaps.
+	ClipIssue[ISSUE_MOST] found;
+	usz found_count = 0;
+	if (check_limits)
+	{
+		StaleFrame[STALE_FRAME_MOST] stale;
+		usz drifted = stale_limit_frames(doc, skeleton, names, dot_ids, stale[..]);
+		for (usz h = 0; h < drifted && found_count < ISSUE_MOST; h++)
+		{
+			found[found_count++] = {
+				.kind = LIMITS_STALE,
+				.joint = stale[h].joint,
+				.phase = 0.0f,
+				.magnitude = stale[h].drift,
+				.axis = -1,
+			};
+		}
+		HingeIssue[HINGE_MOST] hinges;
+		usz hinge_count = hinge_issues(doc, skeleton, names, dot_ids, hinges[..]);
+		for (usz h = 0; h < hinge_count && found_count < ISSUE_MOST; h++)
+		{
+			found[found_count++] = {
+				.kind = hinges[h].kind == INVERTED ? LIMITS_INVERTED : LIMITS_BLOCKED,
+				.joint = hinges[h].joint,
+				.phase = 0.0f,
+				.magnitude = hinges[h].refused,
+				.axis = -1,
+			};
+		}
+	}
+	found_count += motion_issues(allocator, skeleton, names, template, constraints, height, found[found_count..]);
+	found_count += stare_issues(template, found[found_count..]);
+
+	collect_issues(&out, allocator, found[:found_count], tracked, names, foot_slide_worst[:foot_count],
 		foot_slide_sample[:foot_count], feet[:foot_count], root, height, template,
 		skeleton, feet_spec, feet_entry[:foot_count],
 		worst_sink, worst_sink_joint, worst_sink_phase,
@@ -386,6 +497,7 @@ fn ClipMetrics clip_metrics(
 fn void collect_issues(
 	ClipMetrics* out,
 	Allocator allocator,
+	ClipIssue[] found,
 	Vec3[] tracked,
 	String[] names,
 	float[] foot_slide_worst,
@@ -409,6 +521,11 @@ fn void collect_issues(
 	usz samples = out.samples;
 	ClipIssue[ISSUE_MOST] scratch;
 	usz count = 0;
+	foreach (issue : found)
+	{
+		if (count >= ISSUE_MOST) break;
+		scratch[count++] = issue;
+	}
 
 	// A foot whose slide, localized to its own worst sample, clears the tolerance.
 	foreach (usz f, joint : feet)
@@ -466,28 +583,44 @@ fn void collect_issues(
 	if (template.loop && samples >= 6 && template.duration > 0.0f && count + 2 <= ISSUE_MOST)
 	{
 		float step_time = template.duration / (float)samples;
+		float[] usual_position = alloc::new_array(allocator, float, (sz)samples);
+		float[] usual_velocity = alloc::new_array(allocator, float, (sz)samples);
+		defer
+		{
+			alloc::free(allocator, usual_position);
+			alloc::free(allocator, usual_velocity);
+		}
 		float worst_pos = 0.0f;
 		usz worst_pos_joint = 0;
 		float worst_vel = 0.0f;
 		usz worst_vel_joint = 0;
 		for (usz j = 0; j < joints; j++)
 		{
-			Vec3 n3 = seam_relative(tracked, samples, j, root, samples - 3);
-			Vec3 n2 = seam_relative(tracked, samples, j, root, samples - 2);
-			Vec3 n1 = seam_relative(tracked, samples, j, root, samples - 1);
-			Vec3 z0 = seam_relative(tracked, samples, j, root, 0);
-			Vec3 z1 = seam_relative(tracked, samples, j, root, 1);
-			Vec3 z2 = seam_relative(tracked, samples, j, root, 2);
-			Vec3 incoming = n1 - n2;
-			Vec3 outgoing = z1 - z0;
-			Vec3 across = z0 - n1;
-			float position_gap = (across - (incoming + outgoing) * 0.5f).length() / height;
-			// The speed change across the seam beyond what the motion's own
-			// acceleration either side of it accounts for: a swing foot speeding up
-			// through the seam is motion, a speed that jumps there is a fault.
-			Vec3 before = (n1 - n2) - (n2 - n3);
-			Vec3 after = (z2 - z1) - (z1 - z0);
-			float velocity_gap = (outgoing - incoming - (before + after)).length() / (step_time * height);
+			float position_gap;
+			float velocity_gap;
+			seam_gaps(tracked, samples, j, root, 0, step_time, height, &position_gap, &velocity_gap);
+			// Judged against the joint's own motion everywhere else: the same
+			// reading taken across every other pair of neighbouring samples, and the
+			// level nine in ten of them stay under. A cycle keyed linearly has a
+			// small corner at every key, and a dense take a tremble at every frame;
+			// a seam is a fault only where it is rougher than the motion it closes.
+			// The odd sharp corner elsewhere does not raise the bar — a seam that
+			// flips direction is still one, however the middle turns.
+			usz others = 0;
+			for (usz k = 3; k + 3 <= samples; k++)
+			{
+				seam_gaps(tracked, samples, j, root, k, step_time, height, &usual_position[others], &usual_velocity[others]);
+				others++;
+			}
+			if (others > 0)
+			{
+				sort::quicksort(usual_position[:others]);
+				sort::quicksort(usual_velocity[:others]);
+				usz level = (usz)((float)others * 0.9f);
+				if (level >= others) level = others - 1;
+				position_gap = math::max(position_gap - usual_position[level], 0.0f);
+				velocity_gap = math::max(velocity_gap - usual_velocity[level], 0.0f);
+			}
 			if (position_gap > worst_pos) { worst_pos = position_gap; worst_pos_joint = j; }
 			// A foot touching down or lifting at the seam is an impulse, not a fault:
 			// the contact joint and what hangs off it (the toes) are let off.
@@ -549,6 +682,33 @@ fn bool seam_contact_impulse(rig::Skeleton* skeleton, AnimGround spec, usz[] fee
 		if (down <= one_sample + 1.0e-6f || up <= one_sample + 1.0e-6f) return true;
 	}
 	return false;
+}
+
+<*
+ How far the motion jumps between sample `at - 1` and sample `at` (wrapping), in
+ position and in speed, beyond what the motion either side of the gap accounts
+ for. At `at` = 0 that is the loop seam.
+
+ The speed change is measured beyond what the motion's own acceleration either
+ side accounts for: a swing foot speeding up through the seam is motion, a
+ speed that jumps there is a fault.
+*>
+fn void seam_gaps(Vec3[] tracked, usz samples, usz j, usz root, usz at, float step_time, float height,
+	float* position_gap, float* velocity_gap) @local
+{
+	Vec3 n3 = seam_relative(tracked, samples, j, root, (at + samples - 3) % samples);
+	Vec3 n2 = seam_relative(tracked, samples, j, root, (at + samples - 2) % samples);
+	Vec3 n1 = seam_relative(tracked, samples, j, root, (at + samples - 1) % samples);
+	Vec3 z0 = seam_relative(tracked, samples, j, root, at % samples);
+	Vec3 z1 = seam_relative(tracked, samples, j, root, (at + 1) % samples);
+	Vec3 z2 = seam_relative(tracked, samples, j, root, (at + 2) % samples);
+	Vec3 incoming = n1 - n2;
+	Vec3 outgoing = z1 - z0;
+	Vec3 across = z0 - n1;
+	*position_gap = (across - (incoming + outgoing) * 0.5f).length() / height;
+	Vec3 before = (n1 - n2) - (n2 - n3);
+	Vec3 after = (z2 - z1) - (z1 - z0);
+	*velocity_gap = (outgoing - incoming - (before + after)).length() / (step_time * height);
 }
 
 // One joint's world position at a sample, with the root's horizontal carry taken
@@ -742,4 +902,340 @@ fn usz ground_joints(rig::Skeleton* skeleton, String[] names, AnimGround ground,
 		}
 	}
 	return found;
+}
+
+<*
+ One instant of a clip as it plays and as it exports: the keys, held inside the
+ rig's limits, put on the floor, with its pins and then its aims laid over. The
+ order of `evaluated_export_pose`, and of the viewport's `evaluated_clip_pose`.
+
+ With no limit table (`constraints` empty) the clamp passes the keys through.
+
+ The caller owns the returned pose, and `authored` when it is asked for.
+
+ @param authored : `Filled with the keys as sampled, before any limit holds them — what a limit check reads. Null to skip.`
+*>
+fn rig::Pose played_pose(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	String[] names,
+	AnimTemplate template,
+	float time,
+	ConstraintRig constraints,
+	rig::Pose* authored = null)
+{
+	rig::Pose pose = template.pose(allocator, skeleton, names, time, false);
+	if (authored) *authored = pose.copy(allocator);
+	constrain_pose_to_constraint_rig(skeleton, constraints, &pose);
+	ground_pose(allocator, skeleton, names, template.ground, &pose, template.phase_at(time));
+	aim_export_pose(allocator, skeleton, names, template, time, constraints, &pose);
+	return pose;
+}
+
+<*
+ The instants a clip snaps at: a joint turning further in a blink than a body
+ can, and the figure's height stepping.
+
+ Neither shows in a contact sheet, whose frames fall either side of a
+ five-millisecond flick, nor in the even samples the other measurements take: a
+ leftover key a millisecond off its neighbour, a limit flipping a knee to the far
+ end of its range, or a loop whose last frame jumps back to its first all sit
+ between them. So this walks the clip finely, adds every key and both sides of
+ it, and both sides of every contact and pin edge, and on a loop runs on through
+ the seam into the start.
+
+ Kept worst per joint, plus one row for the root's height, so the answer stays
+ an edit list. A row on a key carries that key (1 + its index in the clip).
+
+ @return `How many were written to the front of into.`
+*>
+fn usz motion_issues(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	String[] names,
+	AnimTemplate template,
+	ConstraintRig constraints,
+	float height,
+	ClipIssue[] into)
+{
+	usz joints = skeleton.len();
+	float duration = template.duration;
+	if (joints == 0 || !(duration > 0.0f) || into.len == 0) return 0;
+
+	float[] times = motion_sample_times(allocator, template);
+	defer if (times.len > 0) alloc::free(allocator, times);
+	usz n = times.len;
+	if (n < 3) return 0;
+
+	usz root = 0;
+	while (skeleton.parents[root] >= 0) root = (usz)skeleton.parents[root];
+
+	// The last three instants' rotations, a ring the walk turns round, and the
+	// first two again for a loop to run on into.
+	Quaternionf[] ring = alloc::new_array(allocator, Quaternionf, (sz)(joints * 3));
+	Quaternionf[] start = alloc::new_array(allocator, Quaternionf, (sz)(joints * 2));
+	float[] worst = alloc::new_array(allocator, float, (sz)joints);
+	float[] worst_time = alloc::new_array(allocator, float, (sz)joints);
+	defer
+	{
+		alloc::free(allocator, ring);
+		alloc::free(allocator, start);
+		alloc::free(allocator, worst);
+		alloc::free(allocator, worst_time);
+	}
+	float[3] ring_time;
+	float[3] ring_y;
+	float[2] start_y;
+	float root_worst = 0.0f;
+	float root_time = 0.0f;
+
+	usz total = template.loop ? n + 2 : n;
+	for (usz i = 0; i < total; i++)
+	{
+		usz slot = i % 3;
+		Quaternionf[] here = ring[slot * joints : joints];
+		if (i < n)
+		{
+			ring_time[slot] = times[i];
+			rig::Pose pose = played_pose(allocator, skeleton, names, template, times[i], constraints);
+			defer pose.free(allocator);
+			for (usz j = 0; j < joints; j++) here[j] = j < pose.rotations.len ? pose.rotations[j] : quaternion::IDENTITY;
+			ring_y[slot] = root < pose.offsets.len ? pose.offsets[root].y : 0.0f;
+			if (i < 2)
+			{
+				start[i * joints : joints] = here[..];
+				start_y[i] = ring_y[slot];
+			}
+		}
+		else
+		{
+			// Through the seam: the start again, one cycle on.
+			ring_time[slot] = times[i - n] + duration;
+			here[..] = start[(i - n) * joints : joints];
+			ring_y[slot] = start_y[i - n];
+		}
+		if (i == 0) continue;
+
+		usz was = (i + 2) % 3;
+		float dt = ring_time[slot] - ring_time[was];
+		if (dt > 0.0f)
+		{
+			Quaternionf[] before = ring[was * joints : joints];
+			for (usz j = 0; j < joints; j++)
+			{
+				float turned = rotation_gap(before[j], here[j]);
+				if (turned > POP_STEP && turned / dt > POP_SPEED && turned > worst[j])
+				{
+					worst[j] = turned;
+					worst_time[j] = ring_time[slot];
+				}
+			}
+			float rose = math::abs(ring_y[slot] - ring_y[was]);
+			if (rose > ROOT_POP_STEP * height && rose / dt > ISSUE_ROOT_POP_SPEED * height && rose > root_worst)
+			{
+				root_worst = rose;
+				root_time = ring_time[slot];
+			}
+		}
+		if (i == 1) continue;
+
+		// The middle instant against the path its two neighbours set.
+		usz first = (i + 1) % 3;
+		float span = ring_time[slot] - ring_time[first];
+		if (span > 0.0f && span <= POP_WINDOW)
+		{
+			float u = (ring_time[was] - ring_time[first]) / span;
+			Quaternionf[] left = ring[first * joints : joints];
+			Quaternionf[] mid = ring[was * joints : joints];
+			for (usz j = 0; j < joints; j++)
+			{
+				Quaternionf expected = slerp_short(left[j], here[j], u);
+				float off = rotation_gap(expected, mid[j]);
+				if (off > ISSUE_POP_TOLERANCE && off > worst[j])
+				{
+					worst[j] = off;
+					worst_time[j] = ring_time[was];
+				}
+			}
+		}
+	}
+
+	usz count = 0;
+	for (usz j = 0; j < joints && count < into.len; j++)
+	{
+		if (worst[j] <= 0.0f) continue;
+		into[count++] = {
+			.kind = POP,
+			.joint = j < names.len ? names[j] : "",
+			.phase = wrapped_phase(worst_time[j], duration),
+			.magnitude = worst[j],
+			.axis = -1,
+			.key = key_at(template, worst_time[j]),
+		};
+	}
+	if (root_worst > 0.0f && count < into.len)
+	{
+		into[count++] = {
+			.kind = ROOT_POP,
+			.joint = root < names.len ? names[root] : "",
+			.phase = wrapped_phase(root_time, duration),
+			.magnitude = root_worst / height,
+			.axis = -1,
+			.key = key_at(template, root_time),
+		};
+	}
+	return count;
+}
+
+<*
+ Every instant `motion_issues` looks at, sorted and distinct: an even grid of
+ MOTION_RATE a second, each key and a moment before it, and both sides of every
+ ground window's and pin's edges. A loop's run on `[0, duration)`; a one-shot's
+ on `[0, duration]`.
+
+ The caller owns the result.
+*>
+fn float[] motion_sample_times(Allocator allocator, AnimTemplate template) @local
+{
+	float duration = template.duration;
+	usz grid = (usz)math::ceil(duration * MOTION_RATE);
+	if (grid < 8) grid = 8;
+	if (grid > MOTION_MOST / 2) grid = MOTION_MOST / 2;
+
+	List{float} all;
+	all.init(allocator);
+	defer all.free();
+	for (usz i = 0; i <= grid; i++) all.push(duration * (float)i / (float)grid);
+	foreach (frame : template.keyframes)
+	{
+		all.push(frame.time);
+		all.push(frame.time - MOTION_EDGE);
+	}
+	foreach (foot : template.ground.feet)
+	{
+		foreach (edge : (float[2]){ foot.down, foot.up })
+		{
+			all.push(edge * duration - MOTION_EDGE);
+			all.push(edge * duration + MOTION_EDGE);
+		}
+	}
+	foreach (pin : template.pins)
+	{
+		if (pin.mute) continue;
+		foreach (edge : (float[2]){ pin.from, pin.to })
+		{
+			all.push(edge - MOTION_EDGE);
+			all.push(edge + MOTION_EDGE);
+		}
+	}
+
+	// Onto the clip, the cycle's end being its start again.
+	float[] raw = all.array_view();
+	usz kept = 0;
+	foreach (t : raw)
+	{
+		float at = t;
+		if (template.loop)
+		{
+			at = at - math::floor(at / duration) * duration;
+			if (at >= duration - MOTION_EDGE * 0.1f) continue;
+		}
+		else if (at < 0.0f || at > duration) continue;
+		raw[kept++] = at;
+	}
+	if (kept == 0) return {};
+	sort::quicksort(raw[:kept]);
+
+	float[] out = alloc::new_array(allocator, float, (sz)kept);
+	usz used = 0;
+	foreach (t : raw[:kept])
+	{
+		if (used > 0 && t - out[used - 1] < MOTION_EDGE * 0.1f) continue;
+		if (used >= MOTION_MOST) break;
+		out[used++] = t;
+	}
+	return out[:used];
+}
+
+<*
+ A look-at that stares: a lock whose target never moves, held over the whole
+ clip. A head locked on one point holds still while the body moves under it —
+ right for a guard watching a door, wrong for a walk, where the head should ride
+ the body. A note, not a fault: only the author knows which this is.
+*>
+fn usz stare_issues(AnimTemplate template, ClipIssue[] into) @local
+{
+	usz count = 0;
+	foreach (aim : template.aims)
+	{
+		if (count >= into.len) break;
+		if (aim.mute || !(aim.influence > 0.0f)) continue;
+		sz found = aim_target_index_of(template.aim_targets, aim.target);
+		if (found < 0) continue;
+		AnimAimTarget target = template.aim_targets[(usz)found];
+		if (target.mute || target.keys.len == 0) continue;
+		bool still = true;
+		foreach (key : target.keys)
+		{
+			if ((key.at - target.keys[0].at).length() > 1.0e-4f) still = false;
+		}
+		if (!still) continue;
+		into[count++] = {
+			.kind = AIM_STARE,
+			.joint = aim.joint,
+			.phase = 0.0f,
+			.magnitude = aim.influence,
+			.axis = -1,
+		};
+	}
+	return count;
+}
+
+// How near a key a pop has to fall to be put down to it: inside one 100 Hz frame.
+const float POP_KEY_REACH = 0.01f;
+
+<*
+ 1 + the key a pop at `time` is put down to, or 0 when none is near. A snap is
+ seen on the step into or out of the key that makes it, a sample either side, so
+ the nearest key in reach is taken — and a partial key in reach before any whole
+ pose, since a key naming a few joints between whole poses is the one that juts.
+*>
+fn int key_at(AnimTemplate template, float time) @local
+{
+	float duration = template.duration;
+	float at = template.loop ? time - math::floor(time / duration) * duration : time;
+	usz fullest = 0;
+	foreach (frame : template.keyframes) if (frame.dots.len > fullest) fullest = frame.dots.len;
+
+	int best = 0;
+	float best_gap = 0.0f;
+	bool best_partial = false;
+	foreach (usz k, frame : template.keyframes)
+	{
+		float gap = math::abs(frame.time - at);
+		// Across the seam, a key near the end is near the start.
+		if (template.loop) gap = math::min(gap, duration - gap);
+		if (gap > POP_KEY_REACH) continue;
+		bool partial = frame.dots.len < fullest;
+		if (best == 0 || (partial && !best_partial) || (partial == best_partial && gap < best_gap))
+		{
+			best = (int)k + 1;
+			best_gap = gap;
+			best_partial = partial;
+		}
+	}
+	return best;
+}
+
+fn float wrapped_phase(float time, float duration) @local
+{
+	float phase = time / duration;
+	return phase - math::floor(phase);
+}
+
+// The angle one rotation stands from another, the short way round.
+fn float rotation_gap(Quaternionf a, Quaternionf b) @local
+{
+	float dot = math::abs(a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w);
+	return 2.0f * math::acos(math::min(dot, 1.0f));
 }

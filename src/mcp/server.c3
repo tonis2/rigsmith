@@ -43,6 +43,7 @@ module crig;
 
 import rig;
 import std::collections::object;
+import std::collections::list;
 
 import std::math;
 
@@ -70,6 +71,7 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
 		},"required":["joint"]}},
 		"floor":{"type":"number","description":"Model-space height the feet rest on. Defaults to the lowest contact joint's own rest height, which is where the modeller put the sole."}
 	},"required":["feet"]},
+	"layers":{"type":"array","description":"The clip's layer stack, each in set_layer's layer shape (kind keyed|wave|noise|pulse, mode additive|override, weight, mask, keyframes, joint/tip, axis, amplitude, cycles, lag, falloff, ...). Stated, it replaces the stack and an empty list clears it; left out, a clip of this name already authored keeps its own. get_crig_docs topic layers.","items":{"type":"object"}},
 	"mirror":{"type":"object","description":"Fill in the other side. Every joint whose name ends _L or _R gets its twin driven by the reflected motion, and the ground windows are mirrored with it. Write one leg and one arm; this writes the rest.","properties":{
 		"phase":{"type":"number","description":"How much of the cycle the mirrored side lags by, 0 to 1. Default 0.5, which is a walk or a run."}
 	}},
@@ -82,6 +84,8 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
 			"pivot":{"type":"string","description":"Root entry only: the name of a joint the root's rotation turns about instead of the root's own point (a front shoulder, a foot, the head). The root's move is adjusted so that joint stays where it was — where this keyframe's other entries and move put it without the turn. Any other joint's entry refuses a pivot."},
 			"space":{"type":"string","enum":["local","world"],"description":"Which frame this entry's rotation and move are measured in. local, the default, is a turn against the parent as this clip has already posed it — so the axis a joint answers to moves as the joints above it move, and is the model's own axis only while nothing above it is turned. world states where the joint points against the model's axes whatever the chain above is doing, and Rigsmith works out the turn that lands there; it is the only workable way to write a rig that rests in a T-pose and animates with its arms down. Mixing them inside one keyframe is fine and often right: the shoulder in world, the elbow as a hinge off it."},
 			"move":{"type":"array","description":"[x,y,z] slide as a fraction of rig height, not model units. Omit to leave this channel unkeyed at this time. An entry must provide rotation, move, or both.","items":{"type":"number"}},
+			"rotation_ease":{"description":"How the rotation segment leaving this key spends its time: [start, end], each 0 (untouched) to 1 (a flat tangent at that end), or \"in\" (starts slow), \"out\" (settles), \"in_out\". The path is the same; only its pacing changes — a reach that accelerates away and settles into the next pose instead of moving at one rate. Omit for even pacing.","anyOf":[{"type":"array","items":{"type":"number"}},{"type":"string","enum":["in","out","in_out","none"]}]},
+			"translation_ease":{"description":"The same for the move segment leaving this key.","anyOf":[{"type":"array","items":{"type":"number"}},{"type":"string","enum":["in","out","in_out","none"]}]},
 			"translation_interpolation":{"type":"string","enum":["hold","linear","auto"],"description":"How this move leaves the key: hold keeps it unchanged until the next move key, linear goes straight, and auto uses the smooth fitted curve. Omit to inherit the clip blend."}
 		},"required":["name"]}}
 	},"required":["time"]}}
@@ -112,7 +116,7 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
  whole table as `crig.ops.<name>`); hiding the loops behind it turns a toll paid
  on every request into a lookup paid by the caller that wants it.
 
- So the five that stay are the ones a session actually opens with, and each earns
+ So the few that stay are the ones a session actually opens with, and each earns
  it twice — a single decision rather than a loop, *and* a schema small enough that
  listing it is not the cost being avoided:
 
@@ -128,6 +132,11 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
  - `list_poses`, `get_saved_pose` and `tween_poses`: the person saves poses in
    the Pose tab and asks for an animation between them by name, so the agent
    has to see that these exist without being told.
+ - `measure_clip`: the verdict on a clip. An agent that never learns it exists
+   ships clips whose knees the rig clamps straight and whose keys snap, judging
+   them by contact sheets that fall either side of the fault.
+ - `render`, `set_camera`, `get_annotations` and `solve_targets`: looking at the
+   work, and the one-call reach a person asks for by pointing.
 
  Discovery is what this costs, and it is paid for in the prelude: `crig.help()`
  names every tool here and `crig.help(name)` returns this registration's own
@@ -157,7 +166,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "get_pose",
-		.description = "Sample a clip at time t against the live rig: every joint's world position and world orientation (quaternion [x,y,z,w]). The numeric eyes — author blind, then read this back and adjust.",
+		.description = "Sample a clip at time t against the live rig, as it plays and exports: the keys held inside the rig's joint limits, grounded, pinned and aimed. Every joint's world position and world orientation (quaternion [x,y,z,w]), and limited: each joint whose keyed turn the limits changed, with the radians removed — a keyed bend that plays straight shows there. The numeric eyes — author blind, then read this back and adjust.",
 		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"t":{"type":"number","description":"Seconds from the clip's start","default":0}},"required":["clip"]}`,
 		.handler = &tool_get_pose,
 		.user_data = app,
@@ -165,11 +174,10 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "measure_clip",
-		.description = "What a clip does, as numbers: how much a planted foot skates, how fast the figure has to travel for it not to, how deep anything gets below the floor, the stride, the root's bob, and every joint's travel and height range. All as fractions of rig height, sampled against the live rig. A locomotion cycle runs in place, so its stance foot is meant to travel a whole stride backward — foot_slide is the departure from doing that steadily, which is what skating is, and ground_speed is the rate it implies. Beside the aggregates it answers with an issues list that localizes each fault to a joint and a phase: a foot's worst slide, the joint that sinks deepest through the floor, each bone-local axis an animated rotation runs past its rotation limit (with the radians over), and — on a looping clip — the joint whose position or velocity jumps hardest across the seam, measured with the root's intended forward travel removed. Each issue carries its unit, and a tolerances object states the threshold each had to clear to be named. So the aggregates say a cycle is wrong and the issues say where to edit; pin_feet, solve_targets and patch_clip are how to fix each.",
-		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"samples":{"type":"number","description":"Instants to look at, spread over the cycle","default":32}},"required":["clip"]}`,
+		.description = "Whether a clip is fit to ship, and what to call to make it so. Answers verdict usable or needs_work, an issues list that localizes each fault to a joint, a phase and (for a pop on a key) the key, and fixes: one call per kind of fault with its arguments filled in. Measured as the clip plays and exports — the keys held inside the rig's joint limits, grounded, pinned and aimed. Faults (each marked blocks:false is reported without making the verdict needs_work): limits_inverted / limits_blocked (the rig's knee or elbow limits refuse the natural fold — every clip plays clamped until edit_rig plan_limits mends it), pop (a joint snapping: a leftover partial key, a limit clamp flipping, a loop whose end jumps to its start — found by walking every key and 120 instants a second, so a snap between frames is still seen), root_pop (the body's height jumping where the floor solve changes feet), foot_slide (a planted foot skating; a clip with no ground spec is measured by the feet its motion plants), floor_penetration, limit_saturation (keys turning a joint past its limits, read before the limits hold them; never blocks, since what plays is the held pose), loop_position / loop_velocity (the seam), and aim_stare (a note: a look-at on one still point). Beside them the aggregates: foot_slide, ground_speed (how fast the figure must travel for an in-place cycle not to skate), floor_penetration, stride, root bob, and every joint's travel and height range, as fractions of rig height. Every tool that writes a clip answers with these numbers under metrics; get_crig_docs topic quality is the loop to follow.",
+		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"samples":{"type":"number","description":"Even instants for the slide, seam and travel measurements. Default: sixty a second of clip, 32 to 256. Pops are always walked at every key and 120 a second."}},"required":["clip"]}`,
 		.handler = &tool_measure_clip,
 		.user_data = app,
-		.hidden = true,
 	});
 	server.add_tool({
 		.name = "get_clip",
@@ -181,7 +189,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "apply_clip",
-		.description = "Write an animation clip into the authored pack, replacing any clip of the same name, and bind it into the timeline as the selected, editable clip — so play then pause holds it rather than snapping back to another clip. Joints are addressed by the names get_skeleton reports. Rotation and move are independent sparse tracks: omit either to leave that channel unkeyed at this time, but provide at least one. A rotation is a quaternion, axis and angle, or three euler radians, measured against the parent by default or against the model's axes with space set to world; world conversion samples the complete ancestor tracks at that time. Move is a fraction of rig height. Keyframe times must increase. A keyed channel can set its outgoing interpolation to hold, linear or auto; otherwise it inherits the clip blend. Give the clip a ground spec to plant feet against the loaded rig or a mirror to write the other side. The clip becomes playable in Rigsmith's own library.",
+		.description = "Answers with measure_clip's verdict, issues and fixes for what was written, under metrics — a clip is not done until it reads usable (get_crig_docs topic quality). Write an animation clip into the authored pack, replacing any clip of the same name, and bind it into the timeline as the selected, editable clip — so play then pause holds it rather than snapping back to another clip. Joints are addressed by the names get_skeleton reports. Rotation and move are independent sparse tracks: omit either to leave that channel unkeyed at this time, but provide at least one. A rotation is a quaternion, axis and angle, or three euler radians, measured against the parent by default or against the model's axes with space set to world; world conversion samples the complete ancestor tracks at that time. Move is a fraction of rig height. Keyframe times must increase. A keyed channel can set its outgoing interpolation to hold, linear or auto; otherwise it inherits the clip blend. Give the clip a ground spec to plant feet against the loaded rig or a mirror to write the other side. The clip becomes playable in Rigsmith's own library.",
 		.input_schema = APPLY_CLIP_SCHEMA,
 		.handler = &tool_apply_clip,
 		.user_data = app,
@@ -409,7 +417,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	if (!hosted()) server.add_tool({
 		.name = "get_api_docs",
-		.description = "The conventions every tool follows, and every tool's own arguments. No arguments answers with an index: a line naming each section — clips, authoring, turning, targets, editing, playback, cycles, ground, looking, rigging, scripting, weights, physics, review, gaits, layers, pins — and the name of every registered tool, listed or not. {\"topic\":\"ground\"} returns one section in full and {\"topic\":\"all\"} returns the lot, which is some twelve thousand characters. {\"tool\":\"apply_clip\"} returns that tool's description and JSON Schema off the registration itself, which is how to read the arguments of the tools that are not in this list without writing a script to ask. Read the conventions before authoring anything: they are what no schema has room for.",
+		.description = "The conventions every tool follows, and every tool's own arguments. No arguments answers with an index: a line naming each section — quality, clips, authoring, turning, targets, editing, playback, cycles, ground, gaits, looking, rigging, scripting, weights, physics, review, layers, pins, repair — and the name of every registered tool, listed or not. {\"topic\":\"ground\"} returns one section in full and {\"topic\":\"all\"} returns the lot, which is some twelve thousand characters. {\"tool\":\"apply_clip\"} returns that tool's description and JSON Schema off the registration itself, which is how to read the arguments of the tools that are not in this list without writing a script to ask. Read the conventions before authoring anything: they are what no schema has room for.",
 		.input_schema = `{"type":"object","properties":{
 	"topic":{"type":"string","description":"A section name from the index, or \"all\" for every section. Omit for the index."},
 	"tool":{"type":"string","description":"A tool's own description and JSON Schema, from the registry the wire validates against. The same answer a script gets from crig.help(name)."}
@@ -424,7 +432,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// twenty-odd hidden tools and the conventions no schema has room for.
 	server.add_tool({
 		.name = "get_crig_docs",
-		.description = "Rigsmith's conventions and its tool reference — the half three's get_api_docs, which answers for the scene, does not carry. No arguments gives an index: the sections (clips, authoring, turning, targets, editing, playback, cycles, ground, looking, rigging, scripting, weights, physics, review, gaits, layers, pins) and every tool's name, listed or not. {\"topic\":\"ground\"} returns one section, {\"topic\":\"all\"} every section. {\"tool\":\"apply_clip\"} returns that tool's description and JSON Schema off the registry the wire validates against, which is how to read the arguments of the hidden tools. A run_script body gets the same answers from crig.help(name).",
+		.description = "Rigsmith's conventions and its tool reference — the half three's get_api_docs, which answers for the scene, does not carry. No arguments gives an index: the sections (quality, clips, authoring, turning, targets, editing, playback, cycles, ground, gaits, looking, rigging, scripting, weights, physics, review, layers, pins, repair) and every tool's name, listed or not. Read quality first: it is the bar a clip has to clear and the loop that gets it there. {\"topic\":\"ground\"} returns one section, {\"topic\":\"all\"} every section. {\"tool\":\"apply_clip\"} returns that tool's description and JSON Schema off the registry the wire validates against, which is how to read the arguments of the hidden tools. A run_script body gets the same answers from crig.help(name).",
 		.input_schema = `{"type":"object","properties":{
 	"topic":{"type":"string","description":"A section name from the index, or \"all\" for every section. Omit for the index."},
 	"tool":{"type":"string","description":"A tool's own description and JSON Schema. The same answer a script gets from crig.help(name)."}
@@ -479,7 +487,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// and the tools that measure and fix one are where a session goes next.
 	server.add_tool({
 		.name = "generate_motion",
-		.description = "Generate an animation from a sentence and bind it to the character. Rigsmith runs NVIDIA's Kimodo text-to-motion model on its own GPU through the built-in llm pipeline (the weights are chosen in File › Settings › AI), and the clip it writes comes in like any downloaded clip: matched onto this rig's body plan by shape and bound, in place. It takes ten to thirty seconds, so the call starts the job and answers at once with state running; call it again with no prompt to follow it, until state is done (the clip's name, now playable by play, measurable by measure_clip, repairable with make_loop, smooth_clip, pin_feet and patch_clip — see get_crig_docs topic repair) or failed (the reason). One job runs at a time. When the prompt alone gives a broken motion, key the poses it has to hit in a clip and pass that clip as poses_from: Kimodo passes through each keyed pose at its time and makes the motion between.",
+		.description = "Generate an animation from a sentence and bind it to the character. Rigsmith runs NVIDIA's Kimodo text-to-motion model on its own GPU through the built-in llm pipeline (the weights are chosen in File › Settings › AI), and the clip it writes comes in like any downloaded clip: matched onto this rig's body plan by shape and bound, in place. It takes ten to thirty seconds, so the call starts the job and answers at once with state running; call it again with no prompt to follow it, until state is done (the clip's name, now playable by play, measurable by measure_clip, repairable with make_loop, smooth_clip, pin_feet and patch_clip — see get_crig_docs topics repair and quality; a take is not done until measure_clip reads usable) or failed (the reason). One job runs at a time. When the prompt alone gives a broken motion, key the poses it has to hit in a clip and pass that clip as poses_from: Kimodo passes through each keyed pose at its time and makes the motion between.",
 		.input_schema = GENERATE_MOTION_SCHEMA,
 		.handler = &tool_generate_motion,
 		.user_data = app,
@@ -505,7 +513,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// --- gait tools ---
 	server.add_tool({
 		.name = "author_gait",
-		.description = "Write a walk, trot, pace or gallop cycle for the rig's own legs, as ordinary editable keys in the authored pack (one undo step). Name a gait and a duration and it finds the feet (each left/right pair of limbs near the floor that ends in a toe), draws every foot's path — stance slides back at a constant speed along the floor, swing carries it forward through a lifted arc — and solves each two-to-four-bone leg onto it: analytic IK in the plane the rest leg bends in (so splayed legs work), the knee bending the side it rests on, a longer leg's distal segment holding its tilt and tilting only as far as the reach needs. Each foot keeps its own place in the cycle (walk is the lateral sequence, trot the diagonals, pace the lateral pairs, gallop the rotary order; custom takes every foot's offset) and the clip carries a ground spec of when each is down, so the root height is the floor solve's. The figure does not travel: ground_speed is the treadmill its stance feet run at, in model units per second. Answers with the landed clip, measure_clip's numbers for it and that speed.",
+		.description = "Write a walk, trot, pace or gallop cycle for the rig's own legs — and, on an upright two-legged figure, the rest of a walking body: pelvis bob and turn, a chest turning against it, arms lowered and swinging opposite the legs, a level head (upper_body false for legs only). Every leg is solved inside the rig's joint limits, so the keys are what plays. It lands as ordinary editable keys in the authored pack (one undo step). Name a gait and a duration and it finds the feet (each left/right pair of limbs near the floor that ends in a toe), draws every foot's path — stance slides back at a constant speed along the floor, swing carries it forward through a lifted arc — and solves each two-to-four-bone leg onto it: analytic IK in the plane the rest leg bends in (so splayed legs work), the knee bending the side it rests on, a longer leg's distal segment holding its tilt and tilting only as far as the reach needs. Each foot keeps its own place in the cycle (walk is the lateral sequence, trot the diagonals, pace the lateral pairs, gallop the rotary order; custom takes every foot's offset) and the clip carries a ground spec of when each is down, so the root height is the floor solve's. The figure does not travel: ground_speed is the treadmill its stance feet run at, in model units per second. Answers with the landed clip, measure_clip's numbers for it and that speed.",
 		.input_schema = AUTHOR_GAIT_SCHEMA,
 		.handler = &tool_author_gait,
 		.user_data = app,
@@ -607,6 +615,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "Restate a looping clip's first pose at its end, so the seam does not jump. One undo step.",
 		.input_schema = CLOSE_LOOP_SCHEMA,
 		.handler = &tool_close_loop,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "remove_keys",
+		.description = "Remove keyframes from a clip, by index (counted from 0 as get_clip lists them) or every partial one — a key that names fewer joints than the clip's fullest. The repair for a pop measure_clip localizes to a key: a leftover correction key between whole poses that jerks a leg for a few milliseconds. One undo step; answers with measure_clip's numbers.",
+		.input_schema = REMOVE_KEYS_SCHEMA,
+		.handler = &tool_remove_keys,
 		.user_data = app,
 		.hidden = true,
 	});
@@ -747,11 +763,11 @@ fn String? tool_measure_clip(Object* args, void* user_data, DString* detail) @pr
 	String clip;
 	if (!required_string(args, "clip", &clip, detail, `measure_clip needs "clip": the name of a clip in the library. get_scene lists every pack and clip.`)) return POSE_BAD_ARGS~;
 
-	double samples = args.get_float("samples") ?? 32.0;
-	if (samples < 2 || samples > MEASURE_SAMPLE_LIMIT)
+	double samples = args.get_float("samples") ?? 0.0;
+	if (samples != 0.0 && (samples < 2 || samples > MEASURE_SAMPLE_LIMIT))
 	{
 		detail.appendf(
-			`"samples" is %.9g. Two is the fewest that says anything and %d is as many as the answer is worth; 32 is the default.`,
+			`"samples" is %.9g. Two is the fewest that says anything and %d is as many as the answer is worth; leave it out for sixty a second of clip.`,
 			samples, MEASURE_SAMPLE_LIMIT);
 		return POSE_BAD_ARGS~;
 	}
@@ -874,7 +890,9 @@ fn String scene_json(AppState* app)
 	// The plane the M-key mirror reflects across — its default is the mesh's
 	// bounding-box centre, which edit_rig's symmetry op corrects for an asymmetric
 	// mesh whose centre is not the body's midline.
-	out.appendf(`","symmetry_x":%s}`, (JsonFloat)app.doc.sym_x);
+	out.appendf(`","symmetry_x":%s`, (JsonFloat)app.doc.sym_x);
+	append_rig_issues(&out, app, true);
+	out.append_char('}');
 
 	// Whether the project has authored changes not yet in its sidecar, and whether
 	// crig owns the file it would save into (else the first save_project makes a
@@ -1079,12 +1097,62 @@ fn String skeleton_json(AppState* app)
 	}
 	out.append_string(`],"height":`);
 	out.appendf("%s", (JsonFloat)view.skeleton.height());
+	append_rig_issues(&out, app, false);
 	append_secondary_list(&out, app, &view);
 	append_collider_list(&out, app);
 	append_exclusion_list(&out, app);
 	out.append_char('}');
 
 	return out.copy_str(mem);
+}
+
+<*
+ What is wrong with the rig itself, which every clip on it inherits: a knee or
+ elbow whose limit table refuses the way it naturally folds. Playback and export
+ clamp every keyed bend of such a joint, so no clip edit mends it, and an agent
+ that only measures clips reads it as twenty clips' worth of limit faults.
+
+ @param always : `Write an empty list when there is nothing, rather than nothing.`
+*>
+fn void append_rig_issues(DString* out, AppState* app, bool always) @private
+{
+	HingeIssue[HINGE_MOST] found;
+	usz count = 0;
+	RigView? opened = app.open_rig(mem);
+	if (try view = opened)
+	{
+		defer view.free(mem);
+		count = hinge_issues(&app.doc, &view.skeleton, view.names, view.dot_ids, found[..]);
+	}
+	StaleFrame[STALE_FRAME_MOST] stale;
+	usz drifted = 0;
+	if (try view = app.open_rig(mem))
+	{
+		defer view.free(mem);
+		drifted = stale_limit_frames(&app.doc, &view.skeleton, view.names, view.dot_ids, stale[..]);
+	}
+	if (count == 0 && drifted == 0 && !always) return;
+	out.append_string(`,"rig_issues":[`);
+	for (usz i = 0; i < drifted; i++)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_string(`{"kind":"limits_stale","joint":"`);
+		json_escape_into(out, stale[i].joint);
+		out.appendf(`","drift":%s,"note":"its limit table is pinned to where the bone pointed before the joint moved, so a natural turn reads partly as locked twist and is held back","fix":{"tool":"edit_rig","args":{"ops":[{"op":"plan_limits"}]}}}`,
+			(JsonFloat)stale[i].drift);
+	}
+	for (usz i = 0; i < count; i++)
+	{
+		if (i > 0 || drifted > 0) out.append_char(',');
+		bool inverted = found[i].kind == INVERTED;
+		out.appendf(`{"kind":"%s","joint":"`, inverted ? "limits_inverted" : "limits_blocked");
+		json_escape_into(out, found[i].joint);
+		out.appendf(`","refused":%s,"note":"%s","fix":{"tool":"edit_rig","args":{"ops":[{"op":"plan_limits"}]}}}`,
+			(JsonFloat)found[i].refused,
+			inverted ? "its limits let it fold only the wrong way: every clip plays with this joint clamped straight or flipped backward"
+				: "its limits keep it from folding either way: every clip plays with this joint held straight");
+	}
+	out.append_char(']');
 }
 
 <*
@@ -1212,16 +1280,27 @@ fn String? pose_json(AppState* app, String clip_name, float time, DString* detai
 	RigView view = opened;
 	defer view.free(mem);
 
-	AnimTemplate* template = app.clip(resolve_named(app, clip_name, detail)!);
+	AnimRef ref = resolve_named(app, clip_name, detail)!;
+	AnimTemplate* template = app.clip(ref);
 
-	rig::Pose pose = template.pose(mem, &view.skeleton, view.names, time);
+	// The pose as it plays: the keys held inside the rig's joint limits, grounded,
+	// then pinned and aimed — what the viewport draws and the export writes, not
+	// the keys as typed. Where the limits changed a joint, how far is said, since
+	// a keyed bend the rig refuses is otherwise invisible in the numbers.
+	rig::Pose pose = app.evaluated_clip_pose(mem, &view, *template, ref, time, aimed: true);
 	defer pose.free(mem);
+	rig::Pose authored = template.pose(mem, &view.skeleton, app.names_for(&view, ref), time, false);
+	defer authored.free(mem);
+	rig::Pose held = authored.copy(mem);
+	defer held.free(mem);
+	constrain_pose_to_joint_limits(&app.doc, &view.skeleton, view.dot_ids, &held);
 
-	return joints_json(app, &view, pose, template.name, time);
+	return joints_json(app, &view, pose, template.name, time, &authored, &held);
 }
 
 // Every joint's world position and orientation sampled from the requested clip.
-fn String? joints_json(AppState* app, RigView* view, rig::Pose pose, String clip_name, float time) @private
+fn String? joints_json(AppState* app, RigView* view, rig::Pose pose, String clip_name, float time,
+	rig::Pose* authored = null, rig::Pose* held = null) @private
 {
 	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!;
 	defer alloc::free(mem, palette);
@@ -1242,7 +1321,29 @@ fn String? joints_json(AppState* app, RigView* view, rig::Pose pose, String clip
 		append_vec3(&out, world);
 		out.appendf(`,"rotation":%s}`, (JsonQuat)rotation);
 	}
-	out.append_string(`]}`);
+	out.append_char(']');
+	// The joints whose keyed turn the rig's limits change, and by how much: a knee
+	// keyed bent that plays straight shows here and nowhere else.
+	if (authored && held)
+	{
+		out.append_string(`,"limited":[`);
+		usz written = 0;
+		foreach (j, id : view.dot_ids)
+		{
+			if (j >= authored.rotations.len || j >= held.rotations.len) break;
+			Quaternionf a = authored.rotations[j];
+			Quaternionf b = held.rotations[j];
+			float dot = math::abs(a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w);
+			float removed = 2.0f * math::acos(math::min(dot, 1.0f));
+			if (removed <= ISSUE_LIMIT_TOLERANCE) continue;
+			if (written++ > 0) out.append_char(',');
+			out.append_string(`{"name":"`);
+			append_bone_name(&out, id, view.names[j]);
+			out.appendf(`","removed":%s}`, (JsonFloat)removed);
+		}
+		out.append_char(']');
+	}
+	out.append_char('}');
 	return out.copy_str(mem);
 }
 
@@ -1272,12 +1373,33 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 	RigView view = opened;
 	defer view.free(mem);
 
-	AnimTemplate* template = app.clip(resolve_named(app, clip_name, detail)!);
+	AnimRef ref = resolve_named(app, clip_name, detail)!;
+	if (!app.ensure_clip_imported(ref))
+	{
+		detail.append_string("that clip's keys could not be read out of its pack.");
+		return CLIP_NOT_FOUND~;
+	}
+	AnimTemplate* template = app.clip(ref);
+
+	// Zero asks for as many as the clip's length is worth: sixty a second, so a
+	// stance window is seen at more than a handful of instants.
+	if (samples == 0)
+	{
+		samples = (usz)math::ceil(template.duration * 60.0f);
+		if (samples < 32) samples = 32;
+		if (samples > 256) samples = 256;
+	}
+
+	// A clip that declares no feet is measured by the ones its motion plants, as
+	// the Check panel does — or a hand-keyed walk that skates reports no slide.
+	bool owned;
+	AnimGround contacts = clip_contacts(&view, view.names, template, &owned);
+	defer if (owned) contacts.free(mem);
 
 	// The document and its dot ids go in so limit saturation can be tested against
-	// the rotation-limit tables; the geometry faults need neither.
+	// the rotation-limit tables and every instant held inside them, as it plays.
 	ClipMetrics numbers = clip_metrics(mem, &view.skeleton, view.names, *template, samples,
-		&app.doc, view.dot_ids);
+		&app.doc, view.dot_ids, owned ? contacts : (AnimGround){});
 	defer numbers.free(mem);
 
 	DString out = dstring::new(mem);
@@ -1287,6 +1409,8 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 	json_escape_into(&out, template.name);
 	out.appendf(`","samples":%d,"grounded":`, numbers.samples);
 	out.append_string(template.ground.solves() ? "true" : "false");
+	out.appendf(`,"feet":"%s"`, template.ground.solves() ? "declared" : (contacts.feet.len > 0 ? "read_from_motion" : "none"));
+	out.appendf(`,"verdict":"%s"`, clip_usable(numbers) ? "usable" : "needs_work");
 	out.appendf(`,"floor":%s,"floor_penetration":%s,"foot_slide":%s,"ground_speed":%s,"stride":%s,"root_bob":%s`,
 		(JsonFloat)numbers.floor, (JsonFloat)numbers.floor_penetration, (JsonFloat)numbers.foot_slide, (JsonFloat)numbers.ground_speed,
 		(JsonFloat)numbers.stride, (JsonFloat)numbers.root_bob);
@@ -1318,11 +1442,21 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 		{
 			out.appendf(`,"axis":"%c"`, "xyz"[(usz)issue.axis]);
 		}
+		if (issue.key > 0)
+		{
+			usz k = (usz)(issue.key - 1);
+			out.appendf(`,"key":%d,"partial":%s`, k, key_partial(*template, k) ? "true" : "false");
+		}
+		if (issue.kind.of_rig()) out.append_string(`,"of_rig":true`);
+		if (!issue.blocks()) out.append_string(`,"blocks":false`);
 		out.append_char('}');
 	}
-	out.appendf(`],"tolerances":{"foot_slide":%.6g,"floor_penetration":%.6g,"limit_saturation":%.6g,"loop_position":%.6g,"loop_velocity":%.6g,"note":"an issue is reported only past its tolerance; foot_slide/floor_penetration/loop_position are fractions of rig height, limit_saturation is radians, loop_velocity is rig heights per second. Loop faults are measured with the root's horizontal travel removed, so intended locomotion is not flagged; they need a looping clip and at least four samples."}`,
+	out.append_string(`],"fixes":`);
+	append_fixes(&out, *template, numbers);
+	out.appendf(`,"tolerances":{"foot_slide":%.6g,"floor_penetration":%.6g,"limit_saturation":%.6g,"loop_position":%.6g,"loop_velocity":%.6g,"pop":%.6g,"root_pop":%.6g,"note":"an issue is reported only past its tolerance; foot_slide/floor_penetration/loop_position/root_pop are fractions of rig height, limit_saturation and pop are radians, loop_velocity is rig heights per second. A pop is a joint turning more than %.6g radians faster than %.6g radians a second, or an instant standing that far off the path its neighbours set within %.6g s — read from a walk of every key and %.6g instants a second, so a snap between the even samples is still seen. Loop faults are measured with the root's horizontal travel removed, so intended locomotion is not flagged; they need a looping clip and at least four samples. Every number is of the clip as it plays and exports: held inside the rig's joint limits, grounded, pinned and aimed; limit_saturation alone reads the keys before the limits hold them. limits_inverted and limits_blocked are faults of the rig, not the clip: every clip on it plays wrong until they are mended. An issue marked blocks:false is reported and does not make the verdict needs_work: a note, or a limit overshoot — what the limits hold is what plays and is what every other number measures; the overshoot says the keys ask for more than the rig allows, and past %.6g radians a fix is offered."}`,
 		ISSUE_SLIDE_TOLERANCE, ISSUE_PENETRATION_TOLERANCE, ISSUE_LIMIT_TOLERANCE,
-		ISSUE_LOOP_POSITION_TOLERANCE, ISSUE_LOOP_VELOCITY_TOLERANCE);
+		ISSUE_LOOP_POSITION_TOLERANCE, ISSUE_LOOP_VELOCITY_TOLERANCE, ISSUE_POP_TOLERANCE, ROOT_POP_STEP,
+		POP_STEP, POP_SPEED, POP_WINDOW, MOTION_RATE, ISSUE_LIMIT_NOTABLE);
 	out.append_char('}');
 	return out.copy_str(mem);
 }
@@ -1333,10 +1467,220 @@ fn String issue_unit(ClipIssueKind kind) @private
 {
 	switch (kind)
 	{
-		case LIMIT_SATURATION: return "radians";
+		case LIMIT_SATURATION:
+		case POP:
+		case LIMITS_INVERTED:
+		case LIMITS_BLOCKED:
+		case LIMITS_STALE:
+			return "radians";
 		case LOOP_VELOCITY: return "heights_per_second";
+		case AIM_STARE: return "influence";
 		default: return "height";
 	}
+}
+
+// Whether a clip is fit to ship: nothing found but notes.
+fn bool clip_usable(ClipMetrics numbers) @private
+{
+	foreach (issue : numbers.issues) if (issue.blocks()) return false;
+	return true;
+}
+
+// Whether keyframe `k` keys fewer joints than the clip's fullest key does — the
+// shape a leftover correction key has, sitting between whole poses.
+fn bool key_partial(AnimTemplate clip, usz k) @private
+{
+	if (k >= clip.keyframes.len) return false;
+	usz fullest = 0;
+	foreach (frame : clip.keyframes) if (frame.dots.len > fullest) fullest = frame.dots.len;
+	return clip.keyframes[k].dots.len < fullest;
+}
+
+<*
+ One call per kind of fault found, with the arguments filled in: what an agent
+ reading the issues would otherwise have to work out from the docs, and what it
+ has been seen to get wrong — reading a rig's inverted knees as a clip to repair.
+
+ Rig faults lead, since no clip edit mends them and every other number on the
+ rig is measured through them.
+*>
+fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @private
+{
+	out.append_char('[');
+	usz written = 0;
+
+	// What each kind was found to need; each is written once.
+	bool inverted;
+	bool blocked;
+	bool slide;
+	bool sink;
+	bool saturated;
+	bool seam;
+	bool seam_speed;
+	String seam_joint;
+	bool root_pop;
+	bool stare;
+	List{usz} pop_keys;
+	pop_keys.init(mem);
+	defer pop_keys.free();
+	List{String} smooth_joints;
+	smooth_joints.init(mem);
+	defer smooth_joints.free();
+	String blocked_joint;
+	String saturated_joint;
+	foreach (issue : numbers.issues)
+	{
+		switch (issue.kind)
+		{
+			case LIMITS_INVERTED:
+			case LIMITS_STALE:
+				inverted = true;
+			case LIMITS_BLOCKED:
+				blocked = true;
+				blocked_joint = issue.joint;
+			case FOOT_SLIDE: slide = true;
+			case FLOOR_PENETRATION: sink = true;
+			case LIMIT_SATURATION:
+				if (issue.magnitude <= ISSUE_LIMIT_NOTABLE) break;
+				saturated = true;
+				saturated_joint = issue.joint;
+			case LOOP_POSITION: seam = true;
+			case LOOP_VELOCITY:
+				seam_speed = true;
+				seam_joint = issue.joint;
+			case ROOT_POP:
+				if (issue.key > 0 && key_partial(clip, (usz)(issue.key - 1)))
+				{
+					add_key(&pop_keys, (usz)(issue.key - 1));
+				}
+				else
+				{
+					root_pop = true;
+				}
+			case AIM_STARE: stare = true;
+			case POP:
+				// A snap at the seam of a loop is the cycle not running into its
+				// own start, whichever key sits there: cut the cycle again.
+				if (clip.loop && (issue.phase < 0.01f || issue.phase > 0.99f))
+				{
+					seam = true;
+				}
+				else if (issue.key > 0 && key_partial(clip, (usz)(issue.key - 1)))
+				{
+					add_key(&pop_keys, (usz)(issue.key - 1));
+				}
+				else if (issue.joint.len > 0)
+				{
+					smooth_joints.push(issue.joint);
+				}
+		}
+	}
+
+	if (inverted)
+	{
+		fix_open(out, &written, "limits_inverted", "edit_rig");
+		out.append_string(`{"ops":[{"op":"plan_limits"}]},"why":"the rig's limit tables hold natural motion back — a knee or elbow allowed to fold only the wrong way, or a table still pinned to where its bone pointed before the joint moved — so playback and export clamp it; put the body plan's limits back and carry every table onto its bone, then measure again"}`);
+	}
+	if (blocked)
+	{
+		fix_open(out, &written, "limits_blocked", "edit_rig");
+		out.append_string(`{"ops":[{"op":"plan_limits"}]},"why":"the limit table keeps `);
+		json_escape_into(out, blocked_joint);
+		out.append_string(` from folding either way; put the body plan's limits back, or widen it with an edit_rig limits op"}`);
+	}
+	if (pop_keys.len() > 0)
+	{
+		fix_open(out, &written, "pop", "remove_keys");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`","keys":[`);
+		foreach (usz i, k : pop_keys)
+		{
+			if (i > 0) out.append_char(',');
+			out.appendf("%d", k);
+		}
+		out.append_string(`]},"why":"these keys name only a few joints and jut out of the whole poses either side of them; removing them lets the motion run through"}`);
+	}
+	if (smooth_joints.len() > 0)
+	{
+		fix_open(out, &written, "pop", "smooth_clip");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`","window":0.1,"joints":[`);
+		foreach (usz i, joint : smooth_joints)
+		{
+			if (i > 0) out.append_char(',');
+			out.append_char('"');
+			json_escape_into(out, joint);
+			out.append_char('"');
+		}
+		out.append_string(`]},"why":"the joints snap; get_clip around the issue's phase shows the key that jumps — fix its value, or smooth across it. A pop under a limit_saturation on the same joint is the limit clamp flipping, which mending the limits or the pose takes away"}`);
+	}
+	if (seam)
+	{
+		fix_open(out, &written, "loop", "make_loop");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`"},"why":"the cycle does not run into its own start; make_loop cuts a seamless cycle out of the take (give period as the range one cycle may last), close_loop restates the first pose at the end when the last stretch already leads into it"}`);
+	}
+	else if (seam_speed)
+	{
+		fix_open(out, &written, "loop", "smooth_clip");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`","window":0.1,"joints":["`);
+		json_escape_into(out, seam_joint);
+		out.append_string(`"]},"why":"the cycle meets its start in the right pose at the wrong speed; smoothing wraps round a loop's seam and evens the speed through it"}`);
+	}
+	if (slide)
+	{
+		fix_open(out, &written, "foot_slide", "pin_feet");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`","travel":"auto"},"why":"planted feet skate; pin them to the floor across every window they are down"}`);
+	}
+	if (root_pop)
+	{
+		fix_open(out, &written, "root_pop", "get_clip");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`"},"why":"the floor solve lifts or drops the body at once where the planted feet change; give every foot a ground window that overlaps the next foot's, or pin_feet the clip"}`);
+	}
+	if (sink)
+	{
+		fix_open(out, &written, "floor_penetration", "patch_clip");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`"},"why":"a joint goes through the floor; a ground spec (apply_clip ground) puts the planted feet on it, or patch_clip with a range lifts the hips there"}`);
+	}
+	if (saturated && !inverted && !blocked)
+	{
+		fix_open(out, &written, "limit_saturation", "patch_clip");
+		out.append_string(`{"clip":"`);
+		json_escape_into(out, clip.name);
+		out.append_string(`","joints":[{"name":"`);
+		json_escape_into(out, saturated_joint);
+		out.append_string(`"}]},"why":"the keys turn a joint past its limits and playback holds it at the edge, so what plays is not what was keyed; bring the pose back inside, or if every natural clip saturates the same hinge, edit_rig plan_limits"}`);
+	}
+	if (stare)
+	{
+		fix_open(out, &written, "aim_stare", "set_aim");
+		out.append_string(`{"remove":true},"why":"a look-at locked on one still point freezes the head while the body moves; fine for a figure watching something, wrong for locomotion — remove it or key the target to move"}`);
+	}
+	out.append_char(']');
+}
+
+fn void add_key(List{usz}* keys, usz k) @private
+{
+	foreach (have : *keys) if (have == k) return;
+	keys.push(k);
+}
+
+fn void fix_open(DString* out, usz* written, String issue, String tool) @private
+{
+	if (*written > 0) out.append_char(',');
+	*written += 1;
+	out.appendf(`{"issue":"%s","tool":"%s","args":`, issue, tool);
 }
 
 // What `delete_clip` answers with: what went, and what is left to go.

@@ -549,6 +549,11 @@ fn usz AppState.adopt_model_limits(&self, bool recorded)
 			: self.doc.set_rotation_limits(dot, limits);
 		if (taken) landed++;
 	}
+	// A table written against the limit frame before its rule changed reads with
+	// its swing rows traded — a toe that may only turn sideways — and one carried
+	// from a figure facing the other way folds a knee backward. The joints say
+	// which way they fold, so a file's tables are checked against them.
+	if (landed > 0) self.mend_hinge_limits(recorded);
 	return landed;
 }
 

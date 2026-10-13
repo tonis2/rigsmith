@@ -233,9 +233,15 @@ fn void the_rig_carries_a_limit_on_every_joint_that_turns() @test
 			"opened, %s is %slimited; the model says %s", dot.name, table.constrained ? "" : "not ",
 			constraint.status == EXACT ? "limited" : "free");
 		if (!table.constrained) continue;
+		// The file's toe rows were written against the limit frame before its rule
+		// changed, which reads them a quarter turn round — a toe that may only turn
+		// sideways. The open checks every hinge against the way it folds and trades
+		// the two swing rows back (`mended_hinge`).
+		bool toe = dot.name.starts_with("toe_") && !dot.name.starts_with("toe_tip");
 		for (usz a = 0; a < 3; a++)
 		{
-			test::@check(table.axes[a].same(constraint.axes[a]),
+			usz from = toe && a != 1 ? 2 - a : a;
+			test::@check(table.axes[a].same(constraint.axes[from]),
 				"opened, %s's axis %d is not what the model says", dot.name, a);
 		}
 		test::@check(!table.has_saved_frame, "%s came off the model with a pinned frame", dot.name);

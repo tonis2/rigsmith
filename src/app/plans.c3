@@ -93,6 +93,9 @@ fn void AppState.apply_preset(
 	if (physics.present()) self.adopt_preset_physics(physics, preset, fitted, ids);
 	ConstraintApplyReport constraint_report = self.adopt_preset_constraints(
 		constraints, preset, fitted, ids, reversed, source_rest);
+	// The facing the transfer read is measured and can be wrong, which folds every
+	// knee backward; the hinges are checked against the fitted rig's own anatomy.
+	self.mend_hinge_limits();
 
 	self.undo_stack.commit();
 	self.doc.set_plan(plan);
@@ -207,9 +210,59 @@ fn sz AppState.reapply_plan_limits(&self, bool commit = true)
 	sz before = self.undo_stack.edits.len();
 	ConstraintApplyReport report = self.adopt_preset_constraints(
 		pack.constraints, derived, fitted, ids, reversed, pack.rest);
+	self.mend_hinge_limits();
 	if (commit && self.undo_stack.edits.len() != before) self.undo_stack.commit();
 	self.mark_rig_stale();
 	return (sz)report.applied;
+}
+
+<*
+ Put right every limit table whose saved frame has drifted off its bone
+ (`stale_limit_frames`, carried back onto it) when asked to, then every knee,
+ elbow, toe and thigh
+ whose table refuses the way it folds (`hinge_issues`), from the joint's own rows
+ (`mended_hinge`): a row read the wrong way round, or two swing rows traded. Not committed — the caller's undo
+ group takes it.
+
+ The table carried onto a rig depends on which way the transfer thought the
+ figure faced, and on the frame rule its rows were written against; the joints
+ themselves say which way they fold, so they are the check on both.
+
+ @param recorded : `Through the recorded setter; false writes the document directly, for an open, whose history starts empty.`
+ @param carry_stale : `Carry every drifted frame onto its bone first. Only on request (edit_rig plan_limits, the Re-apply plan limits menu): a frame an author adjusted on purpose leans off its bone as well, and an open or a fit must not straighten it unasked.`
+ @return `How many joints were mended.`
+*>
+fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale = false)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+
+	usz mended = 0;
+	// Frames first: a table read in a frame that has drifted off its bone cannot
+	// be judged by how it folds.
+	StaleFrame[STALE_FRAME_MOST] stale;
+	usz drifted = carry_stale ? stale_limit_frames(&self.doc, &view.skeleton, view.names, view.dot_ids, stale[..]) : 0;
+	for (usz i = 0; i < drifted; i++)
+	{
+		usz j = stale[i].index;
+		JointRotationLimits carried = carried_limit_frame(&self.doc, &view.skeleton, view.dot_ids, j);
+		uint dot = view.dot_ids[j];
+		if (recorded ? self.set_rotation_limits_recorded(dot, carried) : self.doc.set_rotation_limits(dot, carried)) mended++;
+	}
+
+	HingeIssue[HINGE_MOST] found;
+	usz count = hinge_issues(&self.doc, &view.skeleton, view.names, view.dot_ids, found[..]);
+	for (usz i = 0; i < count; i++)
+	{
+		JointRotationLimits better;
+		if (!mended_hinge(&self.doc, &view.skeleton, view.names, view.dot_ids, found[i], &better)) continue;
+		uint dot = view.dot_ids[found[i].index];
+		if (recorded ? self.set_rotation_limits_recorded(dot, better) : self.doc.set_rotation_limits(dot, better)) mended++;
+	}
+	if (mended > 0) self.mark_rig_stale();
+	return mended;
 }
 
 <*

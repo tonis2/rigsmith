@@ -34,7 +34,9 @@ const String AUTHOR_GAIT_SCHEMA = `{"type":"object","properties":{
 		"joint":{"type":"string","description":"The foot joint, by the name get_skeleton reports."},
 		"offset":{"type":"number","description":"Phase of the cycle the foot lands at, 0 to 1."}
 	},"required":["joint"]}},
-	"samples":{"type":"number","description":"Keys per cycle. Default 40, between 8 and 240."}
+	"samples":{"type":"number","description":"Keys per cycle. Default 40, between 8 and 240."},
+	"pin_feet":{"description":"Pin each foot to its stance path after the cycle is written: \"auto\" (the default) pins only when the cycle measures as sliding — the rig's joint limits refusing part of a solved stance, an ankle that will not flex as far as the stride asks — true always, false never. The answer's pinned says which happened.","anyOf":[{"type":"boolean"},{"type":"string","enum":["auto"]}]},
+	"upper_body":{"type":"boolean","description":"For an upright two-legged figure, key the rest of a walking body as well: the pelvis bobbing into each footfall and turning with the leading leg, the chest turning against it, the arms lowered and swinging opposite the legs with the elbows bent, the head held level. Amplitudes scale with stride; a run (trot) swings harder and bends the elbows. false keys the legs only, for a figure whose upper body another clip or layer drives. Default true."}
 },"required":["name"]}`;
 
 <*
@@ -105,6 +107,21 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 		}
 		spec.samples = (usz)given;
 	}
+	spec.legs_only = !(args.get_bool("upper_body") ?? true);
+	Object* pinning = member(args, "pin_feet");
+	if (pinning != null)
+	{
+		if (pinning.is_bool())
+		{
+			spec.always_pin = pinning.b;
+			spec.no_pins = !pinning.b;
+		}
+		else if (!pinning.is_string() || pinning.s != "auto")
+		{
+			detail.append_string(`"pin_feet" is true, false or "auto".`);
+			return GAIT_REFUSED~;
+		}
+	}
 
 	// The feet: as named, else found.
 	GaitFootRequest[GAIT_FEET_MAX] named;
@@ -149,6 +166,8 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	bool replaced = result.replaced;
 	GaitReport report = result.report;
 	usz count = result.count;
+	bool authored_pinned = result.pinned;
+	float slide_before = result.slide_before;
 
 	// The authored pack's own name, so a clip of the same name in a file pack
 	// cannot make the lookup ambiguous.
@@ -156,9 +175,9 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	AnimPack* pack = app.pack((usz)landed.pack);
 	String qualified = string::format(mem, "%s/%s", pack.name, stored.name);
 	defer qualified.free(mem);
-	String metrics = metrics_json(app, qualified, 32, detail)!;
+	String metrics = metrics_json(app, qualified, 0, detail)!;
 	defer metrics.free(mem);
-	String applied = applied_json(app, landed, replaced);
+	String applied = applied_json(app, landed, replaced, measured: false);
 	defer applied.free(mem);
 
 	DString out = dstring::new(mem);
@@ -182,6 +201,7 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	out.append_string(`,"travel":[0,0,`);
 	out.appendf(`%s]`, (JsonFloat)report.speed);
 	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a pin_feet argument."`);
+	out.appendf(`,"pinned":%s,"slide_before_pins":%s`, authored_pinned ? "true" : "false", (JsonFloat)slide_before);
 	out.append_string(`,"landed":`);
 	out.append_string(applied);
 	out.append_string(`,"metrics":`);

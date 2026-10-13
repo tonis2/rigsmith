@@ -41,3 +41,82 @@ fn void re_applying_plan_limits_mends_an_inverted_knee() @test
 	test::@check(f.app.undo(), "the re-apply did not undo");
 	test::@check(f.app.doc.rotation_limits_of(knee).axes[0].maximum == inverted.axes[0].maximum, "undo did not restore the old table");
 }
+
+// How many hinges of the fixture's rig refuse their fold, as get_scene reports them.
+fn usz refused_hinges(Fixture* f, crig::HingeIssue[] into)
+{
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	return crig::hinge_issues(&f.app.doc, &view.skeleton, view.names, view.dot_ids, into);
+}
+
+<*
+ A knee whose table folds it backward is a fault of the rig, named before any
+ clip is measured — and put right from its own rows, with no plan to read from.
+*>
+fn void an_inverted_knee_is_named_and_mended_from_its_own_rows() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	io::printn("an inverted knee is a rig issue, and its own rows mend it");
+	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
+
+	crig::HingeIssue[16] found;
+	usz count = refused_hinges(&f, found[..]);
+	test::@check(count == 0, "a fitted biped refuses %d hinges, the first %s", count, count > 0 ? found[0].joint : "");
+
+	uint knee = 0;
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == "knee_L") knee = dot.id;
+	if (knee == 0) { test::@check(false, "the biped has no knee_L"); return; }
+	crig::JointRotationLimits fitted = f.app.doc.rotation_limits_of(knee);
+	crig::JointRotationLimits inverted = fitted;
+	inverted.axes[0] = { .allowed = true, .minimum = -fitted.axes[0].maximum, .maximum = -fitted.axes[0].minimum };
+	test::@check(f.app.doc.set_rotation_limits(knee, inverted), "the inverted table did not land");
+
+	count = refused_hinges(&f, found[..]);
+	test::@check(count == 1, "the inverted knee is %d issues", count);
+	if (count != 1) return;
+	test::@check(found[0].joint == "knee_L" && found[0].kind == INVERTED, "%s is reported, not the inverted knee_L", found[0].joint);
+
+	String scene = crig::scene_json(&f.app);
+	defer scene.free(mem);
+	test::@check(scene.contains(`"kind":"limits_inverted","joint":"knee_L"`), "get_scene does not name it");
+
+	// With no plan to read limits from, the joint's own rows put it right.
+	test::@check(f.app.mend_hinge_limits() == 1, "the knee was not mended");
+	crig::JointRotationLimits mended = f.app.doc.rotation_limits_of(knee);
+	test::@check(mended.axes[0].minimum == fitted.axes[0].minimum && mended.axes[0].maximum == fitted.axes[0].maximum,
+		"the knee is [%f, %f], not [%f, %f]", mended.axes[0].minimum, mended.axes[0].maximum,
+		fitted.axes[0].minimum, fitted.axes[0].maximum);
+	test::@check(refused_hinges(&f, found[..]) == 0, "the mended rig still refuses a hinge");
+}
+
+<*
+ A toe table read a quarter turn round — it may turn sideways and not bend — is
+ blocked, and trading its swing rows mends it.
+*>
+fn void a_toe_that_cannot_bend_is_mended_by_trading_its_rows() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	io::printn("a toe whose rows are traded is put back");
+	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
+
+	uint toe = 0;
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == "toe_L") toe = dot.id;
+	if (toe == 0) { test::@check(false, "the biped has no toe_L"); return; }
+	crig::JointRotationLimits fitted = f.app.doc.rotation_limits_of(toe);
+	if (!fitted.constrained) { test::@check(false, "the biped's toe has no limits"); return; }
+	crig::JointRotationLimits traded = fitted;
+	traded.axes[0] = fitted.axes[2];
+	traded.axes[2] = fitted.axes[0];
+	test::@check(f.app.doc.set_rotation_limits(toe, traded), "the traded table did not land");
+
+	crig::HingeIssue[16] found;
+	usz count = refused_hinges(&f, found[..]);
+	test::@check(count == 1 && found[0].joint == "toe_L" && found[0].kind == BLOCKED, "the traded toe is not reported blocked");
+	test::@check(f.app.mend_hinge_limits() == 1, "the toe was not mended");
+	test::@check(refused_hinges(&f, found[..]) == 0, "the mended toe still cannot bend");
+}

@@ -225,6 +225,7 @@ fn String layers_answer(AppState* app, AnimRef ref, String op) @local
 	append_json_string(&out, clip.name);
 	out.appendf(`,"op":"%s","layers":`, op)!!;
 	append_layers_json(&out, clip.layers);
+	append_metrics_member(&out, app, ref);
 	out.append_char('}');
 	return out.copy_str(mem);
 }

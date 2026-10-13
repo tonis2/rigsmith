@@ -268,6 +268,28 @@ fn AnimTemplate clip_copy(Allocator allocator, AnimTemplate source, String name 
 }
 
 <*
+ The clip with some of its keyframes gone: every one whose index `drop` marks.
+ What a leftover correction key — a few joints keyed between whole poses, and
+ jutting out of them — needs, and what no other rewrite does without moving
+ the keys either side of it.
+
+ @param drop : `One flag per keyframe, in the clip's own order; an index past its end is kept.`
+*>
+fn AnimTemplate clip_without_keys(Allocator allocator, AnimTemplate source, bool[] drop)
+{
+	usz kept = 0;
+	foreach (usz i, frame : source.keyframes) if (i >= drop.len || !drop[i]) kept++;
+	AnimKeyframe[] frames = alloc::new_array(allocator, AnimKeyframe, (sz)kept);
+	usz written = 0;
+	foreach (usz i, frame : source.keyframes)
+	{
+		if (i < drop.len && drop[i]) continue;
+		frames[written++] = keyframe_copy(allocator, frame);
+	}
+	return clip_with_frames(allocator, source, frames, source.duration);
+}
+
+<*
  The clip with `key` put in at its own time, merging with any key already there.
 
  	`AnimTemplate next = clip_with_key(mem, *clip, keyframe_of_pose(...));`

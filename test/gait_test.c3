@@ -367,3 +367,93 @@ fn void a_baked_target_path_is_followed() @test
 	}
 	test::@check(worst < 0.005f, "the foot is %g off its path", worst);
 }
+
+// Where joint `name` stands at `time` of the clip, model space.
+fn Vec3 joint_at(crig::AnimTemplate* clip, crig::RigView* view, String name, float time)
+{
+	rig::Pose pose = clip.pose(mem, &view.skeleton, view.names, time);
+	defer pose.free(mem);
+	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!!;
+	defer alloc::free(mem, palette);
+	foreach (usz j, joint_name : view.names)
+	{
+		if (joint_name == name) return view.skeleton.joints[j].transform(palette[j]);
+	}
+	return { 0, 0, 0 };
+}
+
+<*
+ A biped's walk moves the whole body, not a pair of legs under a statue: the
+ arms hang and swing opposite the legs, the hips bob twice a cycle, the head
+ stays level — and it measures usable, with the feet still planted.
+*>
+fn void a_biped_walk_moves_the_whole_body() @test
+{
+	io::printn("a humanoid walk swings its arms against its legs");
+	Rigged f;
+	f.open(HUMANOID);
+	defer f.close();
+	String reason;
+	Object* answer = call(&f.app, `{"name":"Body Walk","duration":1.0,"gait":"walk"}`, &reason);
+	if (answer == null) { test::@check(false, "author_gait refused: %s", reason); return; }
+	defer answer.free();
+	Object* metrics = answer.get("metrics")!!;
+	test::@check((metrics.get_string("verdict") ?? "") == "usable", "the walk does not read usable");
+	test::@check(number(metrics, "foot_slide") < 0.005f, "the feet slide %.4f", number(metrics, "foot_slide"));
+
+	crig::AnimRef ref = f.app.clip_named_in_authored(answer.get_string("clip")!!);
+	crig::AnimTemplate* clip = f.app.clip(ref);
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+
+	// Keyed above the legs.
+	bool arms = false;
+	bool spine = false;
+	foreach (dot : clip.keyframes[0].dots)
+	{
+		if (dot.joint_name.starts_with("elbow")) arms = true;
+		if (dot.joint_name.starts_with("spine") || dot.joint_name == "chest") spine = true;
+	}
+	test::@check(arms && spine, "the walk keys no arms or no spine");
+
+	// Half a cycle apart, the feet and the hands trade places, a hand going back
+	// with its own side's foot going forward.
+	float[2] times = { 0.0f, 0.5f };
+	foreach (t : times)
+	{
+		Vec3 ankle_l = joint_at(clip, &view, "ankle_L", t);
+		Vec3 ankle_r = joint_at(clip, &view, "ankle_R", t);
+		Vec3 wrist_l = joint_at(clip, &view, "wrist_L", t);
+		Vec3 wrist_r = joint_at(clip, &view, "wrist_R", t);
+		Vec3 shoulder_l = joint_at(clip, &view, "shoulder_L", t);
+		bool left_leads = ankle_l.z > ankle_r.z;
+		test::@check(left_leads == (wrist_l.z < wrist_r.z), "at %.2f s the arms swing with the legs, not against them", t);
+		test::@check(wrist_l.y < shoulder_l.y - 0.2f * view.skeleton.height(), "at %.2f s the arms are not lowered", t);
+	}
+
+	// The hips bob: lowest as a foot lands, higher by mid-stance.
+	float strike = joint_at(clip, &view, "hips", 0.0f).y;
+	float stance = joint_at(clip, &view, "hips", 0.25f).y;
+	test::@check(stance - strike > 0.003f * view.skeleton.height(), "the hips do not rise out of the footfall");
+}
+
+<*
+ upper_body false keys the legs and the hips' drop only, as author_gait did before.
+*>
+fn void a_legs_only_walk_keys_nothing_above_the_hips() @test
+{
+	io::printn("upper_body false keys the legs only");
+	Rigged f;
+	f.open(HUMANOID);
+	defer f.close();
+	String reason;
+	Object* answer = call(&f.app, `{"name":"Legs Walk","duration":1.0,"gait":"walk","upper_body":false}`, &reason);
+	if (answer == null) { test::@check(false, "author_gait refused: %s", reason); return; }
+	defer answer.free();
+	crig::AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored(answer.get_string("clip")!!));
+	foreach (dot : clip.keyframes[0].dots)
+	{
+		test::@check(!dot.joint_name.starts_with("elbow") && !dot.joint_name.starts_with("spine") && dot.joint_name != "head",
+			"%s is keyed by a legs-only walk", dot.joint_name);
+	}
+}

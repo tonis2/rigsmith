@@ -37,7 +37,7 @@ faultdef RIG_REFUSED;
 *>
 const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 	"ops":{"type":"array","description":"Applied in order, as one undo step. An op that fails takes the whole call back with it.","items":{"type":"object","properties":{
-		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands — the fix for a rig whose limits were carried over by an older build and fold a knee or a hip the wrong way (measure_clip reports limit_saturation on every natural clip, and pins and IK fight the motion)."},
+		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan."},
 		"joint":{"type":"string","description":"Which dot, by the name get_skeleton reports; bone_<id> reaches an unnamed one. Used by move, name, remove, root, reach, attach and limits."},
 		"name":{"type":"string","description":"The name to give a dot — place and name. Empty un-names it, which is the hand-placed state; only named dots can be animated."},
 		"position":{"type":"array","description":"[x,y,z] in model space, the space get_skeleton reports positions in — not a fraction of anything. Used by place and move.","items":{"type":"number"}},
@@ -429,12 +429,13 @@ fn bool op_sharpness(AppState* app, Object* op, usz index, DString* detail) @loc
 fn bool op_plan_limits(AppState* app, usz index, DString* detail) @local
 {
 	sz landed = app.reapply_plan_limits(commit: false);
-	if (landed < 0)
-	{
-		detail.appendf(`ops[%d]: the rig has no body plan with limits to re-apply ("%s").`, index, app.doc.plan);
-		return false;
-	}
-	return true;
+	// Then every table pinned to a frame its bone has moved off is carried onto
+	// it, and the hinges checked again — with no plan to read limits from, this is
+	// the whole of the op, which is what a rig imported with its limits needs.
+	usz mended = app.mend_hinge_limits(carry_stale: true);
+	if (landed >= 0 || mended > 0) return true;
+	detail.appendf(`ops[%d]: the rig has no body plan with limits to re-apply ("%s"), and no knee, elbow or toe table that its own rows can put right.`, index, app.doc.plan);
+	return false;
 }
 
 <*
