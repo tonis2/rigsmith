@@ -162,6 +162,16 @@ jobs:
       # commit and drops any file this build no longer makes. --cleanup-tag
       # drops the old `latest` tag and create puts it back. The links are down
       # for the few seconds the upload takes.
+      #
+      # Two checks come before anything is deleted:
+      #   - Only the newest v* tag moves `latest`. Re-cutting an older release
+      #     leaves it where it is.
+      #   - The workflow token may not create a tag on a commit whose
+      #     .github/workflows differ from the default branch's: GitHub counts
+      #     that as editing workflows, which this token never may (HTTP 403). A
+      #     throwaway tag tries it first, so a refusal leaves the old `latest`
+      #     standing rather than none. Nothing runs on that tag: tags this token
+      #     makes start no workflows, and it isn't v* anyway.
       - name: Replace the rolling latest release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -169,6 +179,20 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
+
+          newest="$(gh api "repos/${GH_REPO}/tags" --paginate --jq '.[].name' | grep '^v[0-9]' | sort -V | tail -1)"
+          if [ "$GITHUB_REF_NAME" != "$newest" ]; then
+            echo "::notice::${GITHUB_REF_NAME} is not the newest tag (${newest}), so latest stays as it is"
+            exit 0
+          fi
+
+          probe="refs/tags/latest-probe-${GITHUB_RUN_ID}"
+          if ! gh api -X POST "repos/${GH_REPO}/git/refs" -f ref="$probe" -f sha="$GITHUB_SHA" > /dev/null; then
+            echo "::error::GitHub won't let this workflow tag ${GITHUB_SHA::7}: its .github/workflows differ from the default branch's. Put the tag on a commit whose workflows match, such as the tip of main. The latest release is unchanged."
+            exit 1
+          fi
+          gh api -X DELETE "repos/${GH_REPO}/git/${probe}" > /dev/null
+
           if gh release view latest > /dev/null 2>&1; then
             gh release delete latest --cleanup-tag --yes
           fi
