@@ -1,13 +1,22 @@
 # Build Rigsmith for every platform and publish it as a GitHub release.
 #
-#   push a tag v*        build all three, publish a release named after the tag
-#   run it by hand       build all three, keep the files as workflow artifacts
+#   push a tag v*        build all three, publish a release named after the tag,
+#                        and replace the rolling `latest` release with the same files
+#   run it on a tag      the same, to re-cut a release (Run workflow, pick the tag)
+#   run it on a branch   build all three, keep the files as workflow artifacts
 #
 # What a user downloads:
 #
 #   Rigsmith-<v>-x86_64.AppImage       Linux: chmod +x and run
 #   Rigsmith-<v>-windows-x64.zip       Windows: portable folder, run rigsmith.exe
 #   Rigsmith-<v>-macos-arm64.dmg       macOS 26+ on Apple Silicon: drag to Applications
+#
+# The newest tagged build is always at
+#
+#   https://github.com/tonis2/rigsmith/releases/download/latest/<file>
+#
+# e.g. .../download/latest/Rigsmith-0.0.2-windows-x64.zip. The `latest` tag is
+# moved to the newest v* tag's commit and its release holds only that build.
 #
 # The packaging itself lives in packaging/package-*.sh, so a release can be
 # rebuilt locally the same way. Each bundle carries assets/ beside the
@@ -20,13 +29,8 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*']   # not `latest`: this workflow moves that tag itself
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish a GitHub release (tag builds do this anyway)'
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -123,13 +127,18 @@ jobs:
 
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Two tags pushed close together must not interleave on `latest`.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -138,3 +147,26 @@ jobs:
             dist/*.dmg
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+      # Delete and recreate rather than edit: the old release still holds the
+      # previous version's files, whose names differ, so uploading over it would
+      # leave them behind. --cleanup-tag drops the old `latest` tag and create
+      # puts it back on this commit.
+      - name: Replace the rolling latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if gh release view latest > /dev/null 2>&1; then
+            gh release delete latest --cleanup-tag --yes
+          fi
+          # A `latest` tag left without its release would pin create to the old commit.
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/latest" > /dev/null 2>&1 || true
+          gh release create latest \
+            dist/*.AppImage dist/*.zip dist/*.dmg \
+            --target "$GITHUB_SHA" \
+            --title "Latest (v${version})" \
+            --latest=false \
+            --notes "The newest build, Rigsmith ${version}: the same files as [${GITHUB_REF_NAME}](https://github.com/${GH_REPO}/releases/tag/${GITHUB_REF_NAME}). Replaced on every release, so https://github.com/${GH_REPO}/releases/download/latest/<file> always serves the newest build."

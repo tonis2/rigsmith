@@ -65,6 +65,37 @@ by default (only your own machine can reach it). To connect an agent:
 
 You can change the port there, and the change applies straight away. Setting it to `0` turns the server off.
 
+### Example configs
+
+Clients that speak HTTP (Claude Code, Cursor, VS Code and others) connect to the URL directly.
+For Claude Code, put this in a `.mcp.json` at the root of your project:
+
+```json
+{
+  "mcpServers": {
+    "rigsmith": {
+      "type": "http",
+      "url": "http://127.0.0.1:8808/mcp"
+    }
+  }
+}
+```
+
+Clients that can only start a command (Claude Desktop, for one) use `rigsmith --mcp-stdio`.
+It starts no window: it relays the client's messages to the Rigsmith you already have open,
+so open the app first. Point `command` at the executable for your platform:
+
+```json
+{
+  "mcpServers": {
+    "rigsmith": {
+      "command": "/Rigsmith app path",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
 ## Building from source
 
 You need [c3c](https://github.com/c3lang/c3c) 0.8.3, [Git LFS](https://git-lfs.com) for the
