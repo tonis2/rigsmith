@@ -11162,6 +11162,17 @@ fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
 	test::@check(fixture.app.motion_draft.guide == "Guide pose", "the draft's guide is '%s'", fixture.app.motion_draft.guide);
 	guide.on_change(fixture.ui, 0);
 	test::@check(fixture.app.motion_draft.guide.len == 0, "None did not clear the guide");
+
+	// "Optimize" starts on Light, and a level picked is kept through a rebuild.
+	Select* optimize = fixture.ui.find_id(crig::GENERATE_OPTIMIZE_ID)!!.widget_as(Select);
+	test::@check(optimize.options.len == 3 && optimize.selected == crig::KeyReduction.LIGHT.ordinal,
+		"Optimize does not start on Light: row %d of %s", optimize.selected, optimize.options);
+	optimize.on_change(fixture.ui, crig::KeyReduction.STRONG.ordinal);
+	test::@check(fixture.app.motion_draft.optimize == STRONG, "the draft's level is %s", fixture.app.motion_draft.optimize);
+	crig::refresh_generate_view(fixture.ui);
+	fixture.ui.flush();
+	optimize = fixture.ui.find_id(crig::GENERATE_OPTIMIZE_ID)!!.widget_as(Select);
+	test::@check(optimize.selected == crig::KeyReduction.STRONG.ordinal, "a rebuild lost Strong: row %d", optimize.selected);
 }
 
 // The Generate pane's Name field: typed, it names the clip; left empty, the clip

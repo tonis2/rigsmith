@@ -14,6 +14,9 @@
  "Poses from" picks one of the character's clips as the guide: its keyed poses
  are ones the generated motion passes through (see `app/generate.c3`). A guide
  is an ordinary clip, made in the Animations pane — a few keys, no loop.
+
+ "Optimize" is Optimize keys run on the clip as it lands: Light or Strong drops
+ the keys it can lose, Off keeps one on every generated frame.
 *>
 module crig;
 import cui;
@@ -33,8 +36,12 @@ const String GENERATE_STEPS_ID = "generate-steps";
 const String GENERATE_GO_ID = "generate-go";
 const String GENERATE_STOP_ID = "generate-stop";
 const String GENERATE_GUIDE_ID = "generate-guide";
+const String GENERATE_OPTIMIZE_ID = "generate-optimize";
 const float GENERATE_PROMPT_H = 64.0f;
 const String GENERATE_PLACEHOLDER = "A person walks forward and waves with the right hand.";
+
+// By `KeyReduction` ordinal.
+String[3] generate_optimize_levels = { "Off", "Light", "Strong" };
 
 // Set by the routes that open the pane for typing (the Animations pane's
 // "+ Generate", the View menu); the pane puts the caret in the prompt on its next
@@ -210,6 +217,12 @@ fn Element* GeneratePanel.build(&self, Element* elem) @dynamic
 					@node((Label) { .text = "Poses from", .size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
 					@node((GenerateGuideChooser) { });
 				};
+				@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = 4, .cross_align = CENTER })
+				{
+					@node((Label) { .text = "Optimize", .size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
+					@node((Select) { .options = generate_optimize_levels[..], .selected = draft.optimize.ordinal,
+						.width = 110, .style = VIEW_MENU_STYLE, .on_change = &generate_optimize_chosen }).with_id(GENERATE_OPTIMIZE_ID);
+				};
 				if (self.shown.running)
 				{
 					@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = 4, .cross_align = CENTER })
@@ -236,6 +249,8 @@ fn Element* GeneratePanel.build(&self, Element* elem) @dynamic
 				@node((GenerateNote) { .text = "Example prompt: \"walks forward, then sits down\". Another seed is another take on the same prompt; fewer steps is faster and rougher.",
 					.size = 12, .color = TEXT_DIM });
 				@node((GenerateNote) { .text = "Poses from loads clips/poses, to let Kimodo use them as reference steps, for its animation generation.",
+					.size = 12, .color = TEXT_DIM });
+				@node((GenerateNote) { .text = "Optimize drops the keys the clip can lose once it lands: Light keeps the motion almost exact, Strong removes more, Off keeps a key on every frame.",
 					.size = 12, .color = TEXT_DIM });
 			}
 		};
@@ -272,6 +287,12 @@ fn void generate_prompt_submitted(Ui* ui, String text) @private
 }
 
 fn void generate_field_submitted(Ui* ui, String text) @private => generate_confirmed(ui);
+
+fn void generate_optimize_chosen(Ui* ui, usz row) @private
+{
+	if (row >= generate_optimize_levels.len) return;
+	ui.inherit(AppState)!!.motion_draft.optimize = (KeyReduction)row;
+}
 
 // Sets the field in place: a change of seed is not a change of the pane's shape.
 fn void set_generate_field(Ui* ui, String id, String* held, String text) @private
@@ -331,7 +352,8 @@ fn bool generate_request(AppState* app, MotionRequest* out) @private
 		app.@notice("The character already has a clip called \"%s\" — pick another name.", name);
 		return false;
 	}
-	*out = { .prompt = prompt, .name = name, .seconds = seconds, .seed = seed, .steps = steps, .guide = draft.guide };
+	*out = { .prompt = prompt, .name = name, .seconds = seconds, .seed = seed, .steps = steps, .guide = draft.guide,
+		.optimize = draft.optimize };
 	return true;
 }
 

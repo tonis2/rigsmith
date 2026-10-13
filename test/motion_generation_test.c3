@@ -162,13 +162,14 @@ fn void generating_with_no_gpu_is_refused() @test
  A job as `start_motion_generation` leaves it, without the pipeline: what it
  asked for, and the .glb bytes the pipeline hands back (empty for none). The
  pipeline's own part - its lines and its end - is then fed to the job the way
- `tick_motion_job` feeds it.
+ `tick_motion_job` feeds it. Light is what the Generate pane starts on.
 *>
-fn void pretend_job(crig::AppState* app, String prompt, char[] glb = {})
+fn void pretend_job(crig::AppState* app, String prompt, char[] glb = {}, crig::KeyReduction optimize = LIGHT)
 {
 	app.motion_job.clear();
 	app.motion_job.name = crig::motion_clip_name(mem, prompt);
 	app.motion_job.prompt = prompt.copy(mem);
+	app.motion_job.optimize = optimize;
 	if (glb.len > 0)
 	{
 		app.motion_job.glb = alloc::new_array(mem, char, glb.len);
@@ -273,6 +274,45 @@ fn void a_generated_clip_lands_in_the_character_from_memory() @test
 	String status = crig::generation_status_json(&app);
 	defer status.free(mem);
 	test::@check(status.contains(`"state":"done"`) && status.contains(`"clip":`), "status: %s", status);
+}
+
+<*
+ The Generate pane's Optimize level is Optimize keys run on the clip as it lands:
+ Off keeps a key on every frame the file has, Light drops the keys that move the
+ same, Strong drops more.
+*>
+fn void a_generated_clip_lands_with_the_keys_its_optimize_level_keeps() @test
+{
+	const String DIRECTORY = GENERATION_DIR +++ "/optimize";
+	String directory = DIRECTORY;
+	(void)path::rmtree((Path)directory);
+	(void)path::mkdir((Path)directory, recursive: true);
+	String model = DIRECTORY +++ "/humanoid.glb";
+	trust_fixes::copy_humanoid(model);
+	defer trust_fixes::remove_with_sidecar(model);
+	rig::TriMesh mesh = rig::load_gltf(mem, model)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, model);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.config.directory = string::format(mem, "%s/config", directory);
+	test::@check(app.motion_draft.optimize == LIGHT, "the pane starts on %s, not Light", app.motion_draft.optimize);
+
+	char[] bytes = file::load(mem, "assets/animations/humanoid.glb")!!;
+	defer alloc::free(mem, bytes);
+
+	crig::KeyReduction[3] levels = { OFF, LIGHT, STRONG };
+	usz[3] keys;
+	foreach (usz i, level : levels)
+	{
+		pretend_job(&app, "a person walks", bytes, level);
+		app.finish_motion_job(true);
+		crig::AnimRef landed;
+		test::@check(app.take_generated_clip(&landed) && landed.valid(), "no clip landed at %s", level);
+		keys[i] = app.clip(landed).keyframes.len;
+	}
+	test::@check(keys[0] > keys[1] && keys[1] > keys[2], "Off, Light and Strong landed %d, %d and %d keys",
+		keys[0], keys[1], keys[2]);
 }
 
 fn void a_failed_generation_says_why_and_binds_nothing() @test

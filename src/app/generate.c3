@@ -104,7 +104,8 @@ const String MOTION_GUIDE_SKELETON = "kimodo/skeletons/soma30.glb";
 <*
  One request. Zero fields take the defaults: 5 seconds, 100 diffusion steps,
  seed 0 (a fixed seed, so the same prompt gives the same motion until it is
- changed), a name made from the prompt, and no guide poses.
+ changed), a name made from the prompt, no guide poses, and every generated
+ frame landed as a key.
 *>
 struct MotionRequest
 {
@@ -116,9 +117,9 @@ struct MotionRequest
 	// A clip bound to the character whose keyed poses the motion passes
 	// through; "" for none. Borrowed.
 	String guide;
-	// Land every generated frame as a key rather than the fewest that move the
-	// same; see `generated_clip_on_rig`.
-	bool dense;
+	// The Optimize keys level the clip lands at; OFF keeps every generated frame
+	// as a key. See `generated_clip_on_rig`.
+	KeyReduction optimize;
 }
 
 <*
@@ -156,8 +157,8 @@ struct MotionJob
 	// and play it; `take_generated_clip` hands it over once.
 	AnimRef landed;
 	bool landed_pending;
-	// The request's `dense`, carried to the landing.
-	bool dense;
+	// The request's `optimize`, carried to the landing.
+	KeyReduction optimize;
 }
 
 <*
@@ -172,6 +173,7 @@ struct MotionDraft
 	String seed;
 	String steps;
 	String guide; // the bound clip chosen under "Poses from"; "" = none
+	KeyReduction optimize; // chosen under "Optimize"; `new_app` starts it at Light
 }
 
 fn void MotionDraft.free(&self)
@@ -740,7 +742,7 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 	self.motion_job.guide_keys = keyed;
 	self.motion_job.guide_dropped = dropped;
 	self.motion_job.guide_partial = partial;
-	self.motion_job.dense = request.dense;
+	self.motion_job.optimize = request.optimize;
 
 	llm::pipeline::Job* engine = mem::new(llm::pipeline::Job);
 	self.motion_job.engine = engine;
@@ -826,7 +828,7 @@ fn void AppState.finish_motion_job(&self, bool ok)
 		self.@notice("Generating \"%s\" failed: %s", job.name, job.last());
 		return;
 	}
-	AnimRef landed = self.land_generated_motion(job.glb, job.name, job.dense);
+	AnimRef landed = self.land_generated_motion(job.glb, job.name, job.optimize);
 	if (!landed.valid())
 	{
 		job.failed = true;
@@ -834,17 +836,17 @@ fn void AppState.finish_motion_job(&self, bool ok)
 		return;
 	}
 	// The landed name, which differs when the authored pack already had this one.
-	if (AnimTemplate* clip = self.clip(landed))
+	AnimTemplate* clip = self.clip(landed);
+	if (clip && clip.name != job.name)
 	{
-		if (clip.name != job.name)
-		{
-			alloc::free(mem, job.name.ptr);
-			job.name = clip.name.copy(mem);
-		}
+		alloc::free(mem, job.name.ptr);
+		job.name = clip.name.copy(mem);
 	}
 	job.landed = landed;
 	job.landed_pending = true;
-	self.@notice("Generated \"%s\" and added it to the character · save to keep it in the model", job.name);
+	String kept = job.optimize == OFF ? "a key every frame" : job.optimize == STRONG ? "optimized Strong" : "optimized Light";
+	self.@notice("Generated \"%s\" (%d keys, %s) and added it to the character · save to keep it in the model",
+		job.name, clip ? clip.keyframes.len : 0, kept);
 }
 
 <*
@@ -871,9 +873,9 @@ fn bool AppState.stop_motion_generation(&self)
 
  @return `The clip, or NO_ANIM when the file holds none this rig can take.`
 *>
-fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, bool dense = false)
+fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyReduction optimize = LIGHT)
 {
-	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name, dense);
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name, optimize);
 	if (catch sampled) return NO_ANIM;
 	AnimRef landed = self.author_clip(sampled);
 	if (!landed.valid()) return NO_ANIM;
@@ -894,17 +896,18 @@ fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, bool d
  **Landed editable.** The file is keyed at 30 frames a second and the import
  slices each frame in four, so taken whole a five-second clip is six hundred keys
  with every joint on every one — a sheet nobody can edit and a curve nobody can
- shape. So it lands with the keys it can lose at Optimize keys' Light tolerance
- dropped (`clip_keys_reduced`), which moves the same within a quarter of a degree;
- `dense` keeps every one. And it lands **not looping**: a generated motion starts
- and ends where it likes, and `make_loop` is how a cycle is cut out of it.
+ shape. So it lands with the keys it can lose at `optimize`'s tolerance dropped
+ (`clip_keys_reduced`, as Optimize keys does it): Light moves the same within a
+ quarter of a degree, Strong within a degree, and OFF keeps every one. And it
+ lands **not looping**: a generated motion starts and ends where it likes, and
+ `make_loop` is how a cycle is cut out of it.
 
  @param name : `The clip's name, made unique against the authored pack.`
- @param dense : `Keep every key the import made.`
+ @param optimize : `The keys dropped; OFF keeps every key the import made.`
  @return? RIG_EMPTY : `There is no rig to put it on.`
  @return? MOTION_NOT_STARTED : `The file holds no clip, or one for a skeleton this rig does not relate to.`
 *>
-fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, bool dense = false)
+fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, KeyReduction optimize = LIGHT)
 {
 	RigView view = self.open_rig(mem)!;
 	defer view.free(mem);
@@ -971,12 +974,12 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, 
 		},
 		.owned = true,
 	};
-	if (dense) return built;
+	if (optimize == OFF) return built;
 	// Compiled first: sampling an uncompiled clip finds each joint's keys by walking
 	// every key, which is most of the cost on a clip this dense.
 	built.compile_tracks(mem);
 	AnimTemplate reduced;
-	if (!clip_keys_reduced(mem, built, &view.skeleton, view.names, LIGHT, &reduced)) return built;
+	if (!clip_keys_reduced(mem, built, &view.skeleton, view.names, optimize, &reduced)) return built;
 	built.free(mem);
 	return reduced;
 }

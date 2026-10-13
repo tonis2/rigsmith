@@ -943,6 +943,10 @@ fn AppState new_app_with_geometry(
 		// as the mode being broken rather than as a setting wanting a scroll.
 		.brush_radius = BRUSH_RADIUS_DEFAULT,
 
+		// A generated clip comes with a key every frame; Light is what makes it one
+		// that can be edited, so it is what the Generate pane starts on.
+		.motion_draft = { .optimize = LIGHT },
+
 		// The config `main` hands over is the one with a file behind it — see
 		// there — and this is the one field of it that is read before that
 		// happens, by a check that never gets one at all. Zero would be an

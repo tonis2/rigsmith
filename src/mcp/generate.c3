@@ -38,7 +38,7 @@ fn String? tool_generate_motion(Object* args, void* user_data, DString* detail) 
 	MotionRequest request = { .prompt = prompt };
 	if (try name = args.get_string("name")) request.name = name;
 	if (try guide = args.get_string("poses_from")) request.guide = guide;
-	request.dense = args.get_bool("dense") ?? false;
+	request.optimize = (args.get_bool("dense") ?? false) ? OFF : LIGHT;
 	if (try seconds = args.get_float("seconds"))
 	{
 		if (!(seconds >= MOTION_MIN_SECONDS && seconds <= MOTION_MAX_SECONDS))
