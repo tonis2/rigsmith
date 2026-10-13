@@ -393,6 +393,64 @@ fn void sparse_same_time_keying_merges_only_incoming_channels() @test
 	test::@check(merged.keyframes[0].dots[0].angle == 0.7f, "rewriter mutated source");
 }
 
+<*
+ Keys put in all at once land as they would one `clip_with_key` at a time: in
+ order, merging on a time already keyed (a hair away included), and lengthening
+ the clip past its end — whatever order they come in.
+*>
+fn AnimKeyframe[] incoming_keys()
+{
+	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, 5);
+	float[5] times = { 0.125f, 0.25f, 0.25f + 1.0e-5f, 1.3f, 0.0625f };
+	foreach (usz i, time : times)
+	{
+		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
+		dots[0] = i == 1
+			? (AnimKeyDot){ .joint_name = "knee".copy(mem), .move = { 0.1f, 0, 0 }, .channels = TRANSLATION }
+			: (AnimKeyDot){ .joint_name = "foot".copy(mem), .axis = { 0, 1, 0 }, .angle = 0.1f * (float)(i + 1), .channels = ROTATION };
+		keys[i] = { .time = time, .dots = dots };
+	}
+	return keys;
+}
+
+fn void many_keys_at_once_land_as_one_at_a_time_would() @test
+{
+	AnimTemplate clip = built(3); // keys at 0.0, 0.25, 0.5
+	defer clip.free(mem);
+
+	AnimTemplate stepped = crig::clip_copy(mem, clip);
+	AnimKeyframe[] one_by_one = incoming_keys();
+	foreach (key : one_by_one)
+	{
+		AnimTemplate next = crig::clip_with_key(mem, stepped, key);
+		stepped.free(mem);
+		stepped = next;
+	}
+	alloc::free(mem, one_by_one);
+	defer stepped.free(mem);
+
+	AnimTemplate batched = crig::clip_with_keys(mem, clip, incoming_keys());
+	defer batched.free(mem);
+
+	test::@check(clip.keyframes.len == 3, "the source clip was mutated");
+	test::eq(batched.keyframes.len, stepped.keyframes.len);
+	test::@check(math::abs(batched.duration - stepped.duration) < 1.0e-6f,
+		"lasts %s, one at a time %s", batched.duration, stepped.duration);
+	foreach (usz k, frame : stepped.keyframes)
+	{
+		AnimKeyframe got = batched.keyframes[k];
+		test::@check(got.time == frame.time, "key %d at %s, one at a time %s", k, got.time, frame.time);
+		test::@check(got.dots.len == frame.dots.len, "key %d holds %d joints, one at a time %d", k, got.dots.len, frame.dots.len);
+		foreach (usz d, dot : frame.dots)
+		{
+			AnimKeyDot other = got.dots[d];
+			test::@check(other.joint_name == dot.joint_name && other.channels == dot.channels
+				&& other.angle == dot.angle && (other.move - dot.move).length() == 0.0f,
+				"key %d differs at %s", k, dot.joint_name);
+		}
+	}
+}
+
 fn void closing_a_sparse_seam_includes_channels_absent_from_the_first_frame() @test
 {
 	AnimKeyDot[1] a = { { .joint_name = "hips", .move = { 0, 0.2f, 0 }, .channels = TRANSLATION } };

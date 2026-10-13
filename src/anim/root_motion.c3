@@ -390,10 +390,22 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 		if (j >= names.len || names[j].len == 0) return UNNAMED;
 	}
 
+	// Sampled at every key: off compiled tracks, or each sample walks the whole
+	// clip. A clip fresh out of another rewrite (a smoothing) has none yet.
+	AnimTemplate probe = source;
+	bool compiled_here = !source.tracks_compiled;
+	if (compiled_here)
+	{
+		probe.owned = false;
+		probe.tracks = {};
+		probe.compile_tracks(mem);
+	}
+	defer if (compiled_here) free_tracks(probe);
+
 	float height = skeleton.height();
-	rig::Pose first = source.pose(mem, skeleton, names, 0.0f, false);
+	rig::Pose first = probe.pose(mem, skeleton, names, 0.0f, false);
 	defer first.free(mem);
-	rig::Pose last = source.pose(mem, skeleton, names, until, false);
+	rig::Pose last = probe.pose(mem, skeleton, names, until, false);
 	defer last.free(mem);
 	RootTravel travel = measure_root_travel(skeleton, roots, &first, &last, until, policy);
 	// Pinned, an out-and-back walk ends where it began, so look at every key.
@@ -419,7 +431,7 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 		float least = math::max(height, 1.0e-6f) * 1.0e-4f;
 		foreach (t : times.array_view())
 		{
-			rig::Pose pose = source.pose(mem, skeleton, names, t, false);
+			rig::Pose pose = probe.pose(mem, skeleton, names, t, false);
 			defer pose.free(mem);
 			if (travel.strays(skeleton, roots, &pose, policy.mode) > least) { moves = true; break; }
 		}
@@ -430,13 +442,23 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 	defer if (bones.len > 0) alloc::free(mem, bones);
 	float unit = height > 0.0f ? height : 1.0f;
 
-	AnimTemplate current = clip_copy(allocator, source);
+	// The bone each moved joint's keys were recorded against, looked up once.
+	Vec3[] source_bones = alloc::new_array(mem, Vec3, (sz)moved.len);
+	defer alloc::free(mem, source_bones);
+	if (policy.turning)
+	{
+		foreach (usz i, j : moved) source_bones[i] = clip_bone_of(source, names[j]);
+	}
+
+	List{AnimKeyframe} keys;
+	keys.init(mem, (sz)times.len());
+	defer keys.free();
 	float previous = -1.0f;
 	foreach (t : times.array_view())
 	{
 		if (previous >= 0.0f && math::abs(t - previous) < ANIM_SAME_TIME) continue;
 		previous = t;
-		rig::Pose pose = source.pose(mem, skeleton, names, t, false);
+		rig::Pose pose = probe.pose(mem, skeleton, names, t, false);
 		defer pose.free(mem);
 		move_root_in_pose(skeleton, &pose, roots, policy.mode, travel, t);
 
@@ -451,7 +473,7 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 			};
 			if (policy.turning)
 			{
-				Vec3 source_bone = clip_bone_of(source, names[j]);
+				Vec3 source_bone = source_bones[i];
 				Quaternionf onto = bone_carry(source_bone, j < bones.len ? bones[j] : (Vec3){});
 				Quaternionf authored;
 				if (skeleton.parents[j] < 0)
@@ -471,10 +493,9 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 			}
 			dots[i] = dot;
 		}
-		AnimTemplate next = clip_with_key(allocator, current, { .time = t, .dots = dots });
-		current.free(allocator);
-		current = next;
+		keys.push({ .time = t, .dots = dots });
 	}
+	AnimTemplate current = clip_with_keys(allocator, source, keys.to_array(allocator));
 	current.duration = source.duration;
 	*out = current;
 	return MOVED;

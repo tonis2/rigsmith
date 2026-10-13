@@ -37,6 +37,7 @@ import rig;
 import std::math;
 import std::math::vector;
 import std::math::quaternion;
+import std::collections::list;
 
 <*
  How close two keyframe times have to be to count as the same instant.
@@ -345,6 +346,54 @@ fn AnimTemplate clip_with_key(Allocator allocator, AnimTemplate source, AnimKeyf
 	// silently clamping it to the duration — would make the playhead a place you
 	// cannot key at, which is the one thing a timeline must not have.
 	return clip_with_frames(allocator, source, frames, math::max(source.duration, key.time));
+}
+
+<*
+ The clip with each of `keys` put in, in order, the way `clip_with_key` puts in one:
+ a key landing on a time already keyed merges its channels into that key.
+
+ 	`AnimTemplate next = clip_with_keys(mem, *clip, rewritten[..]);`
+
+ The clip is copied once, not once a key. A rewrite that keys every frame of a long
+ clip one `clip_with_key` at a time copies the whole clip for each of them, which
+ is minutes on a take of a few thousand keys.
+
+ `keys` are taken over, the array and everything in it.
+*>
+fn AnimTemplate clip_with_keys(Allocator allocator, AnimTemplate source, AnimKeyframe[] keys)
+{
+	List{AnimKeyframe} frames;
+	frames.init(allocator, (sz)(source.keyframes.len + keys.len));
+	foreach (frame : source.keyframes) frames.push(keyframe_copy(allocator, frame));
+	float duration = source.duration;
+	foreach (key : keys)
+	{
+		// The first key that is at the same time or later — what `clip_with_key`
+		// walks to, found by halving because the keys are in time order.
+		sz lo = 0;
+		sz hi = frames.len();
+		while (lo < hi)
+		{
+			sz mid = (lo + hi) / 2;
+			float time = frames[mid].time;
+			if (math::abs(time - key.time) < ANIM_SAME_TIME || time > key.time) { hi = mid; } else { lo = mid + 1; }
+		}
+		if (lo < frames.len() && math::abs(frames[lo].time - key.time) < ANIM_SAME_TIME)
+		{
+			AnimKeyframe old = frames[lo];
+			frames[lo] = merge_key_channels(allocator, old, key);
+			old.free(allocator);
+		}
+		else
+		{
+			frames.insert_at(lo, key);
+		}
+		duration = math::max(duration, key.time);
+	}
+	if (keys.len > 0) alloc::free(allocator, keys);
+	AnimKeyframe[] out = frames.to_array(allocator);
+	frames.free();
+	return clip_with_frames(allocator, source, out, duration);
 }
 
 <*

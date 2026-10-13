@@ -864,14 +864,20 @@ fn bool AnimTemplate.channel_span(self, String joint, bool rotation, float time,
 		float last_time = self.keyframes[self.key_of(track, joint, rotation, cycle - 1)].time;
 		clock = math::clamp(clock, first_time, last_time);
 	}
+	// The first segment ending after the clock, found by halving: the keys are in
+	// time order, and walking them made each sample of a long clip cost as much as
+	// the clip has keys.
 	sz segments = cyclic ? (sz)cycle : (sz)cycle - 1;
-	sz seg = segments - 1;
-	for (sz i = 0; i < segments; i++)
+	sz lo = 0;
+	sz hi = segments;
+	while (lo < hi)
 	{
+		sz mid = (lo + hi) / 2;
 		float upper;
-		self.key_at(track, joint, rotation, i + 1, cycle, cyclic, &upper);
-		if (clock < upper) { seg = i; break; }
+		self.key_at(track, joint, rotation, mid + 1, cycle, cyclic, &upper);
+		if (clock < upper) { hi = mid; } else { lo = mid + 1; }
 	}
+	sz seg = lo < segments ? lo : segments - 1;
 	float t0, t1, t2, t3;
 	out.p1 = self.key_at(track, joint, rotation, seg, cycle, cyclic, &t1);
 	out.p2 = self.key_at(track, joint, rotation, seg + 1, cycle, cyclic, &t2);
