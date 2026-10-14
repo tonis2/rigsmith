@@ -886,7 +886,7 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 		row[(usz)joint] = want;
 
 		usz kept = top_row(row, view.dot_ids, joint, dots[..], shares[..]);
-		draft.state(v, dots[:kept], shares[:kept]);
+		draft.state(v, dots[:kept], shares[:kept], dot_id);
 	}
 
 	usz changed = self.lay_draft(&draft, commit: false);

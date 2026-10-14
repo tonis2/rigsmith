@@ -225,12 +225,21 @@ struct PaintColumn
  different model is loaded, or once the same one is re-exported with its
  vertices reordered. That caveat is inherited from the paint layer and is not
  fixed here.
+
+ **`by` is whose edit wrote the row**: the dot an Apply, a brush stroke or a
+ lasso was working on, the same on every pin one edit lays on a vertex. 0 is
+ nobody's — a whole-model op, or a session from before version 27. It is what
+ lets Reset take back one joint's work and leave every row a neighbour wrote
+ alone: the shares alone cannot say whether a joint is on a row because it was
+ painted there or because a neighbour's soft edge kept it in proportion. See
+ `row_author` for how a row with no author is read.
 *>
 struct VertexPin
 {
 	uint vertex;
 	uint dot_id;
 	float share;
+	uint by;
 }
 
 <*
@@ -262,6 +271,9 @@ struct PinColumn
  already-painted mesh has a previous value per vertex that nothing else
  remembers. Recomputing it from the binder would give the base, not the
  correction that was there.
+
+ `by_before` and `by_after` are a pin's author either side (see `VertexPin.by`);
+ a paint dab has none and leaves them 0.
 *>
 struct PaintChange
 {
@@ -269,6 +281,8 @@ struct PaintChange
 	uint dot_id;
 	float before;
 	float after;
+	uint by_before;
+	uint by_after;
 }
 
 <*
@@ -1057,9 +1071,10 @@ fn float RigDocument.paint_of(&self, uint vertex, uint dot_id)
 
  @param vertex : `Index into the mesh this document was pinned against.`
  @param share : `0 to 1, the fraction of the vertex this dot ends up holding. 0 removes the pin.`
+ @param by : `Whose edit wrote the row — see VertexPin.by. 0 for nobody's.`
  @return `True if anything changed.`
 *>
-fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share)
+fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share, uint by = 0)
 {
 	if (dot_id == 0 || !self.find(dot_id)) return false;
 
@@ -1070,7 +1085,7 @@ fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share)
 	foreach (sz i, pin : self.pins.array_view())
 	{
 		if (pin.vertex != vertex || pin.dot_id != dot_id) continue;
-		if (pin.share == held) return false;
+		if (pin.share == held && (clean || pin.by == by)) return false;
 
 		if (clean)
 		{
@@ -1079,12 +1094,13 @@ fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share)
 		else
 		{
 			self.pins.get_ref(i).share = held;
+			self.pins.get_ref(i).by = by;
 		}
 		return true;
 	}
 
 	if (clean) return false;
-	self.pins.push({ .vertex = vertex, .dot_id = dot_id, .share = held });
+	self.pins.push({ .vertex = vertex, .dot_id = dot_id, .share = held, .by = by });
 	return true;
 }
 

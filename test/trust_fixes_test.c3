@@ -6,7 +6,9 @@ import rig;
 import std::core::test;
 import std::io;
 import std::io::file;
+import std::math;
 import std::math::vector;
+import std::math::quaternion;
 
 // Every primitive keeps its UVs, the file keeps its materials and texture, and it has a skin.
 fn bool keeps_the_model(String path)
@@ -75,6 +77,71 @@ fn void an_export_keeps_uvs_and_materials_and_save_follows_it() @test
 	app.save_session();
 	test::@check(app.source_path == exported, "the save went somewhere other than the export");
 	test::@check(keeps_the_model(exported), "saving after the export lost UVs or materials: %s", app.notice());
+}
+
+<*
+ A model set down away from the origin — beside another in a scene — exports
+ the same as one that was not: whole, with its UVs and texture, standing at its
+ own origin. The placement stays in the project beside the file.
+*>
+fn void a_placed_model_exports_whole_at_its_origin() @test
+{
+	String source = "build/trust-placed-source.glb";
+	String exported = "build/trust-placed-rigged.glb";
+	copy_humanoid(source);
+	remove_with_sidecar(exported);
+	defer
+	{
+		remove_with_sidecar(source);
+		remove_with_sidecar(exported);
+	}
+
+	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, source);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	crig::ProjectTransform placement = {
+		.location = { 4.4f, 0, 0 },
+		.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI * 0.5f),
+	};
+	app.doc.model_transform = placement;
+
+	app.export_rig(exported);
+	test::@check(keeps_the_model(exported), "a placed export lost UVs or materials: %s", app.notice());
+	test::@check(app.source_path == exported, "a whole export should become where saves go");
+	test::@check(!app.source_has_model_transform, "the export claims to carry the placement");
+
+	gltf::GltfStream stream = gltf::open(exported, mem)!!;
+	defer stream.close();
+	foreach (node : stream.gltf.nodes)
+	{
+		test::@check(node.name != "crig:model_transform", "the export wrote the scene placement into the file");
+	}
+	rig::TriMesh written = rig::load_gltf(mem, exported)!!;
+	defer written.free(mem);
+	float worst = 0.0f;
+	foreach (usz i, position : written.positions)
+	{
+		worst = math::max(worst, (position - mesh.positions[i]).length());
+	}
+	test::@check(worst < 1.0e-4f, "the exported model moved %s off its own origin", worst);
+
+	// Reopened, it is the same model in the same place in the scene.
+	crig::AppState reopened = crig::new_app(written, exported);
+	defer reopened.free();
+	reopened.adopt_source_rig();
+	test::@check(reopened.doc.model_transform.same(placement), "the project lost the placement");
+	test::@check(!reopened.source_has_model_transform, "the reopened file claims to carry the placement");
+	test::@check(near_positions(reopened.geometry.positions, mesh.positions),
+		"the reopened model is not the one exported");
+}
+
+fn bool near_positions(Vec3[] a, Vec3[] b) @local
+{
+	if (a.len != b.len) return false;
+	foreach (usz i, p : a) if ((p - b[i]).length() > 1.0e-4f) return false;
+	return true;
 }
 
 <*

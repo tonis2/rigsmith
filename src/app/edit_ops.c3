@@ -1536,7 +1536,9 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 			sz partner = across.twin_of(self.geometry.positions[pin.vertex]);
 			if (partner < 0) continue;
 			wanted[partner] = true;
-			batch[asked++] = { .vertex = (uint)partner, .dot_id = twin, .share = pin.share };
+			// The source's own rows become the twin's; a neighbour's row has no
+			// twin this can name, so the copy is nobody's.
+			batch[asked++] = { .vertex = (uint)partner, .dot_id = twin, .share = pin.share, .by = pin.by == source ? twin : 0 };
 		}
 		foreach (pin : self.doc.pins.array_view())
 		{

@@ -486,13 +486,14 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 
 	float[] dense = rig::bind_geodesic(
 		mem, &self.voxels, self.geometry.positions, view.skeleton.joints, view.skeleton.parents,
-		&self.shells, view.attachments, riders, view.reaches, nearest);
+		&self.shells, view.attachments, riders, view.reaches, nearest, self.bind_eps());
 	defer alloc::free(mem, dense);
 
 	// The second funnel: this binds for itself rather than through `bind_dense`,
 	// because it needs the riders and the distances that only come out of the bind
-	// itself — so the sharpening has to be repeated here or the numbers this
-	// reports describe a bind nobody is looking at.
+	// itself — so the softness and the sharpening have to be repeated here or the
+	// numbers this reports describe a bind nobody is looking at.
+	self.sharpen_digits(dense, &view);
 	sharpen_weights(dense, self.doc.sharpness);
 	paint_over(dense, bones, view.paint);
 	pin_over(dense, bones, view.pins);

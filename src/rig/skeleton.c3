@@ -292,6 +292,72 @@ fn usz Skeleton.ancestor_run(&self, usz joint, usz[] out) {
     return written;
 }
 
+<*
+ How long a digit may be, end to end, as a share of the rig's height: a finger,
+ a toe, an ear, and not a limb. The value `CURL_CHAIN_SHARE` in the pose tools
+ curls a chain at, for the same reason.
+*>
+const float DIGIT_CHAIN_SHARE = 0.1f;
+
+<*
+ Which joints are digits: on a run of at least two joints that hangs from a
+ fork — a joint with two children or more, a hand's wrist — and goes on without
+ branching to a leaf, no longer from its first joint to the leaf than
+ `DIGIT_CHAIN_SHARE` of `height`.
+
+ A finger is short next to its thickness, which no distance falloff tells apart
+ from a forearm: the binder blends a whole finger across its three joints and
+ into the palm. Knowing which joints are digits is what lets it blend them
+ crisply instead (`AppState.sharpen_digits`).
+
+ Name-free, like `ancestor_run`: on the humanoid it is the forty finger joints,
+ and nothing of the legs, the spine or the head, which are longer, or of a lone
+ leaf under the chest, which is one joint.
+
+ The caller owns the returned array, one flag per joint.
+*>
+fn bool[] Skeleton.digits(&self, Allocator allocator) {
+    usz count = self.joints.len;
+    bool[] digits = alloc::new_array(allocator, bool, (sz)count);
+    float longest = self.height() * DIGIT_CHAIN_SHARE;
+    if (count == 0 || !(longest > 0.0f)) return digits;
+
+    usz[] children = alloc::new_array(allocator, usz, (sz)count);
+    usz[] only = alloc::new_array(allocator, usz, (sz)count);
+    defer {
+        alloc::free(allocator, children);
+        alloc::free(allocator, only);
+    }
+    foreach (usz i, parent : self.parents) {
+        if (parent < 0 || (usz)parent >= count) continue;
+        children[(usz)parent]++;
+        only[(usz)parent] = i;
+    }
+
+    foreach (usz first, parent : self.parents) {
+        if (parent < 0 || (usz)parent >= count || children[(usz)parent] < 2) continue;
+
+        // Down the run without branching; the step count bounds a cyclic array.
+        float length = 0.0f;
+        usz joints = 1;
+        usz walk = first;
+        while (children[walk] == 1 && joints <= count) {
+            length += (self.joints[only[walk]] - self.joints[walk]).length();
+            walk = only[walk];
+            joints++;
+        }
+        if (children[walk] != 0 || joints < 2 || length > longest) continue;
+
+        walk = first;
+        digits[walk] = true;
+        for (usz step = 1; step < joints; step++) {
+            walk = only[walk];
+            digits[walk] = true;
+        }
+    }
+    return digits;
+}
+
 fn void Skeleton.free(&self, Allocator allocator) {
     if (self.joints.len > 0) alloc::free(allocator, self.joints);
     if (self.parents.len > 0) alloc::free(allocator, self.parents);

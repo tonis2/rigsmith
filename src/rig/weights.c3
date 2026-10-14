@@ -298,7 +298,7 @@ fn float[] bind_geometric(
  @param riders : `Filled with the joint each shell was bound rigidly to, or -1. Caller-sized to the shell count; empty to not ask.`
  @param reaches : `One per joint, in model units, 0 for no limit — see reach_bias. Shorter than the joint count is allowed; the rest are unlimited.`
  @param nearest : `Filled with the squared distance to the closest bone, the same distance the weights were made from — geodesic where the flood arrived, straight-line elsewhere. Caller-sized to the vertex count; empty to not ask. This is the honest way to ask how well served a vertex is, because a weight scaled by a reach can no longer be inverted back into a distance.`
- @param eps : `Softness of the falloff, in the model's own units.`
+ @param eps : `Softness of the falloff, in the model's own units. The default is a centimetre on a figure in metres; the app passes a share of the model's size instead — AppState.bind_eps.`
 *>
 fn float[] bind_geodesic(
     alloc::Allocator allocator,

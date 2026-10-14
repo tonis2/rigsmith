@@ -277,8 +277,11 @@ fn void pin_over(float[] dense, usz bones, PinColumn[] pins)
 
 		// The whole row, pinned columns included — they are overwritten below, and
 		// scaling them first is cheaper than testing each column for membership of
-		// a list that is almost always one long.
-		float keep = rest > 0.0f ? (1.0f - claimed) / rest : 0.0f;
+		// a list that is almost always one long. A row stated whole, give or take
+		// the rounding of its shares, leaves nothing over: the crumb would hand
+		// every unpinned joint a millionth, and a row read back from this one —
+		// an Apply's soft edge — would then name them.
+		float keep = rest > 0.0f && claimed < 1.0f - PIN_WHOLE_SLACK ? (1.0f - claimed) / rest : 0.0f;
 		for (usz b = 0; b < bones; b++) dense[row + b] *= keep;
 
 		for (usz i = at; i < end; i++)
@@ -290,6 +293,9 @@ fn void pin_over(float[] dense, usz bones, PinColumn[] pins)
 		at = end;
 	}
 }
+
+// How far short of 1 a vertex's stated shares may sum and still be the whole of it.
+const float PIN_WHOLE_SLACK = 1.0e-5;
 
 // One pin's share as the arithmetic above may use it. Clamped here rather than
 // at the setter alone, because a column can also be built by a caller that did
@@ -351,6 +357,71 @@ fn void sharpen_weights(float[] dense, float gamma)
 		if (*weight > 0.0f && *weight != 1.0f) *weight = math::pow(*weight, gamma);
 	}
 }
+
+<*
+ Sharpens each row of a bind by a power of its own: the mean of the joints'
+ `gammas`, weighted by the row's shares.
+
+ 	`sharpen_by_joint(bound, gammas);`
+
+ What `sharpen_weights` does for the whole model, done where only some joints
+ need it — a finger, whose bones are short next to its thickness, where the
+ binder's falloff blends three joints across a whole segment and leaves a
+ knuckle no crease. A row the digits hold none of is left at its power of 1; a
+ row they hold all of gets theirs; a row on the line between gets the mix, so
+ the power changes smoothly across the mesh and no seam appears where it
+ changes. Per row, the strongest joint stays the strongest, so a part picked by
+ owner is the same part either side of this.
+
+ **A row it sharpens comes back normalised**, since a power of a share cannot
+ overflow where a power of a score can, and `sharpen_weights` raises it again
+ after this. So does a row whose scores pass `SHARPEN_SCORE_CEILING`, which
+ that power could take past a float. Every other row is left exactly as the
+ binder made it, so deleting one joint still moves no other joint's column. A
+ share this pushes below `SHARPEN_FLOOR` stops there, so the power on top cannot
+ take a sibling's leak to zero — a weight of nothing is one the paint multiplier
+ can never lift again (see `rig::SIBLING_LEAK`).
+
+ @param dense : `vertices x joints, as the binder returns it. Modified in place.`
+ @param gammas : `One per joint: the power its rows lean to. 1 leaves a joint's rows as the binder made them.`
+*>
+fn void sharpen_by_joint(float[] dense, float[] gammas)
+{
+	usz bones = gammas.len;
+	if (bones == 0 || dense.len % bones != 0) return;
+	for (usz at = 0; at < dense.len; at += bones)
+	{
+		float[] row = dense[at:bones];
+		float sum = 0.0f;
+		float largest = 0.0f;
+		foreach (weight : row)
+		{
+			sum += weight;
+			largest = math::max(largest, weight);
+		}
+		if (!(sum > 0.0f)) continue;
+		float gamma = 0.0f;
+		foreach (b, weight : row) gamma += weight / sum * gammas[b];
+		bool sharpened = math::abs(gamma - 1.0f) >= 1.0e-4f;
+		if (!sharpened && largest <= SHARPEN_SCORE_CEILING) continue;
+		foreach (&weight : row) *weight /= sum;
+		if (!sharpened) continue;
+		foreach (&weight : row)
+		{
+			if (*weight <= 0.0f || *weight >= 1.0f) continue;
+			*weight = math::max(math::pow(*weight, gamma), math::min(*weight, SHARPEN_FLOOR));
+		}
+	}
+}
+
+// The least a share `sharpen_by_joint` lowers keeps: small enough to be nothing
+// in a pose, and large enough that `sharpen_weights` at `SHARPNESS_MAX` leaves it
+// a float rather than a zero.
+const float SHARPEN_FLOOR = 1.0e-9;
+
+// The largest score `sharpen_by_joint` leaves unnormalised: raised to
+// `SHARPNESS_MAX` it is still a float.
+const float SHARPEN_SCORE_CEILING = 1.0e8;
 
 <*
  Turns of the hue wheel between one joint's colour and the next.

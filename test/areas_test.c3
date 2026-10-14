@@ -337,7 +337,7 @@ fn void a_part_mirrors_and_survives_the_session() @test
 		foreach (back : reopened.doc.pins.array_view())
 		{
 			if (back.vertex != pin.vertex || back.dot_id != pin.dot_id) continue;
-			if (math::abs(back.share - pin.share) < 1.0e-5f) matched++;
+			if (math::abs(back.share - pin.share) < 1.0e-5f && back.by == pin.by) matched++;
 			break;
 		}
 	}
@@ -345,8 +345,105 @@ fn void a_part_mirrors_and_survives_the_session() @test
 }
 
 <*
- Resetting one joint leaves the part a neighbour was given alone: only the
- joint's own pins, and the rows its Apply stated around itself, go.
+ Every row an Apply writes is that joint's work — the twin's part the twin's —
+ and the authors come back through undo, redo and a save.
+*>
+fn void pin_authors_survive_save_undo_and_redo() @test
+{
+	io::printn("pin authors survive undo, redo and a save");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.undo_stack.clear();
+
+	uint wrist = named(&app, "wrist_L");
+	uint twin = app.mirror_twin(wrist);
+	bool[] hand = app.area_part_mask(mem, wrist, WITH_CHILDREN);
+	defer alloc::free(mem, hand);
+	bool[] other = app.area_twin_part(mem, twin, WITH_CHILDREN, hand, -1);
+	defer alloc::free(mem, other);
+	test::@check(app.apply_area(wrist, hand, app.area_scale(wrist) * 0.25f, twin, other) > 0, "the apply wrote nothing");
+
+	foreach (pin : app.doc.pins.array_view())
+	{
+		test::@check(pin.by == wrist || pin.by == twin, "a pin on vertex %d is %d's work", pin.vertex, pin.by);
+		if (hand[pin.vertex]) test::@check(pin.by == wrist, "the hand's vertex %d is not the wrist's", pin.vertex);
+		if (other[pin.vertex]) test::@check(pin.by == twin, "the other hand's vertex %d is not the twin's", pin.vertex);
+	}
+	crig::VertexPin[] saved = alloc::new_array(mem, crig::VertexPin, app.doc.pins.len());
+	defer alloc::free(mem, saved);
+	foreach (i, pin : app.doc.pins.array_view()) saved[i] = pin;
+
+	// The same shares stated by another joint are a change of author, and undo
+	// gives the row back to the first.
+	uint thumb = named(&app, "thumb_1_L");
+	crig::VertexPin taken = saved[0];
+	crig::VertexPin[1] restated = { { .vertex = taken.vertex, .dot_id = taken.dot_id, .share = taken.share, .by = thumb } };
+	test::eq(app.pin_dabs(restated[..]), (usz)1);
+	test::eq(app.doc.pins[0].by, thumb);
+	test::@check(app.undo(), "the change of author left nothing to undo");
+	test::eq(app.doc.pins[0].by, taken.by);
+	test::@check(app.undo() && app.redo(), "the apply did not undo and redo");
+	test::eq(app.doc.pins.len(), (sz)saved.len);
+	usz same = 0;
+	foreach (pin : saved)
+	{
+		foreach (back : app.doc.pins.array_view())
+		{
+			if (back.vertex != pin.vertex || back.dot_id != pin.dot_id) continue;
+			if (back.share == pin.share && back.by == pin.by) same++;
+			break;
+		}
+	}
+	test::eq(same, (usz)saved.len);
+}
+
+<*
+ A session from before authors were kept reads its pins as nobody's work.
+*>
+fn void a_version_26_session_reads_its_pins_with_no_author() @test
+{
+	io::printn("a version 26 session reads its pins as nobody's");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+
+	uint head = named(&app, "head");
+	test::@check(app.doc.set_pin(5, head, 1.0f, head), "the pin was refused");
+	String text = crig::session_text(mem, &app.doc, AREA_COPY);
+	defer text.free(mem);
+	String four = string::format(mem, "[5,%d,%s,%d]", head, (crig::JsonFloat)1.0f, head);
+	defer four.free(mem);
+	String three = string::format(mem, "[5,%d,%s]", head, (crig::JsonFloat)1.0f);
+	defer three.free(mem);
+	test::@check(text.contains(four), "the pin was not written with its author: %s", four);
+
+	String older = text.replace(mem, four, three);
+	defer older.free(mem);
+	String versioned = older.replace(mem, `"version": 27`, `"version": 26`);
+	defer versioned.free(mem);
+	crig::RigDocument doc = crig::parse_session(mem, versioned)!!;
+	defer doc.free();
+	test::eq(doc.pins.len(), (sz)1);
+	test::eq(doc.pins[0].share, 1.0f);
+	test::eq(doc.pins[0].by, (uint)0);
+}
+
+<*
+ Resetting one joint leaves the part a neighbour was given alone: only the rows
+ the joint's own Apply wrote change. The neck's Apply took the neck off the head,
+ so the head's rows come back as that — the neck's work, without the neck —
+ rather than as automatic rows that would hand the neck the head again.
 *>
 fn void resetting_a_joint_spares_its_neighbours() @test
 {
@@ -393,8 +490,331 @@ fn void resetting_a_joint_spares_its_neighbours() @test
 		if (on && !restated && math::abs(neck_after[v] - neck_held[v]) > 1.0e-4f) moved++;
 	}
 	test::@check(moved == 0, "resetting the head changed %d vertices of the neck's part", moved);
-	foreach (pin : app.doc.pins.array_view())
+
+	// The neck stays off the head, where its own Apply took it.
+	usz returned = 0;
+	foreach (v, on : head_part) if (on && !neck_part[v] && neck_after[v] >= crig::AREA_LEAK_FLOOR) returned++;
+	test::@check(returned == 0, "the neck came back on %d vertices of the head", returned);
+
+	// What is left of the head is the neck's work: the neck's own rows, and the
+	// head's part as the neck's Apply left it, without the neck.
+	usz count = app.geometry.positions.len;
+	crig::VertexPin[] after;
+	int[] after_at = rows_by_vertex(app.doc.pins.array_view(), count, &after);
+	defer { alloc::free(mem, after_at); alloc::free(mem, after); }
+	for (usz v = 0; v < count; v++)
 	{
-		test::@check(pin.dot_id != head, "a head pin outlived the reset on vertex %d", pin.vertex);
+		crig::VertexPin[] row = after[after_at[v]:after_at[v + 1] - after_at[v]];
+		if (row.len == 0) continue;
+		test::@check(crig::row_author(row) == neck, "the row on vertex %d is %d's work, not the neck's", v, crig::row_author(row));
 	}
+}
+
+// Every vertex's row as shown, normalised; `bones` weights to a vertex.
+fn float[] shown_rows(crig::AppState* app, usz* bones)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	usz stride = view.len();
+	*bones = stride;
+	float[] rows = app.painted_bind(mem, &view);
+	for (usz v = 0; v < app.geometry.positions.len; v++)
+	{
+		float sum = 0.0f;
+		for (usz b = 0; b < stride; b++) sum += rows[v * stride + b];
+		if (sum <= 0.0f) continue;
+		for (usz b = 0; b < stride; b++) rows[v * stride + b] /= sum;
+	}
+	return rows;
+}
+
+fn usz joint_index(crig::AppState* app, uint dot_id)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	return (usz)view.joint_of(dot_id);
+}
+
+<*
+ A joint's Apply keeps what an earlier Apply gave its neighbours: the soft edge
+ shares the rest of each vertex among the other joints as they stand, not as the
+ automatic weights had them. Finger by finger, the second joint's edge used to
+ hand its vertices back to the automatic weights, and the first joint, taken off
+ them by its own Apply, reached across again.
+
+ *Re-introduce:* state the soft edge as the joint's share alone, as it was, and
+ the first joint comes back outside its part.
+*>
+fn void applying_a_joint_keeps_what_its_neighbour_was_given() @test
+{
+	io::printn("applying a joint keeps what an earlier apply gave its neighbours");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+
+	uint first = named(&app, "index_2_L");
+	uint second = named(&app, "index_1_L");
+	test::@check(first != 0 && second != 0, "the humanoid has no index finger");
+
+	float[] automatic = shares_of(&app, first);
+	defer alloc::free(mem, automatic);
+	bool[] first_part = app.area_part_mask(mem, first, OWN);
+	defer alloc::free(mem, first_part);
+	test::@check(app.apply_area(first, first_part, app.area_scale(first) * 0.25f) > 0,
+		"the first joint's part wrote nothing");
+
+	// The second part as it stands after the first Apply, which is what the card
+	// picks when the next joint is selected.
+	bool[] second_part = app.area_part_mask(mem, second, OWN);
+	defer alloc::free(mem, second_part);
+	usz contested = 0;
+	foreach (usz v, on : second_part)
+	{
+		if (on && !first_part[v] && automatic[v] >= crig::AREA_LEAK_FLOOR) contested++;
+	}
+	test::@check(contested > 0, "the second part reaches no vertex the first joint was taken off");
+
+	usz bones;
+	float[] before = shown_rows(&app, &bones);
+	defer alloc::free(mem, before);
+	test::@check(app.apply_area(second, second_part, app.area_scale(second) * 0.25f) > 0,
+		"the second joint's part wrote nothing");
+	float[] after = shown_rows(&app, &bones);
+	defer alloc::free(mem, after);
+	usz a = joint_index(&app, first);
+	usz b = joint_index(&app, second);
+
+	// The first joint stays off everything outside its part.
+	usz returned = 0;
+	float most = 0.0f;
+	foreach (usz v, on : first_part)
+	{
+		float held = after[v * bones + a];
+		if (on || held < crig::AREA_LEAK_FLOOR) continue;
+		returned++;
+		most = math::max(most, held);
+	}
+	test::@check(returned == 0, "the first joint came back on %d vertices outside its part, holding up to %f",
+		returned, most);
+
+	// On the second part's soft edge the other joints share the rest as they did.
+	usz edge = 0;
+	usz drifted = 0;
+	float worst = 0.0f;
+	foreach (usz v, on : second_part)
+	{
+		if (!on) continue;
+		usz at = v * bones;
+		float was = before[at + b];
+		float now = after[at + b];
+		if (was <= 1.0e-3f || was >= 0.999f || now <= 1.0e-3f || now >= 0.999f) continue;
+		edge++;
+		float gap = 0.0f;
+		for (usz j = 0; j < bones; j++)
+		{
+			if (j != b) gap = math::max(gap, math::abs(after[at + j] / (1.0f - now) - before[at + j] / (1.0f - was)));
+		}
+		if (gap <= 1.0e-3f) continue;
+		drifted++;
+		worst = math::max(worst, gap);
+	}
+	test::@check(edge > 0, "the second part has no soft edge to look at");
+	test::@check(drifted == 0, "on %d of %d soft-edge vertices the other joints lost their proportions, by up to %f",
+		drifted, edge, worst);
+}
+
+<*
+ Applying the part a joint already moves changes nothing and records nothing, so
+ the card can say so.
+*>
+fn void applying_the_same_part_twice_writes_nothing() @test
+{
+	io::printn("applying the same part twice writes nothing the second time");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+
+	uint finger = named(&app, "index_1_L");
+	bool[] part = app.area_part_mask(mem, finger, OWN);
+	defer alloc::free(mem, part);
+	float soft = app.area_scale(finger) * 0.25f;
+	test::@check(app.apply_area(finger, part, soft) > 0, "the first apply wrote nothing");
+	usz revision = (usz)app.undo_stack.edits.len();
+	test::eq(app.apply_area(finger, part, soft), (usz)0);
+	test::eq((usz)app.undo_stack.edits.len(), revision);
+}
+
+// Each vertex's row, gathered: `start[v]` to `start[v + 1]` in `out`.
+fn int[] rows_by_vertex(crig::VertexPin[] pins, usz count, crig::VertexPin[]* out)
+{
+	int[] start = alloc::new_array(mem, int, (sz)count + 1);
+	foreach (pin : pins) if ((usz)pin.vertex < count) start[pin.vertex + 1]++;
+	for (usz v = 0; v < count; v++) start[v + 1] += start[v];
+	*out = alloc::new_array(mem, crig::VertexPin, (sz)start[count]);
+	int[] fill = alloc::new_array(mem, int, (sz)count);
+	defer alloc::free(mem, fill);
+	fill[..] = start[:count];
+	foreach (pin : pins) if ((usz)pin.vertex < count) (*out)[fill[pin.vertex]++] = pin;
+	return start;
+}
+
+fn bool same_pins_on(crig::VertexPin[] a, crig::VertexPin[] b)
+{
+	if (a.len != b.len) return false;
+	foreach (pin : a)
+	{
+		bool found = false;
+		foreach (other : b) if (other.dot_id == pin.dot_id && other.share == pin.share && other.by == pin.by) found = true;
+		if (!found) return false;
+	}
+	return true;
+}
+
+// Apply index_1_L's part and then index_2_L's, each with a soft edge, the way
+// fingers are corrected one joint at a time.
+fn void apply_two_finger_joints(crig::AppState* app, uint first, uint second, bool[] first_part)
+{
+	test::@check(app.apply_area(first, first_part, app.area_scale(first) * 0.25f) > 0, "the first joint's part wrote nothing");
+	bool[] second_part = app.area_part_mask(mem, second, OWN);
+	defer alloc::free(mem, second_part);
+	test::@check(app.apply_area(second, second_part, app.area_scale(second) * 0.25f) > 0, "the second joint's part wrote nothing");
+}
+
+<*
+ Reset takes back one joint's work and nothing a neighbour wrote. A finger
+ corrected, the next one applied and then reset: the first joint stays off the
+ second's segment, where its own Apply took it, and every row the first wrote is
+ exactly as it was.
+
+ *Re-introduce:* clear the joint's whole rows to the automatic weights, as Reset
+ did, and the first joint comes back on the second's segment.
+*>
+fn void resetting_a_joint_keeps_what_its_neighbours_were_given() @test
+{
+	io::printn("resetting a joint takes back its own work and nothing a neighbour wrote");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+
+	uint first = named(&app, "index_1_L");
+	uint second = named(&app, "index_2_L");
+	test::@check(first != 0 && second != 0, "the humanoid has no index finger");
+	bool[] first_part = app.area_part_mask(mem, first, OWN);
+	defer alloc::free(mem, first_part);
+	apply_two_finger_joints(&app, first, second, first_part);
+
+	usz count = app.geometry.positions.len;
+	crig::VertexPin[] before;
+	int[] before_at = rows_by_vertex(app.doc.pins.array_view(), count, &before);
+	defer { alloc::free(mem, before_at); alloc::free(mem, before); }
+
+	test::@check(app.reset_area(second) > 0, "the reset changed nothing");
+
+	// The first joint stays off everything outside its part.
+	float[] first_after = shares_of(&app, first);
+	defer alloc::free(mem, first_after);
+	usz returned = 0;
+	float most = 0.0f;
+	foreach (usz v, on : first_part)
+	{
+		if (on || first_after[v] < crig::AREA_LEAK_FLOOR) continue;
+		returned++;
+		most = math::max(most, first_after[v]);
+	}
+	test::@check(returned == 0, "the first joint came back on %d vertices outside its part, holding up to %f",
+		returned, most);
+
+	// Every row the second joint did not write is exactly as it was, and none of
+	// its work is left.
+	crig::VertexPin[] after;
+	int[] after_at = rows_by_vertex(app.doc.pins.array_view(), count, &after);
+	defer { alloc::free(mem, after_at); alloc::free(mem, after); }
+	usz moved = 0;
+	usz left = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		crig::VertexPin[] was = before[before_at[v]:before_at[v + 1] - before_at[v]];
+		crig::VertexPin[] now = after[after_at[v]:after_at[v + 1] - after_at[v]];
+		if (now.len > 0 && crig::row_author(now) == second) left++;
+		if (was.len > 0 && crig::row_author(was) == second) continue;
+		if (!same_pins_on(was, now)) moved++;
+	}
+	test::@check(moved == 0, "resetting the second joint changed %d rows it did not write", moved);
+	test::@check(left == 0, "%d rows are still the second joint's work", left);
+}
+
+<*
+ A second Reset of the same joint finds nothing of its work left, records
+ nothing, and the card says the joint already uses automatic weights.
+*>
+fn void resetting_twice_writes_nothing() @test
+{
+	io::printn("resetting the same joint twice writes nothing the second time");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+
+	uint first = named(&app, "index_1_L");
+	uint second = named(&app, "index_2_L");
+	bool[] first_part = app.area_part_mask(mem, first, OWN);
+	defer alloc::free(mem, first_part);
+	apply_two_finger_joints(&app, first, second, first_part);
+
+	test::@check(app.reset_area(second) > 0, "the first reset changed nothing");
+	usz revision = (usz)app.undo_stack.edits.len();
+	test::eq(app.reset_area(second), (usz)0);
+	test::eq((usz)app.undo_stack.edits.len(), revision);
+}
+
+<*
+ On the binder's own weights too — rows with more joints than a skin file keeps
+ — a fresh Apply and a Reset leave no pin and the automatic shares exactly.
+*>
+fn void a_fresh_apply_resets_to_nothing_on_the_binders_weights() @test
+{
+	io::printn("a fresh apply resets to nothing on the binder's weights");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.doc.skin_from_file = false;
+	app.mark_rig_stale();
+
+	uint finger = named(&app, "index_2_L");
+	float[] before = shares_of(&app, finger);
+	defer alloc::free(mem, before);
+	bool[] part = app.area_part_mask(mem, finger, OWN);
+	defer alloc::free(mem, part);
+	test::@check(app.apply_area(finger, part, app.area_scale(finger) * 0.5f) > 0, "the apply wrote nothing");
+	test::@check(app.reset_area(finger) > 0, "the reset changed nothing");
+	test::eq(app.doc.pins.len(), (sz)0);
+	float[] after = shares_of(&app, finger);
+	defer alloc::free(mem, after);
+	usz off = 0;
+	foreach (v, s : after) if (math::abs(s - before[v]) >= 1.0e-5f) off++;
+	test::@check(off == 0, "%d vertices did not return to automatic", off);
 }

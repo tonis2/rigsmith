@@ -547,7 +547,7 @@ const uint POSE_IK_PASSES = 12;
  Measured by length, not by name: an arm's run is a third of the height and a
  leg's more than half, a finger's is under five percent. The line is drawn at
  a tenth, which a hand's longest finger clears three times over and no limb comes
- near.
+ near. The binder's digits (`rig::DIGIT_CHAIN_SHARE`) are drawn at the same line.
 *>
 const float CURL_CHAIN_SHARE = 0.1f;
 

@@ -85,6 +85,21 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 	if (!self.read_mesh_parts(path, &parts, &bind)) return false;
 	defer parts.free(mem);
 
+	// A file that carries its placement in a node above the joints — an export
+	// from before placements stayed out of the file — binds its mesh where that
+	// node put it, while the rig was read back at the model's own origin
+	// (`restore_local_export_geometry`). Kept in the bind, the placement would sit
+	// under joints that no longer hang from it, and every turn of a joint would
+	// swing the mesh about a point metres away. Taken out, the file comes back at
+	// its origin, the way Save writes every other model.
+	if (self.source_has_model_transform)
+	{
+		if (try Matrix4f unplace = self.doc.model_transform.matrix().inverse())
+		{
+			bind = unplace.mul(bind);
+		}
+	}
+
 	// The one check that catches the two walks drifting apart — see the note on
 	// `gltf_parts.c3`. Weights written against a vertex count that is not this
 	// mesh's would land on whatever vertex happened to be at that row.

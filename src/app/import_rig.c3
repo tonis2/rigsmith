@@ -783,6 +783,10 @@ const uint SKIN_INFLUENCES = 4;
  written the other is the defect this consolidation exists to prevent, and it is
  invisible until the file is opened somewhere else.
 
+ The binder's answer is bound with a softness sized to the model (`bind_eps`)
+ and its digits blended crisply (`sharpen_digits`), so a finger joint holds its
+ own segment rather than a share of the whole hand.
+
  The caller owns the returned array.
 
  @param view : `Whose joint order the columns come back in.`
@@ -832,7 +836,7 @@ fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool p
 
 	float[] bound = rig::bind_geodesic(allocator, &self.voxels, self.geometry.positions,
 		view.skeleton.joints, view.skeleton.parents, &self.shells,
-		view.attachments, riders, reaches: view.reaches);
+		view.attachments, riders, reaches: view.reaches, eps: self.bind_eps());
 	self.riders_stale = false;
 
 	// The binder's own branch only. Imported columns are what an artist painted
@@ -843,6 +847,7 @@ fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool p
 	// carries it: a correction is a correction to what the user can see, and
 	// `paint_share` solves against this base. Changing it is therefore a
 	// `mark_rig_stale`, never a `mark_paint_stale`.
+	self.sharpen_digits(bound, view);
 	sharpen_weights(bound, self.doc.sharpness);
 	if (painted)
 	{
@@ -856,6 +861,74 @@ fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool p
 		pin_over(bound, view.len(), view.pins);
 	}
 	return bound;
+}
+
+<*
+ How soft the binder's falloff is at a bone, for this model: `eps` in
+ `reach_bias / (d² + eps)`, as a share of the model's size.
+
+ A fixed softness is a fixed length, and the one `bind_geodesic` defaults to is
+ a centimetre on a figure in metres — as thick as a finger. Inside that radius
+ every bone looks equally near, so a finger's vertices went to all three of its
+ joints and the palm alike. A thousandth of the model's longest side keeps the
+ falloff a falloff down to the smallest bone anyone places, and makes the bind
+ the same whatever units the model was saved in. On the body nothing changes:
+ a vertex there sits centimetres from its bone, far outside either softness.
+
+ The longest side of the mesh rather than the rig's height, which is zero for a
+ rig laid flat; a mesh with no size keeps the binder's default.
+*>
+fn float AppState.bind_eps(&self)
+{
+	Vec3[] positions = self.geometry.positions;
+	if (positions.len == 0) return BIND_SOFTNESS_DEFAULT;
+	Vec3 low = positions[0];
+	Vec3 high = low;
+	foreach (p : positions)
+	{
+		low = { math::min(low.x, p.x), math::min(low.y, p.y), math::min(low.z, p.z) };
+		high = { math::max(high.x, p.x), math::max(high.y, p.y), math::max(high.z, p.z) };
+	}
+	Vec3 extent = high - low;
+	float size = math::max(extent.x, math::max(extent.y, extent.z));
+	if (!(size > 0.0f)) return BIND_SOFTNESS_DEFAULT;
+	float soft = BIND_SOFTNESS_SHARE * size;
+	return soft * soft;
+}
+
+// The softness a bind takes as a share of the model's longest side, and the one
+// it falls back to with no size to take a share of — `bind_geodesic`'s own.
+const float BIND_SOFTNESS_SHARE = 1.0e-3;
+const float BIND_SOFTNESS_DEFAULT = 1.0e-4;
+
+<*
+ How much harder a digit's rows are sharpened than the rest of the bind: the
+ power `sharpen_by_joint` raises a row the digits hold all of to.
+
+ Three puts a finger segment's middle at nineteen parts in twenty its own, and
+ the knuckle between two segments at an even split, where the binder alone had
+ the middle at two in five and a third joint a fifth of every knuckle.
+*>
+const float DIGIT_SHARPNESS = 3.0;
+
+<*
+ Blend the digits crisply: every row of the bind raised by the share of it the
+ digits hold (`rig::Skeleton.digits`, `sharpen_by_joint`). Rows nowhere near a
+ hand or a foot are only normalised.
+
+ Called on the binder's answer only, wherever it binds — `bind_dense` and
+ `survey_weights` — so the views, the file and the guide describe one bind.
+*>
+fn void AppState.sharpen_digits(&self, float[] dense, RigView* view)
+{
+	usz bones = view.len();
+	if (bones == 0) return;
+	bool[] digits = view.skeleton.digits(mem);
+	defer alloc::free(mem, digits);
+	float[] gammas = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, gammas);
+	foreach (b, &gamma : gammas) *gamma = b < digits.len && digits[b] ? DIGIT_SHARPNESS : 1.0f;
+	sharpen_by_joint(dense, gammas);
 }
 
 // A freshly read imported skin has not covered anything or been warned about.

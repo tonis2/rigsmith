@@ -158,6 +158,7 @@ fn void AppState.replay_pin_stroke(&self, Edit edit, bool forwards)
 			.vertex = change.vertex,
 			.dot_id = change.dot_id,
 			.share = forwards ? change.after : change.before,
+			.by = forwards ? change.by_after : change.by_before,
 		};
 	}
 
@@ -427,33 +428,21 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// require attaching a dummy animation. The plain rig writer stays the compact
 	// path for an ordinary unanimated model.
 	bool carries_physics = unnamed == 0 && (physics.present() || constraints.present());
-	bool placed_model = !self.doc.model_transform.is_identity();
-	String[] export_names = names;
-	String[] generated_names;
-	if (placed_model && unnamed > 0)
-	{
-		generated_names = alloc::new_array(mem, String, (sz)names.len);
-		foreach (usz joint, joint_name : names)
-		{
-			generated_names[joint] = joint_name.len > 0
-				? joint_name.copy(mem)
-				: string::format(mem, "joint_%d", joint);
-		}
-		export_names = generated_names;
-	}
-	defer
-	{
-		foreach (generated : generated_names) generated.free(mem);
-		if (generated_names.len > 0) alloc::free(mem, generated_names);
-	}
 	// The model itself, carried whole: the source copied to the destination and
 	// the rig written into the copy the way Save writes it, so UVs, materials and
-	// textures survive. Not for a model the user placed or one with secondary
-	// motion — only the rebuilding writer below can say either — and not for a
-	// source that will not take a skin in place; those fall through to it.
+	// textures survive. Not for a model with secondary motion — only the
+	// rebuilding writer below can say that — and not for a source that will not
+	// take a skin in place; those fall through to it.
+	//
+	// **Where the model stands in the scene stays out of the file**, on either
+	// route. A placement is where this character was set down beside the others,
+	// which the project beside the file keeps; the file is the character at its
+	// own origin, the way Save writes it. Writing it in cost the whole route —
+	// only the rebuilding writer could say it — so a character moved aside in a
+	// scene came out without its UVs and textures, standing metres off its origin.
 	AnimTemplate[] written_clips = animated ? clips : (AnimTemplate[]){};
 	ExportMotionReport shaped = {};
-	bool whole = !placed_model && !physics.present()
+	bool whole = !physics.present()
 		&& self.export_whole_model(path, written_clips, motion, &shaped);
 
 	PhysicalBodyWriteReport physical_bodies = {};
@@ -461,14 +450,14 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	{
 		// Written above.
 	}
-	else if (animated || carries_physics || placed_model)
+	else if (animated || carries_physics)
 	{
 		if (catch fault error = export_rigged_animated_glb(
-			mem, path, self.geometry, &skeleton, export_names, skin,
+			mem, path, self.geometry, &skeleton, names, skin,
 			animated ? clips : (AnimTemplate[]){}, name, SKIN_INFLUENCES,
 			carries_physics ? physics : (RigPhysics){},
 			carries_physics ? constraints : (ConstraintRig){},
-			&physical_bodies, self.doc.model_transform, motion, &shaped))
+			&physical_bodies, motion: motion, motion_report: &shaped))
 		{
 			self.@notice("could not write %s: %s", base_name(path), error);
 			return;
@@ -496,7 +485,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// whatever its nodes say rather than as the rig that was exported. It is also
 	// what makes `retarget_source` below true on the *next* run rather than only
 	// on this one, since a sidecar beside a model is what raises `saves_in_place`.
-	if (!self.save_rig_beside(path, model_transform_in_mesh: placed_model,
+	if (!self.save_rig_beside(path,
 		stamped_clips: animated ? clips : (AnimTemplate[]){}, clips_replaced: true, skin_written: true))
 	{
 		self.@notice("wrote %s, but its rig document could not be written beside it", base_name(path));
@@ -525,7 +514,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// into it would keep working on a model that has lost its UVs and materials.
 	if (whole)
 	{
-		self.retarget_source(path, placed_model);
+		self.retarget_source(path);
 		// The export wrote the resized positions, and it is the file followed now.
 		self.mesh_resized = false;
 	}
@@ -834,8 +823,12 @@ fn void AppState.save_session(&self)
 	// glTF has no channel for ride in `extras.clips`, and stamping none removed them.
 	AnimTemplate[] bound = self.bound_templates(mem);
 	defer alloc::free(mem, bound);
+	// A model written into stands at its own origin whatever it held before
+	// (see `write_rig_into_model`); one that refused the skin still carries
+	// whatever placement it had.
+	bool placed_in_file = !into_model && self.source_has_model_transform;
 	bool beside = self.save_rig_beside(target, limits: !into_model,
-		model_transform_in_mesh: self.source_has_model_transform,
+		model_transform_in_mesh: placed_in_file,
 		stamped_clips: into_model ? bound : (AnimTemplate[]){}, clips_replaced: into_model,
 		skin_written: into_model);
 
@@ -847,7 +840,7 @@ fn void AppState.save_session(&self)
 
 		// Before the notice, because the notice names the file this document now
 		// belongs to and that is what `retarget_source` makes true.
-		self.retarget_source(target, self.source_has_model_transform);
+		self.retarget_source(target, placed_in_file);
 		// The file the document now follows holds the resized positions.
 		self.mesh_resized = false;
 

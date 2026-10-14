@@ -12,7 +12,7 @@
        "edges": [[a, b], ...],
        "attachments": [[shell, dot_id], ...],
        "paint": [[vertex, dot_id, factor], ...],
-       "pins": [[vertex, dot_id, share], ...],
+       "pins": [[vertex, dot_id, share, by], ...],
        "secondary": [{"root": 3, "tip": 5, "preset": "tail",
                       "flexibility": 0.4, "damping": 0.7, "gravity": 1,
                       "collide": true}, ...],
@@ -215,7 +215,12 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // takeoff and landing), and gave a pin `travel`, the speed its held point slides
 // at — a stance foot on an in-place cycle's treadmill. Written only when moving; a
 // version 25 file reads as pins that stand still.
-const uint SESSION_VERSION = 26;
+//
+// 27 gave each weight pin a fourth number, `by`: the dot whose edit wrote the row
+// (an Apply, a brush stroke, a lasso), or 0 for nobody's. Reset reads it to take
+// back one joint's work and nothing a neighbour wrote. A version 26 pin, with
+// three numbers, reads as nobody's.
+const uint SESSION_VERSION = 27;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -455,7 +460,9 @@ fn String session_text(
 	{
 		if (pin.dot_id == 0 || !doc.find(pin.dot_id)) continue;
 		text.append_string(stated == 0 ? ",\n  \"pins\": [" : ",");
-		text.appendf("[%d,%d,%s]", pin.vertex, pin.dot_id, (JsonFloat)pin.share)!!;
+		// An author that has gone is written as nobody, by the same rule.
+		uint by = pin.by != 0 && doc.find(pin.by) ? pin.by : 0;
+		text.appendf("[%d,%d,%s,%d]", pin.vertex, pin.dot_id, (JsonFloat)pin.share, by)!!;
 		stated++;
 	}
 	if (stated > 0) text.append_char(']');
@@ -1527,11 +1534,14 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		for (sz i = 0; i < stated.get_len(); i++)
 		{
 			Object* pin = stated.get_at(i);
-			if (!is_list(pin) || pin.get_len() != 3) return SESSION_SHAPE~;
+			if (!is_list(pin) || pin.get_len() < 3 || pin.get_len() > 4) return SESSION_SHAPE~;
+			// Version 27; before it every pin is nobody's.
+			uint by = pin.get_len() == 4 ? pin.get_uint_at(3)! : 0;
 			if (!doc.set_pin(
 				pin.get_uint_at(0)!,
 				pin.get_uint_at(1)!,
-				(float)pin.get_float_at(2)!)) return SESSION_SHAPE~;
+				(float)pin.get_float_at(2)!,
+				by)) return SESSION_SHAPE~;
 		}
 	}
 

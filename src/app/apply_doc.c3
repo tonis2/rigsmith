@@ -324,7 +324,7 @@ fn bool same_pins(RigDocument* have, RigDocument* want) @local
 	foreach (sz i, pin : have.pins.array_view())
 	{
 		VertexPin other = want.pins[i];
-		if (pin.vertex != other.vertex || pin.dot_id != other.dot_id || pin.share != other.share)
+		if (pin.vertex != other.vertex || pin.dot_id != other.dot_id || pin.share != other.share || pin.by != other.by)
 		{
 			return false;
 		}

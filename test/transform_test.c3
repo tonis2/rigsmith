@@ -365,6 +365,90 @@ fn void model_transform_exports_as_a_shared_mesh_and_rig_parent() @test
 	reopened.free();
 }
 
+<*
+ An export from when the placement went into the file — the mesh and the
+ skeleton under one transformed node — saves back at its own origin. The skin's
+ bind used to keep the placement while the save hung the joints from the scene
+ root, so the model stood right at rest and swung metres off its joints as soon
+ as one turned.
+*>
+fn void saving_an_export_that_carries_its_placement_brings_it_to_the_origin() @test
+{
+	const String PATH = "build/model-transform-resave.glb";
+	String sidecar = crig::session_path(mem, PATH);
+	defer sidecar.free(mem);
+	String copy = crig::copy_path(mem, PATH);
+	defer copy.free(mem);
+	String copied_sidecar = crig::session_path(mem, copy);
+	defer copied_sidecar.free(mem);
+	defer
+	{
+		(void)file::delete(PATH);
+		(void)file::delete(sidecar);
+		(void)file::delete(copy);
+		(void)file::delete(copied_sidecar);
+	}
+	Vec3[3] positions = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 } };
+	uint[3] indices = { 0, 1, 2 };
+	rig::TriMesh mesh = { .positions = positions[..], .indices = indices[..] };
+	Vec3[1] joints = { { 0, 0, 0 } };
+	int[1] parents = { -1 };
+	rig::Skeleton skeleton = { .joints = joints[..], .parents = parents[..] };
+	String[1] names = { "root" };
+	crig::ProjectTransform placement = {
+		.location = { 2, 3, 4 },
+		.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI * 0.5f),
+	};
+	crig::export_rigged_animated_glb(mem, PATH, mesh, &skeleton, names[..], {}, {},
+		model_transform: placement)!!;
+	crig::RigDocument project;
+	project.dots.init(mem);
+	project.edges.init(mem);
+	defer project.free();
+	(void)project.add_dot({ 0, 0, 0 }, "root");
+	project.model_transform = placement;
+	crig::write_session(sidecar, &project, PATH, model_transform_in_mesh: true)!!;
+
+	rig::TriMesh placed_mesh = rig::load_gltf(mem, PATH)!!;
+	defer placed_mesh.free(mem);
+	crig::AppState app = crig::new_app(placed_mesh, PATH);
+	defer app.free();
+	app.adopt_source_rig();
+	test::@check(app.source_has_model_transform, "the old export was not read as carrying its placement");
+	app.save_session();
+	test::@check(!app.source_has_model_transform, "the saved model still claims its placement: %s", app.notice());
+	String saved = app.source_path.copy(mem);
+	defer saved.free(mem);
+
+	gltf::GltfStream stream = gltf::open(saved, mem)!!;
+	defer stream.close();
+	stream.load_all_buffers()!!;
+	test::@check(stream.gltf.skins.len() == 1, "the save wrote no skin: %s", app.notice());
+	if (stream.gltf.skins.len() != 1) return;
+	Matrix4f bind = rig::skin_bind_matrix(&stream, 0);
+	Matrix4f identity = matrix::IDENTITY4{float};
+	bool unplaced = true;
+	for (usz i = 0; i < 16; i++) unplaced = unplaced && near(bind.m[i], identity.m[i]);
+	test::@check(unplaced, "the saved skin still binds the mesh at the placement: %s", bind.m);
+	Matrix4f root = stream.gltf.nodes[(sz)stream.gltf.skins[0].joints[0]].global_matrix();
+	test::@check(near_vec({ root.m[12], root.m[13], root.m[14] }, { 0, 0, 0 }),
+		"the saved root joint is not at the model's origin");
+
+	// Reopened, the model is at its origin and the project still places it.
+	rig::TriMesh reread = rig::load_gltf(mem, saved)!!;
+	defer reread.free(mem);
+	crig::AppState again = crig::new_app(reread, saved);
+	defer again.free();
+	again.adopt_source_rig();
+	test::@check(!again.source_has_model_transform, "the reopened save claims its placement");
+	test::@check(again.doc.model_transform.same(placement), "the save lost the placement");
+	foreach (usz i, p : positions)
+	{
+		test::@check(near_vec(again.geometry.positions[i], p), "vertex %s reopened at %s, not %s",
+			i, again.geometry.positions[i], p);
+	}
+}
+
 fn void model_projection_and_queries_share_the_render_transform() @test
 {
 	TransformRig fixture;

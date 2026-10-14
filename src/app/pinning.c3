@@ -171,8 +171,13 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 
 		// A buried entry reads as absent, so a batch that removes a pin and then
 		// puts one back on the same vertex leaves one live entry rather than two.
-		float before = at >= 0 && !buried[at] ? self.doc.pins[at].share : 0.0f;
-		if (before == want) continue;
+		bool live = at >= 0 && !buried[at];
+		float before = live ? self.doc.pins[at].share : 0.0f;
+		uint by_before = live ? self.doc.pins[at].by : 0;
+		uint by_after = want == 0.0f ? 0 : entry.by;
+		// The same share written by a different edit is a change of author, which
+		// Reset reads, so it is recorded like any other.
+		if (before == want && by_before == by_after) continue;
 
 		if (want == 0.0f)
 		{
@@ -188,11 +193,12 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 				removals--;
 			}
 			self.doc.pins.get_ref(at).share = want;
+			self.doc.pins.get_ref(at).by = by_after;
 		}
 		else
 		{
 			sz slot = self.doc.pins.len();
-			self.doc.pins.push({ .vertex = entry.vertex, .dot_id = entry.dot_id, .share = want });
+			self.doc.pins.push({ .vertex = entry.vertex, .dot_id = entry.dot_id, .share = want, .by = by_after });
 			index.next[slot] = index.head[entry.vertex];
 			index.head[entry.vertex] = (int)slot;
 		}
@@ -204,6 +210,8 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 				.dot_id = entry.dot_id,
 				.before = before,
 				.after = want,
+				.by_before = by_before,
+				.by_after = by_after,
 			};
 		}
 		changed++;
@@ -311,15 +319,16 @@ fn bool PinDraft.claimed(&self, uint v) => (usz)v < self.first.len && self.first
 
  @param dots : `The dots the row names.`
  @param shares : `One per dot. A share of 0 or less is left out.`
+ @param by : `Whose edit the row is — see VertexPin.by. 0 for nobody's.`
 *>
-fn void PinDraft.state(&self, uint v, uint[] dots, float[] shares)
+fn void PinDraft.state(&self, uint v, uint[] dots, float[] shares, uint by = 0)
 {
 	if ((usz)v >= self.first.len || self.claimed(v)) return;
 	self.first[v] = (int)self.pins.len();
 	foreach (i, dot : dots)
 	{
 		if (shares[i] <= 0.0f) continue;
-		self.pins.push({ .vertex = v, .dot_id = dot, .share = math::min(shares[i], 1.0f) });
+		self.pins.push({ .vertex = v, .dot_id = dot, .share = math::min(shares[i], 1.0f), .by = by });
 		self.held[v]++;
 	}
 }
@@ -416,6 +425,33 @@ fn usz top_row(float[] row, uint[] dot_ids, sz keep, uint[] out_dots, float[] ou
 }
 
 <*
+ The author every pin on a row agrees on (see `VertexPin.by`), or 0 when they
+ name none or disagree.
+*>
+fn uint row_by(VertexPin[] row)
+{
+	if (row.len == 0) return 0;
+	uint by = row[0].by;
+	foreach (pin : row) if (pin.by != by) return 0;
+	return by;
+}
+
+<*
+ Whose edit a vertex's row is: the author its pins name, or, for a row with no
+ author — written before version 27, or by a whole-model op — the dot holding
+ the largest share of it, which is whose part it most likely was. 0 for an
+ empty row.
+*>
+fn uint row_author(VertexPin[] row)
+{
+	uint by = row_by(row);
+	if (by != 0 || row.len == 0) return by;
+	VertexPin strongest = row[0];
+	foreach (pin : row) if (pin.share > strongest.share) strongest = pin;
+	return strongest.dot_id;
+}
+
+<*
  Hand a set of vertices to a dot, and take them off every other dot.
 
  	`usz did = app.pin_vertices(caught, app.selected, 1.0f);`
@@ -488,7 +524,7 @@ fn usz AppState.pin_vertices(&self, uint[] vertices, uint dot_id, float share, b
 	{
 		for (usz v = 0; v < span; v++)
 		{
-			if (wanted[v]) batch[at++] = { .vertex = (uint)v, .dot_id = dot_id, .share = share };
+			if (wanted[v]) batch[at++] = { .vertex = (uint)v, .dot_id = dot_id, .share = share, .by = dot_id };
 		}
 	}
 	if (rivals > 0)

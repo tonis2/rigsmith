@@ -18,6 +18,8 @@ The tests should only use .glb files in the assets folder, no fixtures
 
 # Build and run
 
+When c3c build gives warnings on build time, fix those too
+
 rigsmith is an executable again and links three's engine sources:
 
     c3c build rigsmith
