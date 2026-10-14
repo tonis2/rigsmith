@@ -902,6 +902,8 @@ fn void the_pending_banner_says_a_pose_keys_onto_the_selected_keys() @test
 		test::@check(f.app.key_pose_edit(), "could not key the pose at %f", time);
 	}
 	test::eq(f.app.select_animation_keys_between(f.app.editing, 0.0f, 2.0f), (usz)3);
+	click_segment(&f, crig::ANIM_REACH_ID, 1);
+	test::@check(f.app.key_reach == SELECTED_KEYS, "Selected keys was not chosen");
 
 	f.app.edit_time = 1.0f;
 	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not sample the middle pose");
@@ -909,7 +911,7 @@ fn void the_pending_banner_says_a_pose_keys_onto_the_selected_keys() @test
 	f.app.pose_edit_pending = true;
 	f.feed({ 0, 0 });
 	f.ui.flush();
-	test::@check(f.ui.find_id(crig::ANIM_PENDING_TEXT_ID)!!.widget_as(Label).text == "Pose changed · keys onto all 3 selected keys",
+	test::@check(f.ui.find_id(crig::ANIM_PENDING_TEXT_ID)!!.widget_as(Label).text == "Pose changed · keys onto the 3 selected keys",
 		"the banner does not say the pose keys onto the selection");
 
 	sz before = f.app.undo_stack.cursor;
@@ -957,16 +959,137 @@ fn void ctrl_a_in_the_sheet_picks_every_key_and_the_status_says_edits_spread() @
 	test::eq(f.app.undo_stack.cursor, history);
 	test::@check(f.app.selection_count() < (usz)f.app.doc.dots.len(), "Ctrl+A in the sheet selected the joints");
 
-	test::@check(has_id(&f, crig::ANIM_SPREAD_HINT_ID), "no hint that pose edits spread");
+	// On This frame the picked keys are pointed at, not posed.
+	test::@check(has_id(&f, crig::ANIM_SPREAD_HINT_ID), "no hint about the picked keys");
 	String hint = f.ui.find_id(crig::ANIM_SPREAD_HINT_ID)!!.widget_as(Label).text;
+	test::@check(hint == string::tformat("%d keys picked · Apply to › Selected keys poses them together", keys),
+		"the hint reads: %s", hint);
+
+	// Selected keys keeps the pick and says the edits spread.
+	click_segment(&f, crig::ANIM_REACH_ID, 1);
+	test::eq(f.app.animation_key_selection_count(f.app.editing), keys);
+	hint = f.ui.find_id(crig::ANIM_SPREAD_HINT_ID)!!.widget_as(Label).text;
 	test::@check(hint == string::tformat("Pose edits go to the %d selected keys", keys), "the hint reads: %s", hint);
 
-	// A playhead outside the picked span keys only itself, and the line goes back to saving.
+	// A playhead outside the picked span keys only itself, and the line says so.
 	test::eq(f.app.select_animation_keys_between(f.app.editing, 1.0f, 2.0f), (usz)2);
 	f.app.edit_time = 0.5f;
 	f.app.refresh_ui();
 	f.feed({ 0, 0 });
 	f.ui.flush();
-	test::@check(!has_id(&f, crig::ANIM_SPREAD_HINT_ID), "the hint stayed with the playhead outside the span");
+	hint = f.ui.find_id(crig::ANIM_SPREAD_HINT_ID)!!.widget_as(Label).text;
+	test::@check(hint.starts_with("Pick 2 or more keys around the playhead"), "the hint reads: %s", hint);
+
+	// Back on This frame with nothing picked around the playhead, the line goes back to saving.
+	click_segment(&f, crig::ANIM_REACH_ID, 0);
+	test::@check(!has_id(&f, crig::ANIM_SPREAD_HINT_ID), "the hint stayed on This frame");
 	test::@check(has_id(&f, crig::ANIM_SAVE_STATUS_ID), "the save status did not come back");
+}
+
+// Keys at 0, 1 and 2, every joint keyed on each; the first joint turned by 0.1 s⁻¹.
+fn void reach_workspace(Fixture* f, String name)
+{
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	test::@check(f.app.new_clip(name, 2).valid(), "could not start a clip");
+	f.app.show_edited();
+	f.click(tab_center(f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
+	f.ui.flush();
+	uint joint = f.app.doc.dots[0].id;
+	f.app.auto_key = false;
+	foreach (time : (float[2]){ 1.0f, 2.0f })
+	{
+		f.app.edit_time = time;
+		test::@check(f.app.pose_from_clip(f.app.editing, time), "could not sample the pose at %f", time);
+		f.app.set_working_pose(joint, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.1f * time), {});
+		test::@check(f.app.key_pose_edit(), "could not key the pose at %f", time);
+	}
+	f.app.refresh_ui();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+}
+
+<*
+ Whole clip, with nothing picked: the status line says every key takes the next
+ edit, the banner says it again, and Key pose turns all of them as one undo step.
+*>
+fn void whole_clip_keys_a_pose_onto_every_key() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	reach_workspace(&f, "Whole");
+	test::@check(has_id(&f, crig::ANIM_REACH_ID), "no Apply to switch");
+	test::@check(f.app.key_reach == FRAME, "Apply to does not start on This frame");
+
+	click_segment(&f, crig::ANIM_REACH_ID, 2);
+	test::@check(f.app.key_reach == WHOLE_CLIP, "Whole clip was not chosen");
+	String hint = f.ui.find_id(crig::ANIM_SPREAD_HINT_ID)!!.widget_as(Label).text;
+	test::@check(hint == "Pose edits go to all 3 keys of Whole", "the hint reads: %s", hint);
+
+	uint joint = f.app.doc.dots[0].id;
+	f.app.edit_time = 0.0f;
+	test::@check(f.app.pose_from_clip(f.app.editing, 0.0f), "could not sample the first pose");
+	f.app.set_working_pose(joint, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.3f), {});
+	f.app.pose_edit_pending = true;
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(f.ui.find_id(crig::ANIM_PENDING_TEXT_ID)!!.widget_as(Label).text == "Pose changed · keys onto all 3 keys",
+		"the banner does not say the pose keys onto the whole clip");
+
+	sz before = f.app.undo_stack.cursor;
+	f.click(f.center_of("anim-pending-save")!!);
+	f.ui.flush();
+	test::@check(!f.app.pose_edit_pending && f.app.undo_stack.cursor == before + 1, "Key pose was not one edit");
+	test::@check(f.app.notice().contains("on all 3 keys"), "the notice does not count the keys: %s", f.app.notice());
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	test::eq(clip.keyframes.len, (sz)3);
+	String name = f.app.doc.dots[0].name;
+	foreach (frame : clip.keyframes)
+	{
+		AnimKeyDot dot;
+		test::@check(frame.channel_dot(name, true, &dot), "the key at %f lost the joint", frame.time);
+		Quaternionf got = quaternion::from_axis_angle{float}(dot.axis.normalize(), dot.angle);
+		Quaternionf want = quaternion::from_axis_angle{float}((Vec3){ 0, 1, 0 }, 0.1f * frame.time + 0.3f);
+		test::@check(1.0f - math::abs(got.v.dot(want.v)) < 1.0e-5f, "the key at %f did not take the turn", frame.time);
+	}
+}
+
+<*
+ With Focus selected joints on, picking another joint on the model to pose it
+ moves the picked key times onto that joint's lanes instead of dropping them.
+*>
+fn void picking_a_joint_to_pose_keeps_the_picked_times() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	reach_workspace(&f, "Carry");
+	f.app.anim_show_tracks = true;
+	f.app.anim_tracks_selected_only = true;
+	uint first = f.app.doc.dots[0].id;
+	uint second = f.app.doc.dots[1].id;
+	String first_name = f.app.doc.dots[0].name;
+	String second_name = f.app.doc.dots[1].name;
+	f.app.select(first);
+	f.app.refresh_ui();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	test::@check(f.app.select_animation_channel_keys_between(f.app.editing, first_name, ROTATION, 0.0f, 1.0f) == 2,
+		"could not pick the first joint's keys");
+
+	f.app.select(second);
+	f.app.refresh_ui();
+	f.feed({ 0, 0 });
+	f.ui.flush();
+	AnimFloatList times;
+	times.init(tmem);
+	f.app.selected_key_times(f.app.editing, &times);
+	test::eq(times.len(), (sz)2);
+	test::@check(math::abs(times[0]) < 1.0e-4f && math::abs(times[1] - 1.0f) < 1.0e-4f,
+		"the picked times moved: %f, %f", times[0], times[1]);
+	test::@check(f.app.anim_channel_key_selection.len() > 0, "nothing is picked on the joint now shown");
+	foreach (picked : f.app.anim_channel_key_selection)
+	{
+		test::@check(picked.joint == second_name, "a key of %s stayed picked, out of sight", picked.joint);
+	}
 }

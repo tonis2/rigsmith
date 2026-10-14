@@ -44,6 +44,10 @@ const String ANIM_SPEED_ID = "anim-speed";
 const String ANIM_PENDING_BANNER_ID = "anim-pending-banner";
 const String ANIM_PENDING_TEXT_ID = "anim-pending-text";
 const String ANIM_SPREAD_HINT_ID = "anim-spread-hint";
+const String ANIM_REACH_ID = "anim-reach";
+
+// The Apply to switch, in `KeyReach` order.
+String[3] anim_reach_options = { "This frame", "Selected keys", "Whole clip" };
 
 const float ANIM_PAD = 12.0;
 const float ANIM_GAP = 8.0;
@@ -194,8 +198,11 @@ struct AnimSnapshot
 	bool mask_collapsed;
 	bool pending_pose;
 	bool pending_asked;
-	// How many selected keys a pose edit would land on, which the status line says.
+	// Where a pose edit lands and on how many keys, which the status line says,
+	// and how many are picked around the playhead, which it points at.
+	KeyReach reach;
 	usz spread;
+	usz picked;
 	bool authored_dirty;
 	uint revision;
 
@@ -274,7 +281,9 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.mask_collapsed = app.layer_mask_collapsed,
 		.pending_pose = app.pose_edit_pending,
 		.pending_asked = app.anim_pending_action != 0,
+		.reach = app.key_reach,
 		.spread = app.spread_key_count(app.editing, app.edit_time),
+		.picked = app.picked_keys_around(app.editing, app.edit_time),
 		.authored_dirty = app.authored_dirty,
 		.revision = app.undo_stack.revision,
 		.edit_pack = app.editing.pack,
@@ -322,7 +331,9 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.mask_collapsed != other.mask_collapsed
 		|| self.pending_pose != other.pending_pose
 		|| self.pending_asked != other.pending_asked
+		|| self.reach != other.reach
 		|| self.spread != other.spread
+		|| self.picked != other.picked
 		|| self.authored_dirty != other.authored_dirty
 		|| self.revision != other.revision
 		|| self.edit_pack != other.edit_pack
@@ -592,9 +603,11 @@ fn void AnimPanel.update(&self, Element* elem, float dt) @dynamic
 		&& (now.selected_joint != self.shown.selected_joint
 			|| now.selected_joints_hash != self.shown.selected_joints_hash))
 	{
-		// Viewport selection changes what the sheet exposes. Do not retain sparse
-		// keys that have just become invisible and could be deleted by surprise.
-		app.clear_animation_key_selection();
+		// Viewport selection changes what the sheet exposes. Keys that have just
+		// become invisible must not stay picked, where a delete would take them by
+		// surprise; the times move to the lanes now shown, so picking the joint
+		// to pose keeps the keys picked for Apply to › Selected keys.
+		anim_carry_selection_to_shown_lanes(app);
 	}
 	if (elem.ui.focused && elem.ui.focused.is_widget(CurvePlot))
 	{
@@ -726,6 +739,11 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 										@node((ToggleButton) { .label = "Auto-key", .on = app.auto_key,
 											.on_change = &anim_auto_key_toggled, .style = SEGMENTED_STYLE }).with_id(ANIM_AUTO_KEY_ID);
 									};
+									@tree(widgets::tip("Apply to — where a pose edit is keyed: this frame only, the keys picked in the sheet, or every key of the clip. Your change is added on top of each key's own motion."))
+									{
+										@node((Segmented) { .options = anim_reach_options[..], .selected = (sz)app.key_reach.ordinal,
+											.on_change = &anim_reach_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_REACH_ID);
+									};
 									@node((AnimInterpPicker) { }).with_id(ANIM_INTERP_ID);
 									// The sheet as key lanes or as the selected joints' curves.
 									@node((Segmented) { .options = anim_sheet_mode_options[..], .selected = app.anim_show_curves ? 1 : 0,
@@ -791,7 +809,8 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 							// The slim bar at the bottom. The pending-pose banner takes the
 							// save status's place, so nothing above it moves when it appears
 							// under a pose being dragged.
-							// Said before it happens: a keyed pose here changes every selected key.
+							// Said before it happens, as Auto-key keys an edit the moment the
+							// drag ends: where it will land when that is more than the playhead.
 							usz spread = app.spread_key_count(app.editing, app.edit_time);
 							if (app.pose_edit_pending)
 							{
@@ -799,7 +818,7 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 								{
 									@node((Label) {
 										.text = app.anim_pending_action != 0 ? "Pose changed · move again to drop it"
-											: spread >= 2 ? string::tformat("Pose changed · keys onto all %d selected keys", spread)
+											: spread > 0 ? string::tformat("Pose changed · keys onto %s", anim_reach_keys(app, spread))
 											: "Pose changed",
 										.size = ANIM_TEXT_SIZE, .color = ACCENT }).with_id(ANIM_PENDING_TEXT_ID);
 									@node(accent_button("Key pose", &anim_pending_save)).with_id("anim-pending-save");
@@ -807,12 +826,11 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 								};
 								banner.with_id(ANIM_PENDING_BANNER_ID);
 							}
-							else if (spread >= 2)
+							else if (app.key_reach != FRAME || app.picked_keys_around(app.editing, app.edit_time) > 0)
 							{
-								// Before the edit too, as Auto-key keys it the moment the drag ends.
 								@node((Label) {
-									.text = string::tformat("Pose edits go to the %d selected keys", spread),
-									.size = ANIM_TEXT_SIZE, .color = ACCENT,
+									.text = anim_reach_hint(app, spread),
+									.size = ANIM_TEXT_SIZE, .color = spread > 0 ? ACCENT : TEXT_DIM,
 								}).with_id(ANIM_SPREAD_HINT_ID);
 							}
 							else
@@ -1311,6 +1329,71 @@ fn void anim_balance_toggled(Ui* ui, bool checked) @private
 		? "balance on · pulling the hips back leans the body over the pinned feet"
 		: "balance off · the body stays as pulled, for a pose held up by a chair or a wall");
 	app.refresh_ui();
+}
+
+// The Apply to switch. The key selection stays: it is what Selected keys reads.
+fn void anim_reach_chosen(Ui* ui, usz index) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (index >= anim_reach_options.len) return;
+	app.key_reach = (KeyReach)index;
+	refresh_animations_view(ui);
+}
+
+// The keys a pose edit lands on, for the pending banner: "all 133 keys".
+fn String anim_reach_keys(AppState* app, usz spread) @private
+{
+	return app.key_reach == WHOLE_CLIP ? string::tformat("all %d keys", spread)
+		: string::tformat("the %d selected keys", spread);
+}
+
+<*
+ The status line while Apply to reaches past the playhead, or keys are picked
+ around it: where the next edit goes, or why it will key this frame only.
+*>
+fn String anim_reach_hint(AppState* app, usz spread) @private
+{
+	switch (app.key_reach)
+	{
+		case WHOLE_CLIP:
+			if (spread == 0) return "No keys here to change · edits key this frame";
+			return string::tformat("Pose edits go to all %d keys of %s", spread, app.clip(app.editing).name);
+		case SELECTED_KEYS:
+			if (spread == 0) return "Pick 2 or more keys around the playhead · until then edits key this frame";
+			return string::tformat("Pose edits go to the %d selected keys", spread);
+		case FRAME:
+			return string::tformat("%d keys picked · Apply to › Selected keys poses them together",
+				app.picked_keys_around(app.editing, app.edit_time));
+	}
+}
+
+<*
+ Keep the picked key times on the lanes the sheet now shows, after the joints
+ picked on the model changed what Focus selected joints or Curves expose. A
+ pick of rotation keys stays rotation keys; whole keys become both channels.
+*>
+fn void anim_carry_selection_to_shown_lanes(AppState* app) @private
+{
+	AnimFloatList times;
+	times.init(tmem);
+	app.selected_key_times(app.editing, &times);
+	if (times.len() == 0)
+	{
+		app.clear_animation_key_selection();
+		return;
+	}
+	bool rotations = app.anim_key_selection.len() > 0;
+	bool translations = rotations;
+	foreach (picked : app.anim_channel_key_selection)
+	{
+		if (picked.channel == ROTATION) rotations = true;
+		if (picked.channel == TRANSLATION) translations = true;
+	}
+	StringList shown;
+	shown.init(mem);
+	defer shown.free();
+	anim_selected_track_names(app, &shown);
+	app.reselect_times_on(app.editing, times.array_view(), shown.array_view(), rotations, translations);
 }
 
 fn void anim_auto_key_toggled(Ui* ui, bool checked) @private

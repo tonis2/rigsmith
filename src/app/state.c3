@@ -422,6 +422,9 @@ struct AppState
 	// turns it on for whoever wants to know which two regions met.
 	bool show_collision_contacts;
 	bool auto_key;
+	// Where a keyed pose edit lands: this frame, the selected keys or the whole
+	// clip (key_spread.c3). For the session, like Auto-key.
+	KeyReach key_reach;
 	bool anim_show_tracks;
 
 	// The sheet shows the selected joints' curves instead of key lanes, their

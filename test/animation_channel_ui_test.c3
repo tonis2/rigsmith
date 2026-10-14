@@ -264,7 +264,12 @@ fn void animation_channels_ui_keeps_simple_default_and_moves_only_rotation() @te
 	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)1);
 }
 
-fn void animation_channels_ui_filter_follows_joint_identity_and_clears_hidden_selection() @test
+<*
+ The focus filter follows which joint is picked, not how many, and a key picked
+ on a lane that goes out of sight moves to the lane shown in its place: the
+ same time and channel, never a hidden key.
+*>
+fn void animation_channels_ui_filter_follows_joint_identity_and_moves_hidden_selection() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -288,7 +293,10 @@ fn void animation_channels_ui_filter_follows_joint_identity_and_clears_hidden_se
 	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
 	test::eq(timeline.lanes.len, (sz)2);
 	test::eq(timeline.lanes[0].label, view.names[1]);
-	test::eq(f.app.animation_channel_key_selection_count(f.app.editing), (usz)0);
+	test::eq(f.app.animation_channel_key_selection_count(f.app.editing), (usz)1);
+	AnimChannelKey picked = f.app.anim_channel_key_selection[0];
+	test::@check(picked.joint == view.names[1] && picked.channel == ROTATION && math::abs(picked.time - 1) < 1e-4f,
+		"the pick did not move to the shown lane's rotation key at 1");
 	f.app.select(0);
 	f.feed(VIEWPORT_CENTER);
 	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);

@@ -328,6 +328,11 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 {
 	AppState* app = (AppState*)user_data;
 	if (!takes_object(args, detail, `pose_joint takes an object: {"joint": name, "move": [x,y,z] | "target": [x,y,z], "turn": {"axis":..., "angle": radians}, "clip": name, "time": seconds, "key": bool}`)) return PINS_REFUSED~;
+	// A key lands at "time" alone, whatever the dock's Apply to switch or key
+	// selection says: those are the person's, not the agent's.
+	KeyReach reach = app.key_reach;
+	defer app.key_reach = reach;
+	app.key_reach = FRAME;
 
 	bool key = args.get_bool("key") ?? true;
 	Object* move = member(args, "move");

@@ -749,6 +749,42 @@ fn void pose_joint_turns_a_joint() @test
 	test::@check((now - was).length() < 0.006f, "the paw moved %.4f", (now - was).length());
 }
 
+// The dock's Apply to switch is the person's: an agent's key lands at its time alone.
+fn void pose_joint_keys_its_time_alone_whatever_apply_to_says() @test
+{
+	io::printn("pose_joint keys its own time alone with Apply to on Whole clip");
+	mcp::Fixture f;
+	if (!open_dog_tools(&f)) return;
+	defer f.close();
+	// The pelvis turn each key past the first holds, zero where it holds none.
+	AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored("PinWalk"));
+	usz keys = clip.keyframes.len;
+	test::@check(keys >= 3, "the walk has %d keys", keys);
+	Vec3[] was = alloc::new_array(tmem, Vec3, (sz)keys);
+	foreach (usz i, frame : clip.keyframes)
+	{
+		AnimKeyDot dot;
+		if (frame.channel_dot("pelvis", true, &dot)) was[i] = dot.axis * dot.angle;
+	}
+	f.app.key_reach = WHOLE_CLIP;
+
+	Object*? turned = f.call_tool("pose_joint", `{"joint":"pelvis","turn":{"axis":"y","angle":0.25},"clip":"PinWalk","time":0}`);
+	if (catch turned) { test::@check(false, "the turn refused"); return; }
+	test::@check(turned.get_bool("keyed") ?? false, "the turn was not keyed");
+	turned.free();
+	test::@check(f.app.key_reach == WHOLE_CLIP, "pose_joint left Apply to changed");
+
+	clip = f.app.clip(f.app.clip_named_in_authored("PinWalk"));
+	test::eq(clip.keyframes.len, (sz)keys);
+	foreach (usz i, frame : clip.keyframes)
+	{
+		if (i == 0) continue;
+		AnimKeyDot dot;
+		Vec3 now = frame.channel_dot("pelvis", true, &dot) ? dot.axis * dot.angle : (Vec3){};
+		test::@check((now - was[i]).length() < 1.0e-5f, "the turn reached the key at %f", frame.time);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // A sit is a pitch: the rear goes down, the chest stays up, nothing bends sideways
 

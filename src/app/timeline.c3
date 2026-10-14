@@ -119,13 +119,22 @@ enum AnimKeyScope
 	CHANGED,
 }
 
+<*
+ Key the pose being edited, where the Apply to switch says (`key_reach`): at the
+ playhead, or as an offset onto the selected keys or every key of the clip
+ (key_spread.c3).
+
+ @return `False when nothing was keyed.`
+*>
 fn bool AppState.key_pose_edit(&self, AnimKeyScope scope = ALL)
 {
 	if (!self.pose_edit_active || !self.editing.valid()) return false;
 	float time = self.edit_time;
-	// Keys picked in the sheet around the playhead take the edit with it.
-	AnimRef landed = self.spread_key_count(self.editing, time) >= 2
-		? self.key_onto_selected(self.editing, time, scope)
+	AnimFloatList times;
+	times.init(tmem);
+	self.reach_key_times(self.editing, time, &times);
+	AnimRef landed = times.len() > 0
+		? self.key_onto_keys(self.editing, time, times.array_view(), scope)
 		: self.key_here(self.editing, time, scope);
 	if (!landed.valid()) return false;
 	self.editing = landed;

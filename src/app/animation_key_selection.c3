@@ -227,6 +227,39 @@ fn bool AnimKeyframe.has_channel(self, String joint, AnimChannels channel)
 	return self.channel_dot(joint, channel == ROTATION, &found);
 }
 
+<*
+ Pick, at each of `times`, the keys `joints` hold there in the channels asked
+ for, in place of whatever was picked: the same moments of the clip, on other
+ lanes. A time where none of them keys anything drops out.
+
+ 	`app.reselect_times_on(app.editing, times, shown_joints, true, false);`
+
+ @param times : `Sorted, as selected_key_times gives them.`
+*>
+fn void AppState.reselect_times_on(&self, AnimRef ref, float[] times, String[] joints,
+	bool rotations, bool translations)
+{
+	self.restart_key_selection(ref);
+	AnimTemplate* clip = self.key_clip(ref);
+	if (clip)
+	{
+		// Both run forward in time, so one pass pairs them.
+		usz next = 0;
+		foreach (frame : clip.keyframes)
+		{
+			while (next < times.len && times[next] < frame.time - ANIM_SAME_TIME) next++;
+			if (next == times.len) break;
+			if (math::abs(times[next] - frame.time) >= ANIM_SAME_TIME) continue;
+			foreach (joint : joints)
+			{
+				if (rotations && frame.has_channel(joint, ROTATION)) self.select_channel(frame.time, joint, ROTATION);
+				if (translations && frame.has_channel(joint, TRANSLATION)) self.select_channel(frame.time, joint, TRANSLATION);
+			}
+		}
+	}
+	self.settle_key_selection();
+}
+
 fn bool AppState.select_animation_channel_key(&self, AnimRef ref, float time,
 	String joint, AnimChannels channel, bool additive = false, bool toggle = false)
 {

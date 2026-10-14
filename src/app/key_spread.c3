@@ -1,13 +1,19 @@
 <*
- Keying one pose edit onto every selected key.
+ Keying one pose edit onto many keys at once.
 
- With two or more keys picked in the sheet and the playhead anywhere from the
- first of them to the last, a pose edit that gets keyed — K, Auto-key, the
- banner's Key pose, a typed joint value — lands on all of them, and no key is
- added at the playhead itself. The turn and slide the edit made at the playhead are added
- to each selected key's own value (`clip_with_offset`), so the motion through the
- range is kept and shifted rather than flattened to one pose. Keys just outside
- the selection take a fading share, and the whole change is one undo step.
+ Where an edit lands is the Apply to switch in the Animations dock (`key_reach`):
+
+ - **This frame**: the playhead only, through `key_here`.
+ - **Selected keys**: every key picked in the sheet, when at least two are and
+   the playhead is anywhere from the first of them to the last. No key is added
+   at the playhead itself. Keys just outside the selection take a fading share.
+ - **Whole clip**: every key of the clip, or of the active keyed layer. Nothing
+   needs to be picked.
+
+ Whichever it is, a keyed edit — K, Auto-key, the banner's Key pose, a typed
+ joint value — adds the turn and slide it made at the playhead to each key's own
+ value (`clip_with_offset`), so the motion through the keys is kept and shifted
+ rather than flattened to one pose. The whole change is one undo step.
 
  The edit is measured on screen, as the change from what the clip played at the
  playhead to the pose made there, and composed into the keys the timeline shows:
@@ -44,15 +50,50 @@ fn void AppState.selected_key_times(&self, AnimRef ref, AnimFloatList* into)
 }
 
 <*
- How many keys a pose keyed at `time` would land on: the selected keys of `ref`
- when there are at least two and the playhead is inside their span, else 0 — one
- key at the playhead, as before.
-
- The span rather than the keys themselves: on a dense clip a scrubbed playhead
- lands a millisecond beside a key far more often than on one, and an edit made
- there is still an edit to the range picked around it.
+ Where a keyed pose edit goes; see the file's header.
 *>
-fn usz AppState.spread_key_count(&self, AnimRef ref, float time)
+enum KeyReach
+{
+	FRAME,
+	SELECTED_KEYS,
+	WHOLE_CLIP,
+}
+
+<*
+ The key times a pose keyed at `time` would land on under `key_reach`, sorted
+ and distinct; nothing when it keys the playhead alone.
+
+ Selected keys need at least two picked and the playhead inside their span —
+ the span rather than the keys themselves, as on a dense clip a scrubbed
+ playhead lands a millisecond beside a key far more often than on one, and an
+ edit made there is still an edit to the range picked around it.
+*>
+fn void AppState.reach_key_times(&self, AnimRef ref, float time, AnimFloatList* into)
+{
+	if (!ref.valid()) return;
+	switch (self.key_reach)
+	{
+		case FRAME:
+			return;
+		case SELECTED_KEYS:
+			if (self.picked_keys_around(ref, time) == 0) return;
+			self.selected_key_times(ref, into);
+		case WHOLE_CLIP:
+			// A generated layer holds no keys; `key_here` says so.
+			AnimLayer* layered = self.active_layer_ptr(ref);
+			if (layered && layered.kind != KEYED) return;
+			AnimTemplate* clip = self.key_clip(ref);
+			if (!clip) return;
+			foreach (frame : clip.keyframes) into.push(frame.time);
+	}
+}
+
+<*
+ How many keys are picked in the sheet for `ref` with `time` inside their span,
+ or 0 when fewer than two are or the playhead is outside them. Whatever the
+ switch says: the dock reads it to point at Selected keys.
+*>
+fn usz AppState.picked_keys_around(&self, AnimRef ref, float time)
 {
 	if (!ref.valid() || !self.anim_key_selection_ref.same(ref)) return 0;
 	AnimFloatList times;
@@ -64,19 +105,32 @@ fn usz AppState.spread_key_count(&self, AnimRef ref, float time)
 }
 
 <*
- Key the pose edit made at `time` onto every selected key of `ref`, as one undo
+ How many keys a pose keyed at `time` would land on: the length of
+ `reach_key_times`, 0 for the playhead alone.
+*>
+fn usz AppState.spread_key_count(&self, AnimRef ref, float time)
+{
+	AnimFloatList times;
+	times.init(tmem);
+	self.reach_key_times(ref, time, &times);
+	return (usz)times.len();
+}
+
+<*
+ Key the pose edit made at `time` onto the keys of `ref` at `times`, as one undo
  step, and keep the selection for the next edit.
 
- 	`AnimRef landed = app.key_onto_selected(app.editing, app.edit_time, CHANGED);`
+ 	`AnimRef landed = app.key_onto_keys(app.editing, app.edit_time, times, CHANGED);`
 
  Only the joints the edit changed get an offset, and only in the channels it
  changed. SELECTED narrows them further, as it does for one key: to the joints
  and channels of selected channel keys, or else to the joints selected on the
  model. With nothing changed this is `key_here`, which keys a moved target alone.
 
+ @param times : `Key times from reach_key_times: sorted, distinct, not empty.`
  @return `The reference to hold afterwards, or NO_ANIM when nothing was written.`
 *>
-fn AnimRef AppState.key_onto_selected(&self, AnimRef ref, float time, AnimKeyScope scope = CHANGED)
+fn AnimRef AppState.key_onto_keys(&self, AnimRef ref, float time, float[] times, AnimKeyScope scope = CHANGED)
 {
 	AnimTemplate* clip = self.clip(ref);
 	if (!clip) return NO_ANIM;
@@ -128,11 +182,6 @@ fn AnimRef AppState.key_onto_selected(&self, AnimRef ref, float time, AnimKeySco
 	}
 	if (offsets.len() == 0) return self.key_here(ref, time, scope);
 
-	AnimFloatList times;
-	times.init(mem);
-	defer times.free();
-	self.selected_key_times(ref, &times);
-
 	// The selection by value: landing lets it go, and it is put back afterwards so
 	// the next turn lands on the same keys.
 	float[] whole = self.anim_key_selection.to_tarray();
@@ -143,7 +192,7 @@ fn AnimRef AppState.key_onto_selected(&self, AnimRef ref, float time, AnimKeySco
 
 	usz faded;
 	AnimTemplate built = clip_with_offset(mem, *self.key_clip(ref), offsets.array_view(),
-		times.array_view(), KEY_OFFSET_FADE, &faded);
+		times, KEY_OFFSET_FADE, &faded);
 	// A moved target keys onto the base, at the playhead only.
 	if (!layered) built = self.with_aim_keys(built, time);
 
@@ -173,7 +222,9 @@ fn AnimRef AppState.key_onto_selected(&self, AnimRef ref, float time, AnimKeySco
 	String verb = turns && moves ? "Posed" : (turns ? "Turned" : "Moved");
 	String subject = joint_count == 1 ? joint : string::tformat("%d joints", joint_count);
 	String edges = faded > 0 ? string::tformat(" (%d more faded at the edges)", faded) : "";
-	self.@notice("%s %s on %d selected keys%s · Ctrl+Z undoes it", verb, subject, times.len(), edges);
+	String keys = self.key_reach == WHOLE_CLIP ? string::tformat("all %d keys", times.len)
+		: string::tformat("%d selected keys", times.len);
+	self.@notice("%s %s on %s%s · Ctrl+Z undoes it", verb, subject, keys, edges);
 	return landed;
 }
 
