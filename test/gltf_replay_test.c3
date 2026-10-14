@@ -38,6 +38,7 @@ import std::math;
 import std::math::vector;
 import std::math::matrix;
 import std::math::quaternion;
+import std::collections::list;
 
 
 
@@ -1182,4 +1183,171 @@ fn void a_constrained_export_re_saves_without_growing() @test
 		in_file, again[0].times.len);
 	test::@check(again[0].times.len > clip.keyframes.len,
 		"re-baking collapsed the constrained curve below the source keys");
+}
+
+// Write `clips` into the model at `path` the way Save does: the bench's rig and
+// skin over the file's own primitives, through `reskin_glb`.
+fn void? save_clips_into(String path, Bench* bench, gltf_edit::ReskinClip[] clips) @local
+{
+	gltf::GltfStream stream = gltf::open(path, mem)!;
+	rig::MeshParts? walked = rig::mesh_parts(mem, &stream);
+	stream.close();
+	rig::MeshParts found = walked!;
+	defer found.free(mem);
+
+	gltf_edit::ReskinPart[] parts = alloc::new_array(mem, gltf_edit::ReskinPart, (sz)found.parts.len);
+	defer alloc::free(mem, parts);
+	foreach (usz p, part : found.parts)
+	{
+		parts[p] = { .node = part.node, .mesh = part.mesh, .primitive = part.primitive,
+			.base = part.base, .count = part.count };
+	}
+	gltf_edit::ReskinJoint[JOINTS.len] joints;
+	foreach (usz j, name : JOINTS) joints[j] = { .name = name, .parent = PARENTS[j], .position = REST[j] };
+
+	gltf_edit::reskin_glb(mem, path, {
+		.joints = joints[..], .parts = parts, .weights = bench.dense,
+		.vertices = bench.body.positions.len, .skin = found.skin, .bind = matrix::IDENTITY4,
+		.clips = clips,
+	})!;
+}
+
+<*
+ A model saved in place carries each curve at the samples it needs, and plays as
+ if it carried them all.
+
+ The same baked clip goes through `reskin_glb` twice: once with every curve at
+ every sample, the way Save used to write it, and once with the keys
+ `reskin_clips` chose. An outside reader has to see the same motion in both. The
+ second holds a still curve at one key, writes a straight slide as its ends,
+ shares a run of key times between curves that keep the same ones, and comes out
+ smaller.
+*>
+fn void a_saved_model_writes_each_curve_at_its_own_keys() @test
+{
+	Bench* bench = setup();
+	crig::AnimTemplate clip = fixture_clip(mem);
+	defer clip.free(mem);
+	// Auto on one key bakes the whole clip at four samples a span, so every curve
+	// has samples between its keys for the writer to leave out.
+	clip.keyframes[0].dots[0].rotation_interpolation = crig::AnimInterpolation.AUTO;
+	crig::AnimTemplate[1] source = { clip };
+
+	gltf_edit::ReskinClip[] kept = crig::reskin_clips(mem, &bench.skeleton, JOINTS[..], source[..]);
+	defer crig::free_reskin_clips(mem, kept);
+	test::@check(kept.len == 1 && kept[0].times.len == 9, "the clip was not baked at four samples a span");
+	if (kept.len != 1 || kept[0].times.len != 9) return;
+
+	// The hips slide in a straight line between their keys; the arm and the head
+	// are keyed on both channels and never slide.
+	foreach (curve : kept[0].curves)
+	{
+		if (curve.joint == 0)
+		{
+			test::@check(curve.slide_keys.len == 3 && curve.slide_keys[1] == 4,
+				"the hips' straight slide kept %s of 9 samples", curve.slide_keys);
+		}
+		if (curve.joint == 2 || curve.joint == 3)
+		{
+			test::@check(curve.slides.len > 0 && curve.slide_keys.len == 1 && curve.slide_keys[0] == 0,
+				"the still slide of joint %d kept %s", curve.joint, curve.slide_keys);
+		}
+	}
+
+	gltf_edit::ReskinCurve[] every = alloc::new_array(mem, gltf_edit::ReskinCurve, (sz)kept[0].curves.len);
+	defer alloc::free(mem, every);
+	foreach (usz c, curve : kept[0].curves)
+	{
+		every[c] = { .joint = curve.joint, .turns = curve.turns, .slides = curve.slides };
+	}
+	gltf_edit::ReskinClip[1] full = { { .name = kept[0].name, .times = kept[0].times, .curves = every } };
+
+	String kept_path = "build/gltf-replay-saved.glb";
+	String full_path = "build/gltf-replay-saved-full.glb";
+	defer
+	{
+		(void)file::delete(kept_path);
+		(void)file::delete(full_path);
+	}
+	foreach (usz i, path : (String[]){ kept_path, full_path })
+	{
+		crig::export_rigged_animated_glb(mem, path, bench.body, &bench.skeleton, JOINTS[..],
+			bench.dense, {}, "body")!!;
+		save_clips_into(path, bench, i == 0 ? kept : full[..])!!;
+	}
+
+	gltf::GltfStream thin = gltf::open(kept_path, mem)!!;
+	defer thin.close();
+	thin.load_all_buffers()!!;
+	gltf::GltfStream whole = gltf::open(full_path, mem)!!;
+	defer whole.close();
+	whole.load_all_buffers()!!;
+
+	float worst = 0.0f;
+	for (usz step = 0; step <= 96; step++)
+	{
+		float time = clip.duration * (float)step / 96.0f;
+		ReplayFrame a = replay_frame(mem, &thin, 0, time)!!;
+		defer a.free(mem);
+		ReplayFrame b = replay_frame(mem, &whole, 0, time)!!;
+		defer b.free(mem);
+		foreach (usz k, at : a.joints) worst = math::max(worst, (at - b.joints[k]).length());
+		foreach (usz v, at : a.vertices) worst = math::max(worst, (at - b.vertices[v]).length());
+	}
+	test::@check(worst < 1.0e-4f, "the file with fewer keys plays %.7f away from the full one", worst);
+
+	gltf::Animation written = thin.gltf.animations[0];
+	usz samplers = (usz)written.samplers.len();
+	usz still = 0;
+	List{uint} inputs;
+	inputs.init(mem);
+	defer inputs.free();
+	foreach (sampler : written.samplers)
+	{
+		if (stream_count(&thin, sampler.input) == 1) still++;
+		if (!inputs.contains(sampler.input)) inputs.push(sampler.input);
+	}
+	test::@check(still >= 2, "no still curve was written as one key (%d)", still);
+	test::@check((usz)inputs.len() < samplers, "no two curves share a run of key times");
+
+	usz thin_size = (usz)file::get_size(kept_path)!!;
+	usz full_size = (usz)file::get_size(full_path)!!;
+	test::@check(thin_size < full_size, "the file with fewer keys is not smaller: %d vs %d", thin_size, full_size);
+}
+
+fn usz stream_count(gltf::GltfStream* stream, uint accessor) @local
+	=> (usz)stream.gltf.accessors[accessor].count;
+
+<*
+ A game export writes each curve at its own keys too: the hips' straight slide
+ as its three keys and the still slides as one, out of a clip baked at nine
+ samples. The replays above already hold such a file to the viewport.
+*>
+fn void a_game_export_writes_each_curve_at_its_own_keys() @test
+{
+	Bench* bench = setup();
+	crig::AnimTemplate clip = fixture_clip(mem);
+	defer clip.free(mem);
+	clip.keyframes[0].dots[0].rotation_interpolation = crig::AnimInterpolation.AUTO;
+	crig::AnimTemplate[1] source = { clip };
+	String path = "build/gltf-replay-game.glb";
+	defer (void)file::delete(path);
+	crig::export_rigged_animated_glb(mem, path, bench.body, &bench.skeleton, JOINTS[..],
+		bench.dense, source[..], "body")!!;
+
+	gltf::GltfStream stream = gltf::open(path, mem)!!;
+	defer stream.close();
+	gltf::Animation written = stream.gltf.animations[0];
+	usz hips = 0;
+	usz still = 0;
+	foreach (channel : written.channels)
+	{
+		usz keys = stream_count(&stream, written.samplers[(sz)channel.sampler].input);
+		if (channel.target.path != gltf::AnimationProperty.TRANSLATION) continue;
+		String name = stream.gltf.nodes.get_ref((sz)channel.target.node).name;
+		if (name == "hips") hips = keys;
+		if (keys == 1) still++;
+	}
+	test::@check(hips == 3, "the hips' straight slide kept %d of 9 samples", hips);
+	test::@check(still >= 2, "no still slide was written as one key (%d)", still);
 }

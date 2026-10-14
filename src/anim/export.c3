@@ -1235,8 +1235,9 @@ fn void write_pack_extras(Allocator allocator, gltf::GltfBuilder* builder, AnimP
 }
 
 <*
- One glTF animation per template: a shared run of key times, then a rotation
- channel per joint that turns and a translation channel per joint that moves.
+ One glTF animation per template: a rotation channel per joint that turns and a
+ translation channel per joint that moves, each keyed at the samples it needs —
+ see `curve_keys`.
 
  A joint that does neither gets no channel at all rather than a run of
  identities. Its node already holds the rest transform those channels would
@@ -1328,40 +1329,41 @@ fn void write_animation(
 	usz keys = times.len;
 	usz channels = 0;
 
-	// One input accessor for the whole clip: every joint is keyed at the same
-	// times, so every sampler below shares this one.
-	uint input = builder.add_times(times);
 	uint clip = into >= 0 ? (uint)into : builder.add_animation(template.name);
 
-	// A channel that holds one value the whole clip is written as that value at
-	// the first time, against a one-key input every such channel shares: a walk's
-	// still bones are most of its channels, and repeating each value at every
-	// sample was most of the file. A reader holds a one-key sampler at its value
-	// (glTF's clamp, and `sample_at`'s). Only when something in the clip moves —
-	// the moving channels are what carry its length, which a clip made of nothing
-	// but held channels would otherwise lose.
-	bool moves = false;
-	for (usz j = 0; j < joints && !moves; j++)
+	// Each curve is written at the samples it needs — see `curve_keys`. A baked
+	// file drops every sample its curve's straight line already reproduces; a pack
+	// keeps its keys, and the scene clock keeps every character on one grid. All
+	// three write a curve that holds one value as that value alone, at the first
+	// time, once something in the clip moves: a walk's still bones are most of its
+	// curves, and repeating each value at every sample was most of the file.
+	bool thin = baked && !timing.active;
+	CurveTolerance tolerance = thin
+		? baked_curve_tolerance(skeleton.height())
+		: { .angle = 4.0f * ANIM_EXPORT_EPSILON, .move = ANIM_EXPORT_EPSILON };
+	bool moves = samples_move(posed, joints, tolerance);
+
+	// Curves that need the same samples share one input accessor.
+	List{WrittenInput} inputs;
+	inputs.init(allocator);
+	defer
 	{
-		for (usz k = 1; k < keys; k++)
-		{
-			if (!same_turn(posed[k].rotations[j], posed[0].rotations[j])
-				|| (posed[k].offsets[j] - posed[0].offsets[j]).length() > ANIM_EXPORT_EPSILON)
-			{
-				moves = true;
-				break;
-			}
-		}
+		foreach (held : inputs) if (held.keys.len > 0) alloc::free(allocator, held.keys);
+		inputs.free();
 	}
-	uint held_input;
-	bool held_input_written = false;
 
 	Quaternionf[] turns = alloc::new_array(allocator, Quaternionf, (sz)keys);
 	Vec3[] slides = alloc::new_array(allocator, Vec3, (sz)keys);
+	Quaternionf[] kept_turns = alloc::new_array(allocator, Quaternionf, (sz)keys);
+	Vec3[] kept_slides = alloc::new_array(allocator, Vec3, (sz)keys);
+	float[] kept_times = alloc::new_array(allocator, float, (sz)keys);
 	defer
 	{
 		alloc::free(allocator, turns);
 		alloc::free(allocator, slides);
+		alloc::free(allocator, kept_turns);
+		alloc::free(allocator, kept_slides);
+		alloc::free(allocator, kept_times);
 	}
 
 	const Quaternionf UNROTATED = { 0, 0, 0, 1 };
@@ -1400,33 +1402,25 @@ fn void write_animation(
 		}
 
 		uint node = j < joint_nodes.len ? joint_nodes[j] : (uint)j;
-		if (turning) channels++;
-		if (sliding) channels++;
-		bool turn_held = moves;
-		bool slide_held = moves;
-		for (usz k = 1; k < keys; k++)
-		{
-			if (!same_turn(turns[k], turns[0])) turn_held = false;
-			if ((slides[k] - slides[0]).length() > ANIM_EXPORT_EPSILON) slide_held = false;
-		}
-		if ((turning && turn_held) || (sliding && slide_held))
-		{
-			if (!held_input_written) held_input = builder.add_times(times[:1]);
-			held_input_written = true;
-		}
 		if (turning)
 		{
-			uint sampler = turn_held
-				? builder.add_sampler(clip, held_input, builder.add_rotations(turns[:1]))
-				: builder.add_sampler(clip, input, builder.add_rotations(turns));
-			builder.add_channel(clip, sampler, node, gltf::AnimationProperty.ROTATION);
+			channels++;
+			usz[] needed = curve_keys(allocator, times, turns, {}, tolerance, moves, thin);
+			foreach (usz i, k : needed) kept_turns[i] = turns[k];
+			uint input = written_input(allocator, builder, &inputs, times, needed, kept_times);
+			uint values = builder.add_rotations(needed.len > 0 ? kept_turns[:needed.len] : turns);
+			builder.add_channel(clip, builder.add_sampler(clip, input, values), node,
+				gltf::AnimationProperty.ROTATION);
 		}
 		if (sliding)
 		{
-			uint sampler = slide_held
-				? builder.add_sampler(clip, held_input, builder.add_vectors(slides[:1]))
-				: builder.add_sampler(clip, input, builder.add_vectors(slides));
-			builder.add_channel(clip, sampler, node, gltf::AnimationProperty.TRANSLATION);
+			channels++;
+			usz[] needed = curve_keys(allocator, times, {}, slides, tolerance, moves, thin);
+			foreach (usz i, k : needed) kept_slides[i] = slides[k];
+			uint input = written_input(allocator, builder, &inputs, times, needed, kept_times);
+			uint values = builder.add_vectors(needed.len > 0 ? kept_slides[:needed.len] : slides);
+			builder.add_channel(clip, builder.add_sampler(clip, input, values), node,
+				gltf::AnimationProperty.TRANSLATION);
 		}
 	}
 	if (report) report.count(baked_keys, keys, channels);
@@ -1610,17 +1604,29 @@ fn void? export_scene_glb(
 	return builder.save_glb(path);
 }
 
-// Whether two rotations are the same turn, either sign of the quaternion. By
-// component rather than by their dot product, which near 1 cannot tell apart
-// turns a tenth of a degree apart.
-fn bool same_turn(Quaternionf a, Quaternionf b) @local
+// One key-time run already in the file, and the accessor that holds it.
+struct WrittenInput @local
 {
-	float dot = a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w;
-	float sign = dot < 0.0f ? -1.0f : 1.0f;
-	return math::abs(a.v.x - sign * b.v.x) <= ANIM_EXPORT_EPSILON
-		&& math::abs(a.v.y - sign * b.v.y) <= ANIM_EXPORT_EPSILON
-		&& math::abs(a.v.z - sign * b.v.z) <= ANIM_EXPORT_EPSILON
-		&& math::abs(a.v.w - sign * b.v.w) <= ANIM_EXPORT_EPSILON;
+	usz[] keys; // indices into the clip's samples; empty is all of them
+	uint accessor;
+}
+
+// The input accessor for a curve keyed at `needed` (empty: every one of
+// `times`), written the first time a curve needs that run and shared after.
+// Takes ownership of `needed`. `scratch` holds at least `times.len` floats.
+fn uint written_input(Allocator allocator, gltf::GltfBuilder* builder, List{WrittenInput}* inputs,
+	float[] times, usz[] needed, float[] scratch) @local
+{
+	foreach (held : *inputs)
+	{
+		if (!same_keys(held.keys, needed)) continue;
+		if (needed.len > 0) alloc::free(allocator, needed);
+		return held.accessor;
+	}
+	foreach (usz i, k : needed) scratch[i] = times[k];
+	uint accessor = builder.add_times(needed.len > 0 ? scratch[:needed.len] : times);
+	inputs.push({ .keys = needed, .accessor = accessor });
+	return accessor;
 }
 
 <*
@@ -1647,6 +1653,10 @@ fn bool same_turn(Quaternionf a, Quaternionf b) @local
  A joint that neither turns nor slides across the whole clip gets neither curve,
  which is what a reader makes of a missing channel — so the file says "untouched"
  the same way it would have.
+
+ Each curve holds a value at every sample time, and names in `turn_keys` and
+ `slide_keys` the ones the file needs — the ones `curve_keys` keeps — so the
+ writer stores a still bone as one key and a straight run as its ends.
 
  The caller owns the result; release it with `free_reskin_clips`.
 
@@ -1697,6 +1707,10 @@ fn gltf_edit::ReskinClip[] reskin_clips(
 		List{gltf_edit::ReskinCurve} curves;
 		curves.init(allocator);
 
+		// Each curve keeps the samples it needs, as `write_animation` writes them.
+		CurveTolerance tolerance = baked_curve_tolerance(skeleton.height());
+		bool moves = samples_move(posed, joints, tolerance);
+
 		for (usz j = 0; j < joints; j++)
 		{
 			bool turning = false;
@@ -1728,7 +1742,13 @@ fn gltf_edit::ReskinClip[] reskin_clips(
 				if (sliding) slides[k] = local + posed[k].offsets[j];
 			}
 
-			curves.push({ .joint = j, .turns = turns, .slides = slides });
+			curves.push({
+				.joint = j,
+				.turns = turns,
+				.slides = slides,
+				.turn_keys = curve_keys(allocator, times, turns, {}, tolerance, moves),
+				.slide_keys = curve_keys(allocator, times, {}, slides, tolerance, moves),
+			});
 		}
 
 		if (curves.len() == 0)
@@ -1770,6 +1790,8 @@ fn void free_reskin_clips(Allocator allocator, gltf_edit::ReskinClip[] clips)
 		{
 			if (curve.turns.len > 0) alloc::free(allocator, curve.turns);
 			if (curve.slides.len > 0) alloc::free(allocator, curve.slides);
+			if (curve.turn_keys.len > 0) alloc::free(allocator, curve.turn_keys);
+			if (curve.slide_keys.len > 0) alloc::free(allocator, curve.slide_keys);
 		}
 		if (clip.curves.len > 0) alloc::free(allocator, clip.curves);
 		if (clip.times.len > 0) alloc::free(allocator, clip.times);

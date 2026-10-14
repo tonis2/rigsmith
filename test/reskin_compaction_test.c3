@@ -119,6 +119,33 @@ fn void? rewrite(String path, bool animated = false)
 	})!;
 }
 
+<*
+ A curve's kept keys have to pick out ascending times of its own clip; anything
+ else is a caller that built them against different times, refused rather than
+ written past the end of an accessor.
+*>
+fn void reskin_refuses_keys_outside_the_clip() @test
+{
+	String path = "build/reskin-bad-keys.glb";
+	fixture(path);
+	defer (void)file::delete(path);
+	gltf_edit::ReskinJoint[1] joints = {{ .name = "root", .parent = -1 }};
+	gltf_edit::ReskinPart[1] parts = {{ .node = 0, .mesh = 0, .primitive = 0, .count = 3 }};
+	float[3] weights = {1,1,1};
+	float[3] times = {0,0.5f,1};
+	Vec3[3] slides = {{0,0,0},{0.5f,0,0},{1,0,0}};
+	foreach (usz[] keys : (usz[][]){ (usz[]){0,3}, (usz[]){2,0}, (usz[]){0,0,2} })
+	{
+		gltf_edit::ReskinCurve[1] curves = {{.joint=0,.slides=slides[..],.slide_keys=keys}};
+		gltf_edit::ReskinClip[1] clips = {{.name="move",.times=times[..],.curves=curves[..]}};
+		bool refused = @catch(gltf_edit::reskin_glb(mem, path, {
+			.joints=joints[..],.parts=parts[..],.weights=weights[..],.vertices=3,
+			.skin=0,.bind=matrix::IDENTITY4,.clips=clips[..]
+		})) == gltf_edit::RESKIN_SHAPE;
+		test::@check(refused, "keys %s were written", keys);
+	}
+}
+
 fn void repeated_reskin_reclaims_interleaved_data_and_preserves_other_payload() @test
 {
 	String path = "build/reskin-compaction.glb";

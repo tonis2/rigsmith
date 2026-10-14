@@ -134,12 +134,19 @@ struct ReskinPart
 
  The values are **local to the joint's node** as `reskin_glb` writes that node:
  re-rooted, resting on a pure translation and carrying no rotation of its own.
+
+ `turn_keys` and `slide_keys` say which of those values the file keeps, as
+ ascending indices into the clip's times: a reader slides between the kept ones,
+ so a still joint needs one and a straight run its two ends. Empty keeps them
+ all. Curves that keep the same keys share one input accessor.
 *>
 struct ReskinCurve
 {
 	usz joint; // index into `Reskin.joints`
 	Quaternionf[] turns;
 	Vec3[] slides;
+	usz[] turn_keys;
+	usz[] slide_keys;
 }
 
 <*
@@ -152,8 +159,8 @@ struct ReskinCurve
  this carries: sampled key times, and per joint the values that reproduce the
  pose in the new frame.
 
- Every key time is shared by every curve in the clip, which is the shape glTF's
- samplers want and what lets one input accessor serve all of them.
+ Every curve holds a value at every key time of the clip, and keeps the ones its
+ `turn_keys` and `slide_keys` name — see `ReskinCurve`.
 *>
 struct ReskinClip
 {
@@ -397,6 +404,8 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 			if (curve.joint >= bones) return RESKIN_SHAPE~;
 			if (curve.turns.len > 0 && curve.turns.len != clip.times.len) return RESKIN_SHAPE~;
 			if (curve.slides.len > 0 && curve.slides.len != clip.times.len) return RESKIN_SHAPE~;
+			if (!keys_within(curve.turn_keys, clip.times.len)) return RESKIN_SHAPE~;
+			if (!keys_within(curve.slide_keys, clip.times.len)) return RESKIN_SHAPE~;
 		}
 	}
 
@@ -492,7 +501,7 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 		blob_f32(added, at + 8, p.z);
 	}
 
-	write_anim_bytes(added, input.clips, blocks);
+	write_anim_bytes(added, blocks);
 
 	// Where the new bytes land in the buffer. The chunk's own length rather than
 	// the buffer's declared one: the two differ by up to three bytes of pad, and
@@ -999,11 +1008,13 @@ fn void? mark_mesh_accessors(Allocator allocator, String meshes_text, Reskin inp
  Laid out once and walked twice — by the pass that writes the floats and by the
  pass that writes the accessors — because the two have to agree about every
  offset and a second copy of the arithmetic is a second chance to be wrong. The
- order is fixed: per clip its key times, then per curve its rotations and then
- its translations, skipping the ones that are empty.
+ order is fixed: per clip its distinct runs of key times, then per curve its
+ rotations and then its translations, skipping the ones that are empty.
 
  `components` is what makes it an accessor: 1 is the SCALAR run of times, 4 a
- VEC4 of quaternions, 3 a VEC3 of translations.
+ VEC4 of quaternions, 3 a VEC3 of translations. Each block borrows the values it
+ writes from the clip it came from, and `keys` picks which of them, in order;
+ empty writes them all.
 *>
 struct AnimBlock @local
 {
@@ -1016,98 +1027,128 @@ struct AnimBlock @local
 	// here, so these are filled for that block alone and read for that one alone.
 	float low;
 	float high;
+
+	// For a curve's block: which block holds the key times it is sampled at.
+	usz input;
+
+	usz[] keys;
+	float[] times;
+	Quaternionf[] turns;
+	Vec3[] slides;
 }
 
 fn usz AnimBlock.len(&self) => self.count * self.components * 4;
+
+// Whether `keys` is a strictly ascending run of indices below `count`, which is
+// what a curve's kept keys have to be for the times they pick to stay ascending.
+fn bool keys_within(usz[] keys, usz count) @local
+{
+	foreach (usz i, k : keys)
+	{
+		if (k >= count || (i > 0 && k <= keys[i - 1])) return false;
+	}
+	return true;
+}
+
+fn bool same_keys(usz[] a, usz[] b) @local
+{
+	if (a.len != b.len) return false;
+	foreach (usz i, k : a) if (b[i] != k) return false;
+	return true;
+}
 
 // Every block of every clip, in the one order both passes walk. `base` is where
 // the animation bytes start inside the appended block; every run is a multiple
 // of four bytes long, so a four-aligned base keeps all of them aligned.
 fn AnimBlock[] plan_anim_blocks(Allocator allocator, ReskinClip[] clips, usz base) @local
 {
-	usz total = 0;
-	foreach (clip : clips)
-	{
-		if (!clip.writable()) continue;
-		total++;
-		foreach (curve : clip.curves)
-		{
-			if (curve.turns.len > 0) total++;
-			if (curve.slides.len > 0) total++;
-		}
-	}
-
-	AnimBlock[] blocks = alloc::new_array(allocator, AnimBlock, (sz)total);
+	List{AnimBlock} blocks;
+	blocks.init(allocator);
+	defer blocks.free();
 	usz at = base;
-	usz written = 0;
 
 	foreach (clip : clips)
 	{
 		if (!clip.writable()) continue;
 
-		float low = clip.times[0];
-		float high = clip.times[0];
-		foreach (time : clip.times)
+		// The clip's distinct runs of key times first, one block each, so that
+		// every curve below can name the one it keeps.
+		usz first = (usz)blocks.len();
+		foreach (curve : clip.curves)
 		{
-			if (time < low) low = time;
-			if (time > high) high = time;
-		}
+			for (usz half = 0; half < 2; half++)
+			{
+				bool used = half == 0 ? curve.turns.len > 0 : curve.slides.len > 0;
+				if (!used) continue;
+				usz[] keys = half == 0 ? curve.turn_keys : curve.slide_keys;
+				bool known = false;
+				for (usz b = first; b < (usz)blocks.len() && !known; b++) known = same_keys(blocks[(sz)b].keys, keys);
+				if (known) continue;
 
-		blocks[written] = {
-			.at = at, .count = clip.times.len, .components = 1,
-			.low = low, .high = high,
-		};
-		at += blocks[written++].len();
+				AnimBlock times = {
+					.at = at, .count = keys.len > 0 ? keys.len : clip.times.len, .components = 1,
+					.keys = keys, .times = clip.times,
+				};
+				times.low = clip.times[keys.len > 0 ? keys[0] : 0];
+				times.high = times.low;
+				for (usz i = 0; i < times.count; i++)
+				{
+					float time = clip.times[keys.len > 0 ? keys[i] : i];
+					if (time < times.low) times.low = time;
+					if (time > times.high) times.high = time;
+				}
+				at += times.len();
+				blocks.push(times);
+			}
+		}
+		usz runs = (usz)blocks.len();
 
 		foreach (curve : clip.curves)
 		{
-			if (curve.turns.len > 0)
+			for (usz half = 0; half < 2; half++)
 			{
-				blocks[written] = { .at = at, .count = curve.turns.len, .components = 4 };
-				at += blocks[written++].len();
-			}
-			if (curve.slides.len > 0)
-			{
-				blocks[written] = { .at = at, .count = curve.slides.len, .components = 3 };
-				at += blocks[written++].len();
+				bool used = half == 0 ? curve.turns.len > 0 : curve.slides.len > 0;
+				if (!used) continue;
+				usz[] keys = half == 0 ? curve.turn_keys : curve.slide_keys;
+				usz input = first;
+				while (input < runs && !same_keys(blocks[(sz)input].keys, keys)) input++;
+
+				AnimBlock values = {
+					.at = at,
+					.count = keys.len > 0 ? keys.len : clip.times.len,
+					.components = half == 0 ? 4 : 3,
+					.input = input,
+					.keys = keys,
+				};
+				if (half == 0) { values.turns = curve.turns; } else { values.slides = curve.slides; }
+				at += values.len();
+				blocks.push(values);
 			}
 		}
 	}
 
-	return blocks;
+	return blocks.to_array(allocator);
 }
 
-// The floats themselves, into the runs `plan_anim_blocks` set aside. Walks the
-// clips in exactly the order that did.
-fn void write_anim_bytes(char[] added, ReskinClip[] clips, AnimBlock[] blocks) @local
+// The floats themselves, into the runs `plan_anim_blocks` set aside.
+fn void write_anim_bytes(char[] added, AnimBlock[] blocks) @local
 {
-	usz block = 0;
-	foreach (clip : clips)
+	foreach (block : blocks)
 	{
-		if (!clip.writable()) continue;
-
-		usz at = blocks[block++].at;
-		foreach (usz k, time : clip.times) blob_f32(added, at + k * 4, time);
-
-		foreach (curve : clip.curves)
+		for (usz i = 0; i < block.count; i++)
 		{
-			if (curve.turns.len > 0)
+			usz k = block.keys.len > 0 ? block.keys[i] : i;
+			usz to = block.at + i * block.components * 4;
+			switch (block.components)
 			{
-				usz to = blocks[block++].at;
-				foreach (usz k, turn : curve.turns)
-				{
+				case 1:
+					blob_f32(added, to, block.times[k]);
+				case 4:
 					// glTF wants a quaternion as xyzw, which is the order `Quaternionf.v`
 					// already holds them in.
-					for (usz c = 0; c < 4; c++) blob_f32(added, to + k * 16 + c * 4, turn.v[c]);
-				}
-			}
-			if (curve.slides.len > 0)
-			{
-				usz to = blocks[block++].at;
-				foreach (usz k, slide : curve.slides)
-				{
-					for (usz c = 0; c < 3; c++) blob_f32(added, to + k * 12 + c * 4, slide[c]);
-				}
+					for (usz c = 0; c < 4; c++) blob_f32(added, to + c * 4, block.turns[k].v[c]);
+				default:
+					for (usz c = 0; c < 3; c++) blob_f32(added, to + c * 4, block.slides[k][c]);
 			}
 		}
 	}
@@ -1637,9 +1678,9 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 		{
 			if (!clip.writable()) continue;
 
-			// The whole clip keys at the same times, so one input accessor serves
-			// every sampler below it. It is the block this clip opened with.
-			usz shared = anim_accessor + block++;
+			// The clip's runs of key times come first; each curve's block below names
+			// the one its sampler reads.
+			while (block < at.blocks.len && at.blocks[block].components == 1) block++;
 
 			samplers.clear();
 			channels.clear();
@@ -1655,7 +1696,8 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 				{
 					if (count > 0) { samplers.append_char(','); channels.append_char(','); }
 					samplers.appendf(`{"input":%d,"output":%d,"interpolation":"LINEAR"}`,
-						shared, anim_accessor + block++)!;
+						anim_accessor + at.blocks[block].input, anim_accessor + block)!;
+					block++;
 					channels.appendf(`{"sampler":%d,"target":{"node":%d,"path":"rotation"}}`,
 						count++, node)!;
 				}
@@ -1663,7 +1705,8 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 				{
 					if (count > 0) { samplers.append_char(','); channels.append_char(','); }
 					samplers.appendf(`{"input":%d,"output":%d,"interpolation":"LINEAR"}`,
-						shared, anim_accessor + block++)!;
+						anim_accessor + at.blocks[block].input, anim_accessor + block)!;
+					block++;
 					channels.appendf(`{"sampler":%d,"target":{"node":%d,"path":"translation"}}`,
 						count++, node)!;
 				}

@@ -850,3 +850,169 @@ fn usz thin_linear(Allocator allocator, AnimTemplate source, AnimTemplate reduce
 	*out = keys_without_channels(allocator, reduced, track_names, gone);
 	return removed;
 }
+
+// ---------------------------------------------------------------------------
+// Per-curve keys: which of a baked run's samples one written curve needs.
+//
+// A baked run keys every joint at every sample, because one joint somewhere
+// needed each one: an aimed head, a limb bending against its limit, a smooth
+// curve between keys. Most curves need few of them. A still finger is one value
+// for the whole clip, and a limb keyed linearly lies on the straight line through
+// the samples the head added. glTF lets each curve name its own key times, so a
+// file carries each curve's own samples and no others, and plays the same.
+
+<*
+ How far a written curve may stray from the samples it was baked to.
+*>
+struct CurveTolerance
+{
+	float angle; // radians
+	float move;  // model units
+}
+
+<*
+ What every baked file is written to: below anything visible — a few
+ ten-thousandths of a degree a joint, a hundred-thousandth of the rig's height —
+ and above float noise. A sample the straight line between its neighbours
+ already reproduces goes; every other stays.
+*>
+fn CurveTolerance baked_curve_tolerance(float height)
+{
+	float h = height > 0.0f ? height : 1.0f;
+	return { .angle = 1.0e-5f, .move = 1.0e-5f * h };
+}
+
+// The most samples one kept span may skip, which bounds the check's cost.
+const usz CURVE_LONGEST_SPAN @local = 240;
+
+<*
+ The angle between two turns, either sign of the quaternion. From the chord
+ rather than the dot product, whose acos cannot resolve turns closer than a few
+ hundredths of a degree in float.
+*>
+fn float turn_apart(Quaternionf a, Quaternionf b)
+{
+	float[<4>] d = a.v.dot(b.v) < 0.0f ? a.v + b.v : a.v - b.v;
+	return 4.0f * math::asin(math::min(d.length() * 0.5f, 1.0f));
+}
+
+<*
+ Whether one curve stays within tolerance of its first value throughout. Pass
+ `turns` or `slides` and the other empty.
+*>
+fn bool curve_holds(Quaternionf[] turns, Vec3[] slides, CurveTolerance tolerance)
+{
+	foreach (turn : turns) if (turn_apart(turn, turns[0]) > tolerance.angle) return false;
+	foreach (slide : slides) if ((slide - slides[0]).length() > tolerance.move) return false;
+	return true;
+}
+
+// The slerp a glTF reader plays between two keys: the shortest way round, at an
+// even pace. Not the stdlib's, which blends in a straight line under about 36
+// degrees and drifts from the slerp by far more than this tolerance.
+fn Quaternionf curve_slerp(Quaternionf a, Quaternionf b, float f) @local
+{
+	float[<4>] p = a.v;
+	float[<4>] q = a.v.dot(b.v) < 0.0f ? -b.v : b.v;
+	// The angle from the chord and the sum, which stay precise where an acos of
+	// the dot does not.
+	float angle = 2.0f * math::atan2((p - q).length(), (p + q).length());
+	float s = math::sin(angle);
+	if (s < 1.0e-6f) return { .v = (p + (q - p) * f).normalize() };
+	return { .v = ((p * math::sin((1.0f - f) * angle) + q * math::sin(f * angle)) / s).normalize() };
+}
+
+// Whether every sample strictly between `from` and `to` lies within tolerance of
+// the straight line between those two: a lerp for slides, and for turns the
+// slerp a glTF reader plays.
+fn bool curve_span_holds(float[] times, Quaternionf[] turns, Vec3[] slides, usz from, usz to,
+	CurveTolerance tolerance) @local
+{
+	float width = times[to] - times[from];
+	for (usz k = from + 1; k < to; k++)
+	{
+		float f = width > 0.0f ? (times[k] - times[from]) / width : 0.0f;
+		if (turns.len > 0)
+		{
+			Quaternionf guess = curve_slerp(turns[from], turns[to], f);
+			if (turn_apart(guess, turns[k]) > tolerance.angle) return false;
+		}
+		if (slides.len > 0)
+		{
+			Vec3 guess = slides[from] + (slides[to] - slides[from]) * f;
+			if ((guess - slides[k]).length() > tolerance.move) return false;
+		}
+	}
+	return true;
+}
+
+<*
+ The samples of one baked curve a file has to carry, as ascending indices into
+ `times`. Pass `turns` or `slides`, one value per time, and the other empty.
+
+ With `thin`, a sample goes when the straight line between the kept samples
+ around it reproduces it within `tolerance`. The first and last always stay, so
+ the curve keeps the clip's span. A step's two sides survive on their own: the
+ line across a jump misses the sample before it.
+
+ With `may_hold`, a curve that never strays from its first value keeps that one
+ alone, which a reader holds for the whole clip (glTF's clamp, and
+ `sample_at`'s). The caller allows it only when some other curve of the clip
+ moves, because the moving curves are what carry the clip's length.
+
+ @return `Empty when every sample is needed, which is also what the writers take for "all of them". The caller owns the result.`
+*>
+fn usz[] curve_keys(Allocator allocator, float[] times, Quaternionf[] turns, Vec3[] slides,
+	CurveTolerance tolerance, bool may_hold, bool thin = true)
+{
+	usz n = times.len;
+	if (n <= 1 || (turns.len != n && slides.len != n)) return {};
+	if (may_hold && curve_holds(turns, slides, tolerance)) return alloc::new_array(allocator, usz, 1);
+	if (!thin || n <= 2) return {};
+
+	List{usz} kept;
+	kept.init(allocator);
+	defer kept.free();
+	kept.push(0);
+	usz anchor = 0;
+	for (usz candidate = 1; candidate + 1 < n; candidate++)
+	{
+		if (candidate + 1 - anchor > CURVE_LONGEST_SPAN
+			|| !curve_span_holds(times, turns, slides, anchor, candidate + 1, tolerance))
+		{
+			kept.push(candidate);
+			anchor = candidate;
+		}
+	}
+	kept.push(n - 1);
+	if ((usz)kept.len() == n) return {};
+	return kept.to_array(allocator);
+}
+
+<*
+ Whether any joint of a baked run moves beyond `tolerance` from where it starts:
+ what lets a writer hold the still curves at one key.
+*>
+fn bool samples_move(rig::Pose[] posed, usz joints, CurveTolerance tolerance)
+{
+	for (usz k = 1; k < posed.len; k++)
+	{
+		for (usz j = 0; j < joints; j++)
+		{
+			if (turn_apart(posed[k].rotations[j], posed[0].rotations[j]) > tolerance.angle) return true;
+			if ((posed[k].offsets[j] - posed[0].offsets[j]).length() > tolerance.move) return true;
+		}
+	}
+	return false;
+}
+
+<*
+ Whether two key lists name the same samples. Empty is "every sample", so it
+ matches only another empty one.
+*>
+fn bool same_keys(usz[] a, usz[] b)
+{
+	if (a.len != b.len) return false;
+	foreach (usz i, k : a) if (b[i] != k) return false;
+	return true;
+}
