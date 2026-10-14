@@ -1465,6 +1465,12 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 	String edge = app.area_soft > 0.0f
 		? string::tformat("edge fades over %d%% of the bone", (int)math::round(app.area_soft * 100.0f))
 		: "hard edge";
+	if (!app.area_preview)
+	{
+		// The card's own pick: the mesh still shows the weights, the brush's numbers.
+		return string::bformat(buffer, "Showing its weights as they are. Apply would give it its own bone's part: %d vertices (%d%% of the mesh) · %s — click the mesh, Grow or Shrink to see it first.",
+			held, percent, edge);
+	}
 	if (app.area_islands)
 	{
 		if (held == 0) return "No islands picked — click the mesh to add one, or shift-drag across several.";
@@ -1472,7 +1478,7 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 		return string::bformat(buffer, "holds %d vertices in %d UV island%s (%d%% of the mesh) · %s · click an island to add or remove it, shift-drag paints islands in, ctrl-drag paints them out",
 			held, islands, islands == 1 ? "" : "s", percent, edge);
 	}
-	return string::bformat(buffer, "holds %d vertices (%d%% of the mesh) · %s", held, percent, edge);
+	return string::bformat(buffer, "Showing what Apply would give it: %d vertices (%d%% of the mesh) · %s", held, percent, edge);
 }
 
 fn void weights_section_changed(Ui* ui, bool expanded) @private
@@ -1560,6 +1566,8 @@ fn void weights_soft_moved(Ui* ui, float value) @private
 	float soft = math::round(value / 5.0f) * 0.05f;
 	if (math::abs(soft - app.area_soft) < 1.0e-4f) return;
 	app.area_soft = soft;
+	// Moving the edge is shaping the part, so the mesh shows what Apply would leave.
+	if (app.areaing && app.area_pending()) app.area_preview = true;
 	if (app.tint_mode != OFF)
 	{
 		app.weights_stale = true;

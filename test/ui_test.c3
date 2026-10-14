@@ -16485,9 +16485,9 @@ fn Vec2? Fixture.visible_vertex(&self, bool top)
 
 <*
  The Area tool from the viewport: W opens it on the selected joint, a click on
- the mesh picks the joint's own part, a click again and a wheel notch step the
- ladder, shift-drag grows a custom part, and Enter applies it as one undo step —
- without ever placing a joint.
+ the mesh picks the joint's own part, a click again steps the ladder, a wheel
+ notch zooms and leaves the part alone, shift-drag grows a custom part, and Enter
+ applies it as one undo step — without ever placing a joint.
 *>
 fn void the_area_tool_picks_steps_and_applies_a_part() @test
 {
@@ -16528,12 +16528,16 @@ fn void the_area_tool_picks_steps_and_applies_a_part() @test
 	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN,
 		"a second click did not step up to with children");
 
-	// The cube is one piece, so the ladder has no whole-piece rung: a notch up
-	// wraps round to the own part, and one back returns.
+	// The wheel is the camera's, part picked or not: the Weights card always has
+	// one picked, and a notch that stepped it took the zoom away while weighting.
+	float distance = fixture.app.camera.distance;
+	usz held = fixture.app.area_held();
 	fixture.scroll(top, { 0.0, 1.0 }, precise: false);
-	test::@check(fixture.app.area_part == crig::AreaPart.OWN, "a wheel notch on a one-piece mesh did not wrap to the own part");
+	test::@check(fixture.app.camera.distance < distance, "a wheel notch over a picked part did not zoom");
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_held() == held,
+		"a wheel notch changed the part to %s", fixture.app.area_part.label());
 	fixture.scroll(top, { 0.0, -1.0 }, precise: false);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a wheel notch back did not step down");
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a wheel notch back changed the part");
 	test::@check(!fixture.app.set_area_part(PIECE), "a one-piece mesh let Whole piece take all of it");
 	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "refusing Whole piece dropped the part");
 

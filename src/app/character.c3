@@ -288,7 +288,8 @@ struct Character
 
 	<*
 	 The Area tool (W): the selected joint's pending part of the mesh, shown on
-	 the mesh until Apply writes it as pins or Esc drops it.
+	 the mesh — as the weights Apply would leave, once it has been shaped — until
+	 Apply writes it as pins or Esc drops it.
 
 	 `area_mask` is one flag per vertex, empty while nothing is picked;
 	 `area_twin_mask` is the same part on `area_twin`, the joint across the
@@ -312,6 +313,7 @@ struct Character
 	bool area_islands; // the part is whole UV islands, and grows, shrinks and clicks by island
 	int area_hover_island; // the island under the pointer while picking islands, or -1
 	bool area_paint_adds; // an island paint drag puts islands in, rather than taking them out
+	bool area_preview; // the part was shaped by hand, so the mesh shows what Apply would leave — see `overlay_area_tints`
 	TintMode area_tint;
 	uint area_generation; // moves whenever the pending part does, for the card to follow
 

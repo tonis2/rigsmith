@@ -2040,8 +2040,10 @@ fn sz Viewport.vertex_at(&self, Element* elem, Vec2 pixel)
  trackpad's gesture is already continuous and spends ctrl on choosing zoom over
  orbit, which is the ambiguity a wheel does not have.
 
- The Area tool takes a wheel notch while a part is picked, to step it along the
- part ladder; the trackpad swipe stays the camera's.
+ The Area tool leaves the wheel to the camera too: it used to step a picked part
+ along the ladder, but the Weights card always has a part picked, so zooming
+ while weighting kept changing the part instead. Clicks and the card's Part
+ menu step it.
 
  The trackpad half is unreachable from a machine whose backend cannot report
  precision — X11, win32 — where every scroll is a wheel, and both of the wheel's
@@ -2075,18 +2077,6 @@ fn bool Viewport.scroll_camera(&self, Element* elem, MouseEvent event, Input* in
 	if (sizing)
 	{
 		app.size_brush(event.scroll_precise ? event.scroll * TRACKPAD_NOTCHES_PER_POINT : event.scroll);
-		elem.request_paint();
-		return true;
-	}
-
-	// A wheel notch steps a picked part along the ladder: own bone, with
-	// children, whole piece. Only while a ladder part is picked, so the wheel is
-	// the camera's the rest of the time.
-	if (!event.scroll_precise && event.scroll != 0.0f && app.areaing && app.area_pending()
-		&& app.area_part != CUSTOM)
-	{
-		app.step_area(event.scroll > 0.0f ? 1 : -1);
-		app.refresh_ui();
 		elem.request_paint();
 		return true;
 	}

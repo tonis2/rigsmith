@@ -374,7 +374,7 @@ fn void AppState.rebind_tints(&self)
 				mem, self.geometry.positions, &view.skeleton, &self.voxels, &self.shells,
 				view.attachments, view.reaches, view.paint, painted);
 	}
-	self.overlay_area_tints();
+	self.overlay_area_tints(&view, painted);
 }
 
 <*

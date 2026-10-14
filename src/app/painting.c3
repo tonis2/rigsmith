@@ -205,7 +205,12 @@ fn bool AppState.begin_brush(&self)
 	if (self.animating && !self.anim_paused) self.pause_clip();
 
 	// The Area tool goes: both claim a press on the mesh for the selected joint.
+	// A part on show goes unapplied, and the picture goes back to the weights the
+	// brush paints on — said, so the change is not read as the weights moving.
+	bool unapplied = self.areaing && self.area_preview && self.area_pending();
+	String name = self.area_joint_name();
 	self.end_area();
+	if (unapplied) self.@notice("the part was not applied — the brush paints %s's weights as they are", name);
 
 	// And the lasso, for a sharper version of the same reason: both claim a
 	// drag over the model — the lasso the plain one, the brush the one under

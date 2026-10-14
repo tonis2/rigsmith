@@ -490,23 +490,30 @@ fn uint[] vertex_tints(
 	defer if (!given) alloc::free(allocator, dense);
 	if (!given) paint_over(dense, bones, paint);
 
-	for (usz v = 0; v < positions.len; v++)
-	{
-		usz base = v * bones;
-		usz best = 0;
-		float strongest = dense[base];
-		for (usz b = 1; b < bones; b++)
-		{
-			if (dense[base + b] > strongest)
-			{
-				strongest = dense[base + b];
-				best = b;
-			}
-		}
-		tints[v] = joint_tint(best);
-	}
+	for (usz v = 0; v < positions.len; v++) tints[v] = joint_tint(strongest_joint(dense[v * bones:bones]));
 
 	return tints;
+}
+
+// The joint a row gives most of its vertex to — the first of a tie — which is
+// what the territory view colours it by.
+fn usz strongest_joint(float[] row)
+{
+	usz best = 0;
+	for (usz b = 1; b < row.len; b++)
+	{
+		if (row[b] > row[best]) best = b;
+	}
+	return best;
+}
+
+// A joint's share of a row of any scale, which is what the falloff view
+// colours it by: 0 for a row that holds nothing.
+fn float joint_share(float[] row, usz joint)
+{
+	float sum = 0.0f;
+	foreach (weight : row) sum += weight;
+	return sum > 0.0f ? row[joint] / sum : 0.0f;
 }
 
 <*
@@ -567,11 +574,7 @@ fn uint[] falloff_tints(
 
 	for (usz v = 0; v < positions.len; v++)
 	{
-		usz base = v * bones;
-		float sum = 0.0f;
-		for (usz b = 0; b < bones; b++) sum += dense[base + b];
-
-		float share = sum > 0.0f ? dense[base + joint] / sum : 0.0f;
+		float share = joint_share(dense[v * bones:bones], joint);
 		tints[v] = weight_ramp(share);
 		if (held && share >= floor) (*held)++;
 	}

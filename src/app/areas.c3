@@ -11,9 +11,10 @@
  **The soft edge runs inward.** The band of the part nearest its boundary
  blend from the joint down toward the neighbours — the other joints share the
  rest as they hold it now, earlier Applies included — and nothing outside the part
- is given to the joint. The highlight is then a true picture of everything the
- joint will move, and a separate piece — a part with no boundary — stays rigid
- whatever the edge width. Outside the part the joint's automatic share is handed
+ is given to the joint. The card's preview, which draws the rows Apply lays as
+ the weights they become, is then a true picture of everything the joint will
+ move, and a separate piece — a part with no boundary — stays rigid whatever the
+ edge width. Outside the part the joint's automatic share is handed
  to the other joints on those rows, which is what "exactly" costs: without it a
  vertex just outside the edge could hold more of the joint than the edge itself.
 
@@ -898,16 +899,39 @@ fn bool[] AppState.area_twin_part(&self, Allocator allocator, uint twin, AreaPar
 *>
 fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twin = 0, bool[] twin_mask = {})
 {
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+
+	float[] painted = self.painted_bind(mem, &view);
+	defer if (painted.len > 0) alloc::free(mem, painted);
+
+	PinDraft draft;
+	defer draft.free();
+	usz held = self.area_rows(&draft, &view, painted, dot_id, mask, soft, twin, twin_mask);
+	if (held == 0 || self.lay_draft(&draft) == 0) return 0;
+	if (self.skinned()) self.refresh_pose_display();
+	return held;
+}
+
+<*
+ The rows an Apply states, drafted and not laid: what `apply_area` writes, and
+ what the Weights card draws while a part waits for it — one computation, so
+ the picture is the weights Apply leaves.
+
+ @param draft : `Filled; the caller frees it, whatever this returns.`
+ @param painted : `The bind as shown — painted_bind of the same view.`
+ @return `How many vertices the joint and its twin would hold; 0 when there is nothing to state.`
+*>
+fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted, uint dot_id, bool[] mask, float soft,
+	uint twin = 0, bool[] twin_mask = {})
+{
 	usz count = self.geometry.positions.len;
 	if (count == 0 || mask.len != count || !self.doc.find(dot_id)) return 0;
 
 	rig::MeshAdjacency* around = self.adjacency_for();
 	if (around.vertices() != count) return 0;
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return 0;
-	RigView view = opened;
-	defer view.free(mem);
 
 	usz bones = view.len();
 	sz joint = view.joint_of(dot_id);
@@ -916,21 +940,17 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 	bool with_twin = twin != 0 && twin != dot_id && twin_mask.len == count && view.joint_of(twin) >= 0;
 	sz twin_joint = with_twin ? view.joint_of(twin) : -1;
 
-	float[] painted = self.painted_bind(mem, &view);
-	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (painted.len < count * bones) return 0;
 
 	// The automatic row: the base with the multiplier paint, and no pins.
 	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
 	defer alloc::free(mem, automatic);
-	float[] base = self.base_bind_for(&view);
+	float[] base = self.base_bind_for(view);
 	if (base.len < count * bones) return 0;
 	automatic[..] = base[:count * bones];
 	paint_over(automatic, bones, view.paint);
 
-	PinDraft draft;
 	draft.init(count);
-	defer draft.free();
 
 	float limit = math::max(soft, 0.0f);
 	usz held = 0;
@@ -997,9 +1017,6 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 		uint by = twin_joint >= 0 && painted[at + (usz)twin_joint] > painted[at + (usz)joint] ? twin : dot_id;
 		draft.state((uint)v, keep_dots[:kept], keep_shares[:kept], by);
 	}
-
-	if (self.lay_draft(&draft) == 0) return 0;
-	if (self.skinned()) self.refresh_pose_display();
 	return held;
 }
 
@@ -1494,9 +1511,12 @@ fn void AppState.drop_area_base(&self)
 }
 
 // The picture has to catch up with the part; the bind underneath did not move.
+// A part changed is a part asked to be seen, so the mesh shows what Apply would
+// leave from here on — `pick_own_quietly` is the one door that says otherwise.
 fn void AppState.area_changed(&self)
 {
 	self.area_generation++;
+	self.area_preview = self.area_mask.len > 0;
 	if (self.tint_mode == OFF) return;
 	self.weights_stale = true;
 	self.weights_due = 0.0f;
@@ -1510,7 +1530,20 @@ fn void AppState.area_follow_selection(&self)
 	if (!self.areaing || self.selected == self.area_dot) return;
 	self.drop_area_part();
 	self.area_dot = self.selected;
-	if (self.weights_card_open() && self.doc.find(self.selected)) self.set_area_part(OWN);
+	if (self.weights_card_open() && self.doc.find(self.selected)) self.pick_own_quietly();
+}
+
+<*
+ Pick the joint's own part for the card's buttons to act on, and leave the
+ weights on show as they are rather than the part: nobody has asked to see one
+ yet. The card drawing a part the moment it opened, while the brush drew the
+ weights, is how the two looked like two different calculations of one joint.
+ Shaping the part — a click, Grow, Shrink, the soft edge — shows it.
+*>
+fn void AppState.pick_own_quietly(&self)
+{
+	self.set_area_part(OWN);
+	self.area_preview = false;
 }
 
 // Whether the sidebar is showing the Weights card.
@@ -1537,7 +1570,7 @@ fn void AppState.sync_weights_card(&self, bool pick = true)
 			self.area_by_card = true;
 		}
 		self.area_follow_selection();
-		if (pick && !self.area_pending()) self.set_area_part(OWN);
+		if (pick && !self.area_pending()) self.pick_own_quietly();
 		return;
 	}
 	if (self.areaing && self.area_by_card) self.end_area();
@@ -1545,10 +1578,9 @@ fn void AppState.sync_weights_card(&self, bool pick = true)
 
 <*
  Close the brush and give the Weights card its Area tool back with no part
- picked. The strokes are already on the mesh: a part picked here would show its
- outline instead of them, and Apply would write it over them — the own part is
- only where the joint is now strongest, so every partial share the brush gave
- around it would be taken off.
+ picked. The strokes are already on the mesh, and Apply would write a part over
+ them — the own part is only where the joint is now strongest, so every partial
+ share the brush gave around it would be taken off.
 *>
 fn void AppState.leave_brush(&self)
 {
@@ -1663,7 +1695,9 @@ fn bool AppState.area_click(&self, sz vertex, IslandPick how = TOGGLE)
 	if (!self.areaing || vertex < 0) return false;
 	self.area_follow_selection();
 	if (self.area_islands && self.area_mask.len > 0) return self.pick_area_island(vertex, how);
-	if (self.area_mask.len == 0 || self.area_part == CUSTOM) return self.set_area_part(OWN, vertex);
+	// A part the card picked for itself has not been seen, so the first click
+	// shows it rather than stepping past it.
+	if (self.area_mask.len == 0 || self.area_part == CUSTOM || !self.area_preview) return self.set_area_part(OWN, vertex);
 	self.area_seed = vertex;
 	return self.step_area(1);
 }
@@ -1837,8 +1871,8 @@ fn usz AppState.reset_joint_area(&self)
 	uint twin = self.area_mirrors() ? self.mirror_twin(id) : 0;
 	usz cleared = self.reset_area(id, twin);
 	// A grown or shrunk part still waiting for Apply goes too, and the part is
-	// picked again from the weights as they now stand, so the paint shows the
-	// reset straight away.
+	// picked again, quietly, from the weights as they now stand, so the mesh
+	// shows the reset straight away.
 	bool[] was = self.areaing ? alloc::clone_slice(mem, self.area_mask) : {};
 	defer if (was.len > 0) alloc::free(mem, was);
 	bool reshaped = false;
@@ -1846,7 +1880,7 @@ fn usz AppState.reset_joint_area(&self)
 	{
 		self.drop_area_part();
 		self.drop_area_base();
-		if (self.weights_card_open()) self.set_area_part(OWN);
+		if (self.weights_card_open()) self.pick_own_quietly();
 		reshaped = was.len > 0 && was.len != self.area_mask.len;
 		for (usz v = 0; !reshaped && v < was.len && was.len == self.area_mask.len; v++) reshaped = was[v] != self.area_mask[v];
 	}
@@ -1911,12 +1945,6 @@ fn sz AppState.vertex_under(&self, Matrix4f view_projection, Vec2 viewport, Vec3
 	return -1;
 }
 
-<*
- Paint the pending part over the falloff view: the rest of the mesh greyed and
- the part in the colour of the share Apply would write, so the soft edge shows
- as the fade it will be. A rigid part has no fade to show, so its edge ring is
- drawn white instead.
-*>
 // A brightness offset per island, scattered so neighbours rarely match.
 fn float island_shade(int island) @private
 {
@@ -1924,68 +1952,83 @@ fn float island_shade(int island) @private
 	return ((float)((mixed >> 13) & 7u) / 7.0f - 0.5f) * 0.16f;
 }
 
-fn void AppState.overlay_area_tints(&self)
+<*
+ Draw the part waiting for Apply as the weights Apply would leave: each row it
+ states, read the way the bind reads it once laid, on the scale the view is
+ already drawn on — the joint's share on the falloff ramp, or the strongest
+ joint on the territory map. Every other vertex keeps the weights it has.
+
+ The rows are `area_rows`, the ones Apply lays, each put through `pin_over` from
+ the automatic row with its own pins and no others, which is what `lay_draft`
+ leaves on a vertex. So pressing Apply changes nothing on screen, and the brush
+ then shows what the card showed.
+
+ Only once the part has been shaped by hand (`area_preview`). The part the card
+ picks for itself, so its buttons have something to act on, leaves the weights
+ on show as they are — the card and the brush draw the same numbers until the
+ user asks to see a part.
+
+ Picking UV islands, the islands outside the part keep a grey of their own so
+ the seams show, and the one under the pointer is lit.
+
+ @param painted : `The bind the view was drawn from — painted_bind of the same view.`
+*>
+fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 {
 	usz count = self.geometry.positions.len;
-	if (!self.areaing || self.tints.len != count) return;
-	bool filled = self.area_mask.len == count;
-	bool twin = self.area_twin_mask.len == count;
-	if (!filled) return;
+	if (!self.areaing || !self.area_preview || self.tints.len != count || self.area_mask.len != count) return;
+	if (self.tint_mode == OFF || self.area_dot != self.selected) return;
 
-	rig::MeshAdjacency* around = self.adjacency_for();
-	if (around.vertices() != count) return;
+	usz bones = view.len();
+	sz joint = view.joint_of(self.area_dot);
+	if (joint < 0 || bones == 0) return;
 
-	float soft = self.area_soft_distance();
-	bool[] cls = classes_of(around, self.area_mask);
-	defer alloc::free(mem, cls);
-	if (twin)
-	{
-		foreach (v, on : self.area_twin_mask)
-		{
-			if (on) cls[(usz)around.class_of[v]] = true;
-		}
-	}
-	Vec3[] points = class_points(around, self.geometry.positions);
-	defer alloc::free(mem, points);
-	// The edge ring is found by adjacency, whatever the soft edge.
-	bool[] edge = alloc::new_array(mem, bool, (sz)cls.len);
-	defer alloc::free(mem, edge);
-	foreach (usz g, on : cls)
-	{
-		if (!on) continue;
-		foreach (n : around.around(g)) if (!cls[n]) { edge[g] = true; break; }
-	}
-	float[] depth = edge_depths(around, points, cls, soft);
-	defer alloc::free(mem, depth);
+	PinDraft draft;
+	defer draft.free();
+	usz held = self.area_rows(&draft, view, painted, self.area_dot, self.area_mask, self.area_soft_distance(),
+		self.area_twin, self.area_twin_mask);
+	if (held == 0) return;
 
-	// Picking islands, each island outside the part gets a grey of its own so
-	// the seams show, and the one under the pointer is lit.
-	rig::MeshShells* split = self.islands_for();
-	bool by_island = self.area_islands && split.of.len == count;
+	float[] base = self.base_bind_for(view);
+	if (base.len < count * bones) return;
+	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
+	defer alloc::free(mem, automatic);
+	automatic[..] = base[:count * bones];
+	paint_over(automatic, bones, view.paint);
 
+	bool falloff = self.tint_mode == FALLOFF;
+	PinColumn[SKIN_INFLUENCES] stated;
 	for (usz v = 0; v < count; v++)
 	{
-		usz g = (usz)around.class_of[v];
-		int island = by_island ? split.of[v] : -1;
+		if (!draft.claimed((uint)v)) continue;
+		float[] row = automatic[v * bones:bones];
+		usz from = (usz)draft.first[v];
+		usz kept = 0;
+		for (usz i = from; i < from + (usz)draft.held[v] && kept < stated.len; i++)
+		{
+			VertexPin pin = draft.pins[(sz)i];
+			sz column = view.joint_of(pin.dot_id);
+			if (column >= 0) stated[kept++] = { .vertex = 0, .joint = (usz)column, .share = pin.share };
+		}
+		pin_over(row, bones, stated[:kept]);
+		self.tints[v] = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
+	}
+
+	rig::MeshShells* split = self.islands_for();
+	if (!self.area_islands || split.of.len != count) return;
+	for (usz v = 0; v < count; v++)
+	{
+		int island = split.of[v];
 		if (island >= 0 && island == self.area_hover_island)
 		{
 			// Orange for an island a click would add, red for one it would take out.
 			self.tints[v] = self.area_mask[v] ? rgb(0.85f, 0.25f, 0.2f) : rgb(1.0f, 0.75f, 0.4f);
-			continue;
 		}
-		if (!cls[g])
+		else if (falloff && !self.area_mask[v] && island >= 0)
 		{
 			// Neighbouring islands differ in brightness, so the seams show.
-			float grey = WEIGHT_GREY.x + (island >= 0 ? island_shade(island) : 0.0f);
+			float grey = WEIGHT_GREY.x + island_shade(island);
 			self.tints[v] = rgb(grey, grey, grey);
-			continue;
 		}
-		if (soft <= 0.0f && edge[g])
-		{
-			self.tints[v] = rgb(1.0f, 1.0f, 1.0f);
-			continue;
-		}
-		// Never quite the grey outside, so the part's extent still reads at its edge.
-		self.tints[v] = share_tint(0.2f + 0.8f * area_share(depth[g], soft));
 	}
 }

@@ -84,7 +84,7 @@ const ControlRow[*] CONTROLS = {
 	{ .heading = "While the Area tool is open" },
 	{ .binding = "click the mesh", .action = "pick the selected joint's own part — again for the next size up" },
 	{ .binding = "click, on UV islands", .action = "add the island clicked to the part, or take it out" },
-	{ .binding = "wheel", .action = "step the part: own bone, with children, UV islands, whole piece" },
+	{ .binding = "wheel", .action = "zoom, as always — the part stays as it is" },
 	{ .binding = "shift-drag", .action = "grow the part from where you press, a tenth of the bone per step" },
 	{ .binding = "ctrl-drag", .action = "shrink it" },
 	{ .binding = "enter", .action = "apply: the joint moves exactly that part" },

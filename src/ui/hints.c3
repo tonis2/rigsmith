@@ -124,7 +124,7 @@ fn String hint_line(AppState* app)
 			return "click · add or remove an island     shift-drag · paint islands in     ctrl-drag · paint them out     enter · apply     esc · drop";
 		}
 		return app.area_pending()
-			? "click or scroll · own / children / islands     shift-drag · grow     ctrl-drag · shrink     enter · apply     esc · drop"
+			? "click · own / children / islands     shift-drag · grow     ctrl-drag · shrink     enter · apply     esc · drop"
 			: "click the mesh · pick a part     shift-drag · grow from a point     esc · leave";
 	}
 
