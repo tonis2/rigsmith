@@ -920,10 +920,19 @@ fn bool[] AppState.area_twin_part(&self, Allocator allocator, uint twin, AreaPar
  Every row it states is the joint's work (`VertexPin.by`), the twin's part the
  twin's, which is what `reset_area` takes back.
 
+ A part reaching off the joint's limb gives it nothing there (`limb_family`):
+ those vertices are left as they are, as if the part stopped short. Not a
+ vertex the joint already holds — a rim an earlier Apply gave it stays its own
+ on the next — and not a part of whole `pieces`, Whole piece or UV islands, which the menu
+ named rather than a hand pressed out.
+
  @param twin_mask : `The twin's part, or empty for none.`
+ @param pieces : `The parts are whole pieces of the mesh, applied whole off the limb too — see area_names_pieces.`
+ @param refused : `Filled with how many vertices of the parts were off their joint's limb. Null to not ask.`
  @return `How many vertices the joint and its twin now hold; 0 when nothing changed.`
 *>
-fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twin = 0, bool[] twin_mask = {})
+fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twin = 0, bool[] twin_mask = {},
+	bool pieces = false, usz* refused = null)
 {
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return 0;
@@ -935,7 +944,7 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 
 	PinDraft draft;
 	defer draft.free();
-	usz held = self.area_rows(&draft, &view, painted, dot_id, mask, soft, twin, twin_mask);
+	usz held = self.area_rows(&draft, &view, painted, dot_id, mask, soft, twin, twin_mask, pieces, refused);
 	if (held == 0 || self.lay_draft(&draft) == 0) return 0;
 	if (self.skinned()) self.refresh_pose_display();
 	return held;
@@ -948,11 +957,14 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 
  @param draft : `Filled; the caller frees it, whatever this returns.`
  @param painted : `The bind as shown — painted_bind of the same view.`
+ @param pieces : `The parts are whole pieces, not limited to the limb — see apply_area.`
+ @param refused : `Filled with how many part vertices were off their joint's limb and left out. Null to not ask.`
  @return `How many vertices the joint and its twin would hold; 0 when there is nothing to state.`
 *>
 fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted, uint dot_id, bool[] mask, float soft,
-	uint twin = 0, bool[] twin_mask = {})
+	uint twin = 0, bool[] twin_mask = {}, bool pieces = false, usz* refused = null)
 {
+	if (refused) *refused = 0;
 	usz count = self.geometry.positions.len;
 	if (count == 0 || mask.len != count || !self.doc.find(dot_id)) return 0;
 
@@ -998,13 +1010,29 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 	usz sides = with_twin ? 2 : 1;
 	for (usz p = 0; p < sides; p++)
 	{
-		bool[] cls = classes_of(around, parts[p]);
+		// The part as far as its joint's limb goes — the twin's against the twin,
+		// and with whatever the joint already holds — and its soft edge measured
+		// from there, so a part reaching off the limb fades out where it stops
+		// rather than ending in a step.
+		usz side = (usz)(p == 0 ? joint : twin_joint);
+		bool[] family = limb_family(mem, &view.skeleton, side);
+		defer alloc::free(mem, family);
+		bool[] part = alloc::new_array(mem, bool, (sz)count);
+		defer alloc::free(mem, part);
+		foreach (v, on : parts[p])
+		{
+			if (!on) continue;
+			usz at = (usz)v * bones;
+			part[v] = pieces || on_limb(base[at:bones], family) || joint_share(painted[at:bones], side) >= AREA_LEAK_FLOOR;
+			if (!part[v] && refused) (*refused)++;
+		}
+		bool[] cls = classes_of(around, part);
 		defer alloc::free(mem, cls);
 		float[] depth = edge_depths(around, points, cls, limit);
 		defer alloc::free(mem, depth);
 
 		uint[1] dots = { owners[p] };
-		foreach (v, on : parts[p])
+		foreach (v, on : part)
 		{
 			if (!on || draft.claimed((uint)v)) continue;
 			held++;
@@ -1690,6 +1718,14 @@ fn usz AppState.area_held(&self)
 // Whether the twin gets the mirrored part too.
 fn bool AppState.area_mirrors(&self) => !self.area_solo;
 
+<*
+ Whether the part on show names whole pieces of the mesh — Whole piece, or UV
+ islands — which Apply hands over whole, off the joint's limb too
+ (`limb_family`): the menu chose them by name, where a grown part or a stroke
+ went wherever the pointer was.
+*>
+fn bool AppState.area_names_pieces(&self) => self.area_islands || self.area_part == PIECE;
+
 // Re-read the twin's part from the joint's, after the joint's changed.
 fn void AppState.refresh_area_twin(&self)
 {
@@ -1911,21 +1947,29 @@ fn usz AppState.commit_area(&self)
 	}
 	if (!self.doc.find(self.area_dot)) return 0;
 
-	usz held = self.apply_area(self.area_dot, self.area_mask, self.area_soft_distance(), self.area_twin, self.area_twin_mask);
+	usz refused = 0;
+	usz held = self.apply_area(self.area_dot, self.area_mask, self.area_soft_distance(), self.area_twin, self.area_twin_mask,
+		self.area_names_pieces(), &refused);
 	String name = self.area_joint_name();
-	if (held == 0)
+	// What a part off the joint's limb left out (`limb_family`), and the way to hand it over anyway.
+	String past = refused > 0 ? string::tformat(" · %d past its limb left alone, Lasso pin (shift+T) hands them over", refused) : "";
+	if (held == 0 && refused > 0)
+	{
+		self.@notice("that part is off %s's limb · Lasso pin (shift+T) hands vertices over", name);
+	}
+	else if (held == 0)
 	{
 		self.@notice("%s already moves exactly that part", name);
 	}
 	else if (self.area_twin != 0)
 	{
 		Dot* twin = self.doc.find(self.area_twin);
-		self.@notice("%s and %s now move %d vertices", name,
-			twin && twin.name.len > 0 ? twin.name : "its twin", held);
+		self.@notice("%s and %s now move %d vertices%s", name,
+			twin && twin.name.len > 0 ? twin.name : "its twin", held, past);
 	}
 	else
 	{
-		self.@notice("%s now moves %d vertices", name, held);
+		self.@notice("%s now moves %d vertices%s", name, held, past);
 	}
 	self.drop_area_part();
 	return held;
@@ -2062,7 +2106,7 @@ fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 	PinDraft draft;
 	defer draft.free();
 	usz held = self.area_rows(&draft, view, painted, self.area_dot, self.area_mask, self.area_soft_distance(),
-		self.area_twin, self.area_twin_mask);
+		self.area_twin, self.area_twin_mask, self.area_names_pieces());
 	if (held == 0) return;
 
 	float[] base = self.base_bind_for(view);

@@ -118,6 +118,7 @@ fn void AppState.begin_stroke(&self)
 	}
 	self.stroke_seen[..] = 0.0f;
 	self.stroke_open = true;
+	self.stroke_blocked = false;
 }
 
 <*
@@ -128,7 +129,8 @@ fn void AppState.begin_stroke(&self)
  a stroke runs, since a stroke over a parked clip reskins on every move and the
  mirrored tree and its policy are the expensive half of a rebind. One rebuild
  here, and the overlay's occlusion, the collision tables and the brush's own
- visibility test are exact again before the next press.
+ visibility test are exact again before the next press. And a stroke that
+ passed off the joint's limb says so here, once rather than on every move.
 
  Safe to call with no stroke open; the viewport calls it wherever its latch
  comes down, including when the mode closed under a held button.
@@ -140,6 +142,13 @@ fn void AppState.end_stroke(&self)
 	// The stroke's pins went on the ledger with the group left open; closing it
 	// here makes the whole press-to-release one undo step.
 	self.undo_stack.commit();
+	if (self.stroke_blocked)
+	{
+		self.stroke_blocked = false;
+		Dot* dot = self.doc.find(self.selected);
+		self.@notice("%s is only painted on its own limb · Lasso pin (shift+T) hands other vertices over",
+			dot && dot.name.len > 0 ? dot.name : "this joint");
+	}
 	if (!self.surface_stale) return;
 	self.skin_stale = true;
 	self.refresh_pose_display();
@@ -802,6 +811,156 @@ fn PaintResult AppState.paint_share(&self, uint dot_id, uint[] vertices, float s
 }
 
 <*
+ The share of a vertex's automatic row its limb has to hold before the brush or
+ an Apply may give the joint any of it — see `limb_family`.
+
+ A hundredth, the floor `AREA_LEAK_FLOOR` leaves a hold alone below: geodesic
+ weights reach almost everywhere, faintly, and a floor of nothing would let a
+ finger reach the boot it was meant to stay off.
+*>
+const float LIMB_FLOOR = 0.01;
+
+<*
+ The joints whose part of the body `joint` may be painted onto: itself, its
+ parent, the parent's other children, and everything below it — and for a digit
+ (`Skeleton.digits`) the whole hand: the joint the fingers hang from and every
+ digit under it.
+
+ 	`bool[] family = limb_family(mem, &view.skeleton, joint);`
+
+ A vertex is on the joint's limb when these hold at least `LIMB_FLOOR` of its
+ automatic row (`on_limb`). A finger's limb is its hand, a shin's its leg; the
+ hips' is the whole body below them, which is what keeps a skirt the thighs hold
+ paintable onto the hips. Everything below the joint, not only its children, so
+ a With children part — a finger from its knuckle out, a whole arm — is the
+ joint's limb by construction. The whole hand for a digit because a finger's
+ parts are cut by the knuckle planes, not by the weights: a file can give a
+ vertex the bands put on this finger wholly to the next finger's middle joint.
+
+ The limit is on giving weight to a vertex the joint does not hold: taking a
+ joint off is allowed anywhere, which is how a stroke that landed on the wrong
+ limb is undone, and a vertex it already holds — a head piece's rim an earlier
+ Apply gave the head — can be given more. It stops a stroke over a pose from
+ painting the boot a hand hangs beside, and a part grown from the wrong place
+ from handing it over on Apply. Not limited: a Whole piece or UV islands part,
+ named from the menu (`area_names_pieces`), and Lasso pin — drawing around
+ vertices is how any of them, a prop held at arm's length, is handed to a joint
+ on purpose.
+
+ The caller owns the result, one flag per joint.
+*>
+fn bool[] limb_family(Allocator allocator, rig::Skeleton* skeleton, usz joint)
+{
+	usz n = skeleton.len();
+	bool[] family = alloc::new_array(allocator, bool, (sz)n);
+	if (joint >= n) return family;
+	int parent = skeleton.parents[joint];
+	for (usz j = 0; j < n; j++)
+	{
+		if (j == joint || (parent >= 0 && ((int)j == parent || skeleton.parents[j] == parent)))
+		{
+			family[j] = true;
+			continue;
+		}
+		for (int up = skeleton.parents[j]; up >= 0; up = skeleton.parents[(usz)up])
+		{
+			if (up != (int)joint) continue;
+			family[j] = true;
+			break;
+		}
+	}
+
+	bool[] digit = skeleton.digits(mem);
+	defer alloc::free(mem, digit);
+	if (!digit[joint]) return family;
+	usz fork = joint;
+	while (digit[fork] && skeleton.parents[fork] >= 0) fork = (usz)skeleton.parents[fork];
+	family[fork] = true;
+	for (usz j = 0; j < n; j++)
+	{
+		if (!digit[j]) continue;
+		for (int up = skeleton.parents[j]; up >= 0; up = skeleton.parents[(usz)up])
+		{
+			if (up != (int)fork) continue;
+			family[j] = true;
+			break;
+		}
+	}
+	return family;
+}
+
+<*
+ Whether an automatic row is on the limb `family` names: the family holds at
+ least `LIMB_FLOOR` of it. A row with no weight at all is on every limb, since
+ nothing there says whose it is.
+*>
+fn bool on_limb(float[] automatic, bool[] family)
+{
+	float sum = 0.0f;
+	float held = 0.0f;
+	foreach (b, weight : automatic)
+	{
+		sum += weight;
+		if (b < family.len && family[b]) held += weight;
+	}
+	return sum <= 0.0f || held >= LIMB_FLOOR * sum;
+}
+
+<*
+ One flag per vertex: whether `dot_id` may be given weight there by the brush or
+ an Apply — its limb, over the automatic weights (`limb_family`). Empty when the
+ joint is not in the rig or there is no bind to read.
+
+ The caller owns the result.
+*>
+fn bool[] AppState.limb_mask(&self, Allocator allocator, RigView* view, uint dot_id)
+{
+	usz count = self.geometry.positions.len;
+	usz bones = view.len();
+	sz joint = view.joint_of(dot_id);
+	if (joint < 0 || bones == 0 || count == 0) return {};
+	float[] base = self.base_bind_for(view);
+	if (base.len < count * bones) return {};
+
+	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
+	defer alloc::free(mem, family);
+	bool[] mask = alloc::new_array(allocator, bool, (sz)count);
+	foreach (v, &on : mask) *on = on_limb(base[(usz)v * bones:bones], family);
+	return mask;
+}
+
+// The colour of mesh the selected joint cannot be painted onto: darker than the
+// falloff ramp's grey, so "none of this joint's" and "off its limb" read apart.
+const Vec3 LIMB_OFF_GREY = { 0.12, 0.12, 0.13 };
+
+fn uint off_limb_tint() => rgb(LIMB_OFF_GREY.x, LIMB_OFF_GREY.y, LIMB_OFF_GREY.z);
+
+<*
+ While the brush or the Area tool is open on the falloff view, the mesh off the
+ selected joint's limb in `LIMB_OFF_GREY`: where a stroke or an Apply will not
+ give it anything. A vertex there that the joint still holds keeps its colour —
+ a stray hold is what has to stay in sight to be painted off.
+*>
+fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
+{
+	usz count = self.geometry.positions.len;
+	if (!(self.brushing || self.areaing) || self.tint_mode != FALLOFF || self.tints.len != count) return;
+	usz bones = view.len();
+	sz joint = view.joint_of(self.selected);
+	if (joint < 0 || painted.len < count * bones) return;
+
+	bool[] limb = self.limb_mask(mem, view, self.selected);
+	defer if (limb.len > 0) alloc::free(mem, limb);
+	if (limb.len != count) return;
+	uint off = off_limb_tint();
+	for (usz v = 0; v < count; v++)
+	{
+		if (limb[v] || joint_share(painted[v * bones:bones], (usz)joint) >= AREA_LEAK_FLOOR) continue;
+		self.tints[v] = off;
+	}
+}
+
+<*
  One step of a brush stroke, written as stated shares.
 
  	`app.brush_share(knee, under[:hit], 1.0f, pulls[:hit]);`
@@ -812,6 +971,10 @@ fn PaintResult AppState.paint_share(&self, uint dot_id, uint[] vertices, float s
  raise a joint the automatic weights gave nothing, and speaks the same language
  as the Area tool. Where the joint held the whole row, what it gives up goes to
  the others by their automatic weights.
+
+ Only on the joint's limb (`limb_family`), or where it already holds some: a
+ vertex off it is not given any of the joint, and `stroke_blocked` says so for
+ `end_stroke` to tell. Taking the joint off is allowed anywhere.
 
  The undo group is left open; `end_stroke` closes it, so a stroke is one step.
 
@@ -837,6 +1000,8 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (painted.len < count * bones) return 0;
 	float[] base = self.base_bind_for(&view);
+	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
+	defer alloc::free(mem, family);
 
 	float[] row = alloc::new_array(mem, float, (sz)bones);
 	defer alloc::free(mem, row);
@@ -859,6 +1024,11 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 		float now = sum > 0.0f ? painted[at + (usz)joint] / sum : 0.0f;
 		float want = now + (target - now) * pull;
 		if (math::abs(want - now) < 1.0e-6f) continue;
+		if (want > now && now < AREA_LEAK_FLOOR && base.len >= count * bones && !on_limb(base[at:bones], family))
+		{
+			self.stroke_blocked = true;
+			continue;
+		}
 
 		// The others' proportions: as shown, or where the joint held everything,
 		// the automatic row's.

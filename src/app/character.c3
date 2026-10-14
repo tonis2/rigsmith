@@ -349,6 +349,9 @@ struct Character
 	*>
 	bool stroke_open;
 	bool surface_stale;
+	// That the stroke in flight passed over vertices off the joint's limb and
+	// left them alone (`brush_share`); `end_stroke` says so once.
+	bool stroke_blocked;
 	UndoStack undo_stack;
 	bool weights_stale;
 	float weights_due;

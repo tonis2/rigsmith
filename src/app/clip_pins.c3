@@ -700,7 +700,7 @@ alias AnimPinList = List{AnimPin};
 
 // Where joint `j` stands in the clip at `time`, model space: limits and the ground
 // solve applied, pins not. A time past the end of a looping clip wraps round.
-fn Vec3 AppState.clip_joint_at(&self, RigView* view, AnimTemplate clip, AnimRef ref, usz j, float time) @local
+fn Vec3 AppState.clip_joint_at(&self, RigView* view, AnimTemplate clip, AnimRef ref, usz j, float time)
 {
 	if (clip.loop && clip.duration > 0.0f) time = time - math::floor(time / clip.duration) * clip.duration;
 	rig::Pose pose = self.evaluated_clip_pose(mem, view, clip, ref, math::clamp(time, 0.0f, clip.duration));

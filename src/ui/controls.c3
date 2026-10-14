@@ -88,6 +88,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "shift-drag", .action = "grow the part from where you press, a tenth of the bone per step" },
 	{ .binding = "ctrl-drag", .action = "shrink it" },
 	{ .binding = "after Apply", .action = "the mesh is left alone until a part is picked again" },
+	{ .binding = "dark grey mesh", .action = "off the joint's limb: Apply leaves it, but a whole piece goes whole" },
 	{ .binding = "enter", .action = "apply: the joint moves exactly that part" },
 	{ .binding = "esc", .action = "drop the part, then close the tool" },
 
@@ -100,6 +101,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "hold F, then scroll", .action = "the same, by notches" },
 	{ .binding = "swipe / wheel", .action = "orbit and zoom, as always" },
 	{ .binding = "shift-drag", .action = "pan, as always — the brush leaves it alone" },
+	{ .binding = "dark grey mesh", .action = "off the joint's limb: the brush leaves it, Lasso pin hands it over" },
 	{ .binding = "shift+W / esc", .action = "close it; strokes are already on the ledger" },
 
 	{ .heading = "Rig" },

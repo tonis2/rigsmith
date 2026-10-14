@@ -375,6 +375,7 @@ fn void AppState.rebind_tints(&self)
 				view.attachments, view.reaches, view.paint, painted);
 	}
 	self.overlay_area_tints(&view, painted);
+	self.overlay_limb_tints(&view, painted);
 }
 
 <*
