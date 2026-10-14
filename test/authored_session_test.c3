@@ -658,7 +658,7 @@ fn void look_at_targets_round_trip_in_version_22() @test
 	AnimTemplate[1] source = { clip };
 	String text = crig::session_text(mem, &doc, "hero.glb", source[..]);
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 27`) || text.contains(`"version":27`), "the session is not version 27");
+	test::@check(text.contains(`"version": 28`) || text.contains(`"version":28`), "the session is not version 28");
 
 	AnimTemplate[]? parsed = crig::parse_session_clips(mem, text);
 	if (catch parsed) { test::@check(false, "an aimed clip did not parse"); return; }

@@ -491,10 +491,9 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 
 	// The second funnel: this binds for itself rather than through `bind_dense`,
 	// because it needs the riders and the distances that only come out of the bind
-	// itself — so the softness and the sharpening have to be repeated here or the
+	// itself — so the softness and the shaping have to be repeated here or the
 	// numbers this reports describe a bind nobody is looking at.
-	self.sharpen_digits(dense, &view);
-	sharpen_weights(dense, self.doc.sharpness);
+	self.shape_bind(dense, &view, riders);
 	paint_over(dense, bones, view.paint);
 	pin_over(dense, bones, view.pins);
 

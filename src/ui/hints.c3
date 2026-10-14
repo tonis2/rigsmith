@@ -119,13 +119,18 @@ fn String hint_line(AppState* app)
 
 	if (app.areaing)
 	{
-		if (app.area_islands)
+		// The mesh shapes only a part on show; otherwise it is the camera's.
+		if (app.area_shaping() && app.area_islands)
 		{
 			return "click · add or remove an island     shift-drag · paint islands in     ctrl-drag · paint them out     enter · apply     esc · drop";
 		}
+		if (app.area_shaping())
+		{
+			return "shift-drag · grow from a point     ctrl-drag · shrink     enter · apply     esc · drop";
+		}
 		return app.area_pending()
-			? "click · own / children / islands     shift-drag · grow     ctrl-drag · shrink     enter · apply     esc · drop"
-			: "click the mesh · pick a part     shift-drag · grow from a point     esc · leave";
+			? "Part menu · show a part to shape it     enter · apply its own part     shift+W · paint by hand     esc · drop"
+			: "Part menu · pick a part to shape it     shift+W · paint by hand     esc · leave";
 	}
 
 	String tool = transform_tool_hint(app);

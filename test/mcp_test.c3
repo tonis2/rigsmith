@@ -6218,6 +6218,47 @@ fn void a_blend_sharpness_crosses_the_wire_and_undoes() @test
 }
 
 <*
+ A knuckle blend crosses the wire, undoes in one step back to unset, and is
+ refused outside 0 to 1 with the range in the refusal — the other op that names
+ no joint, on the sharpness's terms.
+*>
+fn void a_knuckle_blend_crosses_the_wire_and_undoes() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	test::@check(f.app.doc.knuckle_blend == 0.0f, "the fixture rig starts with a knuckle blend set");
+
+	Object*? set = f.call_tool("edit_rig", `{"ops":[{"op":"knuckle_blend","value":0}]}`);
+	if (catch set)
+	{
+		test::@check(false, "edit_rig sets a knuckle blend");
+		return;
+	}
+	set.free();
+	test::@check(f.app.doc.knuckle_blend_fraction() == 0.0f && f.app.doc.knuckle_blend > 0.0f,
+		"a blend of 0 came out as %.4f (stored %.4f)", f.app.doc.knuckle_blend_fraction(), f.app.doc.knuckle_blend);
+
+	Object*? back = f.call_tool("undo", "{}");
+	if (catch back)
+	{
+		test::@check(false, "undo answers");
+		return;
+	}
+	back.free();
+	test::@check(f.app.doc.knuckle_blend == 0.0f,
+		"one undo left the knuckle blend stored as %.4f rather than unset", f.app.doc.knuckle_blend);
+
+	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"knuckle_blend","value":25}]}`, "ops[0]", "runs from 0"),
+		"a knuckle blend of 25 is refused, naming the range it fell outside");
+	test::@check(f.app.doc.knuckle_blend == 0.0f, "the refused call left a knuckle blend behind");
+	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"knuckle_blend"}]}`, "ops[0]", "value"),
+		"a knuckle blend op with no value is refused, and says which key it wanted");
+}
+
+<*
  A shell pinned over the wire is one undo step, and `get_shells` says so.
 
  The pin already existed for the mouse — `pin_shell` commits its own group — so

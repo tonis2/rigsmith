@@ -338,7 +338,7 @@ fn float pin_share(PinColumn pin) @local
  asked for a sharpness carries a zero-initialised field, and 0 would otherwise
  raise every weight to the power of nothing and hand the mesh to whichever joint
  the tie-break picked. So `gamma <= 0` is read as "no sharpening" here rather
- than at each of the two call sites.
+ than at each call site.
 
  The cost is one `pow` per vertex per bone — tens of milliseconds on a dense
  mesh, the same order as the bind it follows. It rides the debounced rebind path
@@ -359,35 +359,24 @@ fn void sharpen_weights(float[] dense, float gamma)
 }
 
 <*
- Sharpens each row of a bind by a power of its own: the mean of the joints'
- `gammas`, weighted by the row's shares.
+ Turns into shares every row of a bind whose scores are loud enough that a
+ sharpness could carry them past a float.
 
- 	`sharpen_by_joint(bound, gammas);`
+ 	`normalise_loud_rows(bound, bones);`
 
- What `sharpen_weights` does for the whole model, done where only some joints
- need it — a finger, whose bones are short next to its thickness, where the
- binder's falloff blends three joints across a whole segment and leaves a
- knuckle no crease. A row the digits hold none of is left at its power of 1; a
- row they hold all of gets theirs; a row on the line between gets the mix, so
- the power changes smoothly across the mesh and no seam appears where it
- changes. Per row, the strongest joint stays the strongest, so a part picked by
- owner is the same part either side of this.
-
- **A row it sharpens comes back normalised**, since a power of a share cannot
- overflow where a power of a score can, and `sharpen_weights` raises it again
- after this. So does a row whose scores pass `SHARPEN_SCORE_CEILING`, which
- that power could take past a float. Every other row is left exactly as the
- binder made it, so deleting one joint still moves no other joint's column. A
- share this pushes below `SHARPEN_FLOOR` stops there, so the power on top cannot
- take a sibling's leak to zero — a weight of nothing is one the paint multiplier
- can never lift again (see `rig::SIBLING_LEAK`).
+ The binder's scores run up to `1 / eps`, and `eps` is a share of the model's
+ size squared (`AppState.bind_eps`), so on a model a few centimetres across a
+ score sits near a million — and raised to `SHARPNESS_MAX` it is infinity, which
+ no consumer can divide back into a share. A row whose largest score passes
+ `SHARPEN_SCORE_CEILING` is divided by its own sum first; dividing changes no
+ share, since every consumer divides by the sum anyway. Every other row is left
+ exactly as the binder made it, so deleting one joint still moves no other
+ joint's column.
 
  @param dense : `vertices x joints, as the binder returns it. Modified in place.`
- @param gammas : `One per joint: the power its rows lean to. 1 leaves a joint's rows as the binder made them.`
 *>
-fn void sharpen_by_joint(float[] dense, float[] gammas)
+fn void normalise_loud_rows(float[] dense, usz bones)
 {
-	usz bones = gammas.len;
 	if (bones == 0 || dense.len % bones != 0) return;
 	for (usz at = 0; at < dense.len; at += bones)
 	{
@@ -399,27 +388,12 @@ fn void sharpen_by_joint(float[] dense, float[] gammas)
 			sum += weight;
 			largest = math::max(largest, weight);
 		}
-		if (!(sum > 0.0f)) continue;
-		float gamma = 0.0f;
-		foreach (b, weight : row) gamma += weight / sum * gammas[b];
-		bool sharpened = math::abs(gamma - 1.0f) >= 1.0e-4f;
-		if (!sharpened && largest <= SHARPEN_SCORE_CEILING) continue;
+		if (!(sum > 0.0f) || largest <= SHARPEN_SCORE_CEILING) continue;
 		foreach (&weight : row) *weight /= sum;
-		if (!sharpened) continue;
-		foreach (&weight : row)
-		{
-			if (*weight <= 0.0f || *weight >= 1.0f) continue;
-			*weight = math::max(math::pow(*weight, gamma), math::min(*weight, SHARPEN_FLOOR));
-		}
 	}
 }
 
-// The least a share `sharpen_by_joint` lowers keeps: small enough to be nothing
-// in a pose, and large enough that `sharpen_weights` at `SHARPNESS_MAX` leaves it
-// a float rather than a zero.
-const float SHARPEN_FLOOR = 1.0e-9;
-
-// The largest score `sharpen_by_joint` leaves unnormalised: raised to
+// The largest score `normalise_loud_rows` leaves as a score: raised to
 // `SHARPNESS_MAX` it is still a float.
 const float SHARPEN_SCORE_CEILING = 1.0e8;
 

@@ -5856,6 +5856,89 @@ fn void a_blend_sharpness_survives_undo_and_the_session() @test
 }
 
 <*
+ A knuckle blend round-trips through the session file and the undo ledger.
+
+ Zero is the unset state, read as the default, and a blend of nothing is a real
+ setting stored apart from it — so an untouched model and one set back to the
+ default write no key, a hard switch writes 0 and reads back hard, and a version
+ 27 file with no key reads as the default. Undoing the first change lands on
+ unset, not on a copy of the default.
+
+ *Re-introduce:* store a blend of nothing as zero, and it reads back as the
+ default.
+*>
+fn void a_knuckle_blend_survives_undo_and_the_session() @test
+{
+	io::printn("a knuckle blend round-trips through the session file and the undo ledger");
+
+	RigDocument doc;
+	doc.dots.init(mem);
+	doc.edges.init(mem);
+	doc.attachments.init(mem);
+	defer doc.free();
+	uint hips = doc.add_dot({ 0, 0, 0 }, "hips");
+	uint head = doc.add_dot({ 0, 1, 0 }, "head");
+	doc.connect(hips, head);
+
+	String bare = crig::session_text(mem, &doc, SESSION_MESH);
+	defer bare.free(mem);
+	test::@check(!bare.contains("knuckle_blend"), "an untouched document wrote a knuckle blend");
+	test::@check(doc.knuckle_blend_fraction() == crig::KNUCKLE_BLEND_DEFAULT, "unset reads as %f", doc.knuckle_blend_fraction());
+
+	test::@check(!doc.set_knuckle_blend(crig::knuckle_blend_stored(crig::KNUCKLE_BLEND_DEFAULT)),
+		"setting the default changed an unset document");
+
+	test::@check(doc.set_knuckle_blend(crig::knuckle_blend_stored(0.0f)), "the document refused a blend of nothing");
+	String hard = crig::session_text(mem, &doc, SESSION_MESH);
+	defer hard.free(mem);
+	test::@check(hard.contains(`"knuckle_blend": 0,`), "a hard switch was written as: %s", hard);
+
+	RigDocument? reread = crig::parse_session(mem, hard);
+	if (catch reread)
+	{
+		test::@check(false, "the session with a knuckle blend did not parse");
+		return;
+	}
+	RigDocument back = reread;
+	defer back.free();
+	test::@check(back.knuckle_blend_fraction() == 0.0f, "a hard switch came back as %f", back.knuckle_blend_fraction());
+
+	RigDocument? older = crig::parse_session(mem,
+		`{"version":27,"mesh":"cube.glb","root":0,"next_id":1,"dots":[],"edges":[]}`);
+	if (try older)
+	{
+		RigDocument old = older;
+		defer old.free();
+		test::@check(old.knuckle_blend == 0.0f && old.knuckle_blend_fraction() == crig::KNUCKLE_BLEND_DEFAULT,
+			"a version 27 session came back with a knuckle blend of %f", old.knuckle_blend_fraction());
+	}
+	else
+	{
+		test::@check(false, "a version 27 session did not parse");
+	}
+
+	RigDocument? wide = crig::parse_session(mem,
+		`{"version":28,"mesh":"cube.glb","root":0,"next_id":1,"knuckle_blend":3,"dots":[],"edges":[]}`);
+	if (try wide)
+	{
+		RigDocument clamped = wide;
+		defer clamped.free();
+		test::@check(clamped.knuckle_blend_fraction() == crig::KNUCKLE_BLEND_MAX,
+			"a session asking for 3 came back with %f", clamped.knuckle_blend_fraction());
+	}
+	else
+	{
+		test::@check(false, "a session with a wide knuckle blend did not parse");
+	}
+
+	Edit first = { .kind = SET_KNUCKLE_BLEND, .knuckle_before = 0.0f, .knuckle_after = 0.3f };
+	doc.apply_edit(first);
+	test::@check(doc.knuckle_blend_fraction() == 0.3f, "applying a knuckle blend edit left %f", doc.knuckle_blend_fraction());
+	doc.revert_edit(first);
+	test::@check(doc.knuckle_blend == 0.0f, "undoing the first knuckle blend left %f stored rather than unset", doc.knuckle_blend);
+}
+
+<*
  The bracket keys step the blend sharpness, and each press drops the base bind.
 
  Two claims and the second is the one worth the fixture. The sharpening lives
@@ -6099,7 +6182,7 @@ fn void a_hint_lasts_exactly_as_long_as_its_mode() @test
 		"an idle viewport is hinting at something: \"%s\"", crig::hint_line(&fixture.app));
 
 	fixture.feed_key(Key.W);
-	test::@check(crig::hint_line(&fixture.app).contains("own / children"),
+	test::@check(crig::hint_line(&fixture.app).contains("Part menu"),
 		"the Area tool is open and the hint reads \"%s\"", crig::hint_line(&fixture.app));
 	test::@check(fixture.notice_text().len == 0,
 		"the invitation went to the result line, which cannot take it back: \"%s\"",
@@ -16484,14 +16567,15 @@ fn Vec2? Fixture.visible_vertex(&self, bool top)
 }
 
 <*
- The Area tool from the viewport: W opens it on the selected joint, a click on
- the mesh picks the joint's own part, a click again steps the ladder, a wheel
- notch zooms and leaves the part alone, shift-drag grows a custom part, and Enter
- applies it as one undo step — without ever placing a joint.
+ The Area tool from the viewport: W opens it on the selected joint, the Part
+ menu picks a part and a click on the mesh never does — neither picking one nor
+ stepping it to the next — a wheel notch zooms and leaves the part alone, a
+ shift-drag grows only a part on show, and Enter applies it as one undo step,
+ without ever placing a joint.
 *>
-fn void the_area_tool_picks_steps_and_applies_a_part() @test
+fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
 {
-	io::printn("the Area tool picks a part with a click, steps it, grows it and applies it");
+	io::printn("the Area tool picks a part from the menu, not a click, grows it and applies it");
 
 	Fixture fixture;
 	if (catch fault error = fixture.open())
@@ -16520,13 +16604,20 @@ fn void the_area_tool_picks_steps_and_applies_a_part() @test
 	}
 	fixture.click(top);
 	test::eq(fixture.doc().dots.len(), (sz)2);
-	test::@check(fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.OWN,
-		"a click on the mesh did not pick the chest's own part: %s", fixture.notice_text());
-	usz own = fixture.app.area_held();
+	test::@check(!fixture.app.area_pending(), "a click on the mesh picked a part");
 
+	// The menu picks; a click after it leaves the part as it is.
+	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
+	fixture.click(fixture.center_of("Own bone")!!);
+	test::@check(fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.OWN,
+		"the Part menu did not pick the chest's own part: %s", fixture.notice_text());
+	usz own = fixture.app.area_held();
 	fixture.click(top);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN,
-		"a second click did not step up to with children");
+	test::@check(fixture.app.area_part == crig::AreaPart.OWN && fixture.app.area_held() == own,
+		"a click on the mesh stepped the part to %s", fixture.app.area_part.label());
+	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
+	fixture.click(fixture.center_of("With children")!!);
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "the Part menu did not pick with children");
 
 	// The wheel is the camera's, part picked or not: the Weights card always has
 	// one picked, and a notch that stepped it took the zoom away while weighting.
@@ -16541,19 +16632,38 @@ fn void the_area_tool_picks_steps_and_applies_a_part() @test
 	test::@check(!fixture.app.set_area_part(PIECE), "a one-piece mesh let Whole piece take all of it");
 	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "refusing Whole piece dropped the part");
 
-	// Esc drops the part and keeps the tool; then a shift-drag grows from a point.
+	// Esc drops the part and keeps the tool; a shift-drag then grows nothing.
 	fixture.feed_key(Key.ESCAPE);
 	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "escape did not drop just the part");
-
 	Key[1] shift = { Key.LEFT_SHIFT };
+	Vec2 below = top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f };
+	fixture.feed(top, keys: shift[..]);
+	fixture.feed(top, left: true, keys: shift[..]);
+	fixture.feed(below, left: true, keys: shift[..]);
+	fixture.feed(below, keys: shift[..]);
+	fixture.feed(below);
+	test::@check(!fixture.app.area_pending(), "a shift-drag with no part on show grew one");
+
+	// With the own part on show, a shift-drag grows it into a custom part. Found
+	// again first: the shift-drag above was the camera's, and panned it.
+	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
+	fixture.click(fixture.center_of("Own bone")!!);
+	Vec2? panned = fixture.visible_vertex(true);
+	if (catch panned)
+	{
+		test::@check(false, "no visible vertex on the top of the cube after the pan");
+		return;
+	}
+	top = panned;
+	below = top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f };
 	fixture.feed(top, keys: shift[..]);
 	fixture.feed(top, left: true, keys: shift[..]);
 	test::@check(fixture.app.area_part == crig::AreaPart.CUSTOM && fixture.app.area_pending(),
 		"a shift-press on the mesh did not start a custom part");
 	usz seed_held = fixture.app.area_held();
-	fixture.feed(top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f }, left: true, keys: shift[..]);
-	fixture.feed(top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f }, keys: shift[..]);
-	fixture.feed(top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f });
+	fixture.feed(below, left: true, keys: shift[..]);
+	fixture.feed(below, keys: shift[..]);
+	fixture.feed(below);
 	test::@check(fixture.app.area_held() > seed_held, "a shift-drag did not grow the part (%d)", fixture.app.area_held());
 	test::@check(!fixture.app.undo_stack.can_undo(), "picking a part wrote to the ledger");
 
@@ -16669,6 +16779,173 @@ fn void the_weights_card_drives_the_area_tool() @test
 	// Leaving the card closes the tool it opened.
 	fixture.click(fixture.center_of(crig::JOINT_TAB_JOINT_ID)!!);
 	test::@check(!fixture.app.areaing, "the Area tool stayed open after the Weights card was left");
+}
+
+<*
+ Paint, press Apply, and the painting is over: clicks and shift- or ctrl-drags
+ on the mesh change no weights and pick no part, and the Part menu stays where it
+ was. A part chosen in the menu is the one the mesh then shapes, and a click on
+ it does not step it to another. Clicks after Apply used to pick the own part and
+ then With children, and a shift-drag grew a region, which read as the brush
+ never having closed.
+
+ *Re-introduce:* let a click on the mesh pick and step the part again, and the
+ Part menu moves under the clicks after Apply.
+*>
+fn void after_apply_the_mesh_takes_no_edits() @test
+{
+	io::printn("after Apply, clicks and drags on the mesh change no weights and no part");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+	uint chest = fixture.two_dots();
+	fixture.app.camera.snapping = false;
+	fixture.app.camera.yaw = 0.0f;
+	fixture.app.camera.pitch = 0.0f;
+
+	// A corner of the fixture cube, the mesh's only vertices: found by projecting
+	// a dot put there and taken away again.
+	uint probe = fixture.doc().add_dot({ -1, 1, 1 }, "probe");
+	fixture.app.refresh_ui();
+	Vec2? found = fixture.pixel_of(probe);
+	fixture.doc().remove_dot(probe);
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+	if (catch found)
+	{
+		test::@check(false, "the cube's corner does not project into the viewport");
+		return;
+	}
+	Vec2 corner = found;
+	fixture.feed(VIEWPORT_CENTER);
+
+	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+	fixture.click(fixture.center_of(crig::WEIGHTS_BRUSH_ID)!!);
+	test::@check(fixture.app.brushing, "Paint brush did not open the brush");
+	fixture.drag(corner, { corner.x + 4, corner.y });
+	test::@check(fixture.doc().pins.len() > 0, "the stroke painted nothing");
+
+	fixture.click(fixture.center_of(crig::WEIGHTS_APPLY_ID)!!);
+	test::@check(!fixture.app.brushing, "Apply left the brush open");
+	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "Apply left a part picked");
+
+	Select* menu = fixture.ui.find_id(crig::WEIGHTS_PART_ID)!!.widget_as(Select);
+	usz shown = menu.selected;
+	crig::VertexPin[] pins = alloc::clone_slice(mem, fixture.doc().pins.array_view());
+	defer alloc::free(mem, pins);
+	sz cursor = fixture.app.undo_stack.cursor;
+	Key[1] shift = { Key.LEFT_SHIFT };
+	Key[1] ctrl = { Key.LEFT_CTRL };
+	for (int round = 0; round < 2; round++)
+	{
+		fixture.click(corner);
+		fixture.feed(corner, keys: shift[..]);
+		fixture.feed(corner, left: true, keys: shift[..]);
+		fixture.feed({ corner.x + 60, corner.y }, left: true, keys: shift[..]);
+		fixture.feed({ corner.x + 60, corner.y });
+		fixture.feed(corner, keys: ctrl[..]);
+		fixture.feed(corner, left: true, keys: ctrl[..]);
+		fixture.feed({ corner.x + 60, corner.y }, left: true, keys: ctrl[..]);
+		fixture.feed({ corner.x + 60, corner.y });
+		fixture.feed(VIEWPORT_CENTER);
+	}
+	test::@check(!fixture.app.brushing && !fixture.app.area_pending(),
+		"the mesh's gestures after Apply left %s", fixture.app.brushing ? "the brush open" : "a part picked");
+	test::eq(fixture.app.undo_stack.cursor, cursor);
+	test::eq(fixture.doc().pins.len(), (sz)pins.len);
+	foreach (i, pin : fixture.doc().pins.array_view())
+	{
+		test::@check(pin.vertex == pins[i].vertex && pin.dot_id == pins[i].dot_id && pin.share == pins[i].share,
+			"the weights on vertex %d changed after Apply", pin.vertex);
+	}
+	menu = fixture.ui.find_id(crig::WEIGHTS_PART_ID)!!.widget_as(Select);
+	test::@check(menu.selected == shown, "the Part menu moved to %s under the clicks", crig::weights_part_labels[menu.selected]);
+
+	// With children from the menu, then a click on the mesh: it stays.
+	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
+	fixture.click(fixture.center_of("With children")!!);
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_preview,
+		"the Part menu did not show With children");
+	fixture.click(corner);
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a click on the mesh stepped the part to %s",
+		fixture.app.area_part.label());
+}
+
+<*
+ The Weights card on a finger joint carries the model's knuckle blend. A drag
+ writes through as it goes and the release closes one undo step — and the card,
+ which rebuilds whenever the document moves, leaves the slider being held alone,
+ so the drag reaches where the pointer let go.
+
+ *Re-introduce:* drop the dragging guard from `JointPanel.update`, and the first
+ step rebuilds the card under the pointer: the drag stops at the press.
+*>
+fn void the_knuckle_blend_slider_is_one_undo_step() @test
+{
+	io::printn("the knuckle blend slider writes through a drag and undoes in one step");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+
+	// A wrist with two two-joint fingers, short next to the rig's height.
+	uint base = fixture.doc().add_dot({ 0, -0.5f, 0 }, "base");
+	uint wrist = fixture.doc().add_dot({ 0, 0.4f, 0 }, "wrist");
+	uint a1 = fixture.doc().add_dot({ 0.02f, 0.42f, 0 }, "a1");
+	uint a2 = fixture.doc().add_dot({ 0.04f, 0.44f, 0 }, "a2");
+	uint b1 = fixture.doc().add_dot({ -0.02f, 0.42f, 0 }, "b1");
+	uint b2 = fixture.doc().add_dot({ -0.04f, 0.44f, 0 }, "b2");
+	fixture.doc().connect(base, wrist);
+	fixture.doc().connect(wrist, a1);
+	fixture.doc().connect(a1, a2);
+	fixture.doc().connect(wrist, b1);
+	fixture.doc().connect(b1, b2);
+	fixture.app.mark_rig_stale();
+	fixture.app.select(a1);
+	fixture.app.undo_stack.clear();
+	fixture.app.refresh_ui();
+	fixture.feed(VIEWPORT_CENTER);
+	test::@check(fixture.app.knuckle_blend_applies(a1) && fixture.app.knuckle_blend_applies(wrist)
+		&& !fixture.app.knuckle_blend_applies(base), "the blend is offered on the wrong joints");
+
+	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+	Element*? found = fixture.ui.find_id(crig::WEIGHTS_KNUCKLE_ID);
+	if (catch found)
+	{
+		test::@check(false, "the Weights card on a finger has no knuckle blend slider");
+		return;
+	}
+	Element* slider = found;
+
+	fixture.feed(slider_pixel(slider, 0.25));
+	fixture.feed(slider_pixel(slider, 0.25), left: true);
+	float mid_drag = fixture.doc().knuckle_blend_fraction();
+	fixture.feed(slider_pixel(slider, 0.75), left: true);
+	fixture.feed(slider_pixel(slider, 0.75));
+	fixture.ui.flush();
+
+	test::@check(math::abs(mid_drag - 0.25f) < 0.03f, "the press wrote %f where a quarter along is 0.25", mid_drag);
+	float landed = fixture.doc().knuckle_blend_fraction();
+	test::@check(math::abs(landed - 0.75f) < 0.03f, "the drag left the blend at %f where three quarters along is 0.75", landed);
+
+	test::@check(fixture.app.undo(), "the drag left nothing to undo");
+	test::@check(fixture.doc().knuckle_blend == 0.0f,
+		"one undo left the blend stored as %f rather than unset — the drag was more than one step", fixture.doc().knuckle_blend);
+
+	// Not on a joint the blend does not reach.
+	fixture.app.select(base);
+	fixture.app.refresh_ui();
+	fixture.feed(VIEWPORT_CENTER);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_KNUCKLE_ID), "the knuckle blend showed on a joint it does not reach");
 }
 
 // How many unique vertices carry a pin.

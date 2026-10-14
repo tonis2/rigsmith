@@ -7,7 +7,7 @@
 
      { "version": 19, "mesh": "goat.glb", "root": 3, "next_id": 17,
        "auto_connect": true, "sym_x": 0.42, "plan": "biped",
-       "sharpness": 2.5, "skin_from_file": true,
+       "sharpness": 2.5, "knuckle_blend": 0.3, "skin_from_file": true,
        "dots": [{"id": 1, "position": [x, y, z], "reach": 0.4}, ...],
        "edges": [[a, b], ...],
        "attachments": [[shell, dot_id], ...],
@@ -220,7 +220,13 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // (an Apply, a brush stroke, a lasso), or 0 for nobody's. Reset reads it to take
 // back one joint's work and nothing a neighbour wrote. A version 26 pin, with
 // three numbers, reads as nobody's.
-const uint SESSION_VERSION = 27;
+//
+// 28 added `knuckle_blend`: how wide the blend at each knuckle of a finger is,
+// as a share of a segment. Written only when set; a version 27 file reads as the
+// default. The bump is the usual direction — a version 28 file read by a version
+// 27 binary would bind its fingers at a blend nobody chose, with nothing on
+// screen to say the setting was dropped.
+const uint SESSION_VERSION = 28;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -366,6 +372,12 @@ fn String session_text(
 	if (doc.sharpness > 0.0f && doc.sharpness != 1.0f)
 	{
 		text.appendf("  \"sharpness\": %s,\n", (JsonFloat)doc.sharpness)!!;
+	}
+	// The fraction rather than the stored value, so the file says what it means:
+	// a hand-written 0 is a hard switch at every knuckle, not "unset".
+	if (doc.knuckle_blend > 0.0f)
+	{
+		text.appendf("  \"knuckle_blend\": %s,\n", (JsonFloat)doc.knuckle_blend_fraction())!!;
 	}
 
 	// Only when set, for the plain reason: false is what every rig crig builds
@@ -1429,6 +1441,10 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 	// than assigned, so a hand-edited file naming a power outside the band the
 	// arithmetic survives is clamped here instead of reaching the binder.
 	if (try double g = parsed.get_float("sharpness")) doc.set_sharpness((float)g);
+	// Version 28, and absent wherever the writer had nothing to say — read as the
+	// default. Through the stored form, so 0 here is a hard switch and a value
+	// past the widest blend is clamped rather than reaching the binder.
+	if (try double k = parsed.get_float("knuckle_blend")) doc.set_knuckle_blend(knuckle_blend_stored((float)k));
 
 	Object* dots = parsed.get("dots")!;
 	if (!is_list(dots)) return SESSION_SHAPE~;

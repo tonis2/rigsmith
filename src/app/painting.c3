@@ -207,7 +207,7 @@ fn bool AppState.begin_brush(&self)
 	// The Area tool goes: both claim a press on the mesh for the selected joint.
 	// A part on show goes unapplied, and the picture goes back to the weights the
 	// brush paints on — said, so the change is not read as the weights moving.
-	bool unapplied = self.areaing && self.area_preview && self.area_pending();
+	bool unapplied = self.area_shaping();
 	String name = self.area_joint_name();
 	self.end_area();
 	if (unapplied) self.@notice("the part was not applied — the brush paints %s's weights as they are", name);

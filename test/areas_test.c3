@@ -430,7 +430,7 @@ fn void a_version_26_session_reads_its_pins_with_no_author() @test
 
 	String older = text.replace(mem, four, three);
 	defer older.free(mem);
-	String versioned = older.replace(mem, `"version": 27`, `"version": 26`);
+	String versioned = older.replace(mem, `"version": 28`, `"version": 26`);
 	defer versioned.free(mem);
 	crig::RigDocument doc = crig::parse_session(mem, versioned)!!;
 	defer doc.free();
@@ -692,9 +692,10 @@ fn void apply_two_finger_joints(crig::AppState* app, uint first, uint second, bo
 
 <*
  Reset takes back one joint's work and nothing a neighbour wrote. A finger
- corrected, the next one applied and then reset: the first joint stays off the
- second's segment, where its own Apply took it, and every row the first wrote is
- exactly as it was.
+ corrected, the next one applied and then reset, on the file's own weights: the
+ first joint stays off the second's segment, where its own Apply took it, and
+ every row the first wrote is exactly as it was. (On the binder's weights a
+ hand's rows go back to the knuckle bands — see the test after this one.)
 
  *Re-introduce:* clear the joint's whole rows to the automatic weights, as Reset
  did, and the first joint comes back on the second's segment.
@@ -756,6 +757,75 @@ fn void resetting_a_joint_keeps_what_its_neighbours_were_given() @test
 	}
 	test::@check(moved == 0, "resetting the second joint changed %d rows it did not write", moved);
 	test::@check(left == 0, "%d rows are still the second joint's work", left);
+}
+
+<*
+ Resetting the wrist or a finger joint puts its rows of the hand back to the
+ knuckle bands at the blend asked for now, whatever the bind was when it wrote
+ them. A wrist and a finger applied with the widest blend, the blend set to a
+ hard switch, and both reset: every row of the hand is the automatic row again.
+
+ *Re-introduce:* take a hand's rows back by the others they state, as for any
+ other joint, and about a hundred of them keep the wide blend they were written with.
+*>
+fn void resetting_a_hand_joint_gives_back_the_knuckle_blend() @test
+{
+	io::printn("resetting a hand joint gives back the knuckle blend asked for now");
+	copy_fixture(AREA_COPY);
+	defer remove_fixture(AREA_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, AREA_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.doc.skin_from_file = false;
+	app.doc.set_knuckle_blend(crig::knuckle_blend_stored(1.0f));
+	app.mark_rig_stale();
+
+	uint wrist = named(&app, "wrist_L");
+	uint finger = named(&app, "index_2_L");
+	test::@check(wrist != 0 && finger != 0, "the humanoid has no left hand");
+	uint[2] joints = { wrist, finger };
+	foreach (joint : joints)
+	{
+		bool[] part = app.area_part_mask(mem, joint, OWN);
+		defer alloc::free(mem, part);
+		test::@check(app.apply_area(joint, part, app.area_scale(joint) * 0.25f) > 0, "an apply wrote nothing");
+	}
+
+	app.doc.set_knuckle_blend(crig::knuckle_blend_stored(0.0f));
+	app.mark_rig_stale();
+	foreach (joint : joints) test::@check(app.reset_area(joint) > 0, "a reset changed nothing");
+
+	usz bones;
+	float[] shown = shown_rows(&app, &bones);
+	defer alloc::free(mem, shown);
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	float[] automatic = alloc::clone_slice(mem, app.base_bind_for(&view));
+	defer alloc::free(mem, automatic);
+	usz hand = 0;
+	usz off = 0;
+	float worst = 0.0f;
+	for (usz v = 0; v < app.geometry.positions.len; v++)
+	{
+		float[] row = automatic[v * bones:bones];
+		sz owner = crig::row_owner(row);
+		if (owner < 0) continue;
+		Dot* dot = app.doc.find(view.dot_ids[(usz)owner]);
+		if (!dot || !(dot.name == "wrist_L" || (dot.name.starts_with("index_") && dot.name.ends_with("_L")))) continue;
+		hand++;
+		float sum = 0.0f;
+		foreach (weight : row) sum += weight;
+		float gap = 0.0f;
+		for (usz b = 0; b < bones; b++) gap = math::max(gap, math::abs(shown[v * bones + b] - row[b] / sum));
+		if (gap <= 1.0e-4f) continue;
+		off++;
+		worst = math::max(worst, gap);
+	}
+	test::@check(hand > 0, "no vertex is the wrist's or the index finger's");
+	test::@check(off == 0, "%d of %d rows of the hand are not the automatic row, by up to %f", off, hand, worst);
 }
 
 <*

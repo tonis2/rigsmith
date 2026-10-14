@@ -487,6 +487,7 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case SET_REACH: self.set_reach(edit.id, edit.reach_after);
 		case SET_POSE_WEIGHT: self.set_pose_weight(edit.id, edit.pose_weight_after);
 		case SET_SHARPNESS: self.set_sharpness(edit.sharp_after);
+		case SET_KNUCKLE_BLEND: self.set_knuckle_blend(edit.knuckle_after);
 		case ADD_EDGE: self.connect(edit.id, edit.other);
 		case DELETE_EDGE: self.disconnect(edit.id, edit.other);
 		case SET_ROOT: self.root_id = edit.id;
@@ -540,6 +541,10 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			// the binder's own blend — and `set_sharpness` stores it as such, so
 			// taking back the first sharpening leaves the document as it found it.
 			self.set_sharpness(edit.sharp_before);
+		case SET_KNUCKLE_BLEND:
+			// Stored values either side, so taking back the first change leaves the
+			// field unset rather than holding a copy of the default.
+			self.set_knuckle_blend(edit.knuckle_before);
 		case ADD_EDGE:
 			self.disconnect(edit.id, edit.other);
 		case DELETE_EDGE:

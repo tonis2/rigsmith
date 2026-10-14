@@ -312,6 +312,26 @@ fn bool AppState.set_sharpness_recorded(&self, float value)
 }
 
 <*
+ Sets how wide this model's knuckle blends are, leaving the group open — so a
+ slider dragged across many values is one step of history when it is let go.
+
+ @param stored : `As RigDocument.set_knuckle_blend takes it: knuckle_blend_stored of a fraction.`
+ @return `False when nothing changed, in which case nothing was recorded.`
+*>
+fn bool AppState.set_knuckle_blend_recorded(&self, float stored)
+{
+	float before = self.doc.knuckle_blend;
+	if (!self.doc.set_knuckle_blend(stored)) return false;
+
+	self.undo_stack.record({
+		.kind = SET_KNUCKLE_BLEND,
+		.knuckle_before = before,
+		.knuckle_after = self.doc.knuckle_blend,
+	});
+	return true;
+}
+
+<*
  Move the mirror plane, recording it so one Ctrl+Z takes it back.
 
  Left open like `set_sharpness_recorded`, so a mirror that corrects the plane and

@@ -30,6 +30,7 @@ struct DocumentDiff
 	uint physicked;
 	uint collided;
 	uint sharpened;
+	uint blended;
 	uint transformed;
 	uint settings;
 }
@@ -38,7 +39,7 @@ fn uint DocumentDiff.total(self)
 {
 	return self.added + self.removed + self.moved + self.renamed + self.reached
 		+ self.connected + self.disconnected + self.rooted + self.attached
-		+ self.physicked + self.collided + self.sharpened
+		+ self.physicked + self.collided + self.sharpened + self.blended
 		+ self.transformed + self.settings;
 }
 
@@ -171,6 +172,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 	}
 
 	if (self.set_sharpness_recorded(want.sharpness)) diff.sharpened++;
+	if (self.set_knuckle_blend_recorded(want.knuckle_blend)) diff.blended++;
 	if (!self.doc.model_transform.same(want.model_transform)
 		&& self.set_model_transform_recorded(self.doc.model_transform, want.model_transform)) diff.transformed++;
 

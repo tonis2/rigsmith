@@ -1884,22 +1884,12 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 					else if (self.maybe_place && app.areaing)
 					{
-						// A click in the Area tool picks a part rather than placing
-						// a joint.
+						// A click in the Area tool places no joint and picks no part:
+						// the card's Part menu picks one, and after an Apply the weights
+						// are done. UV islands on show are the exception — a click adds
+						// the island under it, or takes it out.
 						sz vertex = self.vertex_at(elem, self.press_at);
-						if (vertex < 0)
-						{
-							app.@notice("click on the mesh to pick a part");
-						}
-						else if (app.selected == 0)
-						{
-							app.@notice("select a joint first");
-						}
-						else
-						{
-							app.area_click(vertex);
-						}
-						app.refresh_ui();
+						if (vertex >= 0 && app.area_click(vertex)) app.refresh_ui();
 					}
 					else if (self.maybe_place && app.brushing)
 					{
@@ -2042,8 +2032,7 @@ fn sz Viewport.vertex_at(&self, Element* elem, Vec2 pixel)
 
  The Area tool leaves the wheel to the camera too: it used to step a picked part
  along the ladder, but the Weights card always has a part picked, so zooming
- while weighting kept changing the part instead. Clicks and the card's Part
- menu step it.
+ while weighting kept changing the part instead. The card's Part menu picks it.
 
  The trackpad half is unreachable from a machine whose backend cannot report
  precision — X11, win32 — where every scroll is a wheel, and both of the wheel's

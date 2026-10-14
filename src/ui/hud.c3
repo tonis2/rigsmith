@@ -367,7 +367,7 @@ fn usz hud_lines(AppState* app, HudSnapshot shown, char[] buffer, HudLine[] out)
 		}
 		else if (app.areaing)
 		{
-			holds = " · click the mesh to pick a part";
+			holds = " · pick a part in the Weights card";
 		}
 
 		// A group says its size and names its anchor, since the anchor is the one

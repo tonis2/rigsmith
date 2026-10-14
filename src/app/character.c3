@@ -300,7 +300,7 @@ struct Character
 	*>
 	bool areaing;
 	AreaPart area_part;
-	AreaPart area_origin; // the ladder part the pending one started as, for the card's dropdown
+	AreaPart area_origin; // the menu part the pending one started as, for the card's dropdown
 	uint area_dot;
 	uint area_twin;
 	sz area_seed;

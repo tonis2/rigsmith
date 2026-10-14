@@ -21,7 +21,8 @@
  **Reset takes back one joint's work.** Every row an Apply writes is marked as
  that joint's (`VertexPin.by`), and Reset to automatic rebuilds exactly those
  rows and no others — a finger reset leaves the fingers corrected before it as
- they were (see `reset_area`).
+ they were. In a hand those rows go back to the knuckle bands at the blend asked
+ for now (see `reset_area`).
 *>
 module crig;
 
@@ -34,8 +35,8 @@ import std::collections::list;
 
 enum AreaPart : char
 {
-	OWN,            // vertices whose strongest joint is this one
-	WITH_CHILDREN,  // strongest joint anywhere at or below this one
+	OWN,            // vertices whose strongest joint is this one; a finger joint's segment
+	WITH_CHILDREN,  // strongest joint anywhere at or below this one; a finger from this knuckle out
 	ISLANDS,        // the UV islands this joint holds most of
 	PIECE,          // the separate mesh piece under the clicked vertex
 	CUSTOM,         // grown or shrunk by hand
@@ -75,7 +76,14 @@ const float AREA_STEP = 0.1;
 
  OWN and WITH_CHILDREN read the bind as the screen shows it — the strongest joint
  of each row — so an own part is exactly the vertices the territory view paints
- in this joint's colour. ISLANDS is every UV island this joint is the strongest
+ in this joint's colour.
+
+ **A finger joint's parts are cut at its knuckles instead** (`rig::DigitBands`,
+ at a blend of nothing): its own segment, or with children everything from its
+ knuckle to the tip. The automatic weights still say which vertices are the
+ hand's, but not which joint along the finger — so a pin or a stroke that handed
+ part of one segment to the wrong joint cannot move the part, and Apply puts the
+ segment right rather than locking in what was there. ISLANDS is every UV island this joint is the strongest
  joint of more vertices of than any other joint is — the head's unwrap for the
  head — or with none such the island holding most of its own part. PIECE is the
  shell of `seed`, or with no seed the shell holding most of the own part. CUSTOM has no rule of its own and answers empty.
@@ -116,11 +124,28 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 		}
 	}
 
+	// A finger's part from the knuckle planes, over the bind with no paint or pins
+	// on it. A piece riding one joint rigidly keeps its rider, as it does in the bind.
+	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
+	defer bands.free(mem);
+	bool banded = (usz)found < bands.digit.len && bands.digit[(usz)found];
+	float[] base = banded ? self.base_bind_for(&view) : {};
+	if (base.len < count * bones) banded = false;
+	float[] row = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, row);
+
 	bool[] mask = alloc::new_array(allocator, bool, (sz)count);
 	usz caught = 0;
 	for (usz v = 0; v < count; v++)
 	{
-		sz owner = row_owner(painted[v * bones:bones]);
+		float[] read = painted[v * bones:bones];
+		if (banded)
+		{
+			row[..] = base[v * bones:bones];
+			if (!rig::rides_rigidly(self.shells.of, self.shell_riders, v)) bands.band_row(row, self.geometry.positions[v], 0.0f);
+			read = row;
+		}
+		sz owner = row_owner(read);
 		if (owner < 0 || !mine[(usz)owner]) continue;
 		mask[v] = true;
 		caught++;
@@ -577,6 +602,7 @@ fn bool AppState.begin_island_paint(&self, sz vertex, bool add)
 {
 	if (!self.areaing || !self.area_islands) return false;
 	self.area_follow_selection();
+	if (!self.area_shaping()) return false;
 	if (self.island_under(vertex) < 0 || self.area_mask.len != self.geometry.positions.len) return false;
 	self.area_paint_adds = add;
 	self.pick_area_island(vertex, add ? ADD : REMOVE);
@@ -1116,6 +1142,18 @@ fn void AppState.keep_stated(&self, PinIndex* index, uint v, uint[] dots, float[
  were before this joint's Apply wrote over them, and resetting that joint later
  finds them.
 
+ **In a hand the row goes back whole.** Resetting the wrist or a finger joint —
+ any joint the knuckle bands shape (`rig::DigitBands.shapes`) — clears each row
+ of its work that a finger joint holds a share of (`fingers_hold`) to the
+ automatic row, others and all. There the automatic weights are the bands at
+ the knuckle blend the model asks for now, while the others the row states are
+ the bind as it stood when the joint wrote it: a blend since changed, or weights
+ from before the bands, which kept the hand broken through any number of resets.
+ A finger applied before this one can come back across their shared knuckle, by
+ as much as the knuckle blend gives it — the blend, which the Knuckle blend
+ setting narrows to a hard switch. On a file's own weights (`skin_from_file`)
+ nothing is banded, and the rows are taken back as below.
+
  Rows another joint wrote are never touched, which is the whole promise:
  resetting a finger leaves the finger beside it and the one before it exactly as
  they were painted. A row from before authors were kept (version 26) is read as
@@ -1175,6 +1213,25 @@ fn usz AppState.reset_area(&self, uint dot_id, uint twin = 0)
 		foreach (pin : row) if (pin.dot_id != dot_id && (twin == 0 || pin.dot_id != twin)) whole[v] = false;
 	}
 
+	// A hand joint's rows a finger holds go back to the automatic row whole, and
+	// are no evidence of what was taken off the others. Only on the binder's own
+	// weights: a file's fingers are not banded, and the guarantee stays there.
+	bool[] outright = alloc::new_array(mem, bool, (sz)count);
+	defer alloc::free(mem, outright);
+	rig::DigitBands bands = self.doc.skin_from_file ? (rig::DigitBands){} : rig::digit_bands(mem, &view.skeleton);
+	defer bands.free(mem);
+	if (bands.shapes((usz)joint) || (twin_joint >= 0 && bands.shapes((usz)twin_joint)))
+	{
+		for (usz v = 0; v < count; v++)
+		{
+			if (!ours[v]) continue;
+			if (!fingers_hold(&bands, &view, automatic[v * bones:bones], rows[start[v]:start[v + 1] - start[v]])) continue;
+			outright[v] = true;
+			ours[v] = false;
+			whole[v] = false;
+		}
+	}
+
 	bool[] taken = alloc::new_array(mem, bool, (sz)bones);
 	defer alloc::free(mem, taken);
 	self.taken_off_around(&view, automatic, rows, start, ours, whole, joint, twin_joint, taken);
@@ -1196,6 +1253,11 @@ fn usz AppState.reset_area(&self, uint dot_id, uint twin = 0)
 	{
 		VertexPin[] row = rows[start[v]:start[v + 1] - start[v]];
 		if (row.len == 0) continue;
+		if (outright[v])
+		{
+			draft.state((uint)v, {}, {});
+			continue;
+		}
 		usz at = v * bones;
 		float total = 0.0f;
 		for (usz b = 0; b < bones; b++) total += automatic[at + b];
@@ -1343,6 +1405,30 @@ fn void AppState.taken_off_around(&self, RigView* view, float[] automatic, Verte
 			}
 		}
 	}
+}
+
+<*
+ Whether the finger joints together hold at least `rig::DIGIT_GATE_LOW` of a
+ vertex, in its automatic row or as stated on its pins: a row of the hand, as
+ much as the knuckle bands reach it — see `reset_area`.
+*>
+fn bool fingers_hold(rig::DigitBands* bands, RigView* view, float[] automatic, VertexPin[] row) @private
+{
+	float total = 0.0f;
+	float held = 0.0f;
+	foreach (usz b, weight : automatic)
+	{
+		total += weight;
+		if (b < bands.digit.len && bands.digit[b]) held += weight;
+	}
+	if (total > 0.0f && held / total >= rig::DIGIT_GATE_LOW) return true;
+	float stated = 0.0f;
+	foreach (pin : row)
+	{
+		sz b = view.joint_of(pin.dot_id);
+		if (b >= 0 && (usz)b < bands.digit.len && bands.digit[(usz)b]) stated += pin.share;
+	}
+	return stated >= rig::DIGIT_GATE_LOW;
 }
 
 <*
@@ -1618,7 +1704,7 @@ fn void AppState.refresh_area_twin(&self)
 }
 
 <*
- Pick a level of the part ladder for the selected joint.
+ Pick a part for the selected joint: the card's Part menu, Own bone to UV islands.
 
  @param seed : `The vertex it was picked at, or -1 to keep the last one.`
  @return `False when that level holds nothing, which is said on the result line.`
@@ -1664,52 +1750,42 @@ fn bool AppState.set_area_part(&self, AreaPart part, sz seed = -1)
 	return true;
 }
 
-// One step along OWN → WITH_CHILDREN → ISLANDS, wrapping. A mesh whose layout
-// cuts no islands has no ISLANDS rung. Whole piece is not on the ladder: it only
-// ever found the mesh's separate shells, which on most characters is all of it.
-fn bool AppState.step_area(&self, int direction)
-{
-	if (!self.areaing) return false;
-	AreaPart[3] ladder = { OWN, WITH_CHILDREN, OWN };
-	int rungs = 2;
-	if (self.area_has_islands()) ladder[rungs++] = ISLANDS;
-	int level = 0;
-	for (int i = 0; i < rungs; i++)
-	{
-		if (ladder[i] == self.area_part) level = i;
-	}
-	if (self.area_mask.len > 0 || self.area_part == CUSTOM)
-	{
-		level = (level + (direction >= 0 ? 1 : rungs - 1)) % rungs;
-	}
-	return self.set_area_part(ladder[level]);
-}
+<*
+ Whether a part is on show for the mesh to shape: one chosen in the Part menu,
+ or grown, shrunk or softened by the card. Nothing else gives the mesh's own
+ gestures anything to act on — not the part the card picks for itself
+ (`pick_own_quietly`), and not the moment after Apply, Reset or the brush, when
+ the weights are done and a click on the mesh is only a click.
+*>
+fn bool AppState.area_shaping(&self) => self.areaing && self.area_preview && self.area_pending();
 
 <*
- A click on the mesh in the Area tool: the joint's own part the first time, one
- step up the ladder on each click after. Once the part is UV islands a click
- adds the island under it, or takes it out (`how` picks which).
+ A click on the mesh in the Area tool. Only UV islands on show take one: it adds
+ the island under it, or takes it out (`how` picks which). Any other click picks
+ no part and steps nowhere — the Part menu is where a part is chosen, and a
+ click that walked Own bone → With children turned every click meant for the
+ view into a different part, the moment after an Apply included.
+
+ @return `Whether the part changed.`
 *>
 fn bool AppState.area_click(&self, sz vertex, IslandPick how = TOGGLE)
 {
 	if (!self.areaing || vertex < 0) return false;
 	self.area_follow_selection();
-	if (self.area_islands && self.area_mask.len > 0) return self.pick_area_island(vertex, how);
-	// A part the card picked for itself has not been seen, so the first click
-	// shows it rather than stepping past it.
-	if (self.area_mask.len == 0 || self.area_part == CUSTOM || !self.area_preview) return self.set_area_part(OWN, vertex);
-	self.area_seed = vertex;
-	return self.step_area(1);
+	if (!self.area_shaping() || !self.area_islands) return false;
+	return self.pick_area_island(vertex, how);
 }
 
 <*
- Start a grow or shrink drag at a vertex: grows from the current part, or from
- the vertex alone when it is outside it.
+ Start a grow or shrink drag at a vertex: grows from the part on show, or from
+ the vertex alone when it is outside it. With no part on show — after an Apply,
+ say — there is nothing to shape and the press is the camera's.
 *>
 fn bool AppState.begin_area_resize(&self, sz vertex, bool grow)
 {
 	if (!self.areaing) return false;
 	self.area_follow_selection();
+	if (!self.area_shaping()) return false;
 	usz count = self.geometry.positions.len;
 	if (vertex < 0 || (usz)vertex >= count) return false;
 
@@ -1825,7 +1901,7 @@ fn usz AppState.commit_area(&self)
 	}
 	if (!self.areaing || self.area_mask.len == 0)
 	{
-		self.@notice("pick a part first — click the mesh");
+		self.@notice("choose a part above first");
 		return 0;
 	}
 	if (self.area_empty())

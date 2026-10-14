@@ -193,7 +193,12 @@ fn void the_uv_islands_part_takes_whole_islands_and_steps_by_them() @test
 	}
 }
 
-fn void the_ladder_has_an_islands_rung_only_when_the_layout_cuts_the_mesh() @test
+<*
+ UV islands are a part only where the layout cuts the mesh, and a click on the
+ mesh picks islands only once that part is on show: on the hip's own part it
+ changes nothing — no step up to With children, as clicks used to.
+*>
+fn void islands_are_a_part_only_when_the_layout_cuts_the_mesh() @test
 {
 	Vec2[] uvs;
 	rig::TriMesh mesh = tube(&uvs, seams: true);
@@ -208,10 +213,9 @@ fn void the_ladder_has_an_islands_rung_only_when_the_layout_cuts_the_mesh() @tes
 	test::@check(app.begin_area(), "the Area tool did not open");
 
 	test::@check(app.set_area_part(OWN), "the hip has no own part");
-	test::@check(app.step_area(1) && app.area_part == WITH_CHILDREN, "one step up is not with children");
-	test::@check(app.step_area(1) && app.area_part == ISLANDS, "two steps up is not UV islands");
-	app.step_area(1);
-	test::@check(app.area_part == OWN, "a one-piece tube has a rung past islands");
+	test::@check(!app.area_click(vertex_in_island(3)) && app.area_part == OWN, "a click on the mesh changed the part to %s", app.area_part.label());
+	test::@check(app.set_area_part(ISLANDS) && app.area_part == ISLANDS, "the hip holds no islands");
+	test::@check(app.area_click(vertex_in_island(3)), "a click did not pick the island under it");
 
 	// The same tube with no seams has no islands to pick.
 	app.end_area();

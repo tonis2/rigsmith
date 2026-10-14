@@ -65,6 +65,7 @@ const String WEIGHTS_MIRROR_ID = "weights-mirror";
 const String WEIGHTS_APPLY_ID = "weights-apply";
 const String WEIGHTS_RESET_ID = "weights-reset";
 const String WEIGHTS_READOUT_ID = "weights-readout";
+const String WEIGHTS_KNUCKLE_ID = "weights-knuckle";
 
 // The Part selector's rows, in `AreaPart` order.
 String[3] weights_part_labels = { "Own bone", "With children", "UV islands" };
@@ -366,6 +367,13 @@ fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
 	// capture with it, so the drag would end a frame after it began. The dial
 	// keeps its own numbers live; the card catches up on the release.
 	if (app.drag.dial) return;
+	// The knuckle blend records as its handle moves, and every step moves the
+	// revision the snapshot below watches — a rebuild then would destroy the
+	// slider being held, for the dial's reason. The card catches up on the release.
+	if (try Element* knuckle = elem.find_id(WEIGHTS_KNUCKLE_ID))
+	{
+		if (knuckle.widget_as(Slider).dragging) return;
+	}
 	// The name field is the selected dot's. Once the selection has moved on, the
 	// field would be rebuilt on the new dot's card holding the old dot's name —
 	// and Return there would put it on the wrong joint — so the rename ends with
@@ -835,6 +843,22 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 											};
 											@node((Label) { .text = weights_readout(app, &self.readout),
 												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
+											// The model's, not the joint's: shown on the joints it decides.
+											if (app.knuckle_blend_applies(dot.id))
+											{
+												@node((Label) { .text = "Knuckle blend · whole model", .size = 12.0f, .color = TEXT_DIM });
+												@node((Slider) {
+													.label = "Blend",
+													.suffix = "%",
+													.value = app.doc.knuckle_blend_fraction() * 100.0f,
+													.max = KNUCKLE_BLEND_MAX * 100.0f,
+													.step = 5.0f,
+													.disabled = app.doc.skin_from_file,
+													.on_change = &weights_knuckle_moved,
+													.on_commit = &weights_knuckle_committed,
+													.style = PHYSICS_SLIDER_STYLE,
+												}).with_id(WEIGHTS_KNUCKLE_ID);
+											}
 											// Painting by hand lives here too, beside the parts it corrects.
 											@node((Label) { .text = "Brush", .size = 12.0f, .color = TEXT_DIM });
 											@node(app.brushing ? accent_button("Stop painting", &menu_weight_brush)
@@ -1458,7 +1482,7 @@ fn void joint_limits_reset(Ui* ui) @private
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
 	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner.";
-	if (!app.areaing || !app.area_pending()) return "Click the mesh, or choose a part above. Applying a part replaces this joint's weights, brush strokes too.";
+	if (!app.areaing || !app.area_pending()) return "Choose a part above, or paint by hand. Applying a part replaces this joint's weights, brush strokes too.";
 	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
 	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;
@@ -1468,7 +1492,7 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 	if (!app.area_preview)
 	{
 		// The card's own pick: the mesh still shows the weights, the brush's numbers.
-		return string::bformat(buffer, "Showing its weights as they are. Apply would give it its own bone's part: %d vertices (%d%% of the mesh) · %s — click the mesh, Grow or Shrink to see it first.",
+		return string::bformat(buffer, "Showing its weights as they are. Apply would give it its own bone's part: %d vertices (%d%% of the mesh) · %s — choose it above, Grow or Shrink to see it first.",
 			held, percent, edge);
 	}
 	if (app.area_islands)
@@ -1532,7 +1556,7 @@ fn void weights_resize(Ui* ui, int rings) @private
 	AppState* app = ui.inherit(AppState)!!;
 	if (!app.areaing || !app.area_pending())
 	{
-		app.@notice("pick a part first — click the mesh");
+		app.@notice("choose a part above first");
 	}
 	else if (!app.resize_area(rings))
 	{
@@ -1577,6 +1601,23 @@ fn void weights_soft_moved(Ui* ui, float value) @private
 
 // The readout names the edge width, so the card catches up once the handle is let go.
 fn void weights_soft_committed(Ui* ui, float value) @private => refresh_joint_panel(ui);
+
+// Live while the handle moves: the document takes each value and the hand
+// rebinds, but the undo group stays open until the release, so a drag is one step.
+fn void weights_knuckle_moved(Ui* ui, float value) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.set_knuckle_blend_recorded(knuckle_blend_stored(value / 100.0f))) return;
+	app.mark_rig_stale();
+	app.refresh_ui();
+}
+
+fn void weights_knuckle_committed(Ui* ui, float value) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.undo_stack.commit();
+	refresh_joint_panel(ui);
+}
 
 fn void joint_pose_weight_committed(Ui* ui, float value)
 {

@@ -307,8 +307,8 @@ const float DIGIT_CHAIN_SHARE = 0.1f;
 
  A finger is short next to its thickness, which no distance falloff tells apart
  from a forearm: the binder blends a whole finger across its three joints and
- into the palm. Knowing which joints are digits is what lets it blend them
- crisply instead (`AppState.sharpen_digits`).
+ into the palm. Knowing which joints are digits is what lets it cut them at the
+ knuckles instead (`rig::band_digits`).
 
  Name-free, like `ancestor_run`: on the humanoid it is the forty finger joints,
  and nothing of the legs, the spine or the head, which are longer, or of a lone

@@ -494,6 +494,19 @@ struct RigDocument
 	float sharpness;
 
 	<*
+	 How wide the blend at each knuckle of a finger is: the share of the shorter
+	 segment meeting there over which its two joints share a vertex, either side
+	 of the joint. See `rig::band_digits`.
+
+	 **Zero means unset and is read as `KNUCKLE_BLEND_DEFAULT`**, on `sharpness`'s
+	 reasoning. A blend of nothing — a hard switch at every joint — is a real
+	 setting too, so it is stored as `KNUCKLE_BLEND_HARD` rather than as zero;
+	 read it through `knuckle_blend_fraction`, which turns both back into the
+	 fraction they stand for.
+	*>
+	float knuckle_blend;
+
+	<*
 	 Which body plan this rig was started from — an animation pack's plan tag.
 
 	 Empty for a hand-built rig, and for every session written before this field
@@ -970,6 +983,57 @@ fn bool RigDocument.set_sharpness(&self, float value)
 }
 
 <*
+ The knuckle blend a model starts with: the middle half of every finger segment
+ its own joint's outright, and a quarter of a segment either side of each joint
+ shared between the two.
+*>
+const float KNUCKLE_BLEND_DEFAULT = 0.5;
+
+// What a knuckle blend of nothing is stored as, since zero is the unset state.
+// Read back as exactly 0 by `knuckle_blend_fraction`.
+const float KNUCKLE_BLEND_HARD = 1.0e-3;
+
+// The widest knuckle blend: a segment that is ramp from end to end. Wider would
+// let the ramps of two neighbouring knuckles overlap and a third joint in.
+const float KNUCKLE_BLEND_MAX = 1.0;
+
+<*
+ What `RigDocument.knuckle_blend` keeps for a blend of `fraction`: zero for the
+ default, `KNUCKLE_BLEND_HARD` for none at all, and the clamp otherwise.
+*>
+fn float knuckle_blend_stored(float fraction)
+{
+	if (math::abs(fraction - KNUCKLE_BLEND_DEFAULT) < 1.0e-4f) return 0.0f;
+	if (fraction <= KNUCKLE_BLEND_HARD) return KNUCKLE_BLEND_HARD;
+	return math::min(fraction, KNUCKLE_BLEND_MAX);
+}
+
+// The knuckle blend this model asks for, as a fraction from 0 to 1.
+fn float RigDocument.knuckle_blend_fraction(&self)
+{
+	if (self.knuckle_blend <= 0.0f) return KNUCKLE_BLEND_DEFAULT;
+	if (self.knuckle_blend <= KNUCKLE_BLEND_HARD) return 0.0f;
+	return math::min(self.knuckle_blend, KNUCKLE_BLEND_MAX);
+}
+
+<*
+ Sets how wide this model's knuckle blends are — see `RigDocument.knuckle_blend`.
+
+ Takes the *stored* value, so undo can put an unset field back as unset; a
+ caller holding a fraction passes it through `knuckle_blend_stored` first.
+
+ @param stored : `0 for unset, otherwise clamped into [KNUCKLE_BLEND_HARD, KNUCKLE_BLEND_MAX].`
+ @return `True if anything changed.`
+*>
+fn bool RigDocument.set_knuckle_blend(&self, float stored)
+{
+	float want = stored <= 0.0f ? 0.0f : math::clamp(stored, KNUCKLE_BLEND_HARD, KNUCKLE_BLEND_MAX);
+	if (self.knuckle_blend == want) return false;
+	self.knuckle_blend = want;
+	return true;
+}
+
+<*
  The plane the mirror reflects across — the model-space X a left dot and its
  right twin sit even distances either side of.
 
@@ -1310,6 +1374,7 @@ enum EditKind
 	SET_REACH,
 	SET_POSE_WEIGHT,
 	SET_SHARPNESS,
+	SET_KNUCKLE_BLEND,
 	ADD_EDGE,
 	DELETE_EDGE,
 	SET_ROOT,
@@ -1405,6 +1470,12 @@ struct Edit
 	// since the setting is the model's rather than any joint's.
 	float sharp_before;
 	float sharp_after;
+
+	// SET_KNUCKLE_BLEND either side, as stored — zero for unset — so undoing the
+	// first change puts the model back on the default rather than on a copy of
+	// it. Its own pair by the same rule: a knuckle blend is not a blend power.
+	float knuckle_before;
+	float knuckle_after;
 
 	// SET_SYM_X either side — the mirror plane, the model's rather than any dot's,
 	// so `id` is unused for it, the same as SET_SHARPNESS. Its own pair rather than

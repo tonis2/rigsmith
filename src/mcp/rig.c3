@@ -37,7 +37,7 @@ faultdef RIG_REFUSED;
 *>
 const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 	"ops":{"type":"array","description":"Applied in order, as one undo step. An op that fails takes the whole call back with it.","items":{"type":"object","properties":{
-		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan."},
+		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","sharpness","knuckle_blend","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. sharpness: how crisp every blend is, for the whole model. knuckle_blend: how wide the blend at each knuckle of every finger is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan."},
 		"joint":{"type":"string","description":"Which dot, by the name get_skeleton reports; bone_<id> reaches an unnamed one. Used by move, name, remove, root, reach, attach and limits."},
 		"name":{"type":"string","description":"The name to give a dot — place and name. Empty un-names it, which is the hand-placed state; only named dots can be animated."},
 		"position":{"type":"array","description":"[x,y,z] in model space, the space get_skeleton reports positions in — not a fraction of anything. Used by place and move.","items":{"type":"number"}},
@@ -45,7 +45,7 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 		"a":{"type":"string","description":"connect/disconnect: one end of the bone. exclude/include: one of the two joints."},
 		"b":{"type":"string","description":"connect/disconnect: the other end. exclude/include: the other joint."},
 		"reach":{"type":"number","description":"reach only: how far this dot's influence carries, in model units — the same units as position. 0 is no limit, which is what every dot has until asked otherwise. Use it when a dot pulls on mesh it should not: get_weights names the pairs that overlap, and a reach is how you end one without moving the joint off the anatomy."},
-		"value":{"type":"number","description":"sharpness only: the power the binder's weights are raised to, 0.25 to 4, one number for the whole model. 1 is the binder's own blend; above it narrows every transition band at once, which is what a model assembled from solid pieces wants and what no per-dot setting can say. Names no joint."},
+		"value":{"type":"number","description":"sharpness only: the power the binder's weights are raised to, 0.25 to 4, one number for the whole model. 1 is the binder's own blend; above it narrows every transition band at once, which is what a model assembled from solid pieces wants and what no per-dot setting can say. knuckle_blend: 0 to 1, the share of a finger segment either side of each knuckle where its two joints share the skin — 0 is a hard switch at the joint, 0.5 the default, 1 a segment blended from end to end. Names no joint."},
 		"shell":{"type":"integer","description":"attach/detach: which piece of the mesh, by the id get_shells reports."},
 		"active":{"type":"boolean","description":"limits only: whether persistent limits are evaluated. Supplying an axis row turns this on unless active is explicitly false."},
 		"x":{"type":"object","description":"limits only: the swing across the bone about the joint's X, in radians (where the bone points).","properties":{"allow":{"type":"boolean"},"minimum":{"type":"number"},"maximum":{"type":"number"},"locked":{"type":"number"}}},
@@ -63,7 +63,7 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 
 // Every `op` edit_rig answers to, for the refusals that list them. Keep it in
 // step with the schema's enum and the switch in `apply_op`.
-const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, attach, detach, limits, exclude, include, symmetry, plan_limits";
+const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, knuckle_blend, attach, detach, limits, exclude, include, symmetry, plan_limits";
 
 <*
  Apply a batch of rig edits, or none of them.
@@ -153,6 +153,7 @@ fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detai
 		case "root": return op_root(app, op, index, detail);
 		case "reach": return op_reach(app, op, index, detail);
 		case "sharpness": return op_sharpness(app, op, index, detail);
+		case "knuckle_blend": return op_knuckle_blend(app, op, index, detail);
 		case "attach": return op_pin(app, op, index, true, detail);
 		case "detach": return op_pin(app, op, index, false, detail);
 		case "limits": return op_limits(app, op, index, detail);
@@ -419,6 +420,40 @@ fn bool op_sharpness(AppState* app, Object* op, usz index, DString* detail) @loc
 	// Already at that sharpness is not a failure, for the same reason a redundant
 	// rename is not: the batch asked for a state, and the state holds.
 	app.set_sharpness_recorded((float)want);
+	return true;
+}
+
+<*
+ The other op that names no joint: how wide the blend at each knuckle of every
+ finger is — see `RigDocument.knuckle_blend`. Refused outside 0 to 1, on
+ `op_sharpness`'s reasoning.
+*>
+fn bool op_knuckle_blend(AppState* app, Object* op, usz index, DString* detail) @local
+{
+	Object* asked = member(op, "value");
+	if (asked == null)
+	{
+		detail.appendf(
+			`ops[%d] needs "value": a number from 0 to %.4g — the share of a finger segment either side of each knuckle where its two joints share the skin. 0 is a hard switch at the joint and %.4g the default.`,
+			index, KNUCKLE_BLEND_MAX, KNUCKLE_BLEND_DEFAULT);
+		return false;
+	}
+	double? want = asked.to_value(double, false);
+	if (catch want)
+	{
+		detail.appendf(`ops[%d].value must be a number from 0 to %.4g.`, index, KNUCKLE_BLEND_MAX);
+		return false;
+	}
+	if (want < 0.0 || want > (double)KNUCKLE_BLEND_MAX)
+	{
+		detail.appendf(
+			`ops[%d].value is %.4g. The knuckle blend runs from 0, a hard switch at every joint, to %.4g, a segment blended from end to end.`,
+			index, want, KNUCKLE_BLEND_MAX);
+		return false;
+	}
+
+	// Already at that blend is not a failure: the batch asked for a state.
+	app.set_knuckle_blend_recorded(knuckle_blend_stored((float)want));
 	return true;
 }
 
