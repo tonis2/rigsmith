@@ -25,10 +25,7 @@ fn void trim_workspace(Fixture* f)
 
 fn void trim_open(Fixture* f, String start, String end)
 {
-	f.click(f.center_of("anim-more")!!);
-	f.ui.flush();
-	f.click(f.center_of("anim-trim")!!);
-	f.ui.flush();
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, "anim-trim");
 	Element* from = f.ui.find_id(crig::ANIM_TRIM_START_ID)!!;
 	Element* to = f.ui.find_id(crig::ANIM_TRIM_END_ID)!!;
 	if (start.len > 0) from.widget_as(TextField).set_text(from, start);

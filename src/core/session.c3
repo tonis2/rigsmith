@@ -226,7 +226,13 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // default. The bump is the usual direction — a version 28 file read by a version
 // 27 binary would bind its fingers at a blend nobody chose, with nothing on
 // screen to say the setting was dropped.
-const uint SESSION_VERSION = 28;
+//
+// 29 rolls a digit's limit axes by its hand (`along_the_knuckles`) wherever the
+// world axis would turn its X sideways, so X bends every finger toward the
+// palm. A table read from an older file, with no frame of its own, is pinned to
+// the frame it was written against wherever the two rules disagree, as at 23;
+// the joint card's Use bone axes carries it over when asked.
+const uint SESSION_VERSION = 29;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -1358,6 +1364,7 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 		return SESSION_SHAPE~;
 	}
 	if (version < 23) keep_legacy_limit_frames(&doc);
+	if (version < 29) keep_cardinal_limit_frames(&doc);
 	return doc;
 }
 
@@ -1383,6 +1390,39 @@ fn void keep_legacy_limit_frames(RigDocument* doc) @private
 			JointLimitFrame now = joint_limit_frame(&skeleton, ids, limits);
 			if (!now.usable()) continue;
 			JointLimitFrame was = legacy_limit_frame(now);
+			if (math::abs(now.rotation.v.dot(was.rotation.v)) > 0.99999f) continue;
+			JointRotationLimits held = limits;
+			held.has_saved_frame = true;
+			held.saved_frame = was.rotation;
+			pinned[count++] = held;
+		}
+		foreach (limits : pinned[:count]) doc.set_rotation_limits(limits.dot_id, limits);
+	};
+}
+
+<*
+ Pins each derived limit table of a pre-29 session to the frame it was written
+ against, where its digit is now rolled by its hand (`cardinal_limit_frame`).
+ The numbers keep turning the joint about the axes they always did; every
+ table off a hand, and every finger the world axis already suited, stays
+ derived.
+*>
+fn void keep_cardinal_limit_frames(RigDocument* doc) @private
+{
+	if (doc.rotation_limits.len() == 0) return;
+	@pool()
+	{
+		uint[] ids;
+		rig::Skeleton? skeleton = build_skeleton(doc, tmem, &ids);
+		if (catch skeleton) return;
+		JointRotationLimits[] pinned = alloc::new_array(tmem, JointRotationLimits, doc.rotation_limits.len());
+		usz count = 0;
+		foreach (limits : doc.rotation_limits.array_view())
+		{
+			if (limits.has_saved_frame) continue;
+			JointLimitFrame now = joint_limit_frame(&skeleton, ids, limits);
+			if (!now.usable()) continue;
+			JointLimitFrame was = cardinal_limit_frame(now);
 			if (math::abs(now.rotation.v.dot(was.rotation.v)) > 0.99999f) continue;
 			JointRotationLimits held = limits;
 			held.has_saved_frame = true;

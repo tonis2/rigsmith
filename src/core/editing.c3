@@ -462,6 +462,17 @@ fn void UndoStack.commit(&self)
 	self.edits.get_ref(self.edits.len() - 1).chained = false;
 }
 
+<*
+ Opens the group `commit` last closed again, so what is recorded next joins it
+ and one Ctrl+Z takes back both. Whatever follows must commit, as any operation
+ does. Nothing to reopen at the start of history or below a redo step.
+*>
+fn void UndoStack.reopen(&self)
+{
+	if (self.cursor == 0 || self.cursor != self.edits.len()) return;
+	self.edits.get_ref(self.edits.len() - 1).chained = true;
+}
+
 // ---------------------------------------------------------------------------
 // One edit, both directions.
 //

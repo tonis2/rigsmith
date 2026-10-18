@@ -15,6 +15,10 @@
  value (`clip_with_offset`), so the motion through the keys is kept and shifted
  rather than flattened to one pose. The whole change is one undo step.
 
+ Mirror pose (Shift+M) follows the switch too, but key by key rather than as an
+ offset: at each key the twins take the reflection of the joints in hand there
+ (`mirror_onto_keys`, pose_clipboard.c3).
+
  The edit is measured on screen, as the change from what the clip played at the
  playhead to the pose made there, and composed into the keys the timeline shows:
  the base clip's, or the active keyed layer's. That is exact for a clip authored

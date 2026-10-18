@@ -74,6 +74,7 @@ const String ALIGN_SECTION_ID = "align-section";
 const String JOINT_RENAME_ID = "joint-rename";
 const String JOINT_NAME_FIELD_ID = "joint-name-field";
 const String JOINT_AXES_FOLLOW_ID = "joint-axes-follow";
+const String JOINT_AXES_BONE_ID = "joint-axes-bone";
 const String JOINT_LIMITS_ACTIVE_ID = "joint-limits-active";
 const String JOINT_LIMITS_RESET_ID = "joint-limits-reset";
 const String JOINT_LIMIT_X_ALLOW_ID = "joint-limit-x-allow";
@@ -553,6 +554,7 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 	uint follow = 0;
 	String follow_note;
 	String follow_label;
+	bool saved_apart = false;
 
 	if (app.show_joint_panel && app.joint_panel_tab == JointPanelTab.JOINT && dot)
 	{
@@ -569,6 +571,7 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 				limits = app.doc.rotation_limits_of(dot.id);
 				frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
 				follow = joint_axes_automatic_child(&view, limits);
+				saved_apart = saved_frame_apart(&view.skeleton, view.dot_ids, limits);
 				if (follow != 0)
 				{
 					Dot* held = app.doc.find(limits.primary_child);
@@ -655,6 +658,22 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 														.size = 12.0f, .color = TEXT_DIM });
 													@node(panel_button(follow_label,
 														&joint_axes_follow_bone)).with_id(JOINT_AXES_FOLLOW_ID);
+												};
+											}
+
+											// A table pinned to axes of its own — by an older file, a move or a
+											// mirror — can be moved onto the ones its bone derives, which for a
+											// finger are its hand's: the way back to axes that agree with its
+											// neighbours'.
+											if (saved_apart)
+											{
+												@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
+													.size = { JOINT_PANEL_W, 0 } })
+												{
+													@node((Label) { .text = "Axes saved apart from the bone",
+														.size = 12.0f, .color = TEXT_DIM });
+													@node(panel_button("Use bone axes",
+														&joint_axes_use_bone)).with_id(JOINT_AXES_BONE_ID);
 												};
 											}
 
@@ -1361,6 +1380,17 @@ fn void joint_axes_follow_bone(Ui* ui) @private
 	JointRotationLimits limits = app.doc.rotation_limits_of(app.selected);
 	limits.primary_child = 0;
 	(void)commit_joint_limits(ui, limits);
+}
+
+fn void joint_axes_use_bone(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.use_bone_axes_recorded(app.selected))
+	{
+		app.undo_stack.commit();
+		app.refresh_ui();
+	}
+	refresh_joint_panel(ui);
 }
 
 fn void joint_pin_from_committed(Ui* ui, float value)

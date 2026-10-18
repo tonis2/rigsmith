@@ -210,6 +210,18 @@ fn void anim_tools_contact(Ui* ui)
 	anim_add_contact_clicked(ui);
 }
 
+fn void anim_tools_trim(Ui* ui)
+{
+	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
+	anim_trim_clicked(ui);
+}
+
+fn void anim_tools_close_loop(Ui* ui)
+{
+	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
+	anim_close_loop_clicked(ui);
+}
+
 fn void anim_tools_prevent(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -220,10 +232,11 @@ fn void anim_tools_prevent(Ui* ui)
 fn Element* build_anim_tools_menu(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	bool none = app.clip(app.editing) == null;
+	AnimTemplate* clip = app.clip(app.editing);
+	bool none = clip == null;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Prevent intersections" })
+	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Make loop…", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -237,6 +250,12 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_ADD_CONTACT_ID);
 			@node((PopupMenuItem) { .item = { .label = "Optimize keys…", .on_select = &anim_tools_optimize, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_OPTIMIZE_ID);
+			@node((PopupMenuItem) { .item = { .label = "Trim…", .on_select = &anim_tools_trim, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id("anim-trim");
+			@node((PopupMenuItem) { .item = { .label = "Close loop", .on_select = &anim_tools_close_loop,
+				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
+			@node((PopupMenuItem) { .item = { .label = "Make loop…", .on_select = &anim_tools_make_loop, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
 			// The one normal collision control; the rest is behind the clip menu's
 			// Collision — and none of it with the system switched off in Settings.
 			if (app.config.self_collision)
@@ -549,12 +568,6 @@ fn void anim_menu_mirror(Ui* ui)
 	anim_mirror_clicked(ui);
 }
 
-fn void anim_menu_close_loop(Ui* ui)
-{
-	anim_clip_menu_closed(ui);
-	anim_close_loop_clicked(ui);
-}
-
 fn void anim_menu_unbind(Ui* ui)
 {
 	anim_clip_menu_closed(ui);
@@ -598,14 +611,8 @@ fn Element* build_anim_clip_menu(Ui* ui)
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-duplicate");
 			@node((PopupMenuItem) { .item = { .label = "Stretch timing…", .on_select = &anim_retime_clicked,
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-retime");
-			@node((PopupMenuItem) { .item = { .label = "Trim…", .on_select = &anim_trim_clicked,
-				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-trim");
 			@node((PopupMenuItem) { .item = { .label = "Mirror animation", .on_select = &anim_menu_mirror,
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-mirror-clip");
-			@node((PopupMenuItem) { .item = { .label = "Close loop", .on_select = &anim_menu_close_loop,
-				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
-			@node((PopupMenuItem) { .item = { .label = "Make loop", .on_select = &anim_menu_make_loop,
-				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
 			@node((PopupMenuItem) { .item = { .label = "Fix mapping…", .on_select = &anim_fix_mapping_clicked,
 				.disabled = !app.clip_mappable(app.editing) }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FIX_MAPPING_ID);
 			if (app.config.self_collision)

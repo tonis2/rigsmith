@@ -437,3 +437,111 @@ fn void mirroring_an_aimed_side_reflects_what_is_shown() @test
 	}
 	test::@check(pairs > 0, "the biped has no twins to compare");
 }
+
+// The turn each key gives the left leg, reflected: what the right should hold.
+fn Vec3 reflected_turn(Quaternionf turn)
+{
+	Vec3 got = turn_of_quaternion(turn);
+	return { got.x, -got.y, -got.z };
+}
+
+<*
+ Apply to on Whole clip: the twin takes the reflection at every key, not the
+ playhead's alone, as one undo step. Re-introduce: drop the reach from
+ `mirror_pose`, and the right leg at 0.5 s stays at rest.
+*>
+fn void whole_clip_mirrors_onto_the_twin_at_every_key() @test
+{
+	Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+	io::printn("Mirror pose on Whole clip writes the right leg at both keys");
+
+	f.app.key_reach = WHOLE_CLIP;
+	Vec3 hips_before = turn_of(f.entry(HIPS, 0.5f));
+	Vec3 right_before = turn_of(f.entry(RIGHT, 0.5f));
+	sz cursor = f.app.undo_stack.cursor;
+	test::@check(f.app.mirror_pose(), "the mirror was refused");
+	test::@check(f.app.undo_stack.cursor == cursor + 1, "mirroring the clip was not one history entry");
+	Quaternionf[2] turns = { f.first, f.second };
+	foreach (usz i, time : (float[2]){ 0.0f, 0.5f })
+	{
+		test::@check(same_turn(turn_of(f.entry(LEFT, time)), turn_of_quaternion(turns[i])), "the left leg was rewritten at %f", time);
+		test::@check(same_turn(turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
+			"the right leg at %f is not the left's reflection", time);
+	}
+	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), hips_before), "mirroring a leg rewrote the hips");
+	test::@check(f.app.clip(f.app.editing).keyframes.len == 2, "the mirror added a key");
+
+	test::@check(f.app.undo() && same_turn(turn_of(f.entry(RIGHT, 0.5f)), right_before),
+		"one undo did not put the right leg back");
+}
+
+<*
+ Apply to on Selected keys: the picked keys take the reflection, a key outside
+ them keeps the twin's own turn, and the pick stays for the next edit.
+ Re-introduce: write every key of the clip, and the key at 0.75 s changes.
+*>
+fn void selected_keys_mirror_onto_those_keys_alone() @test
+{
+	Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+	io::printn("Mirror pose on Selected keys writes the right leg at the picked keys only");
+
+	Quaternionf third = quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), 0.25f);
+	test::@check(f.key_left(0.75f, third), "the third key did not land");
+	f.app.stop_animation();
+	f.app.edit_time = 0.0f;
+	f.app.select(f.left);
+	f.app.key_reach = SELECTED_KEYS;
+	test::@check(f.app.select_animation_keys_between(f.app.editing, 0.0f, 0.5f) == 2, "the two keys were not picked");
+	Vec3 outside = turn_of(f.entry(RIGHT, 0.75f));
+
+	test::@check(f.app.mirror_pose(), "the mirror was refused");
+	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.0f)), reflected_turn(f.first)), "the first picked key was not mirrored");
+	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.5f)), reflected_turn(f.second)), "the second picked key was not mirrored");
+	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.75f)), outside), "a key outside the pick was mirrored");
+	test::@check(f.app.animation_key_selection_count(f.app.editing) == 2, "the pick did not stay");
+}
+
+<*
+ A turn made on the left leg and not yet keyed is keyed across the clip first,
+ so the right leg mirrors what is on screen, and one undo takes back both.
+ Re-introduce: mirror off the clip alone, and the right leg reflects the left
+ without the turn.
+*>
+fn void an_unkeyed_turn_is_spread_before_it_is_mirrored() @test
+{
+	Figure f;
+	bool opened = f.open();
+	defer f.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
+	io::printn("Mirror pose on Whole clip over an unkeyed turn keys it, then mirrors it");
+
+	f.app.key_reach = WHOLE_CLIP;
+	Quaternionf extra = quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), -0.1f);
+	test::@check(f.app.pose_from_clip(f.app.editing, 0.0f), "the draft did not open");
+	f.app.edit_time = 0.0f;
+	test::@check(f.app.set_working_pose(f.left, f.first.mul(extra).normalize(), {}), "the left leg would not turn");
+	f.app.pose_edit_pending = true;
+	Vec3 right_before = turn_of(f.entry(RIGHT, 0.5f));
+
+	sz cursor = f.app.undo_stack.cursor;
+	test::@check(f.app.mirror_pose(), "the mirror was refused");
+	Quaternionf[2] turns = { f.first.mul(extra).normalize(), f.second.mul(extra).normalize() };
+	foreach (usz i, time : (float[2]){ 0.0f, 0.5f })
+	{
+		test::@check(same_turn(turn_of(f.entry(LEFT, time)), turn_of_quaternion(turns[i])), "the left leg at %f lacks the turn", time);
+		test::@check(same_turn(turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
+			"the right leg at %f is not the turned left's reflection", time);
+	}
+	test::@check(!f.app.pose_edit_pending, "the keyed turn was left pending");
+
+	// The keying and the mirror are two edits chained into one step.
+	test::@check(f.app.undo() && f.app.undo_stack.cursor == cursor, "keying and mirroring were not one undo step");
+	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.second))
+		&& same_turn(turn_of(f.entry(RIGHT, 0.5f)), right_before), "one undo did not put both legs back");
+}

@@ -665,8 +665,8 @@ fn void the_interpolation_popover_sets_the_selected_keys() @test
 	test::@check(f.ui.find(Timeline)!!.widget_as(Timeline).marks[2].curve == HOLD, "the sheet does not draw the key as Step");
 }
 
-// The ⋯ clip menu holds the clip-wide actions, and + From library opens the
-// Assets tab narrowed to animations.
+// The ⋯ clip menu holds the clip-wide actions, Clip tools the trim and loop
+// tools, and + From library opens the Assets tab narrowed to animations.
 fn void the_clip_menu_and_from_library() @test
 {
 	Fixture f;
@@ -676,14 +676,20 @@ fn void the_clip_menu_and_from_library() @test
 
 	f.click(f.center_of(crig::ANIM_MORE_ID)!!);
 	f.ui.flush();
-	foreach (id : (String[]) { "anim-properties", "anim-duplicate", "anim-retime", "anim-trim",
-		"anim-mirror-clip", "anim-close-loop", crig::ANIM_MAKE_LOOP_ID, "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID })
+	foreach (id : (String[]) { "anim-properties", "anim-duplicate", "anim-retime",
+		"anim-mirror-clip", "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID })
 	{
 		test::@check(f.in_tree(id), "the clip menu has no %s", id);
 	}
+	// Trim and the two loop tools are Clip tools.
+	String[3] tools = { "anim-trim", "anim-close-loop", crig::ANIM_MAKE_LOOP_ID };
+	foreach (id : tools) test::@check(!f.in_tree(id), "the clip menu still has %s", id);
 	f.click({ 4, crig::WIN_H - 4 });
 	f.ui.flush();
 	test::@check(!f.ui.find_id(crig::ANIM_CLIP_MENU_ID)!!.widget_as(Dialog).open, "an outside click left the clip menu open");
+	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
+	foreach (id : tools) test::@check(f.in_tree(id), "Clip tools has no %s", id);
+	f.close_menu();
 
 	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_FROM_LIBRARY_ID);
 	test::@check(!f.app.asset_filter.any_kind && f.app.asset_filter.kind == ANIMATION,

@@ -119,6 +119,32 @@ fn void AppState.keep_limit_frames_recorded(&self, uint id, Vec3 from, Vec3 to)
 }
 
 <*
+ Moves a table pinned to a frame of its own onto the axes its bone derives —
+ for a digit, its hand's — and drops the frame: the swing rows trade by the
+ nearest quarter turn of the roll between the two (`limits_rolled_onto`), so the
+ joint allows what it did, now about the axes its neighbours use.
+
+ What the joint card's Use bone axes does, for a table an older file, a move or
+ a mirror pinned.
+
+ @return `False when the table has no saved frame or its bone derives none.`
+*>
+fn bool AppState.use_bone_axes_recorded(&self, uint id)
+{
+	JointRotationLimits limits = self.doc.rotation_limits_of(id);
+	if (!limits.has_saved_frame) return false;
+	@pool()
+	{
+		uint[] ids;
+		rig::Skeleton? skeleton = build_skeleton(&self.doc, tmem, &ids);
+		if (catch skeleton) return false;
+		limits = limits_on_bone_axes(&skeleton, ids, limits);
+	};
+	if (limits.has_saved_frame) return false;
+	return self.set_rotation_limits_recorded(id, limits);
+}
+
+<*
  Pins a shell to a dot, or unpins it, leaving the group open.
 
  The uncommitted half of `pin_shell`, so a batch of pins is one Ctrl+Z. Zero is

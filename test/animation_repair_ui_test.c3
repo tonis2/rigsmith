@@ -201,3 +201,69 @@ fn void fix_mapping_matches_a_library_joint_by_hand() @test
 	test::eq(f.app.doc.joint_maps.len, (sz)0);
 	test::@check(f.app.pack_reach((usz)ref.pack).answers(source), "undo did not bring the joint back");
 }
+
+// Four seconds of hips swinging once every 1.1 s, keyed every frame as a
+// generated take lands.
+fn AnimTemplate striding_take()
+{
+	usz keys = 4 * 60 + 1;
+	AnimKeyframe[] frames = alloc::new_array(mem, AnimKeyframe, (sz)keys);
+	foreach (usz k, &frame : frames)
+	{
+		float t = (float)k / 60.0f;
+		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
+		dots[0] = { .joint_name = "hips".copy(mem), .axis = { 1, 0, 0 },
+			.angle = 0.3f * (float)math::sin(t * (float)math::PI * 2.0f / 1.1f) };
+		*frame = { .time = t, .dots = dots };
+	}
+	return { .name = "Take".copy(mem), .duration = 4.0f, .keyframes = frames, .owned = true };
+}
+
+<*
+ Make loop, from Clip tools, asks before it replaces the clip; declining leaves
+ the take, and accepting turns it into its cycle under its own name, with no
+ second clip, as one undo step.
+
+ Re-introduce: land the cut as a clip of its own (`in_place` false) and the take
+ is still four seconds long, beside a "Take loop".
+*>
+fn void make_loop_asks_then_replaces_the_clip() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	f.app.editing = f.app.author_clip(striding_take());
+	test::@check(f.app.editing.valid(), "the take did not land");
+	f.app.show_edited();
+	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
+	f.ui.flush();
+	Element* panel = f.ui.find_id(crig::ANIM_MAKE_LOOP_CONFIRM_ID)!!;
+	ConfirmDialog* ask = panel.widget_as(ConfirmDialog);
+	sz bound = f.app.doc.animations.len();
+	sz history = f.app.undo_stack.cursor;
+
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MAKE_LOOP_ID);
+	test::@check(ask.asking(panel), "Make loop did not ask first");
+	test::@check(ask.message.str_view().contains("Take"), "the question does not name the clip");
+	f.close_menu();
+	test::@check(!ask.asking(panel), "Escape did not decline");
+	AnimTemplate* take = f.app.clip(f.app.editing);
+	test::@check(take.duration == 4.0f && !take.loop, "declining changed the take");
+	test::eq(f.app.undo_stack.cursor, history);
+
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MAKE_LOOP_ID);
+	ask.withdraw(panel);
+	crig::anim_make_loop_confirmed(f.ui);
+	f.ui.flush();
+	AnimTemplate* cycle = f.app.clip(f.app.editing);
+	test::eq(cycle.name, "Take");
+	test::@check(cycle.loop && math::abs(cycle.duration - 1.1f) < 0.05f, "the take is not its 1.1 s cycle: %.3f s", cycle.duration);
+	test::@check(!f.app.clip_named_in_authored("Take loop").valid(), "Make loop added a clip of its own");
+	test::eq(f.app.doc.animations.len(), bound);
+	test::eq(f.app.undo_stack.cursor, history + 1);
+
+	test::@check(f.app.undo(), "the cut did not undo");
+	take = f.app.clip(f.app.clip_named_in_authored("Take"));
+	test::@check(take.duration == 4.0f && !take.loop, "undo did not bring the take back");
+}

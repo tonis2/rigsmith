@@ -6128,6 +6128,63 @@ fn void collision_exclusions_cross_the_wire_read_back_and_undo() @test
 		"an exclusion missing its other joint was accepted, or refused without naming the fields");
 }
 
+<*
+ bone_axes moves a table pinned to a frame of its own onto its bone's axes over
+ the wire, its swing rows traded by the quarter turn between the two, as one
+ undo step. Beside clear_frame it is refused, and changes nothing.
+
+ Re-introduce: drop the `bone_axes` read from `op_limits`, and the call is
+ refused as given nothing to change.
+*>
+fn void bone_axes_moves_a_pinned_table_onto_the_bones_axes() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+	uint knee = f.app.doc.dots[1].id;
+
+	crig::JointRotationLimits table = crig::unconstrained_rotation(knee);
+	table.constrained = true;
+	table.axes[0] = { .allowed = true, .minimum = -0.25f, .maximum = 1.5f };
+	table.axes[2] = { .allowed = false };
+	crig::RigView view = f.app.open_rig(mem)!!;
+	crig::JointLimitFrame derived = crig::joint_limit_frame(&view.skeleton, view.dot_ids, table);
+	view.free(mem);
+	table.has_saved_frame = true;
+	table.saved_frame = derived.rotation.mul(quaternion::from_axis_angle{float}({ 0, 1, 0 },
+		(float)math::PI * 0.5f)).normalize();
+	test::@check(f.app.set_rotation_limits_recorded(knee, table), "the pinned table did not land");
+	f.app.undo_stack.commit();
+
+	test::@check(f.refuses_tool("edit_rig",
+		`{"ops":[{"op":"limits","joint":"knee","bone_axes":true,"clear_frame":true}]}`, "bone_axes", "clear_frame"),
+		"bone_axes beside clear_frame was accepted, or refused without naming both");
+	test::@check(f.app.doc.rotation_limits_of(knee).has_saved_frame, "a refused call dropped the frame");
+
+	Object*? moved = f.call_tool("edit_rig", `{"ops":[{"op":"limits","joint":"knee","bone_axes":true}]}`);
+	if (catch moved)
+	{
+		test::@check(false, "edit_rig refused bone_axes on a pinned table");
+		return;
+	}
+	moved.free();
+	crig::JointRotationLimits held = f.app.doc.rotation_limits_of(knee);
+	test::@check(!held.has_saved_frame, "bone_axes left the frame saved");
+	test::@check(!held.axes[0].allowed && held.axes[2].allowed
+		&& held.axes[2].minimum == -1.5f && held.axes[2].maximum == 0.25f,
+		"the swing rows did not trade by the quarter turn");
+
+	Object*? undone = f.call_tool("undo", `{}`);
+	if (catch undone)
+	{
+		test::@check(false, "bone_axes would not undo");
+		return;
+	}
+	undone.free();
+	test::@check(f.app.doc.rotation_limits_of(knee).has_saved_frame, "one undo did not bring the frame back");
+}
+
 fn void joint_limits_refuse_invalid_ranges_and_take_a_forks_own_child() @test
 {
 	Fixture fixture;

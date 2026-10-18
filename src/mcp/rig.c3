@@ -53,7 +53,8 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 		"z":{"type":"object","description":"limits only: the swing across the bone about the joint's Z, in radians (where the bone points).","properties":{"allow":{"type":"boolean"},"minimum":{"type":"number"},"maximum":{"type":"number"},"locked":{"type":"number"}}},
 		"primary_child":{"type":"string","description":"limits only: for a branching joint, which direct child defines local +Y, in place of the one that carries its bone on. Empty clears the choice."},
 		"frame":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"number"},"description":"limits only: an explicit rest/model-space local-axis quaternion [x,y,z,w], overriding topology."},
-		"clear_frame":{"type":"boolean","description":"limits only: remove an explicit frame and derive axes from the bone again."},
+		"clear_frame":{"type":"boolean","description":"limits only: remove an explicit frame and derive axes from the bone again, keeping the numbers as they are."},
+		"bone_axes":{"type":"boolean","description":"limits only: move a table saved on a frame of its own onto the axes its bone derives (for a finger, its hand's: X bends it toward the palm), trading the x and z rows by the nearest quarter turn between the two frames so the joint allows what it did. Rows given in the same op are read on the new axes. The joint card's Use bone axes."},
 		"reset":{"type":"boolean","description":"limits only: remove all limits and saved frame choices from this joint."},
 		"plane":{"type":"number","description":"symmetry only: the model-space X the mirror reflects across (a left dot at plane+d, its right twin at plane-d). Give this or \"from\"."},
 		"from":{"type":"string","enum":["skeleton","mesh"],"description":"symmetry only: derive the plane instead of naming it — \"skeleton\" reads it off the rig's centre joints (named joints with no left/right twin, which sit on it), \"mesh\" resets it to the model's bounding-box centre (the default a fresh rig gets)."}
@@ -597,7 +598,9 @@ fn bool op_pin(AppState* app, Object* op, usz index, bool pinning, DString* deta
  are partial updates over the current table; the UI can therefore change one
  field without reconstructing the other two axes. Supplying any row enables
  limits unless `active:false` says otherwise. `reset:true` is the concise way
- back to an entirely free joint.
+ back to an entirely free joint. `bone_axes:true` moves a table pinned to a
+ frame of its own onto its bone's axes (`limits_on_bone_axes`) before any row
+ given beside it is read.
 *>
 fn bool op_limits(AppState* app, Object* op, usz index, DString* detail) @local
 {
@@ -622,6 +625,18 @@ fn bool op_limits(AppState* app, Object* op, usz index, DString* detail) @local
 	bool has_frame = member(op, "frame") != null;
 	bool has_clear_frame = member(op, "clear_frame") != null;
 	bool clear_frame = false;
+	bool has_bone_axes = member(op, "bone_axes") != null;
+	bool bone_axes = false;
+	if (has_bone_axes)
+	{
+		bool? asked = op.get_bool("bone_axes");
+		if (catch asked)
+		{
+			detail.appendf(`ops[%d].bone_axes must be true or false.`, index);
+			return false;
+		}
+		bone_axes = asked;
+	}
 	if (has_clear_frame)
 	{
 		bool? asked = op.get_bool("clear_frame");
@@ -632,12 +647,17 @@ fn bool op_limits(AppState* app, Object* op, usz index, DString* detail) @local
 		}
 		clear_frame = asked;
 	}
-	if (!has_reset && !has_active && !has_axis && !has_child && !has_frame && !has_clear_frame)
+	if (!has_reset && !has_active && !has_axis && !has_child && !has_frame && !has_clear_frame && !has_bone_axes)
 	{
-		detail.appendf(`ops[%d] limits was given nothing to change. Supply active, x/y/z, primary_child, frame, clear_frame, or reset.`, index);
+		detail.appendf(`ops[%d] limits was given nothing to change. Supply active, x/y/z, primary_child, frame, clear_frame, bone_axes, or reset.`, index);
 		return false;
 	}
-	if (reset && (has_active || has_axis || has_child || has_frame || has_clear_frame))
+	if (bone_axes && (has_frame || clear_frame))
+	{
+		detail.appendf(`ops[%d] bone_axes moves the table onto the bone's own axes, so it cannot be combined with frame or clear_frame.`, index);
+		return false;
+	}
+	if (reset && (has_active || has_axis || has_child || has_frame || has_clear_frame || has_bone_axes))
 	{
 		detail.appendf(`ops[%d] reset removes the whole limit table, so it cannot be combined with limit fields.`, index);
 		return false;
@@ -661,6 +681,25 @@ fn bool op_limits(AppState* app, Object* op, usz index, DString* detail) @local
 		else if (has_axis)
 		{
 			settings.constrained = true;
+		}
+
+		// Onto the bone's axes first, so rows given beside it are read on them.
+		if (bone_axes && settings.has_saved_frame)
+		{
+			RigView? opened = app.open_rig(mem);
+			if (catch opened)
+			{
+				detail.appendf(`ops[%d] cannot derive the bone's axes because this rig has no skeleton.`, index);
+				return false;
+			}
+			RigView view = opened;
+			defer view.free(mem);
+			settings = limits_on_bone_axes(&view.skeleton, view.dot_ids, settings);
+			if (settings.has_saved_frame)
+			{
+				detail.appendf(`ops[%d] cannot use the bone's axes: its bone derives none.`, index);
+				return false;
+			}
 		}
 
 		String[3] fields = { "x", "y", "z" };

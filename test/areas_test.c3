@@ -430,7 +430,7 @@ fn void a_version_26_session_reads_its_pins_with_no_author() @test
 
 	String older = text.replace(mem, four, three);
 	defer older.free(mem);
-	String versioned = older.replace(mem, `"version": 28`, `"version": 26`);
+	String versioned = older.replace(mem, `"version": 29`, `"version": 26`);
 	defer versioned.free(mem);
 	crig::RigDocument doc = crig::parse_session(mem, versioned)!!;
 	defer doc.free();

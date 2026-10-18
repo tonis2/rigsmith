@@ -35,14 +35,15 @@ fn AnimRef AppState.smooth_clip(&self, AnimRef ref, String[] joints, float windo
 <*
  Cut a seamless cycle out of the take (`clip_cycle`) as a new looping clip, its
  keys thinned at Optimize keys' Light tolerance, bound and made the clip being
- edited, as one undo step. The take stays as it was.
+ edited, as one undo step. The take stays as it was, unless `in_place`.
 
- @param name : `The cycle's name, made unique; empty for the take's with " loop".`
+ @param name : `The cycle's name, made unique; empty for the take's with " loop". Unused in place.`
  @param why : `Receives the reason on refusal.`
+ @param in_place : `Replace the take with the cycle, under its name, as the pane's Make loop does.`
  @return `The new clip, or NO_ANIM.`
 *>
 fn AnimRef AppState.cut_cycle(&self, AnimRef ref, float period_min, float period_max, float from_min, float from_max,
-	float crossfade, String name, CycleCut* cut, DString* why)
+	float crossfade, String name, CycleCut* cut, DString* why, bool in_place = false)
 {
 	if (!self.ensure_clip_imported(ref) || !self.clip(ref))
 	{
@@ -50,7 +51,8 @@ fn AnimRef AppState.cut_cycle(&self, AnimRef ref, float period_min, float period
 		return NO_ANIM;
 	}
 	AnimTemplate take = *self.clip(ref);
-	String called = self.unused_clip_name(mem, name.len > 0 ? name : string::tformat("%s loop", take.name));
+	String called = in_place ? take.name.copy(mem)
+		: self.unused_clip_name(mem, name.len > 0 ? name : string::tformat("%s loop", take.name));
 	defer called.free(mem);
 
 	RigView? opened = self.open_rig(mem);
@@ -86,7 +88,7 @@ fn AnimRef AppState.cut_cycle(&self, AnimRef ref, float period_min, float period
 	}
 
 	self.clear_animation_key_selection();
-	AnimRef landed = self.author_clip(loop);
+	AnimRef landed = in_place ? self.land_clip(ref, loop) : self.author_clip(loop);
 	if (!landed.valid())
 	{
 		why.append_string("the cycle would not land");

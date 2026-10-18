@@ -170,7 +170,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "ctrl+C", .action = "copy the pose of the selected joints — all of them when none is selected" },
 	{ .binding = "ctrl+V", .action = "paste that pose at the playhead, as keys — one undo takes it back" },
 	{ .binding = "ctrl+shift+V", .action = "paste it mirrored: each joint onto its twin, reflected" },
-	{ .binding = "shift+M", .action = "mirror the pose of the selected joints — all of them when none is selected" },
+	{ .binding = "shift+M", .action = "mirror the selected joints' pose (all if none) on the keys Apply to reaches" },
 	{ .binding = "Poses", .action = "save named poses; apply one whole, mirrored or to selected joints" },
 	// The key clipboard lives on the sheet itself: the menu on a key copies it,
 	// the menu on empty sheet pastes at that time. The chords do the same while
@@ -184,7 +184,8 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "+ Contact", .action = "plant the selected foot or hand from the playhead, as a bar" },
 	{ .binding = "a contact bar", .action = "drag it or its ends; drag an empty lane to add; right-click deletes" },
 	{ .binding = "the time readout", .action = "type a frame (15) or a time (0.5 s) and press Enter to go there" },
-	{ .binding = "the ⋯ by the clip", .action = "rename, duplicate, stretch, trim, mirror, remove or delete the clip" },
+	{ .binding = "the ⋯ by the clip", .action = "rename, duplicate, stretch, mirror, remove or delete the clip" },
+	{ .binding = "Clip tools", .action = "check, trim, close the loop or cut one (Make loop replaces the clip)" },
 
 	{ .heading = "Timeline (while an animation is open)" },
 	{ .binding = "space", .action = "play or pause" },

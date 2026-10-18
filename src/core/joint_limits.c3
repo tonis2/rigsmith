@@ -60,6 +60,18 @@ fn bool JointAxisLimit.same(self, JointAxisLimit other) => self.allowed == other
 	&& self.minimum == other.minimum && self.maximum == other.maximum
 	&& self.locked == other.locked;
 
+<*
+ The row a turn the other way round needs: the range mirrored through zero, and
+ the locked angle with it. Taken from zero rather than negated, so an end at 0
+ stays 0 and the card never reads "-0.0".
+*>
+fn JointAxisLimit JointAxisLimit.negated(self) => {
+	.allowed = self.allowed,
+	.minimum = 0.0f - self.maximum,
+	.maximum = 0.0f - self.minimum,
+	.locked = 0.0f - self.locked,
+};
+
 fn bool JointAxisLimit.valid(self) => math::is_finite(self.minimum)
 	&& math::is_finite(self.maximum) && math::is_finite(self.locked)
 	&& self.minimum <= self.maximum;
@@ -499,6 +511,9 @@ fn Vec3 legacy_frame_seed(Vec3 y) @private
  it up and down; along Y or Z (a spine, a leg, a foot) from world X, so X bends
  it forward and back. Every segment of a limb lying along one axis shares its
  axes that way. Any other bone keeps the cardinal it leans on least.
+
+ A digit leaning far enough off its hand that this would turn its X sideways
+ is rolled by the hand instead (`along_the_knuckles`).
 *>
 fn Vec3 frame_seed(Vec3 y) @private
 {
@@ -527,7 +542,8 @@ fn JointLimitFrame frame_from_seed(Vec3 y, Vec3 seed, uint direction_dot) @priva
  +Y follows Blender's familiar bone-axis convention. This is an editor frame;
  the glTF writer's -Z bone-node convention is converted at export and must not
  leak into the labels a user edits. Roll is deterministic: project the world
- cardinal `frame_seed` picks onto the bone's perpendicular plane.
+ cardinal `frame_seed` picks onto the bone's perpendicular plane. A digit is
+ rolled by its hand on top of this, in `joint_limit_frame_by_index`.
 *>
 fn JointLimitFrame frame_along(Vec3 direction, uint direction_dot = 0) @private
 {
@@ -550,6 +566,161 @@ fn JointLimitFrame legacy_limit_frame(JointLimitFrame derived)
 	if (!derived.usable()) return derived;
 	Vec3 y = derived.axis(Y);
 	return frame_from_seed(y, legacy_frame_seed(y), derived.direction_dot);
+}
+
+<*
+ The frame a derived one was before session 29: the same bone, rolled by the
+ world axis `frame_seed` picks rather than by its hand (`along_the_knuckles`).
+ What an older session's table was written against, so loading one can pin it
+ where it was. For a joint that is no digit it is the derived frame itself.
+*>
+fn JointLimitFrame cardinal_limit_frame(JointLimitFrame derived)
+{
+	if (!derived.usable()) return derived;
+	return frame_along(derived.axis(Y), derived.direction_dot);
+}
+
+<*
+ How nearly a digit's world-rolled X has to lie along its hand's knuckle line to
+ be kept as it is: fifteen degrees, as a cosine. A finger held out along a world
+ axis keeps the axes it always had, to the bit; one leaning far enough that the
+ world axis would turn it sideways is rolled by its hand instead.
+*>
+const float HAND_FRAME_KEEP = 0.966f;
+
+<*
+ The line across a hand's knuckles, for a digit of it: the way the digit's X
+ runs so that X bends every finger of the hand, and its thumb, toward the palm.
+
+ The hand is the fork the digit's chain hangs from (`Skeleton.digits`) and the
+ chains under it, each standing for its first joint off the fork. With three
+ chains or more the one leaving the fork furthest from the way the bone into
+ it runs — a thumb — is left out, as it sits off the palm. The line is the
+ widest pair of what is left, square to the way the hand points.
+
+ It is signed once for the whole hand, along whichever of the X and Z
+ `frame_along` gives the hand's own direction lies nearer it: a hand held out
+ along a world axis keeps the sign its fingers always had, and a hand and its
+ reflection come out reflected, up to the per-axis turn the mirror reads
+ (`reflection_signs_between`).
+
+ Name-free, like `Skeleton.digits`, so it is the hand the binder cuts at the
+ knuckles.
+
+ @return `False for a joint that is not a digit, or a hand with fewer than two chains or no width.`
+*>
+fn bool knuckle_line(rig::Skeleton* skeleton, usz joint, Vec3* across) @private
+{
+	usz count = skeleton.len();
+	if (joint >= count) return false;
+	@pool()
+	{
+		bool[] digit = skeleton.digits(tmem);
+		if (!digit[joint]) return false;
+
+		// Up the chain to its first joint; the fork is above that. Bounded, so a
+		// parent cycle in a hand-built skeleton cannot hang it.
+		usz first = joint;
+		for (usz step = 0; step < count; step++)
+		{
+			int parent = skeleton.parents[first];
+			if (parent < 0 || (usz)parent >= count || !digit[(usz)parent]) break;
+			first = (usz)parent;
+		}
+		int fork = skeleton.parents[first];
+		if (fork < 0 || (usz)fork >= count) return false;
+		Vec3 base = skeleton.joints[(usz)fork];
+
+		// Each chain's first joint off the fork: a chain that starts on the fork
+		// itself stands for the next joint down it.
+		Vec3[] points = alloc::new_array(tmem, Vec3, (sz)count);
+		usz chains = 0;
+		for (usz start = 0; start < count; start++)
+		{
+			if (skeleton.parents[start] != fork || !digit[start]) continue;
+			usz walk = start;
+			for (usz step = 0; step < count; step++)
+			{
+				if ((skeleton.joints[walk] - base).length_sq() > LIMIT_FRAME_EDGE_SQ) break;
+				usz next = count;
+				for (usz c = 0; c < count; c++)
+				{
+					if (skeleton.parents[c] == (int)walk && digit[c]) { next = c; break; }
+				}
+				if (next == count) break;
+				walk = next;
+			}
+			if ((skeleton.joints[walk] - base).length_sq() <= LIMIT_FRAME_EDGE_SQ) continue;
+			points[chains++] = skeleton.joints[walk];
+		}
+		if (chains < 2) return false;
+
+		Vec3 mean = {};
+		foreach (p : points[:chains]) mean += (p - base).normalize();
+		int above = skeleton.parents[(usz)fork];
+		Vec3 incoming = above >= 0 && (usz)above < count
+			? base - skeleton.joints[(usz)above] : (Vec3){};
+		Vec3 reference = incoming.length_sq() > LIMIT_FRAME_EDGE_SQ ? incoming.normalize() : mean.normalize();
+
+		if (chains >= 3)
+		{
+			usz off = 0;
+			float least = 2.0f;
+			foreach (usz i, p : points[:chains])
+			{
+				float along = (p - base).normalize().dot(reference);
+				if (along < least) { least = along; off = i; }
+			}
+			points[off] = points[chains - 1];
+			chains--;
+		}
+
+		Vec3 centre = {};
+		foreach (p : points[:chains]) centre += p;
+		Vec3 ahead = centre / (float)chains - base;
+		Vec3 hand = ahead.length_sq() > LIMIT_FRAME_EDGE_SQ ? ahead.normalize() : reference;
+
+		Vec3 widest = {};
+		float width = 0.0f;
+		for (usz a = 0; a < chains; a++)
+		{
+			for (usz b = a + 1; b < chains; b++)
+			{
+				Vec3 gap = points[b] - points[a];
+				gap -= hand * gap.dot(hand);
+				float size = gap.length_sq();
+				if (size > width) { width = size; widest = gap; }
+			}
+		}
+		if (width <= LIMIT_FRAME_EDGE_SQ) return false;
+		Vec3 line = widest.normalize();
+
+		JointLimitFrame held_out = frame_along(hand);
+		if (!held_out.usable()) return false;
+		float on_x = line.dot(held_out.axis(X));
+		float on_z = line.dot(held_out.axis(Z));
+		float lead = math::abs(on_x) >= math::abs(on_z) ? on_x : on_z;
+		*across = lead < 0.0f ? -line : line;
+		return true;
+	};
+}
+
+<*
+ A digit's frame rolled so its X runs along its hand's knuckle line
+ (`knuckle_line`): X bends it toward the palm, Z spreads it and Y twists it,
+ whichever way it leans. A frame whose X already lies within `HAND_FRAME_KEEP`
+ of the line is kept exactly, and so is one whose bone runs along the line,
+ which the line cannot roll.
+*>
+fn JointLimitFrame along_the_knuckles(JointLimitFrame frame, Vec3 across) @private
+{
+	Vec3 y = frame.axis(Y);
+	Vec3 x = across - y * across.dot(y);
+	float size = x.length();
+	if (size < LIMIT_FRAME_NEAR_AXIS) return frame;
+	x /= size;
+	if (x.dot(frame.axis(X)) >= HAND_FRAME_KEEP) return frame;
+	return frame_from_seed(y, x, frame.direction_dot);
 }
 
 <*
@@ -641,7 +812,10 @@ fn JointLimitFrame joint_limit_frame_by_index(
 	Vec3 edge = direction == (usz)skeleton.parents[joint]
 		? skeleton.joints[joint] - skeleton.joints[direction]
 		: skeleton.joints[direction] - skeleton.joints[joint];
-	return frame_along(edge, direction_dot);
+	JointLimitFrame frame = frame_along(edge, direction_dot);
+	Vec3 across;
+	if (!frame.usable() || !knuckle_line(skeleton, joint, &across)) return frame;
+	return along_the_knuckles(frame, across);
 }
 
 <*
@@ -770,6 +944,89 @@ fn JointLimitFrame joint_limit_frame(
 		}
 	}
 	return joint_limit_frame_by_index(skeleton, joint, primary, dot_ids);
+}
+
+<*
+ A table moved from `from` onto `to`, two frames on one bone that differ by a
+ roll about it: its swing rows traded by the nearest quarter turn of that roll,
+ its twist row as it is.
+
+ 	`JointRotationLimits moved = limits_rolled_onto(limits, limits.saved_frame, derived.rotation);`
+
+ A quarter turn about Y carries the X-Z plane onto itself, so a table rolled by
+ an exact one allows exactly what it did: turned a quarter, the swing that read
+ (x, z) reads (z, -x). What is left of the roll past the nearest quarter, an
+ eighth of a turn at most, turns the box by that much. `from` is laid onto
+ `to`'s bone first (`bone_carry`), so a frame saved off a bone that has since
+ moved is read by the roll it kept.
+*>
+fn JointRotationLimits limits_rolled_onto(JointRotationLimits limits, Quaternionf from, Quaternionf to)
+{
+	Quaternionf there = to.normalize();
+	Quaternionf held = from.normalize();
+	Quaternionf carried = bone_carry(held.rotate_vec3({ 0, 1, 0 }),
+		there.rotate_vec3({ 0, 1, 0 })).mul(held).normalize();
+	float[<4>] roll = there.invert().mul(carried).normalize().v;
+	float turn = 2.0f * (float)math::atan2(roll.y, roll.w);
+	int quarters = (int)math::round(turn / ((float)math::PI * 0.5f));
+	quarters = ((quarters % 4) + 4) % 4;
+
+	JointAxisLimit x = limits.axes[0];
+	JointAxisLimit z = limits.axes[2];
+	switch (quarters)
+	{
+		case 1:
+			limits.axes[0] = z;
+			limits.axes[2] = x.negated();
+		case 2:
+			limits.axes[0] = x.negated();
+			limits.axes[2] = z.negated();
+		case 3:
+			limits.axes[0] = z.negated();
+			limits.axes[2] = x;
+		default:
+			break;
+	}
+	return limits;
+}
+
+<*
+ The table moved onto the axes its bone derives — for a digit, its hand's — its
+ saved frame dropped and its swing rows traded by the nearest quarter turn of
+ the roll between the two (`limits_rolled_onto`). A table with no saved frame,
+ or on a bone that derives none, comes back as it is.
+*>
+fn JointRotationLimits limits_on_bone_axes(rig::Skeleton* skeleton, uint[] dot_ids, JointRotationLimits limits)
+{
+	if (!limits.has_saved_frame) return limits;
+	JointRotationLimits moved = limits;
+	moved.has_saved_frame = false;
+	moved.saved_frame = quaternion::IDENTITY;
+	JointLimitFrame derived = joint_limit_frame(skeleton, dot_ids, moved);
+	if (!derived.usable()) return limits;
+	return limits_rolled_onto(moved, limits.saved_frame, derived.rotation);
+}
+
+<*
+ How far apart, as the cosine of half the angle, a saved frame and its bone's
+ derived one have to be for the joint card to offer the bone's: a degree, so a
+ frame saved on the derived one is not offered back to itself.
+*>
+const float SAVED_FRAME_APART = 0.99996f;
+
+<*
+ Whether a table's saved frame sits off the axes its bone derives — for a
+ digit, its hand's — by more than `SAVED_FRAME_APART`: a table an older file, a
+ move or a mirror pinned, which `limits_rolled_onto` can carry back.
+*>
+fn bool saved_frame_apart(rig::Skeleton* skeleton, uint[] dot_ids, JointRotationLimits limits)
+{
+	if (!limits.has_saved_frame) return false;
+	Quaternionf saved = limits.saved_frame.normalize();
+	limits.has_saved_frame = false;
+	JointLimitFrame derived = joint_limit_frame(skeleton, dot_ids, limits);
+	if (!derived.usable()) return false;
+	return math::abs(derived.rotation.normalize().v.dot(saved.v)) < SAVED_FRAME_APART;
 }
 
 // ---------------------------------------------------------------------------

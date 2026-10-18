@@ -203,6 +203,53 @@ fn void a_branching_joint_card_follows_the_child_that_carries_its_bone() @test
 }
 
 <*
+ A table pinned to axes of its own is shown with a way onto its bone's: the
+ button moves it there, its swing rows traded by the quarter turn between the
+ two, in one undo step, and goes once it has. A derived table offers nothing.
+*>
+fn void a_pinned_tables_card_offers_the_bones_axes() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	JointPanelRig made = joint_panel_rig(&f);
+	f.app.select(made.joint);
+	crig::JointRotationLimits limits = crig::unconstrained_rotation(made.joint);
+	limits.constrained = true;
+	limits.axes[0] = { .allowed = true, .minimum = -0.5f, .maximum = 1.2f };
+	limits.axes[2] = { .allowed = false };
+	test::@check(f.app.set_rotation_limits_recorded(made.joint, limits), "the table was refused");
+	f.app.undo_stack.commit();
+	f.app.refresh_ui();
+	crig::refresh_joint_panel(f.ui);
+	f.feed({ 0, 0 });
+	test::@check(!f.in_tree(crig::JOINT_AXES_BONE_ID), "a derived table offered the bone's axes");
+
+	crig::JointLimitFrame derived = panel_frame(&f, made.joint);
+	limits.has_saved_frame = true;
+	limits.saved_frame = derived.rotation.mul(quaternion::from_axis_angle{float}({ 0, 1, 0 },
+		(float)math::PI * 0.5f)).normalize();
+	test::@check(f.app.set_rotation_limits_recorded(made.joint, limits), "the saved frame was refused");
+	f.app.undo_stack.commit();
+	f.app.refresh_ui();
+	crig::refresh_joint_panel(f.ui);
+	f.feed({ 0, 0 });
+	test::@check(f.in_tree(crig::JOINT_AXES_BONE_ID), "a pinned table offered no way onto the bone's axes");
+
+	f.click(f.center_of(crig::JOINT_AXES_BONE_ID)!!);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	crig::JointRotationLimits moved = f.app.doc.rotation_limits_of(made.joint);
+	test::@check(!moved.has_saved_frame, "the button left the frame saved");
+	test::@check(!moved.axes[0].allowed && moved.axes[2].allowed && moved.axes[2].minimum == -1.2f,
+		"the swing rows did not trade by the quarter turn");
+	test::@check(!f.in_tree(crig::JOINT_AXES_BONE_ID), "the button stayed after the table took the bone's axes");
+
+	test::@check(f.app.undo(), "the move did not undo");
+	test::@check(f.app.doc.rotation_limits_of(made.joint).has_saved_frame, "one undo did not bring the saved frame back");
+}
+
+<*
  The Joint card's dials turn the selected joint one bone-local axis at a time,
  and nothing is drawn around the joint to do it.
 
