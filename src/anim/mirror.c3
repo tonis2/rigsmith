@@ -74,7 +74,7 @@ fn AnimTemplate mirror_template(
 		.loop = template.loop,
 		.blend = template.blend,
 		.ground = mirror_ground(allocator, template.ground, phase),
-		.layers = layers_mirrored(allocator, template.layers),
+		.layers = layers_mirrored(allocator, template.layers, &template),
 		.aims = aims_mirrored(allocator, template.aims),
 		.aim_targets = aim_targets_mirrored(allocator, template.aim_targets),
 		.pins = pins_mirrored(allocator, template.pins),
@@ -137,11 +137,16 @@ fn AnimTemplate mirror_template(
    reflected axis (`x, -y, -z`), so a wave about Y swings the other way and one
    about X the same way. Timing, amplitude and the rest are untouched.
 
+ A shared layer comes out unlinked, laid on `clip`'s own clock (`AnimLayer.plain`):
+ mirrored, it is no longer the motion the other clips share, and mirroring it in
+ place must not flip theirs.
+
  The result replaces nothing: it is a deep copy, freed with `free_layers`.
 *>
-fn AnimLayer[] layers_mirrored(Allocator allocator, AnimLayer[] source)
+fn AnimLayer[] layers_mirrored(Allocator allocator, AnimLayer[] source, AnimTemplate* clip)
 {
-	AnimLayer[] out = layers_copy(allocator, source);
+	AnimLayer[] out = alloc::new_array(allocator, AnimLayer, (sz)source.len);
+	foreach (usz i, &layer : source) out[i] = layer.link.len > 0 ? layer.plain(allocator, clip) : layer.copy(allocator);
 	foreach (&layer : out)
 	{
 		foreach (usz i, entry : layer.mask) layer.mask[i] = twin_or_same(allocator, entry);

@@ -232,7 +232,14 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // palm. A table read from an older file, with no frame of its own, is pinned to
 // the frame it was written against wherever the two rules disagree, as at 23;
 // the joint card's Use bone axes carries it over when asked.
-const uint SESSION_VERSION = 29;
+//
+// 30 lets clips share a layer: `authored_clips[i].layers[l]` may carry a
+// `link` (the id every clip holding it shares), a `length` (the seconds its keys
+// span, on its own clock) and a `fit` (how that length meets the clip's). Absent
+// in an older file, which reads as unshared layers on the clip's own clock. The
+// bump is the usual direction — a version 29 binary would play a shared layer's
+// keys in the clip's seconds and stop keeping its copies in step.
+const uint SESSION_VERSION = 30;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.

@@ -571,6 +571,31 @@ struct Character
 	// A borrowed view of the active keyed layer's keys dressed as a clip, for
 	// the key editors (`key_clip`). Never owned, never freed.
 	AnimTemplate layer_keys_view;
+	// A stretched shared layer's keys at the times the timeline shows them: the
+	// times owned, the entries the layer's. Rebuilt when the layer, the stretch
+	// or the history moves (`AppState.layer_keys_on_timeline`).
+	AnimKeyframe[] layer_keys_scaled;
+	void* layer_keys_scaled_from;
+	float layer_keys_scaled_by;
+	uint layer_keys_scaled_revision;
+	// Raised while one clip's shared layers are being copied into the others,
+	// so the copies landing do not start the same copy again.
+	bool syncing_links;
+	// The last shared-layer id handed out this session; see `new_link_id`.
+	uint link_counter;
+	// The Add to animations dialog (ui/layer_share.c3): the clips it offers and
+	// which already share the layer, their labels and widget ids (owned; the
+	// dialog's widgets borrow them), its heading, and the fit chosen. And the
+	// Shared layer dialog: the shared layers other clips hold, by name and id.
+	AnimRef[] layer_share_targets;
+	bool[] layer_share_held;
+	String[] layer_share_labels;
+	String[] layer_share_ids;
+	String layer_share_heading;
+	usz layer_share_fit;
+	String[] layer_pick_names;
+	String[] layer_pick_links;
+	usz layer_pick_row;
 
 	// The pose library panel (pose_library.c3): the picked row, whether
 	// Apply writes only the selected joints, renaming the picked row, and the

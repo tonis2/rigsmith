@@ -1113,7 +1113,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 45;
+const int DOCS_VERSION @local = 46;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -7748,4 +7748,95 @@ fn void a_pin_out_of_reach_lowers_the_hips() @test
 	Vec3 foot = joints[2].transform(palette[2]);
 	test::@check(pose.offsets[0].y < -0.15f, "the hips stayed up (%.3f)", pose.offsets[0].y);
 	test::@check((foot - (Vec3){ 0, -0.2f, 0 }).length() < 0.02f, "the foot is %.3f from its pin", (foot - (Vec3){ 0, -0.2f, 0 }).length());
+}
+
+const String KNEE_CLIP @local = `{"name":"striding","duration":1.0,"loop":true,"keyframes":[{"time":0,"joints":[{"name":"hips","move":[0,0.01,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.2}},{"name":"foot","rotation":{"axis":[1,0,0],"angle":-0.1}}]},{"time":0.5,"joints":[{"name":"hips","move":[0,0,0]},{"name":"knee","rotation":{"axis":[1,0,0],"angle":0.7}},{"name":"foot","rotation":{"axis":[1,0,0],"angle":0.1}}]}]}`;
+
+fn bool keys_joint_named(crig::AppState* app, String clip, String joint) @local
+{
+	AnimTemplate* found = app.clip(app.clip_named_in_authored(clip));
+	if (!found) return false;
+	foreach (&frame : found.keyframes) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
+	return false;
+}
+
+<*
+ remove_keys with joints takes every key of those joints and the joints below
+ them, leaving the rest of the clip, as one undo step.
+
+ Re-introduce: remove only the named joint, and the foot keeps its keys.
+*>
+fn void remove_keys_by_joint_takes_the_joints_below() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+	Object*? authored = f.call_tool("apply_clip", KNEE_CLIP);
+	if (catch authored) { test::@check(false, "the clip authors"); return; }
+	defer authored.free();
+
+	Object*? removed = f.call_tool("remove_keys", `{"clip":"striding","joints":["knee"]}`);
+	if (catch removed) { test::@check(false, "remove_keys answers"); return; }
+	defer removed.free();
+	test::@check((removed.get_string("done") ?? "") == "joint keys removed", "remove_keys did not take the joints");
+	test::@check(!keys_joint_named(&f.app, "striding", "knee") && !keys_joint_named(&f.app, "striding", "foot"),
+		"the knee or the foot below it still has keys");
+	test::@check(keys_joint_named(&f.app, "striding", "hips"), "the hips lost their keys");
+	test::@check(f.app.undo() && keys_joint_named(&f.app, "striding", "foot"), "one undo did not bring the keys back");
+
+	// A joint the rig does not have is refused, and the clip is left as it is.
+	Object*? stranger = f.call_tool("remove_keys", `{"clip":"striding","joints":["elbow"]}`);
+	if (try stranger) stranger.free();
+	test::@check(keys_joint_named(&f.app, "striding", "knee"), "a refused call changed the clip");
+}
+
+<*
+ set_layer over the wire: extract lifts the knee and foot into a layer of their
+ own, share links it into a second clip with a fit of its own, an edit in the
+ first reaches the second, and unlink parts them.
+
+ Re-introduce: share without a link, and the rename does not reach the second clip.
+*>
+fn void set_layer_extracts_shares_and_unlinks() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+	Object*? first = f.call_tool("apply_clip", KNEE_CLIP);
+	if (catch first) { test::@check(false, "the clip authors"); return; }
+	defer first.free();
+	Object*? second = f.call_tool("apply_clip",
+		`{"name":"other","duration":2.0,"keyframes":[{"time":0,"joints":[{"name":"hips","move":[0,0,0]}]}]}`);
+	if (catch second) { test::@check(false, "the second clip authors"); return; }
+	defer second.free();
+
+	Object*? lifted = f.call_tool("set_layer", `{"clip":"striding","op":"extract","joints":["knee"]}`);
+	if (catch lifted) { test::@check(false, "extract answers"); return; }
+	defer lifted.free();
+	AnimTemplate* striding = f.app.clip(f.app.clip_named_in_authored("striding"));
+	test::@check(striding.layers.len == 1 && striding.layers[0].mode == OVERRIDE && striding.layers[0].name == "knee motion",
+		"the knee did not become a layer");
+	test::@check(!keys_joint_named(&f.app, "striding", "foot"), "the foot below the knee stayed in the base");
+
+	Object*? shared = f.call_tool("set_layer", `{"clip":"striding","op":"share","index":0,"clips":["other"],"fit":"keep"}`);
+	if (catch shared) { test::@check(false, "share answers"); return; }
+	defer shared.free();
+	test::@check((shared.get_int("holders") ?? 0) == 2, "the layer is not held by both clips");
+	AnimTemplate* other = f.app.clip(f.app.clip_named_in_authored("other"));
+	test::@check(other.layers.len == 1 && other.layers[0].fit == KEEP && other.layers[0].length == 1.0f,
+		"the second clip's copy lacks its fit or the layer's length");
+
+	Object*? renamed = f.call_tool("set_layer", `{"clip":"striding","op":"replace","index":0,"layer":{"name":"leg"}}`);
+	if (catch renamed) { test::@check(false, "replace answers"); return; }
+	defer renamed.free();
+	other = f.app.clip(f.app.clip_named_in_authored("other"));
+	test::@check(other.layers[0].name == "leg" && other.layers[0].fit == KEEP, "the rename did not reach the shared copy");
+
+	Object*? parted = f.call_tool("set_layer", `{"clip":"other","op":"unlink","name":"leg"}`);
+	if (catch parted) { test::@check(false, "unlink answers"); return; }
+	defer parted.free();
+	other = f.app.clip(f.app.clip_named_in_authored("other"));
+	test::@check(other.layers[0].link.len == 0, "unlink left the copy shared");
 }

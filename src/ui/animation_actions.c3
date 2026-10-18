@@ -234,9 +234,12 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 	AnimTemplate* clip = app.clip(app.editing);
 	bool none = clip == null;
+	// The joint verbs take the selection (and what hangs below it).
+	bool unpicked = none || app.selection_count() == 0;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Make loop…", "Prevent intersections" })
+	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
+		"Remove joint animation…", "Move joints to layer", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -256,6 +259,11 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
 			@node((PopupMenuItem) { .item = { .label = "Make loop…", .on_select = &anim_tools_make_loop, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
+			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
+			@node((PopupMenuItem) { .item = { .label = "Remove joint animation…", .on_select = &anim_tools_remove_joints,
+				.disabled = unpicked }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_REMOVE_JOINTS_ID);
+			@node((PopupMenuItem) { .item = { .label = "Move joints to layer", .on_select = &anim_tools_move_joints,
+				.disabled = unpicked }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MOVE_JOINTS_ID);
 			// The one normal collision control; the rest is behind the clip menu's
 			// Collision — and none of it with the system switched off in Settings.
 			if (app.config.self_collision)

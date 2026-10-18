@@ -30,10 +30,13 @@ faultdef LAYER_REFUSED;
 
 const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip whose stack to change. A clip from a library file is forked into the authored pack first, as apply_clip does."},
-	"op":{"type":"string","description":"\"add\" (the default) puts a layer in the stack, \"replace\" changes one, \"remove\" takes one out, \"move\" reorders. The stack applies bottom to top: index 0 first."},
+	"op":{"type":"string","description":"\"add\" (the default) puts a layer in the stack, \"replace\" changes one, \"remove\" takes one out, \"move\" reorders. The stack applies bottom to top: index 0 first. \"extract\" lifts the keys of \"joints\" (each with every joint below it) out of the base into a new full-weight override layer at the bottom, the pose unchanged — a tail made a layer of its own. \"share\" gives the layer (index or name) to the clips in \"clips\", linked: an edit of any copy is an edit of all, each clip keeping its own weight, range and fit. \"unlink\" makes this clip's copy its own again."},
 	"index":{"type":"integer","description":"Which layer to replace, remove or move; for add, where to insert (default: on top). Instead of an index, name the layer with \"name\"."},
 	"name":{"type":"string","description":"Names the layer to replace, remove or move, when no index is given."},
 	"to":{"type":"integer","description":"For move: the index the layer ends up at."},
+	"joints":{"type":"array","items":{"type":"string"},"description":"For extract: the dots whose keys to lift, each taking every joint below it. \"name\" then names the new layer (default \"<joint> motion\")."},
+	"clips":{"type":"array","items":{"type":"string"},"description":"For share: the clips to give the layer to, or \"Pack/Clip\". A library clip is forked first."},
+	"fit":{"type":"string","description":"For share: how the layer's own length meets each clip's: \"stretch\" (the default; spread over the clip, so a cycle stays one cycle), \"keep\" (its own seconds, holding its last pose) or \"repeat\" (its own seconds, over and over)."},
 	"layer":{"type":"object","description":"The layer, for add and replace. On replace, fields left out keep their current value, so {\"mute\":true} is a mute. name is required on add.","properties":{
 		"name":{"type":"string"},
 		"kind":{"type":"string","description":"\"keyed\" (sparse keys, in keyframes), or a generator: \"wave\" (a sine down a chain of joints, each trailing the last), \"noise\" (three seeded sines, loops seamlessly) or \"pulse\" (one bump at a moment)."},
@@ -57,7 +60,10 @@ const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 		"phase":{"type":"number","description":"Wave: fraction of a cycle."},
 		"seed":{"type":"integer","description":"Noise: the seed."},
 		"at":{"type":"number","description":"Pulse: the moment, in seconds."},
-		"width":{"type":"number","description":"Pulse: its width in seconds."}
+		"width":{"type":"number","description":"Pulse: its width in seconds."},
+		"fit":{"type":"string","description":"A shared layer's fit in this clip: \"stretch\", \"keep\" or \"repeat\". Each clip has its own."},
+		"link":{"type":"string","description":"Read only in practice: the id every clip sharing this layer holds. Set by op share."},
+		"length":{"type":"number","description":"A shared layer's own length in seconds, which its keys' times are on. Set by op share."}
 	}}
 },"required":["clip"]}`;
 
@@ -243,9 +249,9 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 	String clip_name;
 	if (!required_string(args, "clip", &clip_name, detail, `set_layer needs "clip": the clip whose stack to change. get_scene lists every pack and clip.`)) return LAYER_REFUSED~;
 	String op = args.get_string("op") ?? "add";
-	if (op != "add" && op != "replace" && op != "remove" && op != "move")
+	if (op != "add" && op != "replace" && op != "remove" && op != "move" && op != "extract" && op != "share" && op != "unlink")
 	{
-		detail.appendf(`"op" is "%s". It is "add", "replace", "remove" or "move".`, op);
+		detail.appendf(`"op" is "%s". It is "add", "replace", "remove", "move", "extract", "share" or "unlink".`, op);
 		return LAYER_REFUSED~;
 	}
 
@@ -261,6 +267,9 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 		detail.append_string(`this clip has no keys to lay a layer over.`);
 		return LAYER_REFUSED~;
 	}
+
+	if (op == "extract") return extract_layer_json(app, ref, args, detail);
+	if (op == "share" || op == "unlink") return share_layer_json(app, ref, op, args, detail);
 
 	Object* spec = member(args, "layer");
 	if ((op == "add" || op == "replace") && (spec == null || !spec.is_keyable()))
@@ -337,6 +346,128 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 	AnimRef written = app.author_clip(clip);
 	app.refresh_ui();
 	return layers_answer(app, written, op);
+}
+
+<*
+ One flag per rig joint for the dots `joints` names. False with the reason in
+ detail when it is not a non-empty array of this rig's dot names.
+*>
+fn bool joints_picked(AppState* app, RigView* view, Object* joints, bool[]* picked, DString* detail)
+{
+	if (joints == null || !joints.is_array() || joints.get_len() == 0)
+	{
+		detail.append_string(`"joints" must be a non-empty array of dot names; each takes every joint below it too`);
+		return false;
+	}
+	bool[] flags = alloc::new_array(mem, bool, (sz)view.len());
+	for (sz i = 0; i < joints.get_len(); i++)
+	{
+		String? name = joints.get_string_at((usz)i);
+		sz at = -1;
+		if (try name) at = array::index_of(view.names, name) ?? -1;
+		if (at < 0)
+		{
+			alloc::free(mem, flags);
+			String said = name ?? "";
+			detail.appendf(`"joints"[%d] is not a dot on this rig`, i);
+			if (said.len > 0) append_addressable(detail, app, said);
+			return false;
+		}
+		flags[(usz)at] = true;
+	}
+	*picked = flags;
+	return true;
+}
+
+// set_layer op extract: the named joints' keys lifted into a layer of their own.
+fn String? extract_layer_json(AppState* app, AnimRef ref, Object* args, DString* detail) @local
+{
+	RigView? opened = app.open_rig(mem);
+	if (catch opened)
+	{
+		detail.append_string(`extract needs a rig: the joints are found on it.`);
+		return LAYER_REFUSED~;
+	}
+	RigView view = opened;
+	defer view.free(mem);
+	bool[] picked;
+	if (!joints_picked(app, &view, member(args, "joints"), &picked, detail)) return LAYER_REFUSED~;
+	defer alloc::free(mem, picked);
+	if (app.move_joints_to_layer(ref, picked, args.get_string("name") ?? "") < 0)
+	{
+		detail.append_string(app.notice());
+		return LAYER_REFUSED~;
+	}
+	app.refresh_ui();
+	return layers_answer(app, app.editing, "extract");
+}
+
+// set_layer ops share and unlink, on the layer `index` or `name` picks.
+fn String? share_layer_json(AppState* app, AnimRef ref, String op, Object* args, DString* detail) @local
+{
+	AnimTemplate* src = app.clip(ref);
+	sz at = which_layer(src, args, detail);
+	if (at < 0) return LAYER_REFUSED~;
+	if (op == "unlink")
+	{
+		if (src.layers[(usz)at].link.len == 0)
+		{
+			detail.appendf(`layer "%s" is not shared, so there is nothing to unlink.`, src.layers[(usz)at].name);
+			return LAYER_REFUSED~;
+		}
+		if (!app.unlink_layer(ref, (usz)at))
+		{
+			detail.append_string(`the unlinked clip would not land.`);
+			return LAYER_REFUSED~;
+		}
+		app.refresh_ui();
+		return layers_answer(app, ref, op);
+	}
+
+	AnimLayerFit fit = STRETCH;
+	String fit_text = args.get_string("fit") ?? "stretch";
+	if (!parse_layer_fit(fit_text, &fit))
+	{
+		detail.appendf(`"fit" is "%s". It is "stretch", "keep" or "repeat".`, fit_text);
+		return LAYER_REFUSED~;
+	}
+	Object* clips = member(args, "clips");
+	if (clips == null || !clips.is_array() || clips.get_len() == 0)
+	{
+		detail.append_string(`share needs "clips": the names of the clips to give the layer to. get_scene lists them.`);
+		return LAYER_REFUSED~;
+	}
+	AnimRef[] targets = alloc::new_array(mem, AnimRef, (sz)clips.get_len());
+	defer alloc::free(mem, targets);
+	for (sz i = 0; i < clips.get_len(); i++)
+	{
+		String? named = clips.get_string_at((usz)i);
+		if (catch named)
+		{
+			detail.appendf(`"clips"[%d] must be a clip name`, i);
+			return LAYER_REFUSED~;
+		}
+		targets[(usz)i] = resolve_named(app, named, detail)!;
+		if (targets[(usz)i].same(ref))
+		{
+			detail.appendf(`"clips"[%d] is the clip the layer is on`, i);
+			return LAYER_REFUSED~;
+		}
+	}
+	usz added = app.share_layer(ref, (usz)at, targets, fit);
+	app.refresh_ui();
+	AnimRef source = app.editing;
+	AnimTemplate* clip = app.clip(source);
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.append_string(`{"clip":`);
+	append_json_string(&out, clip.name);
+	out.appendf(`,"op":"share","shared_with":%d,"link":`, added)!!;
+	append_json_string(&out, clip.layers[(usz)at].link);
+	out.appendf(`,"holders":%d,"layers":`, app.link_holders(clip.layers[(usz)at].link))!!;
+	append_layers_json(&out, clip.layers);
+	out.append_char('}');
+	return out.copy_str(mem);
 }
 
 <*

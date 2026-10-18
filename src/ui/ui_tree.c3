@@ -2483,6 +2483,10 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_OPTIMIZE_DIALOG_ID);
 			@node((Dialog) { .title = "Trim animation", .body = &build_anim_trim_body,
 				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_TRIM_DIALOG_ID);
+			@node((Dialog) { .title = "Add to animations", .body = &build_layer_share_body,
+				.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_SHARE_DIALOG_ID);
+			@node((Dialog) { .title = "Shared layer", .body = &build_layer_pick_body,
+				.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_PICK_DIALOG_ID);
 			@node((Dialog) { .title = "Joint mapping", .body = &build_anim_mapping_body,
 				.style = DIALOG_STYLE, .modal = true, .on_close = &anim_mapping_closed }).with_id(ANIM_MAPPING_DIALOG_ID);
 			@node((Dialog) { .title = "Collision (advanced)", .body = &build_collision_body,
@@ -2506,6 +2510,12 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.style = DIALOG_STYLE,
 				.buttons = CONFIRM_BUTTONS,
 			}).with_id(ANIM_MAKE_LOOP_CONFIRM_ID);
+			@node((ConfirmDialog) {
+				.title = "Remove joint animation",
+				.confirm_label = "Remove keys",
+				.style = DIALOG_STYLE,
+				.buttons = CONFIRM_BUTTONS,
+			}).with_id(ANIM_REMOVE_JOINTS_CONFIRM_ID);
 
 			// ---- window menu bar ----
 			// Painted after the pane tree, so the bar and an open dropdown win

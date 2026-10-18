@@ -7,10 +7,13 @@
  makes it the **active layer**: the timeline below shows and edits that layer's
  keys, and Key pose / Auto-key store a delta into it (app/layer_edit.c3).
 
- The Layers column's header holds + (a menu of the kinds) and Merge down (bake the
- whole stack into the base); right-click a row for Delete, Move up / down and
- Mask from selection / Clear mask. For the active layer a form follows, in three
- folding sections: Blend (name, mode, weight, range, fades), Motion (for a wave,
+ The Layers column's header holds + (a menu of the kinds, From selected joints —
+ lift their keys out of the base — and Shared layer…, one another animation
+ shares) and Merge down (bake the whole stack into the base); right-click a row
+ for Delete, Move up / down, Mask from selection / Clear mask, Add to
+ animations… (share it, linked) and Unlink (ui/layer_share.c3). For the active
+ layer a form follows, in three folding sections: Blend (name, mode, weight, and
+ for a shared layer its fit in this animation, range, fades), Motion (for a wave,
  noise or pulse: its joint, tip, axis and the numbers that shape it) and Mask.
 
  Every change is one edit of the clip through `land_clip`, so one undo step; the
@@ -175,7 +178,8 @@ fn void paint_layer_icon(Painter* painter, Vec2 at, float size, ushort icon, boo
 fn String layer_row_note(AnimLayer* layer)
 {
 	String mode = layer.mode == OVERRIDE ? "override" : "additive";
-	return string::format(mem, "%s · %s · %d%%", layer.kind.label(), mode, (int)(layer.weight * 100.0f + 0.5f));
+	return string::format(mem, "%s · %s · %d%%%s", layer.kind.label(), mode, (int)(layer.weight * 100.0f + 0.5f),
+		layer.link.len > 0 ? " · shared" : "");
 }
 
 struct AnimLayerStrip (Widget)
@@ -185,6 +189,7 @@ struct AnimLayerStrip (Widget)
 	String[] joints;
 	String[] tips;
 	String mask_text;
+	String shared_text;
 }
 
 fn void AnimLayerStrip.release(&self)
@@ -204,10 +209,12 @@ fn void AnimLayerStrip.release(&self)
 		alloc::free(mem, self.tips);
 	}
 	if (self.mask_text.len > 0) alloc::free(mem, self.mask_text.ptr);
+	if (self.shared_text.len > 0) alloc::free(mem, self.shared_text.ptr);
 	self.rows = {};
 	self.joints = {};
 	self.tips = {};
 	self.mask_text = "";
+	self.shared_text = "";
 }
 
 fn void AnimLayerStrip.unmount(&self, Element* elem) @dynamic => self.release();
@@ -312,6 +319,13 @@ fn Element* AnimLayerStrip.build(&self, Element* elem) @dynamic
 		}
 	}
 	// `release` frees tips[0] only; the rest are `joints`'.
+	if (layer && layer.link.len > 0)
+	{
+		usz holders = app.link_holders(layer.link);
+		self.shared_text = layer.own_clock()
+			? string::format(mem, "Shared by %d animation%s · its own %.2f s", holders, holders == 1 ? "" : "s", layer.length)
+			: string::format(mem, "Shared by %d animation%s", holders, holders == 1 ? "" : "s");
+	}
 	if (layer)
 	{
 		self.mask_text = layer.mask.len == 0 ? "Mask: the whole body".copy(mem)
@@ -369,6 +383,17 @@ fn Element* AnimLayerStrip.build(&self, Element* elem) @dynamic
 						};
 						@node((Segmented) { .options = layer_mode_options[..], .selected = layer.mode == OVERRIDE ? 1 : 0,
 							.on_change = &anim_layer_mode_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_LAYER_MODE_ID);
+						if (layer.link.len > 0)
+						{
+							// Shared: how this animation lays the layer's own length on its own.
+							@node((Label) { .text = self.shared_text, .size = 12, .color = TEXT_DIM });
+							if (layer.own_clock())
+							{
+								@node((Segmented) { .options = layer_fit_options[..], .selected = (sz)layer.fit,
+									.on_change = &anim_layer_fit_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_LAYER_FIT_ID);
+								@node((Label) { .text = layer_fit_note(layer.fit), .size = 12, .color = TEXT_DIM });
+							}
+						}
 						@node(layer_slider("Weight", layer.weight, 0.0f, 1.0f, 0.01f, 2, &anim_layer_weight_committed)).with_id(ANIM_LAYER_WEIGHT_ID);
 						@node(layer_slider("Start", layer.start, 0.0f, duration, 0.05f, 2,
 							&anim_layer_start_committed, " s")).with_id(ANIM_LAYER_START_ID);
@@ -489,8 +514,10 @@ fn sz layer_axis_row(Vec3 axis)
 
 fn Element* build_anim_layer_menu(Ui* ui)
 {
+	AppState* app = ui.inherit(AppState)!!;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
-	String[5] labels = { "Keyed (additive)", "Keyed (override)", "Wave", "Noise", "Pulse" };
+	String[7] labels = { "Keyed (additive)", "Keyed (override)", "Wave", "Noise", "Pulse", "From selected joints",
+		"Shared layer…" };
 	float width = widgets::PANEL_MIN_W;
 	foreach (label : labels)
 	{
@@ -510,6 +537,14 @@ fn Element* build_anim_layer_menu(Ui* ui)
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_NOISE_ID);
 			@node((PopupMenuItem) { .item = { .label = labels[4], .on_select = &anim_layer_add_pulse },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_PULSE_ID);
+			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
+			// Lifts the selected joints' keys out of the base, rather than starting empty.
+			@node((PopupMenuItem) { .item = { .label = labels[5], .on_select = &anim_layer_add_from_joints,
+				.disabled = app.selection_count() == 0 }, .style = VIEW_MENU_STYLE, .width = width })
+				.with_id(ANIM_LAYER_FROM_JOINTS_ID);
+			// A layer another animation shares, put on this one too.
+			@node((PopupMenuItem) { .item = { .label = labels[6], .on_select = &anim_layer_add_shared },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_SHARED_ID);
 		};
 	};
 }
@@ -571,7 +606,11 @@ fn Element* build_anim_layer_row_menu(Ui* ui)
 	bool none = layer == null;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Move up", "Move down", "Mask from selection", "Clear mask", "Delete layer" })
+	bool shared = layer && layer.link.len > 0;
+	// A shared layer's Delete takes it off this animation only.
+	String remove = shared ? "Remove from this animation" : "Delete layer";
+	foreach (label : (String[]) { "Move up", "Move down", "Mask from selection", "Clear mask", "Add to animations…",
+		"Unlink", remove })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -589,7 +628,12 @@ fn Element* build_anim_layer_row_menu(Ui* ui)
 			@node((PopupMenuItem) { .item = { .label = "Clear mask", .on_select = &anim_layer_menu_mask_clear,
 				.disabled = none || layer.mask.len == 0 }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_MASK_CLEAR_ID);
 			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
-			@node((PopupMenuItem) { .item = { .label = "Delete layer", .on_select = &anim_layer_menu_delete,
+			@node((PopupMenuItem) { .item = { .label = "Add to animations…", .on_select = &anim_layer_menu_share,
+				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_SHARE_ID);
+			@node((PopupMenuItem) { .item = { .label = "Unlink", .on_select = &anim_layer_menu_unlink,
+				.disabled = !shared }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_UNLINK_ID);
+			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
+			@node((PopupMenuItem) { .item = { .label = remove, .on_select = &anim_layer_menu_delete,
 				.disabled = none }, .style = DANGER_MENU_STYLE, .width = width }).with_id(ANIM_LAYER_DELETE_ID);
 		};
 	};
@@ -687,7 +731,20 @@ fn void anim_layer_delete_clicked(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 	sz at = app.active_layer_of(app.editing);
 	if (at < 0 || !anim_can_rewrite(ui)) return;
-	if (app.remove_clip_layer(app.editing, (usz)at)) app.@notice("layer deleted — Undo brings it back");
+	String link = app.clip(app.editing).layers[(usz)at].link.tcopy();
+	if (app.remove_clip_layer(app.editing, (usz)at))
+	{
+		usz others = app.link_holders(link);
+		if (others > 0)
+		{
+			app.@notice("layer removed from this animation; %d other%s still share it — Undo brings it back", others,
+				others == 1 ? "" : "s");
+		}
+		else
+		{
+			app.@notice("layer deleted — Undo brings it back");
+		}
+	}
 	app.refresh_timeline_tracks(app.editing);
 	refresh_animations_view(ui);
 }

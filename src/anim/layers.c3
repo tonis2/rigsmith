@@ -96,6 +96,24 @@ struct AnimLayer
 	uint seed;       // noise
 	float at;        // pulse: seconds
 	float width;     // pulse: seconds
+
+	// Sharing. A layer one or more other clips also hold has a `link` (the same
+	// id in each) and keeps its own clock: its keys span `length` seconds, and
+	// each clip lays them on its own duration by its `fit`. Unshared, `length` is
+	// zero and the keys are in the clip's own seconds.
+	String link;
+	float length;
+	AnimLayerFit fit;
+}
+
+<*
+ How a layer on its own clock meets a clip of another length.
+*>
+enum AnimLayerFit
+{
+	STRETCH, // its length spread over the clip's: a cycle stays one cycle
+	KEEP,    // its own seconds, holding its last pose past its end
+	REPEAT,  // its own seconds, over and over
 }
 
 <*
@@ -117,6 +135,257 @@ fn AnimLayer anim_layer_defaults(String name)
 }
 
 fn bool AnimLayer.procedural(self) => self.kind != KEYED;
+
+<*
+ Whether the layer keeps its own clock: a shared layer's keys are stated over its
+ own `length` and laid on each clip by its `fit`, rather than in the clip's
+ seconds. A clip edit that moves time — a retime, a crop, a cut — leaves such
+ keys alone.
+*>
+fn bool AnimLayer.own_clock(&self) => self.kind == KEYED && self.length > 0.0f;
+
+<*
+ The layer's keys as a clip to sample, borrowed for as long as the layer is. On
+ the clip's clock that is the clip's length and loop. On its own clock it spans
+ its own length: looping when its fit repeats it (or when the clip loops a
+ stretched one), holding its ends when it keeps its seconds.
+*>
+fn AnimTemplate AnimLayer.keys_view(&self, AnimTemplate* clip)
+{
+	AnimTemplate view = {
+		.name = clip.name,
+		.duration = clip.duration,
+		.loop = clip.loop,
+		.blend = clip.blend,
+		.keyframes = self.keyframes,
+	};
+	if (!self.own_clock()) return view;
+	view.duration = self.length;
+	if (self.fit == KEEP) view.loop = false;
+	if (self.fit == REPEAT) view.loop = true;
+	return view;
+}
+
+<*
+ Where in its keys the layer is when the clip is at `time`: the clip's seconds
+ on the clip's clock; on its own, the clip's place in its cycle, spread over the
+ layer's length when it stretches. `keys_view` wraps a repeat.
+*>
+fn float AnimLayer.local_time(&self, AnimTemplate* clip, float time)
+{
+	if (!self.own_clock()) return time;
+	float clock = clip.layer_clock(time);
+	if (self.fit != STRETCH || !(clip.duration > 0.0f) || self.length == clip.duration) return clock;
+	return clock * self.length / clip.duration;
+}
+
+<*
+ Where among its keys one made at the clip's `time` goes: `local_time`, with a
+ repeated layer's folded back into its first pass.
+*>
+fn float AnimLayer.key_time(&self, AnimTemplate* clip, float time)
+{
+	float at = self.local_time(clip, time);
+	if (!self.own_clock() || self.fit != REPEAT) return at;
+	return at - self.length * math::floor(at / self.length);
+}
+
+// Two keyframe lists that say the same thing, entry for entry.
+fn bool keyframes_same(AnimKeyframe[] a, AnimKeyframe[] b) @local
+{
+	if (a.len != b.len) return false;
+	foreach (usz i, frame : a)
+	{
+		AnimKeyframe other = b[i];
+		if (frame.time != other.time || frame.dots.len != other.dots.len) return false;
+		foreach (usz d, dot : frame.dots)
+		{
+			AnimKeyDot them = other.dots[d];
+			if (dot.joint_name != them.joint_name || dot.channels != them.channels
+				|| dot.rotation_interpolation != them.rotation_interpolation
+				|| dot.translation_interpolation != them.translation_interpolation
+				|| dot.rotation_ease.start != them.rotation_ease.start || dot.rotation_ease.end != them.rotation_ease.end
+				|| dot.translation_ease.start != them.translation_ease.start
+				|| dot.translation_ease.end != them.translation_ease.end
+				|| dot.axis != them.axis || dot.angle != them.angle || dot.move != them.move || dot.bone != them.bone)
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+<*
+ Whether two copies of a shared layer carry the same motion: everything but how
+ each clip plays it (weight, mute, solo, range, fades, fit) and the link itself.
+*>
+fn bool AnimLayer.same_shared(&self, AnimLayer* other)
+{
+	if (self.name != other.name || self.kind != other.kind || self.mode != other.mode) return false;
+	if (self.length != other.length || self.joint != other.joint || self.tip != other.tip) return false;
+	if (self.axis != other.axis || self.amplitude != other.amplitude || self.cycles != other.cycles
+		|| self.lag != other.lag || self.falloff != other.falloff || self.phase != other.phase
+		|| self.seed != other.seed || self.at != other.at || self.width != other.width) return false;
+	if (self.mask.len != other.mask.len) return false;
+	foreach (usz i, entry : self.mask) if (entry != other.mask[i]) return false;
+	return keyframes_same(self.keyframes, other.keyframes);
+}
+
+<*
+ This layer's motion, as `local` plays it: a deep copy of `self` with `local`'s
+ weight, mute, solo, range, fades and fit. What a shared layer's other copies
+ become when one is edited.
+*>
+fn AnimLayer AnimLayer.shared_onto(&self, Allocator allocator, AnimLayer* local)
+{
+	AnimLayer out = self.copy(allocator);
+	out.weight = local.weight;
+	out.mute = local.mute;
+	out.solo = local.solo;
+	out.start = local.start;
+	out.end = local.end;
+	out.fade_in = local.fade_in;
+	out.fade_out = local.fade_out;
+	out.fit = local.fit;
+	return out;
+}
+
+<*
+ The index of this clip's layer that shares `link`, or -1.
+*>
+fn sz AnimTemplate.layer_linked(&self, String link)
+{
+	if (link.len == 0) return -1;
+	foreach (usz i, &layer : self.layers) if (layer.link == link) return (sz)i;
+	return -1;
+}
+
+<*
+ How far one of the layer's seconds stretches on the clip's timeline: the clip's
+ length over the layer's for a stretched layer on its own clock, 1 otherwise.
+*>
+fn float AnimLayer.display_scale(&self, AnimTemplate* clip)
+{
+	if (!self.own_clock() || self.fit != STRETCH || !(clip.duration > 0.0f)) return 1.0f;
+	return clip.duration / self.length;
+}
+
+// Most repeats a repeated layer is laid out over, whatever its length.
+const usz LAYER_REPEAT_LIMIT @local = 1024;
+
+<*
+ The instants in the clip's seconds the layer's keys fall at, up to the clip's
+ end: as they are on the clip's clock, stretched on a stretched one, and every
+ repeat of a repeated one. Writes as many as `out` has room for and answers how
+ many there are, so an empty `out` counts them.
+*>
+fn usz AnimLayer.clip_key_times(&self, AnimTemplate* clip, float[] out)
+{
+	usz count;
+	float duration = clip.duration;
+	float scale = self.display_scale(clip);
+	float period = self.own_clock() && self.fit == REPEAT ? self.length : 0.0f;
+	for (usz k = 0; k < LAYER_REPEAT_LIMIT; k++)
+	{
+		float offset = (float)k * period;
+		if (offset > duration) break;
+		foreach (frame : self.keyframes)
+		{
+			float at = frame.time * scale + offset;
+			if (at > duration) continue;
+			if (count < out.len) out[count] = at;
+			count++;
+		}
+		if (period <= 0.0f) break;
+	}
+	return count;
+}
+
+<*
+ The layer on the clip's own clock: a shared layer made independent. Its keys
+ are restated in the clip's seconds the way its fit lays them — stretched, kept
+ (holding past their end, cut at the clip's) or repeated across the clip — and it
+ has no link or length of its own. A layer already on the clip's clock is only
+ unlinked.
+*>
+fn AnimLayer AnimLayer.plain(&self, Allocator allocator, AnimTemplate* clip)
+{
+	AnimLayer out = self.copy(allocator);
+	if (out.link.len > 0) alloc::free(allocator, out.link.ptr);
+	out.link = "";
+	out.length = 0.0f;
+	out.fit = STRETCH;
+	if (!self.own_clock() || self.keyframes.len == 0) return out;
+
+	float duration = clip.duration;
+	float scale = self.display_scale(clip);
+	usz repeats = 1;
+	if (self.fit == REPEAT) repeats = math::clamp((usz)math::ceil(duration / self.length), (usz)1, LAYER_REPEAT_LIMIT);
+	float period = self.fit == REPEAT ? self.length : 0.0f;
+	// One more for the held pose a kept layer ends on.
+	AnimKeyframe[] laid = alloc::new_array(allocator, AnimKeyframe, (sz)(self.keyframes.len * repeats + 1));
+	usz count;
+	float last = -1.0f;
+	for (usz k = 0; k < repeats; k++)
+	{
+		foreach (frame : self.keyframes)
+		{
+			float at = frame.time * scale + (float)k * period;
+			if (count > 0 && at <= last + ANIM_SAME_TIME)
+			{
+				// A repeat's opening key meets the last pass's closing key. Saying the
+				// same, one is enough. Otherwise the motion goes on from the opening
+				// one, and the closing one steps back a hair so the jump between the
+				// passes stays a jump — or goes, when there is no room before it.
+				AnimKeyframe[1] closing = { laid[count - 1] };
+				AnimKeyframe[1] opening = { frame };
+				opening[0].time = closing[0].time;
+				if (keyframes_same(closing[..], opening[..])) continue;
+				float back = at - 2.0f * ANIM_SAME_TIME;
+				if (count > 1 && back <= laid[count - 2].time + ANIM_SAME_TIME)
+				{
+					laid[count - 1].free(allocator);
+					count--;
+				}
+				else
+				{
+					laid[count - 1].time = back;
+				}
+			}
+			laid[count] = keyframe_copy(allocator, frame);
+			laid[count].time = at;
+			last = at;
+			count++;
+		}
+	}
+	// Kept seconds hold their last pose to the clip's end, where a looping clip
+	// would otherwise wander back to the first.
+	if (self.fit == KEEP && last < duration - ANIM_SAME_TIME)
+	{
+		laid[count] = keyframe_copy(allocator, self.keyframes[^1]);
+		laid[count].time = duration;
+		last = duration;
+		count++;
+	}
+	AnimTemplate keys = {
+		.name = "keys",
+		.duration = math::max(last, duration),
+		.blend = clip.blend,
+		.keyframes = laid[:count],
+	};
+	AnimTemplate cut = last > duration + ANIM_SAME_TIME
+		? clip_cropped(allocator, keys, 0.0f, duration)
+		: clip_copy(allocator, keys);
+	foreach (&frame : laid[:count]) frame.free(allocator);
+	alloc::free(allocator, laid);
+	foreach (&frame : out.keyframes) frame.free(allocator);
+	if (out.keyframes.len > 0) alloc::free(allocator, out.keyframes);
+	out.keyframes = cut.keyframes;
+	cut.keyframes = {};
+	cut.free(allocator);
+	return out;
+}
 
 fn bool AnimTemplate.has_layers(&self) => self.layers.len > 0;
 
@@ -148,6 +417,7 @@ fn void AnimLayer.free(&self, Allocator allocator)
 	if (self.name.len > 0) alloc::free(allocator, self.name.ptr);
 	if (self.joint.len > 0) alloc::free(allocator, self.joint.ptr);
 	if (self.tip.len > 0) alloc::free(allocator, self.tip.ptr);
+	if (self.link.len > 0) alloc::free(allocator, self.link.ptr);
 	foreach (entry : self.mask) if (entry.len > 0) alloc::free(allocator, entry.ptr);
 	if (self.mask.len > 0) alloc::free(allocator, self.mask);
 	foreach (&frame : self.keyframes) frame.free(allocator);
@@ -163,7 +433,9 @@ fn void free_layers(Allocator allocator, AnimLayer[] layers)
 
 <*
  A deep copy of the layer, its times mapped `t' = t * scale + shift` — identity
- by default. A retime scales, a crop shifts; key times never go below zero.
+ by default. A retime scales, a crop shifts; key times never go below zero. The
+ keys of a layer on its own clock are its own and stay where they are; only its
+ range and fades, which are the clip's seconds, move.
 *>
 fn AnimLayer AnimLayer.copy(&self, Allocator allocator, float scale = 1.0f, float shift = 0.0f)
 {
@@ -173,13 +445,15 @@ fn AnimLayer AnimLayer.copy(&self, Allocator allocator, float scale = 1.0f, floa
 	out.name = self.name.len > 0 ? self.name.copy(allocator) : "";
 	out.joint = self.joint.len > 0 ? self.joint.copy(allocator) : "";
 	out.tip = self.tip.len > 0 ? self.tip.copy(allocator) : "";
+	out.link = self.link.len > 0 ? self.link.copy(allocator) : "";
 	out.mask = alloc::new_array(allocator, String, (sz)self.mask.len);
 	foreach (usz i, entry : self.mask) out.mask[i] = entry.copy(allocator);
 	out.keyframes = alloc::new_array(allocator, AnimKeyframe, (sz)self.keyframes.len);
+	bool own = self.own_clock();
 	foreach (usz i, frame : self.keyframes)
 	{
 		out.keyframes[i] = keyframe_copy(allocator, frame);
-		out.keyframes[i].time = math::max(0.0f, frame.time * scale + shift);
+		if (!own) out.keyframes[i].time = math::max(0.0f, frame.time * scale + shift);
 	}
 	if (scale != 1.0f || shift != 0.0f)
 	{
@@ -201,6 +475,61 @@ fn AnimLayer[] layers_copy(Allocator allocator, AnimLayer[] source, float scale 
 }
 
 // ---------------------------------------------------------------------------
+// Stack arithmetic, shared by the pane, the MCP `set_layer` op and the clip
+// rewriters that build a layer (anim/keying.c3)
+
+<*
+ `source` with `layer` put in at `at` (0 = bottom of the stack). The layer is
+ taken over; the returned array replaces `source`, which is released.
+*>
+fn AnimLayer[] layers_inserted(Allocator allocator, AnimLayer[] source, usz at, AnimLayer layer)
+{
+	AnimLayer[] grown = alloc::new_array(allocator, AnimLayer, (sz)(source.len + 1));
+	usz write = 0;
+	for (usz i = 0; i <= source.len; i++)
+	{
+		if (i == at) { grown[i] = layer; continue; }
+		grown[i] = source[write++];
+	}
+	if (source.len > 0) alloc::free(allocator, source);
+	return grown;
+}
+
+<*
+ `source` without the layer at `at`, which is freed. The returned array replaces
+ `source`, which is released.
+*>
+fn AnimLayer[] layers_removed(Allocator allocator, AnimLayer[] source, usz at)
+{
+	AnimLayer[] shrunk = alloc::new_array(allocator, AnimLayer, (sz)(source.len - 1));
+	usz write = 0;
+	for (usz i = 0; i < source.len; i++)
+	{
+		if (i == at) { source[i].free(allocator); continue; }
+		shrunk[write++] = source[i];
+	}
+	alloc::free(allocator, source);
+	return shrunk;
+}
+
+<*
+ The layer at `at` moved to `dest`, the ones between shifting over by one.
+*>
+fn void layers_moved(AnimLayer[] layers, usz at, usz dest)
+{
+	AnimLayer moving = layers[at];
+	if (dest > at)
+	{
+		for (usz i = at; i < dest; i++) layers[i] = layers[i + 1];
+	}
+	else
+	{
+		for (usz i = at; i > dest; i--) layers[i] = layers[i - 1];
+	}
+	layers[dest] = moving;
+}
+
+// ---------------------------------------------------------------------------
 // Evaluation
 
 // What one layer says about one joint at one instant: which channels it speaks
@@ -211,6 +540,7 @@ struct LayerSample
 	bool move;
 	Quaternionf turn;
 	Vec3 offset; // fraction of rig height, like AnimKeyDot.move
+	Vec3 bone;   // what a keyed layer's turn was recorded against; zero for a generator
 }
 
 struct ActiveLayer
@@ -383,6 +713,49 @@ fn usz[] layer_chain(Allocator allocator, rig::Skeleton* skeleton, String[] name
 }
 
 <*
+ Which joints the layer's mask lets it touch, one flag per joint of `inside`: a
+ mask entry and everything below it, or every joint for an empty mask.
+*>
+fn void AnimLayer.mask_inside(&self, rig::Skeleton* skeleton, String[] names, bool[] inside)
+{
+	foreach (usz j, &flag : inside)
+	{
+		bool own = self.mask.len == 0;
+		String name = j < names.len ? names[j] : "";
+		if (!own) foreach (entry : self.mask) if (name.len > 0 && entry == name) { own = true; break; }
+		int parent = j < skeleton.parents.len ? skeleton.parents[j] : -1;
+		*flag = own || (parent >= 0 && inside[(usz)parent]);
+	}
+}
+
+<*
+ Whether the layer, unmuted, moves any of the joints `joints` flags anywhere in
+ the clip: a keyed layer that keys one inside its mask, a generator whose chain
+ runs through one.
+*>
+fn bool AnimLayer.drives_any(&self, Allocator allocator, rig::Skeleton* skeleton, String[] names, bool[] joints)
+{
+	if (self.mute) return false;
+	usz count = skeleton.len();
+	bool[] inside = alloc::new_array(allocator, bool, (sz)count);
+	defer alloc::free(allocator, inside);
+	self.mask_inside(skeleton, names, inside);
+	if (self.kind == KEYED)
+	{
+		foreach (&frame : self.keyframes) foreach (dot : frame.dots)
+		{
+			sz j = array::index_of(names, dot.joint_name) ?? -1;
+			if (j >= 0 && (usz)j < count && (usz)j < joints.len && joints[(usz)j] && inside[(usz)j]) return true;
+		}
+		return false;
+	}
+	usz[] chain = layer_chain(allocator, skeleton, names, self.joint, self.tip);
+	defer if (chain.len > 0) alloc::free(allocator, chain);
+	foreach (j : chain) if (j < joints.len && joints[j] && inside[j]) return true;
+	return false;
+}
+
+<*
  Sample one layer into `out`, one slot per joint, already limited to its mask.
  `clip` supplies the loop and blend a keyed layer is read under.
 *>
@@ -392,25 +765,14 @@ fn void AnimLayer.sample(&self, Allocator allocator, AnimTemplate* clip,
 	usz count = out.len;
 	bool[] inside = alloc::new_array(allocator, bool, (sz)count);
 	defer alloc::free(allocator, inside);
-	for (usz j = 0; j < count; j++)
-	{
-		bool own = self.mask.len == 0;
-		String name = j < names.len ? names[j] : "";
-		if (!own) foreach (entry : self.mask) if (name.len > 0 && entry == name) { own = true; break; }
-		int parent = skeleton.parents[j];
-		inside[j] = own || (parent >= 0 && inside[(usz)parent]);
-	}
+	self.mask_inside(skeleton, names, inside);
 
 	float clock = clip.layer_clock(time);
 
 	if (self.kind == KEYED)
 	{
-		AnimTemplate view = {
-			.duration = clip.duration,
-			.loop = clip.loop,
-			.blend = clip.blend,
-			.keyframes = self.keyframes,
-		};
+		AnimTemplate view = self.keys_view(clip);
+		float at = self.local_time(clip, time);
 		for (usz j = 0; j < count; j++)
 		{
 			String name = j < names.len ? names[j] : "";
@@ -418,12 +780,12 @@ fn void AnimLayer.sample(&self, Allocator allocator, AnimTemplate* clip,
 			if (view.channel_count(name, true) > 0)
 			{
 				out[j].rot = true;
-				out[j].turn = view.rotation_at(name, time);
+				out[j].turn = view.rotation_and_bone_at(name, at, &out[j].bone);
 			}
 			if (view.channel_count(name, false) > 0)
 			{
 				out[j].move = true;
-				out[j].offset = view.translation_at(name, time);
+				out[j].offset = view.translation_at(name, at);
 			}
 		}
 		return;
@@ -508,21 +870,50 @@ fn void LayerStack.apply(&self, usz joint, Quaternionf* turn, Vec3* slide, bool*
 	{
 		if (joint >= layer.samples.len) continue;
 		LayerSample s = layer.samples[joint];
+		// An override at full strength is its own values outright: the blend would
+		// only round them (and a slerp of a key that is already the identity drops
+		// a sliver of it), and a joint moved out of the base into one has to come
+		// back exactly as it was.
+		bool replaces = layer.mode == OVERRIDE && layer.gain >= 1.0f;
 		if (s.rot)
 		{
-			*turn = layer.mode == ADDITIVE
-				? turn.mul(slerp_short(quaternion::IDENTITY, s.turn, layer.gain)).normalize()
-				: slerp_short(*turn, s.turn, layer.gain);
+			if (replaces) { *turn = s.turn; }
+			else
+			{
+				*turn = layer.mode == ADDITIVE
+					? turn.mul(slerp_short(quaternion::IDENTITY, s.turn, layer.gain)).normalize()
+					: slerp_short(*turn, s.turn, layer.gain);
+			}
 			*rotates = true;
 		}
 		if (s.move)
 		{
-			*slide = layer.mode == ADDITIVE
-				? *slide + s.offset * layer.gain
-				: *slide + (s.offset - *slide) * layer.gain;
+			if (replaces) { *slide = s.offset; }
+			else
+			{
+				*slide = layer.mode == ADDITIVE
+					? *slide + s.offset * layer.gain
+					: *slide + (s.offset - *slide) * layer.gain;
+			}
 			*translates = true;
 		}
 	}
+}
+
+<*
+ The bone a joint's layered turn is carried from when the base does not key it:
+ the first playing layer, from the bottom, that turns the joint and records one.
+ Zero when none does. See `AnimTemplate.pose`.
+*>
+fn Vec3 LayerStack.bone(&self, usz joint)
+{
+	foreach (&layer : self.layers)
+	{
+		if (joint >= layer.samples.len) continue;
+		LayerSample s = layer.samples[joint];
+		if (s.rot && s.bone.length_sq() >= 1.0e-12f) return s.bone;
+	}
+	return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -573,14 +964,16 @@ fn float[] layer_sample_times(Allocator allocator, AnimTemplate* clip, float[] t
 
 	// Sorted already; each candidate is checked against the list by bisection.
 	sort::quicksort(merged[:used]);
-	float[] extra = alloc::new_array(allocator, float, (sz)(steps + 1 + clip.layer_key_count()));
+	usz keyed;
+	foreach (&layer : clip.layers) if (!layer.mute) keyed += layer.clip_key_times(clip, {});
+	float[] extra = alloc::new_array(allocator, float, (sz)(steps + 1 + keyed));
 	defer alloc::free(allocator, extra);
 	usz extras = 0;
 	for (usz i = 0; i <= steps; i++) extra[extras++] = clip.duration * (float)i / (float)steps;
 	foreach (&layer : clip.layers)
 	{
 		if (layer.mute) continue;
-		foreach (frame : layer.keyframes) if (frame.time <= clip.duration) extra[extras++] = frame.time;
+		extras += layer.clip_key_times(clip, extra[extras..]);
 	}
 	for (usz i = 0; i < extras; i++)
 	{
@@ -596,13 +989,6 @@ fn float[] layer_sample_times(Allocator allocator, AnimTemplate* clip, float[] t
 	foreach (usz i, time : merged[:used]) out[i] = time;
 	alloc::free(allocator, merged);
 	return out;
-}
-
-fn usz AnimTemplate.layer_key_count(&self)
-{
-	usz count = 0;
-	foreach (&layer : self.layers) count += layer.keyframes.len;
-	return count;
 }
 
 <*
@@ -643,12 +1029,15 @@ fn AnimTemplate clip_flattened(Allocator allocator, AnimTemplate source,
 	Vec3[] slides = alloc::new_array(allocator, Vec3, (sz)(joints * samples));
 	bool[] drives_rot = alloc::new_array(allocator, bool, (sz)joints);
 	bool[] drives_move = alloc::new_array(allocator, bool, (sz)joints);
+	// For a joint only layers turn, the bone their keys record (see `pose`).
+	Vec3[] layer_bones = alloc::new_array(allocator, Vec3, (sz)joints);
 	defer
 	{
 		alloc::free(allocator, turns);
 		alloc::free(allocator, slides);
 		alloc::free(allocator, drives_rot);
 		alloc::free(allocator, drives_move);
+		alloc::free(allocator, layer_bones);
 	}
 
 	foreach (usz s, time : at)
@@ -664,6 +1053,7 @@ fn AnimTemplate clip_flattened(Allocator allocator, AnimTemplate source,
 			bool translates = name.len > 0 && source.channel_count(name, false) > 0;
 			if (rotates) turn = source.rotation_at(name, time);
 			if (translates) slide = source.translation_at(name, time);
+			if (!rotates && layer_bones[j].length_sq() < 1.0e-12f) layer_bones[j] = stack.bone(j);
 			stack.apply(j, &turn, &slide, &rotates, &translates);
 			turns[s * joints + j] = turn;
 			slides[s * joints + j] = slide;
@@ -688,8 +1078,9 @@ fn AnimTemplate clip_flattened(Allocator allocator, AnimTemplate source,
 			};
 			if (drives_rot[j]) axis_angle_of(turns[s * joints + j], &dot.axis, &dot.angle);
 			if (drives_move[j]) dot.move = slides[s * joints + j];
-			// The base's bone direction rides along so retargeting still applies.
-			if (source.channel_count(name, true) > 0) dot.bone = source.entry_at(name, time).bone;
+			// The bone direction rides along so retargeting still applies: the base's,
+			// or the layer's for a joint only a layer turns.
+			dot.bone = source.channel_count(name, true) > 0 ? source.entry_at(name, time).bone : layer_bones[j];
 			dots.push(dot);
 		}
 		frames[s] = { .time = time, .dots = dots.to_array(allocator) };
@@ -719,6 +1110,27 @@ fn AnimTemplate clip_copy_without_layers(Allocator allocator, AnimTemplate sourc
 // `keyframes`), so it is written and read by them.
 
 fn String AnimLayerMode.wire(self) => self == OVERRIDE ? "override" : "additive";
+
+fn String AnimLayerFit.wire(self)
+{
+	switch (self)
+	{
+		case STRETCH: return "stretch";
+		case KEEP: return "keep";
+		case REPEAT: return "repeat";
+	}
+}
+
+fn bool parse_layer_fit(String text, AnimLayerFit* out)
+{
+	switch (text)
+	{
+		case "stretch": *out = STRETCH; return true;
+		case "keep": *out = KEEP; return true;
+		case "repeat": *out = REPEAT; return true;
+		default: return false;
+	}
+}
 
 fn String AnimLayerKind.wire(self)
 {
@@ -759,6 +1171,13 @@ fn void append_layer_fields(DString* out, AnimLayer* layer)
 		}
 		out.append_char(']');
 	}
+	if (layer.link.len > 0)
+	{
+		out.append_string(`,"link":`);
+		append_json_string(out, layer.link);
+	}
+	if (layer.length > 0.0f) out.appendf(`,"length":%s`, (JsonFloat)layer.length)!!;
+	if (layer.fit != STRETCH) out.appendf(`,"fit":"%s"`, layer.fit.wire())!!;
 	if (!layer.procedural()) return;
 	out.append_string(`,"joint":`);
 	append_json_string(out, layer.joint);
@@ -836,6 +1255,8 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 	if (!layer_text(obj, "name", allocator, &layer.name, detail)) return false;
 	if (!layer_text(obj, "joint", allocator, &layer.joint, detail)) return false;
 	if (!layer_text(obj, "tip", allocator, &layer.tip, detail)) return false;
+	if (!layer_text(obj, "link", allocator, &layer.link, detail)) return false;
+	if (!layer_number(obj, "length", &layer.length, detail)) return false;
 	if (!layer_number(obj, "weight", &layer.weight, detail)) return false;
 	if (!layer_number(obj, "start", &layer.start, detail)) return false;
 	if (!layer_number(obj, "end", &layer.end, detail)) return false;
@@ -894,6 +1315,17 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 		}
 		layer.mode = mode == "override" ? OVERRIDE : ADDITIVE;
 	}
+	if (member(obj, "fit") != null)
+	{
+		String fit = obj.get_string("fit") ?? "";
+		AnimLayerFit parsed;
+		if (!parse_layer_fit(fit, &parsed))
+		{
+			if (detail) detail.append_string(`layer "fit" must be "stretch", "keep" or "repeat"`);
+			return false;
+		}
+		layer.fit = parsed;
+	}
 	if (member(obj, "kind") != null)
 	{
 		String? kind = obj.get_string("kind");
@@ -948,9 +1380,9 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 		if (detail) detail.appendf(`layer "weight" is %.9g; it is 0 to 1`, layer.weight);
 		return false;
 	}
-	if (layer.start < 0.0f || layer.fade_in < 0.0f || layer.fade_out < 0.0f || layer.cycles < 0.0f)
+	if (layer.start < 0.0f || layer.fade_in < 0.0f || layer.fade_out < 0.0f || layer.cycles < 0.0f || layer.length < 0.0f)
 	{
-		if (detail) detail.append_string(`layer "start", "fade_in", "fade_out" and "cycles" cannot be negative`);
+		if (detail) detail.append_string(`layer "start", "fade_in", "fade_out", "cycles" and "length" cannot be negative`);
 		return false;
 	}
 	if (layer.procedural())

@@ -290,6 +290,97 @@ fn AnimTemplate clip_without_keys(Allocator allocator, AnimTemplate source, bool
 	return clip_with_frames(allocator, source, frames, source.duration);
 }
 
+faultdef STRIP_NOTHING_KEYED, STRIP_NOTHING_LEFT;
+
+<*
+ The clip with every key of `joints` gone, both channels, and every keyframe
+ that is left with nothing in it dropped. The joints then hold their rest pose,
+ unless a layer moves them.
+
+ 	`AnimTemplate still = clip_without_joints(mem, *clip, { "tail_1", "tail_2" })!;`
+
+ @param joints : `Names in the clip's own vocabulary; the caller has already widened a selection to the joints below it.`
+ @param moved : `When given, receives what was taken out, one keyframe per time it was keyed at, each keyed channel's curve stated outright (INHERIT resolved against the clip's blend) so the entries read the same in any clip. The caller owns it.`
+ @return? STRIP_NOTHING_KEYED : `The clip keys none of the joints.`
+ @return? STRIP_NOTHING_LEFT : `The joints are everything the clip keys, and a clip with no keys is not one this format holds.`
+*>
+fn AnimTemplate? clip_without_joints(Allocator allocator, AnimTemplate source, String[] joints, AnimKeyframe[]* moved = null)
+{
+	usz kept_frames;
+	usz taken_frames;
+	foreach (frame : source.keyframes)
+	{
+		usz stays;
+		usz goes;
+		foreach (dot : frame.dots)
+		{
+			if (array::contains(joints, dot.joint_name)) { goes++; } else { stays++; }
+		}
+		if (stays > 0) kept_frames++;
+		if (goes > 0) taken_frames++;
+	}
+	if (taken_frames == 0) return STRIP_NOTHING_KEYED~;
+	if (kept_frames == 0) return STRIP_NOTHING_LEFT~;
+
+	AnimKeyframe[] frames = alloc::new_array(allocator, AnimKeyframe, (sz)kept_frames);
+	AnimKeyframe[] taken = moved ? alloc::new_array(allocator, AnimKeyframe, (sz)taken_frames) : {};
+	usz written;
+	usz moved_written;
+	foreach (frame : source.keyframes)
+	{
+		usz goes;
+		foreach (dot : frame.dots) if (array::contains(joints, dot.joint_name)) goes++;
+		usz stays = frame.dots.len - goes;
+		if (stays > 0)
+		{
+			AnimKeyDot[] dots = alloc::new_array(allocator, AnimKeyDot, (sz)stays);
+			usz at;
+			foreach (dot : frame.dots) if (!array::contains(joints, dot.joint_name)) dots[at++] = dot.copy(allocator);
+			frames[written++] = { .time = frame.time, .dots = dots };
+		}
+		if (moved && goes > 0)
+		{
+			AnimKeyDot[] dots = alloc::new_array(allocator, AnimKeyDot, (sz)goes);
+			usz at;
+			foreach (dot : frame.dots)
+			{
+				if (!array::contains(joints, dot.joint_name)) continue;
+				AnimKeyDot out = dot.copy(allocator);
+				if (out.keys_rotation()) out.rotation_interpolation = dot.interpolation(true, source.blend);
+				if (out.keys_translation()) out.translation_interpolation = dot.interpolation(false, source.blend);
+				dots[at++] = out;
+			}
+			taken[moved_written++] = { .time = frame.time, .dots = dots };
+		}
+	}
+	if (moved) *moved = taken;
+	return clip_with_frames(allocator, source, frames, source.duration);
+}
+
+<*
+ The clip with the keys of `joints` moved out of its base into a layer of their
+ own: a keyed OVERRIDE layer at full weight, put at the **bottom** of the stack
+ so whatever layers the clip already has still lie over it as before. The pose
+ is the same at every instant; what changes is that the motion can now be muted,
+ weighed, edited or deleted apart from the rest.
+
+ @param mask : `The joints the layer is confined to (each with everything below it): the roots of the selection.`
+ @param name : `The new layer's name; copied.`
+ @return? STRIP_NOTHING_KEYED, STRIP_NOTHING_LEFT : `As clip_without_joints.`
+*>
+fn AnimTemplate? clip_with_joints_layered(Allocator allocator, AnimTemplate source, String[] joints, String[] mask, String name)
+{
+	AnimKeyframe[] moved;
+	AnimTemplate out = clip_without_joints(allocator, source, joints, &moved)!;
+	AnimLayer layer = anim_layer_defaults(name.copy(allocator));
+	layer.mode = OVERRIDE;
+	layer.keyframes = moved;
+	layer.mask = alloc::new_array(allocator, String, (sz)mask.len);
+	foreach (usz i, entry : mask) layer.mask[i] = entry.copy(allocator);
+	out.layers = layers_inserted(allocator, out.layers, 0, layer);
+	return out;
+}
+
 <*
  The clip with `key` put in at its own time, merging with any key already there.
 
@@ -513,6 +604,7 @@ fn AnimTemplate clip_cropped(Allocator allocator, AnimTemplate source, float sta
 	};
 	out = edge_restated(allocator, out, source, start, 0.0f);
 	out = edge_restated(allocator, out, source, end, length);
+	layer_keys_rewritten(allocator, &out, source, start, end, false);
 	if (out.keyframes.len == 0)
 	{
 		out.free(allocator);
@@ -607,12 +699,46 @@ fn AnimTemplate clip_range_cut(Allocator allocator, AnimTemplate source, float s
 		out.free(allocator);
 		out = joined;
 	}
+	layer_keys_rewritten(allocator, &out, source, start, end, true);
 	if (out.keyframes.len == 0)
 	{
 		out.free(allocator);
 		return clip_copy(allocator, source);
 	}
 	return out;
+}
+
+<*
+ `out`'s keyed layers given keys cut the way its base was: each one's keys, as
+ `source` held them, run through the same crop (`cut` false) or range cut as a
+ clip of their own. So a crop restates a layer at its new edges, and a cut closes
+ the layer's gap where the base's closes, rather than every key before the start
+ piling onto zero. A layer on its own clock is not the clip's to cut.
+*>
+fn void layer_keys_rewritten(Allocator allocator, AnimTemplate* out, AnimTemplate source,
+	float start, float end, bool cut) @local
+{
+	foreach (usz i, &layer : out.layers)
+	{
+		if (i >= source.layers.len || layer.kind != KEYED || layer.own_clock()) continue;
+		AnimTemplate keys = {
+			.name = "keys",
+			.duration = source.duration,
+			.loop = source.loop,
+			.blend = source.blend,
+			.keyframes = source.layers[i].keyframes,
+		};
+		AnimTemplate done = cut ? clip_range_cut(allocator, keys, start, end) : clip_cropped(allocator, keys, start, end);
+		// A cut that leaves no key answers with the keys unchanged (a real cut always
+		// shortens), which for a layer means none are left. A crop restates every
+		// channel at its edges, so it always has its keys.
+		bool kept = !cut || done.duration != keys.duration;
+		foreach (&frame : layer.keyframes) frame.free(allocator);
+		if (layer.keyframes.len > 0) alloc::free(allocator, layer.keyframes);
+		layer.keyframes = kept ? done.keyframes : {};
+		if (kept) done.keyframes = {};
+		done.free(allocator);
+	}
 }
 
 // Inside the range, with a key sitting on either edge counted in.

@@ -522,7 +522,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// --- layers tools ---
 	server.add_tool({
 		.name = "set_layer",
-		.description = "Add, replace, remove or reorder one layer of a clip's stack without resending the clip. A layer is an adjustment laid over the clip's own keys: sparse keyed deltas (a breath, a limp), or a generator — a wave travelling down a chain of joints such as a tail, seeded noise, or one pulse at a moment — with a weight, an optional time range and fades, and an optional joint mask. Additive layers add to what is underneath; override layers blend it toward the layer. The stack is evaluated inside the pose sampler before retargeting, so playback, get_pose, measure_clip, bake_physics and every baked export see it. Layers live in the project sidecar (save_project); a saved or exported file gets the flattened result. One call is one undo step. Read the layers topic of get_crig_docs for the model; merge_layers bakes the stack into ordinary keys.",
+		.description = "Add, replace, remove or reorder one layer of a clip's stack without resending the clip. A layer is an adjustment laid over the clip's own keys: sparse keyed deltas (a breath, a limp), or a generator — a wave travelling down a chain of joints such as a tail, seeded noise, or one pulse at a moment — with a weight, an optional time range and fades, and an optional joint mask. Additive layers add to what is underneath; override layers blend it toward the layer. The stack is evaluated inside the pose sampler before retargeting, so playback, get_pose, measure_clip, bake_physics and every baked export see it. Layers live in the project sidecar (save_project); a saved or exported file gets the flattened result. One call is one undo step. op extract lifts the keys of chosen joints (a tail) out of the base into a layer of their own, the pose unchanged; op share links the layer into other clips so one edit changes them all, each fitting it to its own length; op unlink makes a copy independent again. Read the layers topic of get_crig_docs for the model; merge_layers bakes the stack into ordinary keys.",
 		.input_schema = SET_LAYER_SCHEMA,
 		.handler = &tool_set_layer,
 		.user_data = app,
@@ -620,7 +620,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "remove_keys",
-		.description = "Remove keyframes from a clip, by index (counted from 0 as get_clip lists them) or every partial one — a key that names fewer joints than the clip's fullest. The repair for a pop measure_clip localizes to a key: a leftover correction key between whole poses that jerks a leg for a few milliseconds. One undo step; answers with measure_clip's numbers.",
+		.description = "Remove keyframes from a clip, by index (counted from 0 as get_clip lists them) or every partial one — a key that names fewer joints than the clip's fullest. The repair for a pop measure_clip localizes to a key: a leftover correction key between whole poses that jerks a leg for a few milliseconds. With joints, removes every key of those joints and the joints below them instead, leaving them at rest: the tail of a clip that should not move (set_layer op extract keeps the motion as a layer instead). One undo step; answers with measure_clip's numbers.",
 		.input_schema = REMOVE_KEYS_SCHEMA,
 		.handler = &tool_remove_keys,
 		.user_data = app,

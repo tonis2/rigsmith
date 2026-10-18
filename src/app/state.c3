@@ -1605,6 +1605,8 @@ fn void AppState.free_character_state(&self)
 	self.imported_skin.free(mem);
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
 	self.drop_aim_draft();
+	self.drop_layer_keys_scaled();
+	self.drop_layer_share_rows();
 	self.clear_aim_target();
 	self.clear_position_locks();
 	self.drop_palette();

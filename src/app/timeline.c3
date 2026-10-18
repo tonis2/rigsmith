@@ -230,7 +230,38 @@ fn AnimKeyframe? AppState.keyframe_here(&self, Allocator allocator, float time, 
 *>
 fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 {
-	bool forked = ref.pack != self.authored_pack;
+	bool forked;
+	AnimRef landed = self.land_clip_recorded(ref, built, &forked);
+	if (!landed.valid()) return NO_ANIM;
+	self.undo_stack.commit();
+	self.editing = landed;
+	self.sync_clip_pins();
+
+	if (forked)
+	{
+		// Said out loud, because it moves where the clip lives. A user who edits a
+		// library clip and later cannot find their change in `biped.glb` was never
+		// told it went somewhere else.
+		self.@notice("%s now uses a copy you can edit; the library file is unchanged.", self.clip(landed).name);
+	}
+
+	self.refresh_ui();
+	return landed;
+}
+
+<*
+ `land_clip` up to the undo record and no further: the fork, the put and the
+ binding, recorded but not committed, with `editing` left alone and nothing
+ said. For an edit that lands several clips as one undo step — sharing a layer
+ into them — and commits once itself.
+
+ @param forked : `Raised when the clip came out of a library pack.`
+ @return `NO_ANIM when the clip could not be landed. The template is taken over either way.`
+*>
+fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, bool* forked = null)
+{
+	bool fork = ref.pack != self.authored_pack;
+	if (forked) *forked = fork;
 	String source_file = "";
 	String source_name = "";
 	(void)self.binding_of(ref, &source_file, &source_name);
@@ -239,7 +270,7 @@ fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 	// A library fork must never replace an unrelated authored clip merely
 	// because both packs called theirs "Walk". Name the fork uniquely before the
 	// authored upsert and carry that name into its binding.
-	if (forked && self.clip_named_in_authored(built.name).valid())
+	if (fork && self.clip_named_in_authored(built.name).valid())
 	{
 		String unique = self.unused_clip_name(mem, built.name);
 		if (built.name.len > 0) alloc::free(mem, built.name.ptr);
@@ -265,19 +296,6 @@ fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 		BoundClip parked = self.doc.swap_bound((uint)at, owned_binding("", named));
 		self.undo_stack.record_binding_swap((uint)at, parked, owned_binding("", named));
 	}
-	self.undo_stack.commit();
-	self.editing = landed;
-	self.sync_clip_pins();
-
-	if (forked)
-	{
-		// Said out loud, because it moves where the clip lives. A user who edits a
-		// library clip and later cannot find their change in `biped.glb` was never
-		// told it went somewhere else.
-		self.@notice("%s now uses a copy you can edit; the library file is unchanged.", named);
-	}
-
-	self.refresh_ui();
 	return landed;
 }
 

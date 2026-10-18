@@ -715,6 +715,9 @@ fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced =
 	self.clear_animation_key_selection();
 	if (replaced) *replaced = had.name.len > 0;
 	self.undo_stack.record_clip_swap(name.copy(mem), had, slot);
+	// A shared layer edited here is edited in every clip that shares it, in the
+	// same undo step (layer_edit.c3).
+	self.sync_linked_layers(landed);
 	return landed;
 }
 

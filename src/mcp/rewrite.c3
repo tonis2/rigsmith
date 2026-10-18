@@ -69,7 +69,8 @@ const String MAKE_LOOP_SCHEMA = `{"type":"object","properties":{
 const String REMOVE_KEYS_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."},
 	"keys":{"type":"array","items":{"type":"integer"},"description":"Keyframe indices to remove, counted from 0 in the order get_clip lists them — the key a measure_clip pop names."},
-	"partial":{"type":"boolean","description":"Remove every keyframe that keys fewer joints than the clip's fullest one: the leftover correction keys a dense clip should not have. Give this or keys."}
+	"partial":{"type":"boolean","description":"Remove every keyframe that keys fewer joints than the clip's fullest one: the leftover correction keys a dense clip should not have. Give this or keys."},
+	"joints":{"type":"array","items":{"type":"string"},"description":"Remove every key of these dots, each with every joint below it, from the base keys; they hold their rest pose. A tail that should not move. Give this, keys or partial."}
 }}`;
 
 <*
@@ -319,6 +320,16 @@ fn String? tool_remove_keys(Object* args, void* user_data, DString* detail) @pri
 
 	Object* listed = member(args, "keys");
 	bool partial = args.get_bool("partial") ?? false;
+	Object* joints = member(args, "joints");
+	if (joints != null)
+	{
+		if (listed != null || partial)
+		{
+			detail.append_string(`give one of "joints", "keys" or "partial".`);
+			return REWRITE_REFUSED~;
+		}
+		return remove_joint_keys_json(app, ref, joints, detail);
+	}
 	if ((listed != null) == partial)
 	{
 		detail.append_string(`give "keys": [indices] to remove those keyframes, or "partial": true to remove every keyframe that keys fewer joints than the fullest — one of them.`);
@@ -374,6 +385,39 @@ fn String? tool_remove_keys(Object* args, void* user_data, DString* detail) @pri
 		return REWRITE_REFUSED~;
 	}
 	return landed_rewrite_json(app, ref, clip_without_keys(mem, *clip, drop), "keys removed", detail);
+}
+
+// remove_keys with joints: every key of those joints and the joints below them.
+fn String? remove_joint_keys_json(AppState* app, AnimRef ref, Object* joints, DString* detail) @local
+{
+	RigView? opened = app.open_rig(mem);
+	if (catch opened)
+	{
+		detail.append_string(`removing a joint's keys needs a rig: the joints below it are found on it.`);
+		return REWRITE_REFUSED~;
+	}
+	RigView view = opened;
+	defer view.free(mem);
+	bool[] picked;
+	if (!joints_picked(app, &view, joints, &picked, detail)) return REWRITE_REFUSED~;
+	defer alloc::free(mem, picked);
+	String[] names = app.covered_joint_names(mem, &view, ref, picked: picked);
+	defer free_names(mem, names);
+	AnimTemplate* clip = app.clip(ref);
+	AnimTemplate? stripped = clip_without_joints(mem, *clip, names);
+	if (catch why = stripped)
+	{
+		if (why == STRIP_NOTHING_KEYED)
+		{
+			detail.appendf(`%s has no keys on those joints or any below them.`, clip.name);
+		}
+		else
+		{
+			detail.append_string("those joints are everything the clip keys. delete_clip removes a clip.");
+		}
+		return REWRITE_REFUSED~;
+	}
+	return landed_rewrite_json(app, ref, stripped, "joint keys removed", detail);
 }
 
 fn String? tool_smooth_clip(Object* args, void* user_data, DString* detail) @private

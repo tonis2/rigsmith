@@ -185,7 +185,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "a contact bar", .action = "drag it or its ends; drag an empty lane to add; right-click deletes" },
 	{ .binding = "the time readout", .action = "type a frame (15) or a time (0.5 s) and press Enter to go there" },
 	{ .binding = "the ⋯ by the clip", .action = "rename, duplicate, stretch, mirror, remove or delete the clip" },
-	{ .binding = "Clip tools", .action = "check, trim, close the loop or cut one (Make loop replaces the clip)" },
+	{ .binding = "Clip tools", .action = "check, trim, loop; remove the selected joints' keys or move them to a layer" },
 
 	{ .heading = "Timeline (while an animation is open)" },
 	{ .binding = "space", .action = "play or pause" },

@@ -917,6 +917,36 @@ fn Vec3 AnimTemplate.translation_at(self, String joint, float time, AnimSpan* sp
 }
 
 <*
+ The joint's turn at `time`, exactly as `rotation_at` gives it, and the bone that
+ turn was recorded against (see `AnimKeyDot.bone`). The identity and a zero bone
+ where the clip does not rotate the joint.
+
+ What a keyed layer reads, so a joint only a layer turns is carried onto the rig
+ the way the base would carry it.
+*>
+fn Quaternionf AnimTemplate.rotation_and_bone_at(self, String joint, float time, Vec3* bone)
+{
+	AnimSpan at;
+	*bone = {};
+	if (!self.channel_span(joint, true, time, &at)) return quaternion::IDENTITY;
+	*bone = self.span_bone(joint, at);
+	return at.turn(self.keyframes[at.p0].rotation_of(joint), self.keyframes[at.p1].rotation_of(joint),
+		self.keyframes[at.p2].rotation_of(joint), self.keyframes[at.p3].rotation_of(joint));
+}
+
+// Whichever key of a rotation span recorded it: an entry's bone is a property of
+// the rig the clip was authored on, so it is the same in every key that names the
+// joint, and the outgoing key is asked first only because it is the one at hand.
+fn Vec3 AnimTemplate.span_bone(self, String joint, AnimSpan span)
+{
+	AnimKeyDot dot;
+	self.keyframes[span.p1].channel_dot(joint, true, &dot);
+	if (dot.bone.length_sq() >= 1.0e-12f) return dot.bone;
+	self.keyframes[span.p2].channel_dot(joint, true, &dot);
+	return dot.bone;
+}
+
+<*
  The pose this template puts a rig in at `time`.
 
  Everything a template means happens here: the span of keyframes the clock falls
@@ -1051,24 +1081,13 @@ fn rig::Pose AnimTemplate.pose(
 
 		authored[joint] = from_parent.mul(turn).normalize();
 
-		// Whichever frame recorded it: an entry's bone is a property of the rig the
-		// clip was authored on, so it is the same in every frame that names the
-		// joint, and a frame that omits the joint has nothing to say about it. A
-		// joint only layers drive has no bone to carry from and is left as written.
+		// The bone the turn was recorded against: the base's when it keys the
+		// joint, otherwise the one a keyed layer's entries record — so a joint moved
+		// out of the base into a layer is carried exactly as it was. A layer that
+		// records none (a generator, a hand-written key) is left as written.
 		if (rotates)
 		{
-			Vec3 source = {};
-			if (base_rotates)
-			{
-				AnimKeyDot source_dot;
-				self.keyframes[rotation_span.p1].channel_dot(name, true, &source_dot);
-				source = source_dot.bone;
-				if (source.length_sq() < 1.0e-12f)
-				{
-					self.keyframes[rotation_span.p2].channel_dot(name, true, &source_dot);
-					source = source_dot.bone;
-				}
-			}
+			Vec3 source = base_rotates ? self.span_bone(name, rotation_span) : stack.bone(joint);
 			Vec3 target = joint < bones.len ? bones[joint] : (Vec3){ 0, 0, 0 };
 			Quaternionf onto = bone_carry(source, target);
 			// An arm raised or lowered at rest is the source's pose, not a fact

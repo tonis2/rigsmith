@@ -43,58 +43,7 @@ import std::math::vector;
 import std::math::quaternion;
 
 // ---------------------------------------------------------------------------
-// Stack arithmetic, shared with the MCP `set_layer` op
-
-<*
- `source` with `layer` put in at `at` (0 = bottom of the stack). The layer is
- taken over; the returned array replaces `source`, which is released.
-*>
-fn AnimLayer[] layers_inserted(Allocator allocator, AnimLayer[] source, usz at, AnimLayer layer)
-{
-	AnimLayer[] grown = alloc::new_array(allocator, AnimLayer, (sz)(source.len + 1));
-	usz write = 0;
-	for (usz i = 0; i <= source.len; i++)
-	{
-		if (i == at) { grown[i] = layer; continue; }
-		grown[i] = source[write++];
-	}
-	if (source.len > 0) alloc::free(allocator, source);
-	return grown;
-}
-
-<*
- `source` without the layer at `at`, which is freed. The returned array replaces
- `source`, which is released.
-*>
-fn AnimLayer[] layers_removed(Allocator allocator, AnimLayer[] source, usz at)
-{
-	AnimLayer[] shrunk = alloc::new_array(allocator, AnimLayer, (sz)(source.len - 1));
-	usz write = 0;
-	for (usz i = 0; i < source.len; i++)
-	{
-		if (i == at) { source[i].free(allocator); continue; }
-		shrunk[write++] = source[i];
-	}
-	alloc::free(allocator, source);
-	return shrunk;
-}
-
-<*
- The layer at `at` moved to `dest`, the ones between shifting over by one.
-*>
-fn void layers_moved(AnimLayer[] layers, usz at, usz dest)
-{
-	AnimLayer moving = layers[at];
-	if (dest > at)
-	{
-		for (usz i = at; i < dest; i++) layers[i] = layers[i + 1];
-	}
-	else
-	{
-		for (usz i = at; i > dest; i--) layers[i] = layers[i - 1];
-	}
-	layers[dest] = moving;
-}
+// The stack as a whole (the array arithmetic is anim/layers.c3's)
 
 <*
  The clip with its whole stack replaced by `next`, which is taken over.
@@ -207,11 +156,72 @@ fn AnimTemplate* AppState.key_clip(&self, AnimRef ref)
 	self.layer_keys_view = {
 		.name = clip.name,
 		.duration = clip.duration,
-		.loop = clip.loop,
+		// A layer that keeps its seconds holds its last pose; it never wraps.
+		.loop = clip.loop && !(layer.own_clock() && layer.fit == KEEP),
 		.blend = clip.blend,
-		.keyframes = layer.keyframes,
+		.keyframes = self.layer_keys_on_timeline(layer, clip),
 	};
 	return &self.layer_keys_view;
+}
+
+<*
+ The layer's keys at the times the timeline shows them. Its own, except for a
+ stretched shared layer, whose keys are spread over the clip: a copy of the times
+ over the layer's own entries, kept until the layer, the stretch or the history
+ moves, so a view handed out stays good while a caller walks it. `land_key_edit`
+ takes the times back.
+*>
+fn AnimKeyframe[] AppState.layer_keys_on_timeline(&self, AnimLayer* layer, AnimTemplate* clip)
+{
+	float scale = layer.display_scale(clip);
+	if (scale == 1.0f) return layer.keyframes;
+	if (self.layer_keys_scaled_from == layer.keyframes.ptr && self.layer_keys_scaled.len == layer.keyframes.len
+		&& self.layer_keys_scaled_by == scale && self.layer_keys_scaled_revision == self.undo_stack.revision)
+	{
+		return self.layer_keys_scaled;
+	}
+	self.drop_layer_keys_scaled();
+	self.layer_keys_scaled = alloc::new_array(mem, AnimKeyframe, (sz)layer.keyframes.len);
+	foreach (usz i, frame : layer.keyframes) self.layer_keys_scaled[i] = { .time = frame.time * scale, .dots = frame.dots };
+	self.layer_keys_scaled_from = layer.keyframes.ptr;
+	self.layer_keys_scaled_by = scale;
+	self.layer_keys_scaled_revision = self.undo_stack.revision;
+	return self.layer_keys_scaled;
+}
+
+// The entries are the layer's; only the array of times is this view's own.
+fn void AppState.drop_layer_keys_scaled(&self)
+{
+	if (self.layer_keys_scaled.len > 0) alloc::free(mem, self.layer_keys_scaled);
+	self.layer_keys_scaled = {};
+	self.layer_keys_scaled_from = null;
+}
+
+<*
+ A shared layer's keys back from the timeline's seconds to its own, `keys` taken
+ over: a stretched layer's times shrunk back, a kept one's length grown to hold a
+ key past its end. A stretched or repeated layer has no room past its length, and
+ says so.
+
+ @return `False, the keys still the caller's, when a key falls past the layer's own end.`
+*>
+fn bool AppState.keys_onto_own_clock(&self, AnimLayer* layer, AnimTemplate* clip, AnimKeyframe[] keys)
+{
+	float scale = layer.display_scale(clip);
+	float last = 0.0f;
+	foreach (frame : keys) last = math::max(last, frame.time / scale);
+	if (layer.fit != KEEP && last > layer.length + ANIM_SAME_TIME)
+	{
+		self.@notice("layer \"%s\" is shared and keeps its own %.2fs: its keys stay inside it", layer.name,
+			layer.length * scale);
+		return false;
+	}
+	foreach (&frame : keys) frame.time = math::min(frame.time / scale, layer.fit == KEEP ? last : layer.length);
+	foreach (&frame : layer.keyframes) frame.free(mem);
+	if (layer.keyframes.len > 0) alloc::free(mem, layer.keyframes);
+	layer.keyframes = keys;
+	if (layer.fit == KEEP) layer.length = math::max(layer.length, last);
+	return true;
 }
 
 <*
@@ -229,6 +239,19 @@ fn AnimRef AppState.land_key_edit(&self, AnimRef ref, AnimTemplate built)
 
 	AnimTemplate full = clip_copy(mem, *clip);
 	AnimLayer* layer = &full.layers[(usz)at];
+	if (layer.own_clock())
+	{
+		// Its own seconds: the clip's length is not the layer's to grow.
+		if (!self.keys_onto_own_clock(layer, clip, built.keyframes))
+		{
+			full.free(mem);
+			built.free(mem);
+			return NO_ANIM;
+		}
+		built.keyframes = {};
+		built.free(mem);
+		return self.land_layered(ref, full);
+	}
 	foreach (&frame : layer.keyframes) frame.free(mem);
 	if (layer.keyframes.len > 0) alloc::free(mem, layer.keyframes);
 	layer.keyframes = built.keyframes;
@@ -443,6 +466,230 @@ fn bool AppState.merge_clip_layers(&self, AnimRef ref)
 }
 
 // ---------------------------------------------------------------------------
+// Sharing a layer between clips
+//
+// A shared layer is one motion several clips of the character play: each holds a
+// copy with the same `link`, and an edit of any copy is copied into the rest as
+// part of the same undo step (`sync_linked_layers`, below). What the copies share
+// is the motion — name, kind, mode, keys, mask, length, a generator's numbers;
+// what stays each clip's own is how it plays there: weight, mute, solo, range,
+// fades, and the fit that lays the layer's own length on the clip's.
+
+<*
+ A shared-layer id no clip of the character holds and none handed out this
+ session did either, so an undone holder brought back by redo is never confused
+ with a newer share.
+*>
+fn String AppState.new_link_id(&self)
+{
+	uint highest = self.link_counter;
+	AnimPack* pack = self.authored();
+	if (pack)
+	{
+		foreach (&clip : pack.clips) foreach (&layer : clip.layers)
+		{
+			if (!layer.link.starts_with("link-")) continue;
+			uint? number = layer.link[5..].to_uint();
+			if (try number) highest = math::max(highest, number);
+		}
+	}
+	self.link_counter = highest + 1;
+	return string::format(mem, "link-%d", self.link_counter);
+}
+
+<*
+ How many clips of the character hold the shared layer `link`.
+*>
+fn usz AppState.link_holders(&self, String link)
+{
+	AnimPack* pack = self.authored();
+	if (!pack || link.len == 0) return 0;
+	usz count;
+	foreach (&clip : pack.clips) if (clip.layer_linked(link) >= 0) count++;
+	return count;
+}
+
+<*
+ Where the shared layer `link` can be read from: a clip of the character holding
+ it, or NO_ANIM. `skip` is passed over, for "another clip than this one".
+*>
+fn AnimRef AppState.link_holder(&self, String link, AnimRef skip = NO_ANIM)
+{
+	AnimPack* pack = self.authored();
+	if (!pack || link.len == 0) return NO_ANIM;
+	foreach (usz i, &clip : pack.clips)
+	{
+		AnimRef ref = { .pack = (int)self.authored_pack, .clip = (int)i };
+		if (!ref.same(skip) && clip.layer_linked(link) >= 0) return ref;
+	}
+	return NO_ANIM;
+}
+
+// A copy of the shared layer for a clip that does not have it yet: the motion,
+// played the way a fresh layer is — full weight, the whole clip, no fades.
+fn AnimLayer shared_layer_for(AnimLayer* shared, AnimLayerFit fit) @local
+{
+	AnimLayer copy = shared.copy(mem);
+	copy.fit = fit;
+	copy.weight = 1.0f;
+	copy.mute = false;
+	copy.solo = false;
+	copy.start = copy.end = copy.fade_in = copy.fade_out = 0.0f;
+	return copy;
+}
+
+<*
+ Share the layer at `at` with other clips: each target gets a copy on top of its
+ stack, laid on its length by `fit`, and from then on an edit of any copy is an
+ edit of all of them. A layer shared for the first time is given its id and its
+ own clock — the clip's present length, so in its own clip nothing moves. A
+ library clip is forked first, as any edit does. Everything is one undo step.
+
+ @return `How many clips were given the layer; targets that already hold it, have no keys or are the clip itself are passed over.`
+*>
+fn usz AppState.share_layer(&self, AnimRef ref, usz at, AnimRef[] targets, AnimLayerFit fit)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip || at >= clip.layers.len) return 0;
+	// A copy, because a fork below grows the packs under every pointer held.
+	AnimLayer shared = clip.layers[at].copy(mem);
+	defer shared.free(mem);
+	AnimRef source = ref;
+	if (shared.link.len == 0)
+	{
+		shared.link = self.new_link_id();
+		if (shared.kind == KEYED)
+		{
+			shared.length = clip.duration;
+			shared.fit = STRETCH;
+		}
+		AnimLayer[] next = layers_copy(mem, clip.layers);
+		next[at].free(mem);
+		next[at] = shared.copy(mem);
+		source = self.land_clip_recorded(ref, clip_with_layers(mem, *clip, next));
+		if (!source.valid()) return 0;
+		if (self.active_layer_ref.same(ref)) self.active_layer_ref = source;
+	}
+	usz added;
+	foreach (target : targets)
+	{
+		if (target.same(source) || !self.ensure_clip_imported(target)) continue;
+		AnimTemplate* other = self.clip(target);
+		if (!other || other.keyframes.len == 0 || other.layer_linked(shared.link) >= 0) continue;
+		AnimLayer[] next = layers_inserted(mem, layers_copy(mem, other.layers), other.layers.len,
+			shared_layer_for(&shared, fit));
+		if (self.land_clip_recorded(target, clip_with_layers(mem, *other, next)).valid()) added++;
+	}
+	self.undo_stack.commit();
+	self.editing = source;
+	self.sync_clip_pins();
+	self.refresh_ui();
+	return added;
+}
+
+<*
+ Put the shared layer `link`, as another clip of the character holds it, on top
+ of this clip's stack and make it the active layer.
+
+ @return `The new layer's index, or -1 when no clip holds the link or this one already does.`
+*>
+fn sz AppState.add_shared_layer(&self, AnimRef ref, String link, AnimLayerFit fit)
+{
+	if (!self.ensure_clip_imported(ref)) return -1;
+	AnimRef holder = self.link_holder(link, ref);
+	AnimTemplate* clip = self.clip(ref);
+	if (!holder.valid() || !clip || clip.keyframes.len == 0 || clip.layer_linked(link) >= 0) return -1;
+	AnimTemplate* from = self.clip(holder);
+	AnimLayer layer = shared_layer_for(&from.layers[(usz)from.layer_linked(link)], fit);
+	AnimLayer[] next = layers_inserted(mem, layers_copy(mem, clip.layers), clip.layers.len, layer);
+	usz top = next.len - 1;
+	AnimRef landed = self.land_layered(ref, clip_with_layers(mem, *clip, next));
+	if (!landed.valid()) return -1;
+	self.set_active_layer(landed, (sz)top);
+	return (sz)top;
+}
+
+<*
+ Make this clip's copy of a shared layer its own: laid on the clip's seconds as
+ its fit had it, no longer linked. The other clips keep sharing theirs.
+*>
+fn bool AppState.unlink_layer(&self, AnimRef ref, usz at)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip || at >= clip.layers.len || clip.layers[at].link.len == 0) return false;
+	return self.replace_clip_layer(ref, at, clip.layers[at].plain(mem, clip));
+}
+
+// What the two sharing dialogs list (ui/layer_share.c3), released.
+fn void AppState.drop_layer_share_rows(&self)
+{
+	if (self.layer_share_targets.len > 0) alloc::free(mem, self.layer_share_targets);
+	if (self.layer_share_held.len > 0) alloc::free(mem, self.layer_share_held);
+	free_names(mem, self.layer_share_labels);
+	free_names(mem, self.layer_share_ids);
+	free_names(mem, self.layer_pick_names);
+	free_names(mem, self.layer_pick_links);
+	if (self.layer_share_heading.len > 0) alloc::free(mem, self.layer_share_heading.ptr);
+	self.layer_share_targets = {};
+	self.layer_share_held = {};
+	self.layer_share_labels = {};
+	self.layer_share_ids = {};
+	self.layer_pick_names = {};
+	self.layer_pick_links = {};
+	self.layer_share_heading = "";
+}
+
+<*
+ Copy the shared layers of the clip just put into the pack into every other clip
+ of the character holding the same link, each keeping its own weight, range,
+ fades and fit. Called by `put_authored_clip` after it records the put, so the
+ copies are recorded into the same undo step as the edit that changed them; undo
+ swaps every one back on its own and never comes here.
+*>
+fn void AppState.sync_linked_layers(&self, AnimRef landed)
+{
+	if (self.syncing_links) return;
+	AnimTemplate* clip = self.clip(landed);
+	if (!clip || clip.layers.len == 0) return;
+	usz linked;
+	foreach (&layer : clip.layers) if (layer.link.len > 0) linked++;
+	if (linked == 0) return;
+	// The landed clip's shared layers, copied before anything else is put: a put
+	// may move the pack's clips.
+	AnimLayer[] shared = alloc::new_array(mem, AnimLayer, (sz)linked);
+	usz count;
+	foreach (&layer : clip.layers) if (layer.link.len > 0) shared[count++] = layer.copy(mem);
+	defer free_layers(mem, shared);
+
+	self.syncing_links = true;
+	defer self.syncing_links = false;
+	AnimPack* pack = self.authored();
+	usz clips = pack ? pack.clips.len : 0;
+	for (usz i = 0; i < clips; i++)
+	{
+		if ((int)i == landed.clip) continue;
+		AnimTemplate* other = &self.authored().clips[i];
+		bool stale = false;
+		foreach (&layer : shared)
+		{
+			sz at = other.layer_linked(layer.link);
+			if (at >= 0 && !layer.same_shared(&other.layers[(usz)at])) { stale = true; break; }
+		}
+		if (!stale) continue;
+		AnimTemplate next = clip_copy(mem, *other);
+		foreach (&layer : shared)
+		{
+			sz at = next.layer_linked(layer.link);
+			if (at < 0) continue;
+			AnimLayer mine = layer.shared_onto(mem, &next.layers[(usz)at]);
+			next.layers[(usz)at].free(mem);
+			next.layers[(usz)at] = mine;
+		}
+		(void)self.put_authored_clip(next);
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Keying into a layer
 
 // Whether the layer keys this joint's rotation (or translation) anywhere.
@@ -575,6 +822,10 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 
 	// Which joints and channels are written. A sparse layer stays sparse: a
 	// joint enters it by differing from the stack below, and stays in once keyed.
+	// Nothing outside its mask, which would only be keys the layer never plays.
+	bool[] inside = alloc::new_array(mem, bool, (sz)view.len());
+	defer alloc::free(mem, inside);
+	layer.mask_inside(&view.skeleton, names, inside);
 	AnimDotList kept;
 	kept.init(mem);
 	defer kept.free();
@@ -582,7 +833,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	{
 		sz j = array::index_of(names, dot.joint_name) ?? -1;
 		bool rotation, translation;
-		if (j >= 0 && (usz)j < view.dot_ids.len)
+		if (j >= 0 && (usz)j < view.dot_ids.len && inside[(usz)j])
 		{
 			bool moved_rotation = dot.angle > 1.0e-5f;
 			bool moved_translation = dot.move.length_sq() > 1.0e-12f;
@@ -616,11 +867,11 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 		return NO_ANIM;
 	}
 
-	// The layer's keys with this one put in, on a real copy of the clip.
-	AnimTemplate keys = {
-		.name = clip.name, .duration = clip.duration, .loop = clip.loop, .blend = clip.blend,
-		.keyframes = layer.keyframes,
-	};
+	// The layer's keys with this one put in, on a real copy of the clip. A shared
+	// layer keeps its own seconds: the key goes where the playhead falls among
+	// them, and a kept layer grows to hold one past its end.
+	key.time = layer.key_time(clip, time);
+	AnimTemplate keys = layer.keys_view(clip);
 	AnimTemplate grown = clip_with_key(mem, keys, key);
 	AnimTemplate full_clip = clip_copy(mem, *clip);
 	AnimLayer* target = &full_clip.layers[(usz)at];
@@ -628,7 +879,14 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	if (target.keyframes.len > 0) alloc::free(mem, target.keyframes);
 	target.keyframes = grown.keyframes;
 	grown.keyframes = {};
-	full_clip.duration = math::max(full_clip.duration, grown.duration);
+	if (target.own_clock())
+	{
+		if (target.fit == KEEP) target.length = math::max(target.length, grown.duration);
+	}
+	else
+	{
+		full_clip.duration = math::max(full_clip.duration, grown.duration);
+	}
 	grown.free(mem);
 
 	// As `key_here` does: the draft belongs to this editing transaction, not to
@@ -757,7 +1015,11 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 		sz j = array::index_of(names, dot.joint_name) ?? -1;
 		bool rotation = j < 0 || !lost_rotation[(usz)j];
 		bool slide = j < 0 || !lost_slide[(usz)j];
-		if (!rotation || !slide)
+		// Only a joint the base keys itself has keys to leave as they were; one an
+		// override layer alone drives (a tail moved into one) is not news.
+		bool base_keyed = (!rotation && clip.channel_count(dot.joint_name, true) > 0)
+			|| (!slide && clip.channel_count(dot.joint_name, false) > 0);
+		if (base_keyed)
 		{
 			if (covered > 0 && covered < 4) list.append(", ");
 			if (covered < 4) list.append(dot.joint_name);

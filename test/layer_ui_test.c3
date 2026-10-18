@@ -385,3 +385,136 @@ fn void layer_ui_mute_reaches_the_clip_that_is_playing() @test
 	test::@check(f.app.current_anim.layers.len == 1 && f.app.current_anim.layers[0].mute,
 		"muting did not reach the playing clip");
 }
+
+// The workspace's left thigh bent at 1 s, so the leg has motion of its own.
+fn uint lyr_bend_thigh(Fixture* f)
+{
+	uint thigh;
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == "thigh_L") thigh = dot.id;
+	test::@check(thigh != 0, "the biped has no thigh_L");
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not open a pose draft");
+	Quaternionf bend = quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, 0.5f);
+	test::@check(f.app.set_working_pose(thigh, bend, {}), "could not pose the thigh");
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(ALL), "keying the bend failed");
+	f.app.discard_pose_edit();
+	f.app.show_edited();
+	return thigh;
+}
+
+fn rig::Pose lyr_pose(Fixture* f, float time)
+{
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	return f.app.evaluated_clip_pose(mem, &view, *f.app.clip(f.app.editing), f.app.editing, time, false);
+}
+
+fn bool lyr_base_keys(Fixture* f, String joint)
+{
+	foreach (&frame : f.app.clip(f.app.editing).keyframes) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
+	return false;
+}
+
+<*
+ Clip tools' Move joints to layer lifts the selected thigh and the leg below it
+ into a full-strength override at the bottom of the stack, which becomes the
+ active layer; the clip plays exactly as it did, and one undo puts it back.
+
+ Re-introduce: leave the thigh's keys in the base too, or put the layer on top of
+ the stack, and the checks on the base or the order fail.
+*>
+fn void layer_ui_move_joints_to_a_layer_keeps_the_pose() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	lyr_workspace(&f);
+	uint thigh = lyr_bend_thigh(&f);
+	lyr_add(&f, crig::ANIM_LAYER_WAVE_ID);
+	float[3] times = { 0.5f, 1.0f, 1.5f };
+	rig::Pose[3] before;
+	foreach (usz i, t : times) before[i] = lyr_pose(&f, t);
+	defer foreach (&pose : before) pose.free(mem);
+	f.app.select(thigh);
+	RigView view = f.app.open_rig(mem)!!;
+	String[] leg = f.app.covered_joint_names(mem, &view, f.app.editing);
+	view.free(mem);
+	defer crig::free_names(mem, leg);
+	test::@check(leg.len > 1, "the thigh covers no joints below it");
+	sz history = f.app.undo_stack.cursor;
+
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MOVE_JOINTS_ID);
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	test::eq(clip.layers.len, (sz)2);
+	AnimLayer* layer = &clip.layers[0];
+	test::@check(layer.kind == KEYED && layer.mode == OVERRIDE && layer.weight == 1.0f, "the leg did not land in a full override");
+	test::@check(layer.name == "thigh_L motion", "the layer is called %s", layer.name);
+	test::@check(layer.mask.len == 1 && layer.mask[0] == "thigh_L", "the layer is not confined to the leg");
+	test::@check(clip.layers[1].kind == WAVE, "the new layer did not go under the wave");
+	foreach (joint : leg) test::@check(!lyr_base_keys(&f, joint), "the base still keys %s", joint);
+	test::@check(lyr_base_keys(&f, "hips"), "the rest of the body lost its keys");
+	test::eq(f.app.active_layer_of(f.app.editing), (sz)0);
+	test::eq(f.app.undo_stack.cursor, history + 1);
+	foreach (usz i, t : times)
+	{
+		rig::Pose after = lyr_pose(&f, t);
+		defer after.free(mem);
+		foreach (usz j, turn : after.rotations)
+		{
+			test::@check(lyr_angle_between(turn, before[i].rotations[j]) < 1.0e-5f
+				&& (after.offsets[j] - before[i].offsets[j]).length() < 1.0e-6f, "joint %d moved at %.1f s", (int)j, t);
+		}
+	}
+
+	test::@check(f.app.undo(), "undo failed");
+	test::eq(f.app.clip(f.app.editing).layers.len, (sz)1);
+	test::@check(lyr_base_keys(&f, "thigh_L"), "undo did not give the thigh its keys back");
+}
+
+<*
+ Clip tools' Remove joint animation asks first, names the joints and the clip,
+ does nothing on Cancel, and on Remove leaves the leg at rest as one undo step.
+
+ Re-introduce: skip the question and act at once, and the decline check fails.
+*>
+fn void layer_ui_remove_joint_animation_asks_first() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	lyr_workspace(&f);
+	uint thigh = lyr_bend_thigh(&f);
+	f.app.select(thigh);
+	Element* panel = f.ui.find_id(crig::ANIM_REMOVE_JOINTS_CONFIRM_ID)!!;
+	ConfirmDialog* ask = panel.widget_as(ConfirmDialog);
+	sz history = f.app.undo_stack.cursor;
+
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_REMOVE_JOINTS_ID);
+	test::@check(ask.asking(panel), "Remove did not ask first");
+	test::@check(ask.message.str_view().contains("thigh_L") && ask.message.str_view().contains("Layered"),
+		"the question does not name the joints and the clip: %s", ask.message.str_view());
+	f.close_menu();
+	test::@check(!ask.asking(panel), "Escape did not decline");
+	test::eq(f.app.undo_stack.cursor, history);
+	test::@check(lyr_base_keys(&f, "thigh_L"), "declining removed the keys");
+
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_REMOVE_JOINTS_ID);
+	ask.withdraw(panel);
+	crig::anim_remove_joints_confirmed(f.ui);
+	f.ui.flush();
+	test::@check(!lyr_base_keys(&f, "thigh_L"), "the thigh still has keys");
+	test::@check(lyr_base_keys(&f, "hips"), "the rest of the body lost its keys");
+	test::eq(f.app.undo_stack.cursor, history + 1);
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = lyr_pose(&f, 1.0f);
+	defer pose.free(mem);
+	foreach (usz j, id : view.dot_ids)
+	{
+		if (id == thigh) test::@check(lyr_angle_between(pose.rotations[j], quaternion::IDENTITY) < 1.0e-4f, "the thigh is not at rest");
+	}
+
+	test::@check(f.app.undo(), "undo failed");
+	test::@check(lyr_base_keys(&f, "thigh_L"), "undo did not bring the keys back");
+}
