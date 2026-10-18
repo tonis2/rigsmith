@@ -231,7 +231,8 @@ fn AnimKeyframe? AppState.keyframe_here(&self, Allocator allocator, float time, 
 fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 {
 	bool forked;
-	AnimRef landed = self.land_clip_recorded(ref, built, &forked);
+	usz unreached;
+	AnimRef landed = self.land_clip_recorded(ref, built, &forked, &unreached);
 	if (!landed.valid()) return NO_ANIM;
 	self.undo_stack.commit();
 	self.editing = landed;
@@ -242,7 +243,15 @@ fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
 		// Said out loud, because it moves where the clip lives. A user who edits a
 		// library clip and later cannot find their change in `biped.glb` was never
 		// told it went somewhere else.
-		self.@notice("%s now uses a copy you can edit; the library file is unchanged.", self.clip(landed).name);
+		if (unreached > 0)
+		{
+			self.@notice("%s now uses a copy you can edit, but %d of its keys are on joints this rig has not named, and the copy cannot hold them. Undo, name the joints (Auto-name) and edit again.",
+				self.clip(landed).name, unreached);
+		}
+		else
+		{
+			self.@notice("%s now uses a copy you can edit; the library file is unchanged.", self.clip(landed).name);
+		}
 	}
 
 	self.refresh_ui();
@@ -255,13 +264,18 @@ fn AnimRef AppState.land_clip(&self, AnimRef ref, AnimTemplate built)
  said. For an edit that lands several clips as one undo step — sharing a layer
  into them — and commits once itself.
 
+ A fork is respelt in the rig's own words on the way in (`in_rig_words`): the
+ edit was made in the library's, and the authored pack speaks the rig's.
+
  @param forked : `Raised when the clip came out of a library pack.`
+ @param unreached : `Receives how many of a fork's keys are on joints the rig has no name for, which the copy cannot hold.`
  @return `NO_ANIM when the clip could not be landed. The template is taken over either way.`
 *>
-fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, bool* forked = null)
+fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, bool* forked = null, usz* unreached = null)
 {
 	bool fork = ref.pack != self.authored_pack;
 	if (forked) *forked = fork;
+	if (fork) built = self.in_rig_words(built, ref, unreached);
 	String source_file = "";
 	String source_name = "";
 	(void)self.binding_of(ref, &source_file, &source_name);
@@ -297,6 +311,48 @@ fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, b
 		self.undo_stack.record_binding_swap((uint)at, parked, owned_binding("", named));
 	}
 	return landed;
+}
+
+<*
+ `built`, made from the clip at `from`, spelt in the rig's own words — the words
+ the authored pack speaks, since it has no skeleton of its own to be matched by
+ (anim/retarget.c3 `measure_reach`). A library clip keys its joints in its
+ file's words, which reach the rig through the pack's reach; copied into the
+ authored pack as they were, every joint the two spell differently would stop
+ moving. Taken over, and handed back as it is when the words already agree or
+ `from` is not a library clip.
+
+ @param unreached : `Receives how many keys are on joints the rig has no name for (unnamed dots), which a clip in the rig's words cannot hold.`
+*>
+fn AnimTemplate AppState.in_rig_words(&self, AnimTemplate built, AnimRef from, usz* unreached = null)
+{
+	if (unreached) *unreached = 0;
+	if (!from.valid() || from.pack == self.authored_pack) return built;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return built;
+	RigView view = opened;
+	defer view.free(mem);
+	String[] words = self.names_for(&view, from);
+	bool same = words.len == view.names.len;
+	if (same) foreach (usz j, word : words) if (word != view.names[j]) { same = false; break; }
+	if (same) return built;
+	AnimTemplate spelt = clip_in_words(mem, built, words, view.names, unreached);
+	built.free(mem);
+	return spelt;
+}
+
+<*
+ A copy of the clip at `ref` in the rig's own words, tracks compiled, for a tool
+ that samples a clip with the rig's names and writes the result into the
+ authored pack (a bake, a patch). The caller frees it.
+*>
+fn AnimTemplate AppState.clip_in_rig_words(&self, AnimRef ref)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip) return {};
+	AnimTemplate spelt = self.in_rig_words(clip_copy(mem, *clip), ref);
+	spelt.compile_tracks(mem);
+	return spelt;
 }
 
 <*

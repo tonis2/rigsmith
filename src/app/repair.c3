@@ -88,7 +88,9 @@ fn AnimRef AppState.cut_cycle(&self, AnimRef ref, float period_min, float period
 	}
 
 	self.clear_animation_key_selection();
-	AnimRef landed = in_place ? self.land_clip(ref, loop) : self.author_clip(loop);
+	// A new clip cut from a library take goes into the authored pack, which
+	// speaks the rig's words; landing in place respells a fork itself.
+	AnimRef landed = in_place ? self.land_clip(ref, loop) : self.author_clip(self.in_rig_words(loop, ref));
 	if (!landed.valid())
 	{
 		why.append_string("the cycle would not land");

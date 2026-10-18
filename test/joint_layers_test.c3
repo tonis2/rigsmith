@@ -443,3 +443,59 @@ fn void mirroring_unlinks_a_shared_layer() @test
 	test::@check(flipped.layers.len == 1 && flipped.layers[0].link.len == 0 && flipped.layers[0].length == 0.0f,
 		"the mirrored clip still shares the layer");
 }
+
+fn bool names_of(AnimKeyframe[] frames, String joint) @local
+{
+	foreach (frame : frames) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
+	return false;
+}
+
+<*
+ A library clip respelt in the rig's words: every key, contact, lock, pin and
+ layer is renamed joint for joint, a pack word the rig gives two joints drives
+ both, a name the pack does not have passes through, and an entry on a joint the
+ rig has no name for is dropped and counted.
+
+ Re-introduce: rename only the base keys, or map a word to its first joint only,
+ and the layer, the pin or the second joint keeps the library's word.
+*>
+fn void respelling_a_clip_renames_every_joint_it_names() @test
+{
+	// The pack's word for each rig joint, and the rig's own. The rig spells c
+	// nothing (an unnamed dot), and gives the pack's "a" to two joints.
+	String[5] from = { "root", "a", "b", "c", "a" };
+	String[5] to = { "Root", "Arm", "Bend", "", "Again" };
+	AnimKeyframe[] frames = alloc::new_array(mem, AnimKeyframe, 2);
+	frames[0] = frame_of(0.0f, { dot_of("a", X, 0.1f), dot_of("b", X, 0.2f), dot_of("c", X, 0.3f), dot_of("extra", X, 0.4f) });
+	frames[1] = frame_of(1.0f, { dot_of("c", X, 0.5f) });
+	AnimTemplate clip = { .name = "library".copy(mem), .duration = 1.0f, .keyframes = frames, .owned = true };
+	clip.ground.feet = alloc::new_array(mem, AnimFoot, 2);
+	clip.ground.feet[0] = { .joint = "b".copy(mem), .down = 0.1f, .up = 0.5f };
+	clip.ground.feet[1] = { .joint = "c".copy(mem), .down = 0.6f, .up = 0.9f };
+	clip.pins = alloc::new_array(mem, AnimPin, 1);
+	clip.pins[0] = crig::pin_defaults(mem, "b", { 0, 0, 0 }, 0.0f, 1.0f);
+	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, 1);
+	keys[0] = frame_of(0.0f, { dot_of("b", Z, 0.2f) });
+	AnimLayer layer = crig::anim_layer_defaults("lean".copy(mem));
+	layer.keyframes = keys;
+	layer.mask = alloc::new_array(mem, String, 1);
+	layer.mask[0] = "a".copy(mem);
+	clip.layers = alloc::new_array(mem, AnimLayer, 1);
+	clip.layers[0] = layer;
+	defer clip.free(mem);
+
+	usz dropped;
+	AnimTemplate spelt = crig::clip_in_words(mem, clip, from[..], to[..], &dropped);
+	defer spelt.free(mem);
+	test::@check(names_of(spelt.keyframes, "Arm") && names_of(spelt.keyframes, "Again"), "a word the rig gives two joints drove one");
+	test::@check(names_of(spelt.keyframes, "Bend") && !names_of(spelt.keyframes, "b"), "b kept the library's word");
+	test::@check(names_of(spelt.keyframes, "extra"), "a name the pack does not have was lost");
+	test::@check(!names_of(spelt.keyframes, "c"), "a key on an unnamed joint was kept");
+	test::@check(dropped == 2, "%d entries on the unnamed joint were counted, not 2", dropped);
+	test::@check(spelt.keyframes.len == 1, "the key left with nothing was kept");
+	test::@check(spelt.ground.feet.len == 1 && spelt.ground.feet[0].joint == "Bend", "the contacts were not respelt");
+	test::@check(spelt.pins.len == 1 && spelt.pins[0].joint == "Bend", "the pin was not respelt");
+	AnimLayer* respelt = &spelt.layers[0];
+	test::@check(respelt.mask.len == 2 && respelt.mask[0] == "Arm" && respelt.mask[1] == "Again", "the mask was not respelt");
+	test::@check(names_of(respelt.keyframes, "Bend"), "the layer's keys were not respelt");
+}

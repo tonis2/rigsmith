@@ -173,8 +173,12 @@ fn String? bake_physics_json(AppState* app, Object* args, DString* detail)
 	defer sim.free(mem);
 	defer app.release_jiggle_surface();
 
+	// Sampled, and written, in the rig's own words: a library clip spelt another
+	// way would drive nothing under them, and the bake lands in the authored pack.
+	AnimTemplate spelt = app.clip_in_rig_words(ref);
+	defer spelt.free(mem);
 	AnimTemplate? made = bake_physics_clip(
-		mem, *source, &view.skeleton, view.names, &sim, label, (float)hz, (usz)settle, &app.doc, view.dot_ids);
+		mem, spelt, &view.skeleton, view.names, &sim, label, (float)hz, (usz)settle, &app.doc, view.dot_ids);
 	if (catch made)
 	{
 		detail.appendf(

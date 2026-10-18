@@ -147,7 +147,7 @@ fn String? solve_targets_json(AppState* app, Object* args, DString* detail)
 		}
 		AnimRef ref = resolve_named(app, clip_name, detail)!;
 		double t = from.get_float("t") ?? 0.0;
-		pose = app.clip(ref).pose(mem, &view.skeleton, view.names, (float)t, false);
+		pose = app.clip(ref).pose(mem, &view.skeleton, app.names_for(&view, ref), (float)t, false);
 	}
 	else
 	{

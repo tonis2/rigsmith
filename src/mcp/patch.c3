@@ -105,12 +105,17 @@ fn String? patch_clip_json(AppState* app, Object* args, DString* detail)
 	}
 
 	AnimRef ref = resolve_named(app, clip_name, detail)!;
-	AnimTemplate* src = app.clip(ref);
-	if (src == null)
+	if (app.clip(ref) == null || !app.ensure_clip_imported(ref))
 	{
 		detail.append_string(`this clip could not be read back to offset.`);
 		return PATCH_REFUSED~;
 	}
+	// The offsets name the rig's joints, and the patched clip lands in the
+	// authored pack, which speaks the rig's words: a library clip spelt another
+	// way is respelt first, or nothing it keys would answer to them.
+	AnimTemplate spelt = app.clip_in_rig_words(ref);
+	defer spelt.free(mem);
+	AnimTemplate* src = &spelt;
 	float duration = src.duration;
 	if (duration <= 0.0f)
 	{

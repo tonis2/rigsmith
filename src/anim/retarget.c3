@@ -720,3 +720,185 @@ fn void free_gaps(Allocator allocator, String[] gaps)
 	}
 	if (gaps.len > 0) alloc::free(allocator, gaps);
 }
+
+// ---------------------------------------------------------------------------
+// Respelling a clip
+
+<*
+ The words a joint name written in `from` becomes in `to`: `to[j]` for every
+ joint j that `from` calls by it, once each. A name `from` does not hold stays as
+ it is — a pack joint the rig has nothing for, or a name already in `to`'s words,
+ as a layer put on a library clip from an authored one is. A joint `to` has no
+ word for (an unnamed dot) cannot be written at all; `unreached` is raised.
+*>
+fn void words_for(String name, String[] from, String[] to, StringList* out, bool* unreached) @local
+{
+	out.clear();
+	bool held = false;
+	foreach (usz j, word : from)
+	{
+		if (word != name) continue;
+		held = true;
+		String spelt = j < to.len ? to[j] : "";
+		if (spelt.len == 0) { *unreached = true; continue; }
+		bool seen = false;
+		foreach (already : out.array_view()) if (already == spelt) { seen = true; break; }
+		if (!seen) out.push(spelt);
+	}
+	if (!held && name.len > 0) out.push(name);
+}
+
+// The entries of one key respelt: one per word each joint becomes.
+fn AnimKeyframe keyframe_in_words(Allocator allocator, AnimKeyframe frame, String[] from, String[] to,
+	StringList* words, usz* dropped) @local
+{
+	AnimDotList dots;
+	dots.init(allocator);
+	foreach (dot : frame.dots)
+	{
+		bool unreached;
+		words_for(dot.joint_name, from, to, words, &unreached);
+		if (words.len() == 0 && unreached) (*dropped)++;
+		foreach (word : words.array_view())
+		{
+			AnimKeyDot copy = dot;
+			copy.joint_name = word.copy(allocator);
+			dots.push(copy);
+		}
+	}
+	AnimKeyframe out = { .time = frame.time, .dots = dots.to_array(allocator) };
+	dots.free();
+	return out;
+}
+
+// Keys respelt, a key left saying nothing dropped — unless all of them would
+// be, where the first is kept empty, since a clip has to have a key.
+fn AnimKeyframe[] keyframes_in_words(Allocator allocator, AnimKeyframe[] frames, String[] from, String[] to,
+	StringList* words, usz* dropped) @local
+{
+	AnimKeyframe[] out = alloc::new_array(allocator, AnimKeyframe, (sz)frames.len);
+	usz count;
+	foreach (frame : frames)
+	{
+		AnimKeyframe spelt = keyframe_in_words(allocator, frame, from, to, words, dropped);
+		if (spelt.dots.len == 0 && (count > 0 || frames.len > 1))
+		{
+			spelt.free(allocator);
+			continue;
+		}
+		out[count++] = spelt;
+	}
+	if (count == 0 && frames.len > 0) out[count++] = { .time = frames[0].time, .dots = {} };
+	if (count == 0)
+	{
+		if (out.len > 0) alloc::free(allocator, out);
+		return {};
+	}
+	return out[:count];
+}
+
+// One name replaced by its first word in `to`, or emptied when it has none.
+fn void name_in_words(Allocator allocator, String* name, String[] from, String[] to, StringList* words) @local
+{
+	if (name.len == 0) return;
+	bool unreached;
+	words_for(*name, from, to, words, &unreached);
+	String spelt = words.len() > 0 ? words.array_view()[0].copy(allocator) : "";
+	alloc::free(allocator, name.ptr);
+	*name = spelt;
+}
+
+<*
+ The clip with every joint it names spelt in other words: a name that `from`
+ gives joint j becomes `to[j]`. What a clip from a library file needs when it is
+ copied into the authored pack, which speaks the rig's own words — `from` is the
+ pack's word for each rig joint (`AppState.names_for`), `to` the rig's.
+
+ A name `from` gives several joints (the rig's own word for a joint the pack has
+ not got can be the word the pack gives another) is written once for each, so
+ the copy drives every joint the original did. A name `from` does not hold is
+ kept as it is, so a name already in `to`'s words passes through. Keys, ground contacts, look-at
+ locks, pins and layers (their keys, masks and chains) are all respelt; times,
+ values and the bones keys were recorded against are untouched, so the copy is
+ carried onto the rig exactly as the original was.
+
+ @param dropped : `Counts the entries whose joint the rig has no word for — an unnamed dot — and which the copy therefore cannot hold.`
+*>
+fn AnimTemplate clip_in_words(Allocator allocator, AnimTemplate source, String[] from, String[] to, usz* dropped = null)
+{
+	usz lost;
+	StringList words;
+	words.init(allocator);
+	defer words.free();
+
+	AnimTemplate out = clip_with_frames(allocator, source,
+		keyframes_in_words(allocator, source.keyframes, from, to, &words, &lost), source.duration);
+
+	foreach (&foot : out.ground.feet) name_in_words(allocator, &foot.joint, from, to, &words);
+	foreach (&aim : out.aims) name_in_words(allocator, &aim.joint, from, to, &words);
+	foreach (&pin : out.pins) name_in_words(allocator, &pin.joint, from, to, &words);
+	foreach (usz i, &layer : out.layers)
+	{
+		name_in_words(allocator, &layer.joint, from, to, &words);
+		name_in_words(allocator, &layer.tip, from, to, &words);
+		StringList mask;
+		mask.init(allocator);
+		defer mask.free();
+		foreach (entry : layer.mask)
+		{
+			bool unreached;
+			words_for(entry, from, to, &words, &unreached);
+			foreach (word : words.array_view()) mask.push(word.copy(allocator));
+			if (entry.len > 0) alloc::free(allocator, entry.ptr);
+		}
+		if (layer.mask.len > 0) alloc::free(allocator, layer.mask);
+		layer.mask = mask.to_array(allocator);
+		AnimKeyframe[] keys = keyframes_in_words(allocator, layer.keyframes, from, to, &words, &lost);
+		foreach (&frame : layer.keyframes) frame.free(allocator);
+		if (layer.keyframes.len > 0) alloc::free(allocator, layer.keyframes);
+		layer.keyframes = keys;
+	}
+	// A contact, lock or pin on a joint the rig cannot address goes with it.
+	out.ground.feet = feet_named(allocator, out.ground.feet);
+	out.aims = aims_named(allocator, out.aims);
+	out.pins = pins_named(allocator, out.pins);
+	if (dropped) *dropped = lost;
+	return out;
+}
+
+// The contacts, locks and pins that still name a joint, in place. An array left
+// empty is released, since their owners free only one with a length.
+fn AnimFoot[] feet_named(Allocator allocator, AnimFoot[] feet) @local
+{
+	usz kept;
+	foreach (foot : feet) if (foot.joint.len > 0) feet[kept++] = foot;
+	if (kept > 0 || feet.len == 0) return feet[:kept];
+	alloc::free(allocator, feet);
+	return {};
+}
+
+fn AnimAim[] aims_named(Allocator allocator, AnimAim[] aims) @local
+{
+	usz kept;
+	foreach (&aim : aims)
+	{
+		if (aim.joint.len > 0) { aims[kept++] = *aim; continue; }
+		aim.free(allocator);
+	}
+	if (kept > 0 || aims.len == 0) return aims[:kept];
+	alloc::free(allocator, aims);
+	return {};
+}
+
+fn AnimPin[] pins_named(Allocator allocator, AnimPin[] pins) @local
+{
+	usz kept;
+	foreach (&pin : pins)
+	{
+		if (pin.joint.len > 0) { pins[kept++] = *pin; continue; }
+		pin.free(allocator);
+	}
+	if (kept > 0 || pins.len == 0) return pins[:kept];
+	alloc::free(allocator, pins);
+	return {};
+}

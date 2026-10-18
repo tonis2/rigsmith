@@ -965,3 +965,152 @@ fn void a_hand_match_plays_an_unmatched_joint() @test
 	test::@check(figure.app.redo(), "the match did not redo");
 	test::@check(figure.app.pack_reach(which).answers("index_2_L"), "redo lost the match");
 }
+
+<*
+ Editing a library clip whose words are not the rig's keeps every joint's
+ motion. The first edit copies the clip into the authored pack, which speaks the
+ rig's own words; a copy still spelt the library's way would reach none of the
+ renamed joints and leave the figure at rest.
+
+ Re-introduce: land a fork without translating its joint names, and the copy
+ stops moving the rig.
+*>
+fn void editing_a_clip_spelt_another_way_keeps_its_motion() @test
+{
+	Figure figure;
+	figure.open();
+	defer figure.close();
+	crig::AnimRef found = { .pack = -1, .clip = -1 };
+	foreach (usz p, &pack : figure.app.packs)
+	{
+		if (!pack.is_body_plan() || pack.plan != "biped" || pack.clips.len == 0) continue;
+		found = { .pack = (int)p, .clip = 0 };
+		break;
+	}
+	test::@check(found.pack >= 0 && figure.app.ensure_clip_imported(found), "the fixture library holds no biped clip");
+	foreach (usz i, id : figure.id)
+	{
+		String own = string::format(mem, "bone_%d", i);
+		defer alloc::free(mem, own.ptr);
+		figure.app.rename_recorded(id, own);
+	}
+	figure.app.undo_stack.commit();
+
+	crig::RigView view = figure.app.open_rig(mem)!!;
+	defer view.free(mem);
+	float[3] times = { 0.1f, 0.4f, 0.7f };
+	rig::Pose[3] before;
+	foreach (usz i, t : times)
+	{
+		before[i] = figure.app.evaluated_clip_pose(mem, &view, *figure.app.clip(found), found,
+			t * figure.app.clip(found).duration, false);
+	}
+	defer foreach (&pose : before) pose.free(mem);
+
+	// Any edit forks it; this one changes nothing else.
+	crig::AnimRef landed = figure.app.land_clip(found, crig::clip_copy(mem, *figure.app.clip(found)));
+	test::@check(landed.valid() && landed.pack == figure.app.authored_pack, "the edit did not fork the clip");
+	usz moved;
+	foreach (usz i, t : times)
+	{
+		rig::Pose after = figure.app.evaluated_clip_pose(mem, &view, *figure.app.clip(landed), landed,
+			t * figure.app.clip(landed).duration, false);
+		defer after.free(mem);
+		foreach (usz j, turn : after.rotations)
+		{
+			if (1.0f - math::abs(turn.v.dot(before[i].rotations[j].v)) > 1.0e-6f
+				|| (after.offsets[j] - before[i].offsets[j]).length() > 1.0e-5f) moved++;
+		}
+	}
+	test::@check(moved == 0, "%d joint samples moved when the clip was copied to edit", moved);
+}
+
+// The figure renamed to words no pack uses, and a biped clip from the library
+// that reaches it only through the shape of the two skeletons.
+fn crig::AnimRef renamed_figure(Figure* figure) @local
+{
+	crig::AnimRef found = { .pack = -1, .clip = -1 };
+	foreach (usz p, &pack : figure.app.packs)
+	{
+		if (!pack.is_body_plan() || pack.plan != "biped" || pack.clips.len == 0) continue;
+		found = { .pack = (int)p, .clip = 0 };
+		break;
+	}
+	test::@check(found.pack >= 0 && figure.app.ensure_clip_imported(found), "the fixture library holds no biped clip");
+	foreach (usz i, id : figure.id)
+	{
+		String own = string::format(mem, "bone_%d", i);
+		defer alloc::free(mem, own.ptr);
+		figure.app.rename_recorded(id, own);
+	}
+	figure.app.undo_stack.commit();
+	return found;
+}
+
+// Whether every joint the clip names, base and layers, is a dot of the rig.
+fn bool speaks_the_rig(Figure* figure, crig::AnimRef ref) @local
+{
+	AnimTemplate* clip = figure.app.clip(ref);
+	foreach (&frame : clip.keyframes) foreach (dot : frame.dots) if (!figure.app.has_dot_named(dot.joint_name)) return false;
+	foreach (&layer : clip.layers)
+	{
+		foreach (entry : layer.mask) if (!figure.app.has_dot_named(entry)) return false;
+		foreach (&frame : layer.keyframes) foreach (dot : frame.dots) if (!figure.app.has_dot_named(dot.joint_name)) return false;
+	}
+	return true;
+}
+
+<*
+ Keying a library clip spelt another way writes a copy in the rig's words, and
+ so does putting a layer on one: the new key, the old keys and the layer's mask
+ and keys all name the rig's own joints.
+
+ Re-introduce: land a fork without respelling it, and the copy keeps the
+ library's words beside the rig's.
+*>
+fn void keying_or_layering_a_clip_spelt_another_way_writes_the_rigs_words() @test
+{
+	Figure figure;
+	figure.open();
+	defer figure.close();
+	crig::AnimRef found = renamed_figure(&figure);
+	float duration = figure.app.clip(found).duration;
+
+	crig::AnimRef keyed = figure.app.key_here(found, duration * 0.5f);
+	test::@check(keyed.valid() && keyed.pack == figure.app.authored_pack, "keying did not fork the clip");
+	test::@check(speaks_the_rig(&figure, keyed), "the keyed copy names joints the rig does not have");
+
+	crig::AnimRef other = { .pack = found.pack, .clip = found.clip };
+	figure.app.select(figure.id[2]);
+	test::@check(figure.app.undo(), "undo failed");
+	test::@check(figure.app.add_clip_layer(other, KEYED, ADDITIVE) >= 0, "a layer could not be put on the library clip");
+	test::@check(speaks_the_rig(&figure, figure.app.editing), "the layered copy names joints the rig does not have");
+	AnimLayer* layer = &figure.app.clip(figure.app.editing).layers[0];
+	test::@check(layer.keyframes.len > 0 && layer.keyframes[0].dots.len > 0 && layer.keyframes[0].dots[0].joint_name == "bone_2",
+		"the new layer does not key the selected joint");
+}
+
+<*
+ A library clip copied to edit on a rig whose joints have no names cannot hold
+ their keys, and says so rather than going still without a word.
+
+ Re-introduce: drop the count from the fork's notice, and nothing tells the user
+ why the copy stopped moving.
+*>
+fn void editing_a_clip_on_an_unnamed_rig_says_what_it_cannot_hold() @test
+{
+	Figure figure;
+	figure.open();
+	defer figure.close();
+	crig::AnimRef found = { .pack = -1, .clip = -1 };
+	foreach (usz p, &pack : figure.app.packs)
+	{
+		if (!pack.is_body_plan() || pack.plan != "biped" || pack.clips.len == 0) continue;
+		found = { .pack = (int)p, .clip = 0 };
+		break;
+	}
+	test::@check(found.pack >= 0 && figure.app.ensure_clip_imported(found), "the fixture library holds no biped clip");
+	crig::AnimRef landed = figure.app.land_clip(found, crig::clip_copy(mem, *figure.app.clip(found)));
+	test::@check(landed.valid(), "the edit did not land");
+	test::@check(figure.app.notice().contains("not named"), "the fork did not say what it lost: %s", figure.app.notice());
+}

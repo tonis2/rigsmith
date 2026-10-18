@@ -780,7 +780,7 @@ fn void anim_layer_mask_clicked(Ui* ui)
 	AppState* app = ui.inherit(AppState)!!;
 	sz at = app.active_layer_of(app.editing);
 	if (at < 0 || !anim_can_rewrite(ui)) return;
-	String[] picked = app.selected_joint_names(mem);
+	String[] picked = app.selected_joint_names(mem, app.editing);
 	defer
 	{
 		foreach (name : picked) name.free(mem);

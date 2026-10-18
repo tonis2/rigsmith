@@ -1012,8 +1012,12 @@ fn void physics_bake_clicked(Ui* ui)
 	defer sim.free(mem);
 	defer app.release_jiggle_surface();
 
+	// In the rig's own words, which the bake samples with and the authored pack
+	// speaks (see `AppState.in_rig_words`).
+	AnimTemplate spelt = app.clip_in_rig_words(ref);
+	defer spelt.free(mem);
 	AnimTemplate? made = bake_physics_clip(
-		mem, *source, &view.skeleton, view.names, &sim, "", (float)BAKE_DEFAULT_HZ, BAKE_DEFAULT_SETTLE,
+		mem, spelt, &view.skeleton, view.names, &sim, "", (float)BAKE_DEFAULT_HZ, BAKE_DEFAULT_SETTLE,
 		&app.doc, view.dot_ids);
 	if (catch made)
 	{

@@ -287,11 +287,11 @@ fn String AppState.unused_layer_name(&self, AnimTemplate* clip, String base)
 }
 
 <*
- The names of the dots the viewport has selected, in rig order, for a layer's
- mask or for the joint a generator starts at. The caller frees the array and
- each name.
+ The names of the dots the viewport has selected, in rig order and in the clip's
+ own words (`names_for`), for a layer's mask or for the joint a generator starts
+ at. The caller frees the array and each name.
 *>
-fn String[] AppState.selected_joint_names(&self, Allocator allocator)
+fn String[] AppState.selected_joint_names(&self, Allocator allocator, AnimRef ref = NO_ANIM)
 {
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return {};
@@ -300,7 +300,7 @@ fn String[] AppState.selected_joint_names(&self, Allocator allocator)
 	StringList names;
 	names.init(mem);
 	defer names.free();
-	foreach (usz j, name : view.names)
+	foreach (usz j, name : self.names_for(&view, ref))
 	{
 		if (name.len == 0 || j >= view.dot_ids.len || !self.is_selected(view.dot_ids[j])) continue;
 		names.push(name);
@@ -310,13 +310,25 @@ fn String[] AppState.selected_joint_names(&self, Allocator allocator)
 	return out;
 }
 
+// The clip's word for the rig's first named joint, for a layer with nothing
+// selected to start from. Temp-allocated.
+fn String AppState.first_joint_word(&self, AnimRef ref)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return "";
+	RigView view = opened;
+	defer view.free(mem);
+	foreach (word : self.names_for(&view, ref)) if (word.len > 0) return word.tcopy();
+	return "";
+}
+
 <*
  A fresh layer with the values the pane promises: a keyed layer starts with one
  identity key at 0 on the selected joints (or the first joint, so it is never an
  empty shell); a generator starts on the selected joint with a gentle move.
  The caller owns the result.
 *>
-fn AnimLayer AppState.default_layer(&self, AnimTemplate* clip, AnimLayerKind kind, AnimLayerMode mode)
+fn AnimLayer AppState.default_layer(&self, AnimRef ref, AnimTemplate* clip, AnimLayerKind kind, AnimLayerMode mode)
 {
 	String base = "Keyed";
 	switch (kind)
@@ -330,13 +342,13 @@ fn AnimLayer AppState.default_layer(&self, AnimTemplate* clip, AnimLayerKind kin
 	layer.kind = kind;
 	layer.mode = mode;
 
-	String[] picked = self.selected_joint_names(mem);
+	String[] picked = self.selected_joint_names(mem, ref);
 	defer
 	{
 		foreach (name : picked) name.free(mem);
 		if (picked.len > 0) alloc::free(mem, picked);
 	}
-	String first = picked.len > 0 ? picked[0] : (self.doc.dots.len() > 0 ? self.doc.dots.array_view()[0].name : "");
+	String first = picked.len > 0 ? picked[0] : self.first_joint_word(ref);
 
 	if (kind == KEYED)
 	{
@@ -376,7 +388,7 @@ fn sz AppState.add_clip_layer(&self, AnimRef ref, AnimLayerKind kind, AnimLayerM
 	if (!self.ensure_clip_imported(ref)) return -1;
 	AnimTemplate* clip = self.clip(ref);
 	if (!clip || clip.keyframes.len == 0) return -1;
-	AnimLayer layer = self.default_layer(clip, kind, mode);
+	AnimLayer layer = self.default_layer(ref, clip, kind, mode);
 	AnimLayer[] next = layers_inserted(mem, layers_copy(mem, clip.layers), clip.layers.len, layer);
 	usz top = next.len - 1;
 	AnimRef landed = self.land_clip(ref, clip_with_layers(mem, *clip, next));

@@ -261,8 +261,7 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 		detail.append_string(`this clip could not be read back to edit.`);
 		return LAYER_REFUSED~;
 	}
-	AnimTemplate* src = app.clip(ref);
-	if (src == null || src.keyframes.len == 0)
+	if (app.clip(ref) == null || app.clip(ref).keyframes.len == 0)
 	{
 		detail.append_string(`this clip has no keys to lay a layer over.`);
 		return LAYER_REFUSED~;
@@ -270,6 +269,12 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 
 	if (op == "extract") return extract_layer_json(app, ref, args, detail);
 	if (op == "share" || op == "unlink") return share_layer_json(app, ref, op, args, detail);
+
+	// The layer names the rig's joints, and the clip lands in the authored pack,
+	// which speaks the rig's words: a library clip spelt another way is respelt.
+	AnimTemplate spelt = app.clip_in_rig_words(ref);
+	defer spelt.free(mem);
+	AnimTemplate* src = &spelt;
 
 	Object* spec = member(args, "layer");
 	if ((op == "add" || op == "replace") && (spec == null || !spec.is_keyable()))
