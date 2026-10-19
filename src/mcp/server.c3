@@ -493,6 +493,15 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	// Listed: bringing motion in from a file is a first call a session makes, not
+	// a step inside a loop, and no other door does it without a library rescan.
+	server.add_tool({
+		.name = "import_clip",
+		.description = "Bring an animation in from a .glb file and bind it to the character — motion made for any other skeleton: a capture, SAM 3D Body's MHR clip, a Mixamo download, another rig's clip. It comes in the way generate_motion's clips do: the file's skeleton matched onto this rig's body plan by shape, the clip sampled onto the rig's own joints and landed in the authored pack as one undo step, editable, not looping, in place (the root's travel is removed). Answers as apply_clip does, with measure_clip's numbers under metrics; make_loop, smooth_clip and pin_feet are how a take becomes a cycle. Refused when the file cannot be read, holds no animation, or its skeleton matches no body plan this rig shares.",
+		.input_schema = IMPORT_CLIP_SCHEMA,
+		.handler = &tool_import_clip,
+		.user_data = app,
+	});
 	// --- clip management tools ---
 	server.add_tool({
 		.name = "unbind_clip",

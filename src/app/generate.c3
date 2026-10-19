@@ -65,6 +65,7 @@ faultdef
 	MOTION_BUSY,
 	MOTION_NO_PROMPT,
 	MOTION_NOT_STARTED,
+	MOTION_CLIP_MISSING,
 	MOTION_GUIDE_MISSING,
 	MOTION_GUIDE_UNMATCHED,
 	MOTION_GUIDE_EMPTY;
@@ -884,7 +885,7 @@ fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyRed
 }
 
 <*
- The first clip of a generated .glb, written against this rig rather than
+ The first clip of a generated .glb, or the one asked for, written against this rig rather than
  Kimodo's skeleton: sampled at each of its own keys through the same name match
  playback uses (`measure_reach`, the document's joint maps) and keyed under the
  rig's own joint names, so the authored pack — which has no skeleton of its own
@@ -902,12 +903,17 @@ fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyRed
  lands **not looping**: a generated motion starts and ends where it likes, and
  `make_loop` is how a cycle is cut out of it.
 
+ import_clip lands a file's clip the same way, for motion made for any other
+ skeleton.
+
  @param name : `The clip's name, made unique against the authored pack.`
  @param optimize : `The keys dropped; OFF keeps every key the import made.`
+ @param from_clip : `Which of the file's clips, by name; "" takes the one called name, else the first.`
  @return? RIG_EMPTY : `There is no rig to put it on.`
  @return? MOTION_NOT_STARTED : `The file holds no clip, or one for a skeleton this rig does not relate to.`
+ @return? MOTION_CLIP_MISSING : `from_clip names no clip in the file.`
 *>
-fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, KeyReduction optimize = LIGHT)
+fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, KeyReduction optimize = LIGHT, String from_clip = "")
 {
 	RigView view = self.open_rig(mem)!;
 	defer view.free(mem);
@@ -916,14 +922,18 @@ fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, 
 	defer pack.free(mem);
 	if (pack.clips.len == 0) return MOTION_NOT_STARTED~;
 	AnimTemplate source = pack.clips[0];
+	String wanted = from_clip.len > 0 ? from_clip : name;
+	bool found;
 	foreach (clip : pack.clips)
 	{
-		if (clip.name == name)
+		if (clip.name == wanted)
 		{
 			source = clip;
+			found = true;
 			break;
 		}
 	}
+	if (from_clip.len > 0 && !found) return MOTION_CLIP_MISSING~;
 	if (source.keyframes.len == 0) return MOTION_NOT_STARTED~;
 
 	PackReach reach = measure_reach(mem, &pack, &view.skeleton, view.names);

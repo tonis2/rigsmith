@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[64] tool_names @local = {
+String[65] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -451,6 +451,7 @@ String[64] tool_names @local = {
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
+	"import_clip",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and
@@ -480,10 +481,10 @@ fn void the_boot_server_holds_every_tool() @test
 // Kept as a second table rather than a flag on the first, because the two are
 // asserted against different things: this one against what a client is told, that
 // one against what the server can do.
-String[15] listed_tools @local = {
+String[16] listed_tools @local = {
 	"get_scene", "screenshot", "undo", "redo", "get_api_docs", "get_crig_docs", "measure_clip",
 	"solve_targets", "get_annotations", "list_poses", "get_saved_pose", "tween_poses",
-	"focus_character", "set_camera", "render",
+	"focus_character", "set_camera", "render", "import_clip",
 };
 
 fn bool? tools_list_body(Object* root)

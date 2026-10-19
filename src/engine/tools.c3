@@ -41,7 +41,7 @@ alias ToolDef = mcp::ToolDef;
 
 // Room for crig's twenty-seven and the ones after them. Fixed rather than a List
 // because the table is built once, at startup, and never grows afterwards.
-const usz MAX_TOOLS = 64;
+const usz MAX_TOOLS = 96;
 
 <*
  The registry.
