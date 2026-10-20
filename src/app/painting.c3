@@ -439,12 +439,14 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
  one stroke is allowed — `brush_strength` — and the rim fades to nothing, so
  clipping a vertex with the edge barely moves it — see `brush_falloff`.
 
- **Front faces only, always, and it is not a preference.** A brush that painted
- through a limb onto the one behind it would manufacture exactly the bleed crig
- exists to remove — the user would be correcting an arm and silently correcting
- the ribs under it. `Picker.hidden_surface` is the test for a point *on* the
- skin; `occluded` is built for dots inside the body and answers "visible" for
- every back-facing vertex on the model.
+ **Front faces only, unless `xray`.** A brush that painted through a limb onto
+ the one behind it would manufacture exactly the bleed crig exists to remove —
+ the user would be correcting an arm and silently correcting the ribs under it.
+ `Picker.hidden_surface` is the test for a point *on* the skin; `occluded` is
+ built for dots inside the body and answers "visible" for every back-facing
+ vertex on the model. X-ray takes every vertex in the circle, for the creases
+ and inner shells the front never shows; the limb guard in `brush_share` still
+ holds.
 
  **The positions on screen, posed or not.** Under a parked clip or a pose draft
  the vertices are read back skinned by the palette on screen and the visibility
@@ -461,10 +463,11 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
  @param viewport : `Size of the region the camera renders into, in pixels.`
  @param eye : `Camera position in model space, for the visibility test.`
  @param at : `Where the brush is, in the same pixels project returns.`
+ @param xray : `Take every vertex in the circle, hidden or not.`
  @return `How many were hit.`
 *>
 fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4f view_projection,
-	Vec2 viewport, Vec3 eye, Vec2 at, float radius)
+	Vec2 viewport, Vec3 eye, Vec2 at, float radius, bool xray = false)
 {
 	usz count = self.geometry.positions.len;
 	if (count == 0 || radius <= 0.0f) return 0;
@@ -482,7 +485,7 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 		Vec2 gap = where - at;
 		float span = gap.x * gap.x + gap.y * gap.y;
 		if (span > reach) continue;
-		if (self.mesh_hidden_surface(eye, position)) continue;
+		if (!xray && self.mesh_hidden_surface(eye, position)) continue;
 
 		// Closeness for now, not the hit: `brush_surface` finds the vertex under
 		// the cursor as the closest, and the falloff's flat core would tie it.
@@ -490,7 +493,7 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 		strength[kept] = 1.0f - span / reach;
 		kept++;
 	}
-	kept = self.brush_surface(vertices, strength, kept, view_projection, viewport, eye, radius);
+	if (!xray) kept = self.brush_surface(vertices, strength, kept, view_projection, viewport, eye, radius);
 	for (usz i = 0; i < kept; i++) strength[i] = brush_falloff(strength[i]) * self.brush_strength;
 	return kept;
 }

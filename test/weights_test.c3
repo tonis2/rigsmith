@@ -3552,3 +3552,65 @@ fn void the_brush_paints_only_the_surface_under_it() @test
 	test::@check(on_chest > 0, "the circle over the chest took none of it");
 	test::eq(on_hand, (usz)0);
 }
+
+<*
+ With X-ray the same circle over the hand takes the chest behind it, and a wall
+ far behind that: every vertex under the brush, hidden or not, however deep.
+
+ Re-introduce: run `mesh_hidden_surface` or `brush_surface` with `xray` set in
+ `AppState.brush_vertices`.
+*>
+fn void the_xray_brush_takes_everything_under_the_circle() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 21);   // the chest
+	usz chest = (usz)positions.len();
+	grid_into(&positions, &indices, { 0, 0, 1 }, 0.3f, 7);    // the hand, in front of it
+	usz hand_end = (usz)positions.len();
+	grid_into(&positions, &indices, { 0, 0, -3 }, 2.0f, 11);  // the back, far behind the chest
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	app.camera.target = { 0, 0, 0 };
+	app.camera.distance = 4.0f;
+	app.camera.yaw = 0.0f;
+	app.camera.pitch = 0.0f;
+
+	Vec2 viewport = { 800, 600 };
+	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
+	Vec3 eye = app.camera.eye();
+	usz count = app.geometry.positions.len;
+	uint[] under = alloc::new_array(mem, uint, (sz)count);
+	defer alloc::free(mem, under);
+	float[] strength = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, strength);
+
+	Vec2 hand = crig::project(vp, { 0, 0, 1 }, viewport)!!;
+	usz hit = app.brush_vertices(under, strength, vp, viewport, eye, hand, 150.0f, xray: true);
+	usz on_hand = 0;
+	usz on_chest = 0;
+	usz on_back = 0;
+	for (usz i = 0; i < hit; i++)
+	{
+		usz v = (usz)under[i];
+		if (v >= hand_end) { on_back++; } else if (v >= chest) { on_hand++; } else { on_chest++; }
+	}
+	test::eq(on_hand, hand_end - chest);
+	test::@check(on_chest > 0, "the x-ray circle over the hand took none of the chest behind it");
+	// Further behind than the front-only brush's depth allowance reaches.
+	test::@check(on_back > 0, "the x-ray circle took nothing from the far back");
+
+	// The chest right behind the hand, which the front-only brush cannot see.
+	usz behind = 0;
+	for (usz i = 0; i < hit; i++)
+	{
+		Vec3 at = app.geometry.positions[under[i]];
+		if ((usz)under[i] < chest && math::abs(at.x) < 0.1f && math::abs(at.y) < 0.1f) behind++;
+	}
+	test::@check(behind > 0, "the chest hidden by the hand was not painted");
+}

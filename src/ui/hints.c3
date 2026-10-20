@@ -83,12 +83,18 @@ fn String hint_line(AppState* app)
 	}
 
 	// A plain drag on the mesh paints the way the options strip says; off the
-	// mesh it orbits. The modifiers are accelerators.
+	// mesh it orbits. The modifiers are accelerators; alt flips the X-ray box.
 	if (app.brushing)
 	{
+		if (app.config.brush_xray)
+		{
+			return app.brush_removes
+				? "drag the mesh · take off     drag off it · orbit     ctrl-drag · put on     alt · no x-ray     hold F · size     esc · leave"
+				: "drag the mesh · put on     drag off it · orbit     ctrl+shift-drag · take off     alt · no x-ray     hold F · size     esc · leave";
+		}
 		return app.brush_removes
-			? "drag the mesh · take the joint off     drag off it · orbit     ctrl-drag · put on     hold F · size     esc · leave"
-			: "drag the mesh · put the joint on     drag off it · orbit     ctrl+shift-drag · take off     hold F · size     esc · leave";
+			? "drag the mesh · take off     drag off it · orbit     ctrl-drag · put on     alt · x-ray     hold F · size     esc · leave"
+			: "drag the mesh · put on     drag off it · orbit     ctrl+shift-drag · take off     alt · x-ray     hold F · size     esc · leave";
 	}
 
 	// Directly under the brush, matching the order the press ladder resolves

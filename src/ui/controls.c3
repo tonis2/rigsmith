@@ -97,6 +97,8 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "drag off the mesh", .action = "orbit, as always" },
 	{ .binding = "ctrl-drag", .action = "put the joint on, whatever the strip says" },
 	{ .binding = "ctrl+shift-drag", .action = "take it off" },
+	{ .binding = "X-ray box", .action = "paint every vertex under the circle, the far side too" },
+	{ .binding = "alt-drag", .action = "the other way from the X-ray box, for one stroke" },
 	{ .binding = "Size slider / hold F", .action = "size the brush — with F, right grows, left shrinks" },
 	{ .binding = "hold F, then scroll", .action = "the same, by notches" },
 	{ .binding = "swipe / wheel", .action = "orbit and zoom, as always" },

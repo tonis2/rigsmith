@@ -120,6 +120,7 @@ fn void settings_survive_a_restart() @test
 	written.hide_guide = true;
 	written.tutorial_seen = true;
 	written.viewport_shading = crig::ShadingMode.TEXTURED;
+	written.brush_xray = true;
 	written.show_ghosts = true;
 	written.ghost_past = 7;
 	written.ghost_future = 5;
@@ -152,6 +153,7 @@ fn void settings_survive_a_restart() @test
 	test::@check(read.hide_guide, "and the hidden workflow guide");
 	test::@check(read.tutorial_seen, "and the answered welcome");
 	test::@check(read.viewport_shading == crig::ShadingMode.TEXTURED, "and the viewport shading");
+	test::@check(read.brush_xray, "and the brush's X-ray box");
 	test::@check(read.show_ghosts && read.ghost_past == 7 && read.ghost_future == 5 && read.ghost_step == 4,
 		"and the ghost counts and spacing (%d, %d, every %d)", read.ghost_past, read.ghost_future, read.ghost_step);
 	test::@check(math::abs(read.ghost_opacity - 0.6f) < 0.001f, "and the ghost opacity (%.3f)", read.ghost_opacity);

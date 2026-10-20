@@ -16,6 +16,7 @@
        "tutorial_seen": false,
        "hide_floor": false,
        "viewport_shading": 0,
+       "brush_xray": false,
        "show_ghosts": false,
        "ghost_past": 3,
        "ghost_future": 3,
@@ -280,6 +281,10 @@ struct CrigConfig
 	// zero, so a config without the key keeps the grey model crig always drew.
 	ShadingMode viewport_shading;
 
+	// The weight brush's X-ray box: paint every vertex under the circle, not only
+	// the surface facing the camera. Off unless ticked.
+	bool brush_xray;
+
 	// The animation aids: onion-skin ghosts of the posed mesh `ghost_past` and
 	// `ghost_future` steps either side of the playhead, each `ghost_step` frames
 	// apart and `ghost_opacity` at most, and the selected joint's motion path.
@@ -462,6 +467,7 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	{
 		if (wanted >= 0 && wanted <= ShadingMode.WIREFRAME.ordinal) self.viewport_shading = (ShadingMode)(int)wanted;
 	}
+	if (try bool wanted = parsed.get_bool("brush_xray")) self.brush_xray = wanted;
 	if (try bool wanted = parsed.get_bool("show_ghosts")) self.show_ghosts = wanted;
 	if (try bool wanted = parsed.get_bool("show_motion_path")) self.show_motion_path = wanted;
 	// The retired key count, read as the same number of ghosts each side so an
@@ -794,6 +800,7 @@ struct ConfigFile @private
 	bool tutorial_seen;
 	bool hide_floor;
 	int viewport_shading;
+	bool brush_xray;
 	bool show_ghosts;
 	int ghost_past;
 	int ghost_future;
@@ -852,6 +859,7 @@ fn void CrigConfig.save(&self)
 		.tutorial_seen = self.tutorial_seen,
 		.hide_floor = self.hide_floor,
 		.viewport_shading = self.viewport_shading.ordinal,
+		.brush_xray = self.brush_xray,
 		.show_ghosts = self.show_ghosts,
 		.ghost_past = self.ghost_past,
 		.ghost_future = self.ghost_future,

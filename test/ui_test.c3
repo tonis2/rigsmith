@@ -6254,6 +6254,23 @@ fn void every_hint_fits_the_bar() @test
 			"\"%s\" is %.1f wide and the bar is %.1f — the tail is clipped",
 			line, wide, crig::HINT_BOX_W);
 
+		// The brush has four lines: Add or Remove, with the X-ray box on or off.
+		if (fixture.app.brushing)
+		{
+			for (int k = 0; k < 4; k++)
+			{
+				fixture.app.brush_removes = (k & 1) != 0;
+				fixture.app.config.brush_xray = (k & 2) != 0;
+				String variant = crig::hint_line(&fixture.app);
+				float variant_wide = hint_width(&fixture);
+				test::@check(variant_wide <= crig::HINT_BOX_W,
+					"\"%s\" is %.1f wide and the bar is %.1f — the tail is clipped",
+					variant, variant_wide, crig::HINT_BOX_W);
+			}
+			fixture.app.brush_removes = false;
+			fixture.app.config.brush_xray = false;
+		}
+
 		// Out again: each remaining modal tool closes with escape.
 		fixture.feed_key(Key.ESCAPE);
 	}
@@ -15016,9 +15033,9 @@ fn void the_brush_never_places_or_edits_joints() @test
 }
 
 <*
- The brush does not paint through the model.
+ The brush does not paint through the model, with X-ray off.
 
- **Front faces only, always**, and it is not a preference: a brush that reached
+ **Front faces only by default**: a brush that reached
  the far side would correct an arm and silently correct the ribs behind it —
  manufacturing exactly the bleed crig exists to remove, with nothing on screen to
  say it happened.
@@ -15078,6 +15095,104 @@ fn void the_brush_does_not_paint_through_the_model() @test
 	{
 		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
 	}
+}
+
+// The head-on cube of `the_brush_does_not_paint_through_the_model`, with the brush
+// open over the whole silhouette.
+fn bool open_brush_head_on(Fixture* fixture)
+{
+	uint hips = fixture.doc().add_dot({ 0, -0.2f, 0 }, "hips");
+	uint chest = fixture.doc().add_dot({ 0, 0.2f, 0 }, "chest");
+	fixture.doc().connect(hips, chest);
+	fixture.app.select(chest);
+	fixture.app.camera.snapping = false;
+	fixture.app.camera.yaw = 0.0f;
+	fixture.app.camera.pitch = 0.0f;
+	fixture.app.brush_radius = 4000.0f;
+	fixture.app.refresh_ui();
+	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.W);
+	return fixture.app.brushing;
+}
+
+// One press-and-release at the viewport centre with `keys` held.
+fn void stroke_with(Fixture* fixture, Key[] keys)
+{
+	fixture.feed(VIEWPORT_CENTER, keys: keys);
+	fixture.feed(VIEWPORT_CENTER, left: true, keys: keys);
+	fixture.feed(VIEWPORT_CENTER, keys: keys);
+}
+
+<*
+ The strip's X-ray box paints every vertex under the circle, the cube's back
+ corners included, and alt held at the press turns it back to front only for
+ that stroke.
+
+ Re-introduce: drop `self.brush_xray` from `Viewport.paint_at`'s call, or latch
+ it without `alt_down`.
+*>
+fn void the_xray_box_paints_through_the_model() @test
+{
+	io::printn("the weight brush's X-ray box paints the far side too, and alt undoes it for a stroke");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+	test::@check(open_brush_head_on(&fixture), "the brush did not open");
+	fixture.feed(VIEWPORT_CENTER);
+
+	test::@check(!fixture.app.config.brush_xray, "X-ray starts ticked");
+	fixture.click(fixture.center_of(crig::BRUSH_XRAY_ID)!!);
+	test::@check(fixture.app.config.brush_xray, "clicking X-ray did not tick it");
+
+	Key[2] taking = { Key.LEFT_CTRL, Key.LEFT_SHIFT };
+	stroke_with(&fixture, taking[..]);
+	test::eq(pinned_vertices(&fixture), (usz)8);
+
+	test::@check(fixture.app.undo(), "the stroke did not undo");
+	test::eq(pinned_vertices(&fixture), (usz)0);
+
+	Key[3] front_only = { Key.LEFT_ALT, Key.LEFT_CTRL, Key.LEFT_SHIFT };
+	stroke_with(&fixture, front_only[..]);
+	usz painted = pinned_vertices(&fixture);
+	test::@check(painted > 0 && painted < 8, "alt with X-ray ticked painted %d corners, not the front ones", painted);
+	foreach (pin : fixture.app.doc.pins.array_view())
+	{
+		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
+	}
+}
+
+<*
+ With the box off, alt held at the press paints through for that one stroke.
+
+ Re-introduce: latch `brush_xray` from the box alone.
+*>
+fn void alt_paints_through_with_the_box_off() @test
+{
+	io::printn("alt held at the press paints through the model for one stroke");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+	test::@check(open_brush_head_on(&fixture), "the brush did not open");
+
+	Key[3] through = { Key.LEFT_ALT, Key.LEFT_CTRL, Key.LEFT_SHIFT };
+	stroke_with(&fixture, through[..]);
+	test::eq(pinned_vertices(&fixture), (usz)8);
+
+	// The next stroke without alt is front only again.
+	test::@check(fixture.app.undo(), "the stroke did not undo");
+	Key[2] taking = { Key.LEFT_CTRL, Key.LEFT_SHIFT };
+	stroke_with(&fixture, taking[..]);
+	usz painted = pinned_vertices(&fixture);
+	test::@check(painted > 0 && painted < 8, "the stroke after alt painted %d corners", painted);
 }
 
 <*

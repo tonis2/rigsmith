@@ -1,9 +1,9 @@
 <*
  The tool options strip: the running tool's settings as real controls, across
- the top of the 3D view. Only the weight brush has one — its size, its strength
- and which way a plain drag paints — so painting needs no modifier and no held
- key. Ctrl-drag,
- ctrl+shift-drag and F stay as accelerators.
+ the top of the 3D view. Only the weight brush has one — its size, its strength,
+ which way a plain drag paints and whether it paints through the model (X-ray) —
+ so painting needs no modifier and no held key. Ctrl-drag, ctrl+shift-drag, alt
+ and F stay as accelerators.
 *>
 module crig;
 
@@ -14,6 +14,7 @@ const String BRUSH_OPTIONS_ID = "brush-options";
 const String BRUSH_SIZE_ID = "brush-size";
 const String BRUSH_STRENGTH_ID = "brush-strength";
 const String BRUSH_MODE_ID = "brush-mode";
+const String BRUSH_XRAY_ID = "brush-xray";
 
 const float BRUSH_SLIDER_W = 200.0;
 
@@ -68,6 +69,10 @@ fn Element* BrushOptions.build(&self, Element* elem) @dynamic
 							.selected = app.brush_removes ? 1 : 0,
 							.on_change = &brush_mode_chosen, .style = SEGMENTED_STYLE })
 							.with_id(BRUSH_MODE_ID);
+						// Saved in the config, unlike the size and strength.
+						@node((Checkbox) { .label = "X-ray", .checked = app.config.brush_xray,
+							.on_change = &brush_xray_toggled, .style = CHECKBOX_STYLE })
+							.with_id(BRUSH_XRAY_ID);
 					};
 				};
 			}
@@ -118,6 +123,15 @@ fn void BrushOptions.update(&self, Element* elem, float dt) @dynamic
 			mode.request_paint();
 		}
 	}
+	if (try Element* xray = elem.find_id(BRUSH_XRAY_ID))
+	{
+		Checkbox* box = xray.widget_as(Checkbox);
+		if (!box.held && box.checked != app.config.brush_xray)
+		{
+			box.checked = app.config.brush_xray;
+			xray.request_paint();
+		}
+	}
 }
 
 fn void brush_size_moved(Ui* ui, float value)
@@ -136,5 +150,13 @@ fn void brush_mode_chosen(Ui* ui, usz index)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	app.brush_removes = index == 1;
+	app.refresh_ui();
+}
+
+fn void brush_xray_toggled(Ui* ui, bool on)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.config.brush_xray = on;
+	app.config.save();
 	app.refresh_ui();
 }

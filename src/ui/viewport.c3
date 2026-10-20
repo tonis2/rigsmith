@@ -145,9 +145,11 @@ struct Viewport (Widget)
 	 Latched on the press: the modifiers are read once, at the start, so a shift pressed or released mid-stroke does
 	 not turn a stroke that was adding into one that is taking away halfway
 	 along — and a ctrl let go does not hand the rest of the stroke to the orbit.
+	 `brush_xray` is the strip's X-ray box, flipped by alt held at the press.
 	*>
 	bool brushing_now;
 	bool brush_adds;
+	bool brush_xray;
 
 	<*
 	 Whether a lasso is being drawn in this pane.
@@ -1475,13 +1477,14 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					// strip says (Add / Remove); a plain drag off the mesh still
 					// orbits, so the model can be turned to reach the next part.
 					// Ctrl-drag adds and ctrl+shift-drag removes whatever the strip
-					// says, and shift alone is still pan. One press is one stroke and
-					// one undo entry.
+					// says, and shift alone is still pan. Alt paints the other way
+					// from the X-ray box. One press is one stroke and one undo entry.
 					bool ctrl = input.ctrl_down();
 					if (app.brushing && (ctrl || !shift) && !input.key_down(Key.F))
 					{
 						self.brushing_now = true;
 						self.brush_adds = ctrl ? !shift : !app.brush_removes;
+						self.brush_xray = app.config.brush_xray != input.alt_down();
 						app.begin_stroke();
 						usz under = self.paint_at(elem, event.pos);
 						if (under > 0 || ctrl)
@@ -1985,7 +1988,7 @@ fn usz Viewport.paint_at(&self, Element* elem, Vec2 at)
 	// compares projected dots against — so there is no origin to subtract.
 	OrbitCamera* camera = self.view_camera(elem);
 	Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
-	usz hit = app.brush_vertices(under, strength, vp, elem.size, app.model_eye(camera), at, app.brush_radius);
+	usz hit = app.brush_vertices(under, strength, vp, elem.size, app.model_eye(camera), at, app.brush_radius, self.brush_xray);
 	if (hit == 0) return 0;
 
 	// Not the falloff itself but the part of it this stroke has not already
