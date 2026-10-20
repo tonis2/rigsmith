@@ -167,6 +167,11 @@ const float MOTION_EDGE = 2.0e-4f;
 // axis per joint, so a rig fighting its whole table could name many; past this the
 // aggregate is the better read.
 const usz ISSUE_MOST = 64;
+// As many faults of the rig as ride along after the clip's own. They are the same
+// on every clip of the rig and get_scene lists them all, so a rig with many stale
+// finger tables names a few and counts the rest rather than crowding the clip's
+// own faults out of the answer.
+const usz RIG_ISSUE_MOST = 16;
 
 <*
  A cycle's measurements.
@@ -188,6 +193,7 @@ struct ClipMetrics
 	JointTravel[] joints;    // one per named joint, in joint order
 	ClipIssue[] issues;      // localized faults, worst kept per foot/joint/axis
 	usz samples;
+	usz rig_omitted;         // faults of the rig past RIG_ISSUE_MOST, counted only
 }
 
 fn void ClipMetrics.free(&self, Allocator allocator)
@@ -448,29 +454,26 @@ fn ClipMetrics clip_metrics(
 	out.stride /= height;
 	out.root_bob /= height;
 
-	// The faults found by their own walks: the rig's hinges first, since no edit to
-	// a clip mends them, then the instants the clip snaps.
+	// The faults found by their own walks: the instants the clip snaps, then —
+	// after every fault of the clip's own, under a cap of their own so they cannot
+	// crowd those out — the rig's hinges and stale tables, which no edit to a clip
+	// mends and which every clip on the rig shares. Inverted and blocked hinges
+	// lead the stale tables, since they refuse a fold outright.
 	ClipIssue[ISSUE_MOST] found;
 	usz found_count = 0;
+	found_count += motion_issues(allocator, skeleton, names, template, constraints, height, found[found_count..]);
+	found_count += stare_issues(template, found[found_count..]);
+
+	ClipIssue[RIG_ISSUE_MOST] rig_rows;
+	usz rig_count = 0;
 	if (check_limits)
 	{
-		StaleFrame[STALE_FRAME_MOST] stale;
-		usz drifted = stale_limit_frames(doc, skeleton, names, dot_ids, stale[..]);
-		for (usz h = 0; h < drifted && found_count < ISSUE_MOST; h++)
-		{
-			found[found_count++] = {
-				.kind = LIMITS_STALE,
-				.joint = stale[h].joint,
-				.phase = 0.0f,
-				.magnitude = stale[h].drift,
-				.axis = -1,
-			};
-		}
 		HingeIssue[HINGE_MOST] hinges;
 		usz hinge_count = hinge_issues(doc, skeleton, names, dot_ids, hinges[..]);
-		for (usz h = 0; h < hinge_count && found_count < ISSUE_MOST; h++)
+		for (usz h = 0; h < hinge_count; h++)
 		{
-			found[found_count++] = {
+			if (rig_count >= RIG_ISSUE_MOST) { out.rig_omitted++; continue; }
+			rig_rows[rig_count++] = {
 				.kind = hinges[h].kind == INVERTED ? LIMITS_INVERTED : LIMITS_BLOCKED,
 				.joint = hinges[h].joint,
 				.phase = 0.0f,
@@ -478,15 +481,26 @@ fn ClipMetrics clip_metrics(
 				.axis = -1,
 			};
 		}
+		StaleFrame[STALE_FRAME_MOST] stale;
+		usz drifted = stale_limit_frames(doc, skeleton, names, dot_ids, stale[..]);
+		for (usz h = 0; h < drifted; h++)
+		{
+			if (rig_count >= RIG_ISSUE_MOST) { out.rig_omitted++; continue; }
+			rig_rows[rig_count++] = {
+				.kind = LIMITS_STALE,
+				.joint = stale[h].joint,
+				.phase = 0.0f,
+				.magnitude = stale[h].drift,
+				.axis = -1,
+			};
+		}
 	}
-	found_count += motion_issues(allocator, skeleton, names, template, constraints, height, found[found_count..]);
-	found_count += stare_issues(template, found[found_count..]);
 
 	collect_issues(&out, allocator, found[:found_count], tracked, names, foot_slide_worst[:foot_count],
 		foot_slide_sample[:foot_count], feet[:foot_count], root, height, template,
 		skeleton, feet_spec, feet_entry[:foot_count],
 		worst_sink, worst_sink_joint, worst_sink_phase,
-		check_limits, limit_active, limit_worst, limit_phase);
+		check_limits, limit_active, limit_worst, limit_phase, rig_rows[:rig_count]);
 	return out;
 }
 
@@ -515,11 +529,12 @@ fn void collect_issues(
 	bool check_limits,
 	bool[] limit_active,
 	float[] limit_worst,
-	float[] limit_phase) @local
+	float[] limit_phase,
+	ClipIssue[] rig_rows) @local
 {
 	usz joints = out.joints.len;
 	usz samples = out.samples;
-	ClipIssue[ISSUE_MOST] scratch;
+	ClipIssue[ISSUE_MOST + RIG_ISSUE_MOST] scratch;
 	usz count = 0;
 	foreach (issue : found)
 	{
@@ -647,6 +662,9 @@ fn void collect_issues(
 			};
 		}
 	}
+
+	// The rig's own faults last, in the room kept for them past ISSUE_MOST.
+	foreach (row : rig_rows) scratch[count++] = row;
 
 	if (count == 0) return;
 	out.issues = alloc::new_array(allocator, ClipIssue, (sz)count);

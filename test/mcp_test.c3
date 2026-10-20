@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[66] tool_names @local = {
+String[68] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -451,7 +451,7 @@ String[66] tool_names @local = {
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
-	"import_clip", "render_poses",
+	"import_clip", "render_poses", "duplicate_clip", "blend_in",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and
@@ -1114,7 +1114,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 46;
+const int DOCS_VERSION @local = 47;
 
 fn bool? resources_read_body(Object* root)
 {

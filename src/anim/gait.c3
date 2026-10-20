@@ -610,6 +610,20 @@ struct GaitSpec
 	bool no_pins;
 	// Pin them whether or not it slides.
 	bool always_pin;
+	// Rewriting a clip that already exists drops its layers and look-ats instead
+	// of keeping them over the new keys (`AppState.author_gait`).
+	bool drop_layers;
+	// The hips' drop in model units, in place of the smallest one that keeps the
+	// legs short of straight: smaller for straighter legs, larger for a crouch.
+	bool drop_set;
+	float drop;
+	// Multipliers on a biped's arm swing, elbow bend, elbow swing and how far the
+	// arms hang out from the body (`gait_body_amounts`); unset is 1 each.
+	bool arms_set;
+	float arm_swing;
+	float arm_elbow;
+	float arm_elbow_swing;
+	float arm_spread;
 }
 
 // One foot of a gait: a joint of the skeleton, and where in the cycle it lands.
@@ -900,6 +914,7 @@ fn AnimTemplate? gait_clip(
 			drop = high;
 		}
 	}
+	if (spec.drop_set) drop = math::clamp(spec.drop, 0.0f, 0.6f * leg_height);
 
 	usz root = 0;
 	while (skeleton.parents[root] >= 0) root = (usz)skeleton.parents[root];
@@ -916,6 +931,13 @@ fn AnimTemplate? gait_clip(
 		float scale = default_stride > 0.0f ? math::clamp(spec.stride / default_stride, 0.5f, 1.6f) : 1.0f;
 		body = gait_body_of(skeleton, names, { plans[0].leg.joints[0], plans[1].leg.joints[0] },
 			plans[left].offset, spec.kind, scale);
+		if (spec.arms_set)
+		{
+			body.swing *= spec.arm_swing;
+			body.elbow *= spec.arm_elbow;
+			body.elbow_swing *= spec.arm_elbow_swing;
+			body.abduct *= spec.arm_spread;
+		}
 		// The pelvis's names have to be addressable for it to be keyed.
 		if (body.active && (body.pelvis >= names.len || names[body.pelvis].len == 0)) body.active = false;
 	}

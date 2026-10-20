@@ -8,7 +8,9 @@
 module crig_tests::ui;
 
 import crig;
+import std::collections::object;
 import std::core::test;
+import std::encoding::json;
 import std::io;
 
 fn void re_applying_plan_limits_mends_an_inverted_knee() @test
@@ -119,4 +121,58 @@ fn void a_toe_that_cannot_bend_is_mended_by_trading_its_rows() @test
 	test::@check(count == 1 && found[0].joint == "toe_L" && found[0].kind == BLOCKED, "the traded toe is not reported blocked");
 	test::@check(f.app.mend_hinge_limits() == 1, "the toe was not mended");
 	test::@check(refused_hinges(&f, found[..]) == 0, "the mended toe still cannot bend");
+}
+
+fn uint named_dot(Fixture* f, String name)
+{
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == name) return dot.id;
+	return 0;
+}
+
+fn bool rig_edit(Fixture* f, String text)
+{
+	Object*? args = json::parse(mem, text);
+	if (catch args) return false;
+	defer args.free();
+	DString detail = dstring::new(mem);
+	defer detail.free();
+	String? out = crig::edit_rig(&f.app, args, &detail);
+	if (catch out)
+	{
+		test::@check(false, "edit_rig refused: %s", detail.str_view());
+		return false;
+	}
+	out.free(mem);
+	return true;
+}
+
+<*
+ plan_limits with joints re-plans only those tables: a limit taken off the neck
+ on purpose stays off, where plan_limits over the whole rig puts it back.
+
+ Re-introduce: ignore the op's `joints` (call `reapply_plan_limits` with no
+ mask), and the neck's table comes back.
+*>
+fn void plan_limits_with_joints_leaves_the_rest_of_the_rig_alone() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	io::printn("plan_limits joints re-plans only the joints named");
+	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
+	uint neck = named_dot(&f, "neck");
+	uint knee = named_dot(&f, "knee_L");
+	test::@check(neck != 0 && knee != 0, "the biped has no neck or knee_L");
+	if (neck == 0 || knee == 0) return;
+	test::@check(f.app.doc.rotation_limits_of(neck).constrained, "the fitted neck has no limits to take off");
+
+	if (!rig_edit(&f, `{"ops":[{"op":"limits","joint":"neck","reset":true},{"op":"limits","joint":"knee_L","reset":true}]}`)) return;
+	test::@check(!f.app.doc.rotation_limits_of(neck).constrained, "the neck's limits did not come off");
+
+	if (!rig_edit(&f, `{"ops":[{"op":"plan_limits","joints":["knee_L"]}]}`)) return;
+	test::@check(f.app.doc.rotation_limits_of(knee).constrained, "the named knee was not re-planned");
+	test::@check(!f.app.doc.rotation_limits_of(neck).constrained, "plan_limits put back a limit it was not asked about");
+
+	if (!rig_edit(&f, `{"ops":[{"op":"plan_limits"}]}`)) return;
+	test::@check(f.app.doc.rotation_limits_of(neck).constrained, "plan_limits over the whole rig should re-plan the neck");
 }

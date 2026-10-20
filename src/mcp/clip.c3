@@ -43,14 +43,19 @@ faultdef CLIP_INVALID;
 
  @param detail : `Filled with what was wrong and what would have been accepted, when this faults.`
  @param fallback_duration : `What a clip with no length of its own (one key at time zero, no "duration") is given instead of a refusal. A layer's keys are read through here and have none of their own.`
+ @param layer_name : `Set when the object is a layer's: the name to use when it states none, since a layer being replaced keeps its own and its keys need no clip name.`
  @return? CLIP_INVALID : `Not a clip this rig can play. The reason is in detail.`
 *>
-fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float fallback_duration = 0.0f)
+fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float fallback_duration = 0.0f, String layer_name = "")
 {
 	if (!takes_object(args, detail, `apply_clip takes an object: {"name": string, "keyframes": [{"time": seconds, "joints": [{"name": dot, "rotation": ..., "move": [x,y,z]}]}], "duration": seconds, "loop": bool}`)) return CLIP_INVALID~;
 
 	String name;
-	if (!required_string(args, "name", &name, detail, `apply_clip needs "name": a string, and the handle every later call uses for this clip. A clip of that name in the authored pack is replaced.`)) return CLIP_INVALID~;
+	if (layer_name.len > 0)
+	{
+		name = args.get_string("name") ?? layer_name;
+	}
+	else if (!required_string(args, "name", &name, detail, `apply_clip needs "name": a string, and the handle every later call uses for this clip. A clip of that name in the authored pack is replaced.`)) return CLIP_INVALID~;
 	if (name.len == 0)
 	{
 		detail.append_string(`"name" is empty. A clip is addressed by name, so it needs one that is not.`);
@@ -408,12 +413,20 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 		if (!parse_layers(app, layers, clip.duration, &clip.layers, detail)) return CLIP_INVALID~;
 	}
 	// The look-at targets are not stated here (`set_aim` owns them), so rewriting
-	// the keys of a clip keeps the ones the clip of this name already has.
+	// the keys of a clip keeps the ones the clip of this name already has. The
+	// ground spec is kept the same way unless it is stated, or cleared with null,
+	// so a get_clip → apply_clip round trip does not drop the floor solve.
+	bool ground_stated = member(args, "ground") != null || stated_null(args, "ground");
 	AnimPack* authored = app.authored();
 	if (authored) foreach (held : authored.clips)
 	{
 		if (held.name != name) continue;
 		if (layers == null) clip.layers = layers_copy(mem, held.layers);
+		if (!ground_stated)
+		{
+			clip.ground.free(mem);
+			clip.ground = ground_copy(mem, held.ground);
+		}
 		free_aims(mem, clip.aims);
 		clip.aims = aims_copy(mem, held.aims);
 		free_aim_targets(mem, clip.aim_targets);
@@ -497,7 +510,8 @@ fn bool parse_ground(AppState* app, Object* ground, AnimGround* into, DString* d
 			return false;
 		}
 
-		planted[f] = { .joint = joint.copy(mem), .down = (float)down, .up = (float)up };
+		planted[f] = { .joint = joint.copy(mem), .down = (float)down, .up = (float)up,
+			.off_floor = entry.get_bool("off_floor") ?? false };
 	}
 
 	*into = { .feet = planted };
@@ -933,6 +947,11 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 
 	out.append_string(`,"keyframes":`);
 	append_keyframes_json(&out, clip.keyframes);
+	if (clip.ground.solves())
+	{
+		out.append_string(`,"ground":`);
+		append_ground_json(&out, clip.ground);
+	}
 	if (clip.layers.len > 0)
 	{
 		out.append_string(`,"layers":`);
@@ -966,6 +985,61 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 	out.append_char('}');
 
 	return out.copy_str(mem);
+}
+
+// What set_layer and patch_clip answer with when they move the root of a
+// grounded clip up or down: the floor solve cancels that while a foot is down.
+const String ROOT_Y_NOTE = `a move on the root's Y in a grounded clip is cancelled by the floor solve while a foot is down, so it changes nothing there; stance height comes from how the legs bend (get_crig_docs topic ground)`;
+
+// The name of the dot the skeleton hangs from, or empty when there is none.
+fn String root_dot_name(AppState* app)
+{
+	Dot* root = app.doc.find(app.doc.root_id);
+	return root ? root.name : "";
+}
+
+<*
+ Whether a grounded clip has an unmuted keyed layer that moves its root up or
+ down — a move the floor solve cancels while any foot is planted.
+*>
+fn bool layers_lift_root(AppState* app, AnimTemplate* clip)
+{
+	if (!clip.ground.solves()) return false;
+	String root = root_dot_name(app);
+	if (root.len == 0) return false;
+	foreach (layer : clip.layers)
+	{
+		if (layer.mute || layer.kind != KEYED) continue;
+		foreach (frame : layer.keyframes)
+		{
+			foreach (dot : frame.dots)
+			{
+				if (dot.joint_name != root || dot.channels == ROTATION) continue;
+				if (math::abs(dot.move.y) > 1.0e-6f) return true;
+			}
+		}
+	}
+	return false;
+}
+
+<*
+ A ground spec in apply_clip's own shape, `{"feet":[{"joint","down","up"}],"floor"}`.
+ A joint may appear more than once, one entry per window it is down.
+*>
+fn void append_ground_json(DString* out, AnimGround ground)
+{
+	out.append_string(`{"feet":[`);
+	foreach (usz f, foot : ground.feet)
+	{
+		if (f > 0) out.append_char(',');
+		out.append_string(`{"joint":`);
+		append_json_string(out, foot.joint);
+		out.appendf(`,"down":%s,"up":%s`, (JsonFloat)foot.down, (JsonFloat)foot.up)!!;
+		out.append_string(foot.off_floor ? `,"off_floor":true}` : "}");
+	}
+	out.append_char(']');
+	if (ground.floor_set) out.appendf(`,"floor":%s`, (JsonFloat)ground.floor)!!;
+	out.append_char('}');
 }
 
 <*

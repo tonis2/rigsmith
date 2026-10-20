@@ -521,6 +521,21 @@ fn String patch_report(AppState* app, String clip_name, float start, float end, 
 
 	if (did_land)
 	{
+		// A root moved up or down on a grounded clip: the floor solve takes it
+		// back wherever a foot is planted.
+		AnimTemplate* patched = app.clip(landed);
+		String root = root_dot_name(app);
+		bool lifted = false;
+		if (patched && patched.ground.solves() && root.len > 0)
+		{
+			foreach (pj : joints) if (pj.name == root && pj.has_move && math::abs(pj.move.y) > 1.0e-6f) lifted = true;
+		}
+		if (lifted)
+		{
+			out.append_string(`,"note":"`);
+			out.append_string(ROOT_Y_NOTE);
+			out.append_char('"');
+		}
 		String applied = applied_json(app, landed, replaced);
 		defer alloc::free(mem, applied);
 		out.append_string(`,"landed":`);

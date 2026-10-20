@@ -36,6 +36,14 @@ const String AUTHOR_GAIT_SCHEMA = `{"type":"object","properties":{
 	},"required":["joint"]}},
 	"samples":{"type":"number","description":"Keys per cycle. Default 40, between 8 and 240."},
 	"pin_feet":{"description":"Pin each foot to its stance path after the cycle is written: \"auto\" (the default) pins only when the cycle measures as sliding — the rig's joint limits refusing part of a solved stance, an ankle that will not flex as far as the stride asks — true always, false never. The answer's pinned says which happened.","anyOf":[{"type":"boolean"},{"type":"string","enum":["auto"]}]},
+	"pelvis_drop":{"type":"number","description":"How far the hips sit below standing height, in model units, in place of the smallest drop that keeps every leg short of straight (the answer's pelvis_drop). Smaller for straighter legs, larger for a crouch; at most 0.6 of the leg's height. While a foot is down the floor solve still plants it, so this is a statement about how the legs bend."},
+	"arms":{"type":"object","description":"For an upright two-legged figure with upper_body on: multipliers on the arms' default motion, each 1 when left out, 0 to 4.","properties":{
+		"swing":{"type":"number","description":"How far the arms swing forward and back."},
+		"elbow":{"type":"number","description":"How bent the elbows are."},
+		"elbow_swing":{"type":"number","description":"How much more the elbow bends as the arm comes forward."},
+		"spread":{"type":"number","description":"How far the arms hang out from the body."}
+	}},
+	"keep_layers":{"type":"boolean","description":"When a clip of this name already exists, keep its layers and look-ats over the new cycle, as apply_clip does. Default true; false starts the clip clean. Its pins are always written again, since they were for the old footfalls."},
 	"upper_body":{"type":"boolean","description":"For an upright two-legged figure, key the rest of a walking body as well: the pelvis bobbing into each footfall and turning with the leading leg, the chest turning against it, the arms lowered and swinging opposite the legs with the elbows bent, the head held level. Amplitudes scale with stride; a run (trot) swings harder and bends the elbows. false keys the legs only, for a figure whose upper body another clip or layer drives. Default true."}
 },"required":["name"]}`;
 
@@ -108,6 +116,45 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 		spec.samples = (usz)given;
 	}
 	spec.legs_only = !(args.get_bool("upper_body") ?? true);
+	spec.drop_layers = !(args.get_bool("keep_layers") ?? true);
+	if (try given = args.get_float("pelvis_drop"))
+	{
+		if (given < 0.0 || given > 1000.0)
+		{
+			detail.appendf(`"pelvis_drop" is %.9g. It is model units the hips sit below standing, zero or more.`, given);
+			return GAIT_REFUSED~;
+		}
+		spec.drop_set = true;
+		spec.drop = (float)given;
+	}
+	Object* arms = member(args, "arms");
+	if (arms != null)
+	{
+		if (!arms.is_keyable())
+		{
+			detail.append_string(`"arms" must be an object: {"swing": n, "elbow": n, "elbow_swing": n, "spread": n}, each a multiplier on the default.`);
+			return GAIT_REFUSED~;
+		}
+		String[4] keys = { "swing", "elbow", "elbow_swing", "spread" };
+		float[4] amounts = { 1.0f, 1.0f, 1.0f, 1.0f };
+		foreach (usz k, key : keys)
+		{
+			if (try given = arms.get_float(key))
+			{
+				if (given < 0.0 || given > 4.0)
+				{
+					detail.appendf(`"arms".%s is %.9g. It is a multiplier on the default, 0 to 4.`, key, given);
+					return GAIT_REFUSED~;
+				}
+				amounts[k] = (float)given;
+			}
+		}
+		spec.arms_set = true;
+		spec.arm_swing = amounts[0];
+		spec.arm_elbow = amounts[1];
+		spec.arm_elbow_swing = amounts[2];
+		spec.arm_spread = amounts[3];
+	}
 	Object* pinning = member(args, "pin_feet");
 	if (pinning != null)
 	{
@@ -202,6 +249,7 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	out.appendf(`%s]`, (JsonFloat)report.speed);
 	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a pin_feet argument."`);
 	out.appendf(`,"pinned":%s,"slide_before_pins":%s`, authored_pinned ? "true" : "false", (JsonFloat)slide_before);
+	if (result.kept_layers > 0) out.appendf(`,"kept_layers":%d`, result.kept_layers);
 	out.append_string(`,"landed":`);
 	out.append_string(applied);
 	out.append_string(`,"metrics":`);

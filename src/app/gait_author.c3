@@ -50,6 +50,8 @@ struct GaitAuthored
 	// written, and how far they slid before.
 	bool pinned;
 	float slide_before;
+	// Layers carried over from the clip of this name the cycle replaced.
+	usz kept_layers;
 }
 
 fn void GaitAuthored.free(&self, Allocator allocator)
@@ -211,6 +213,24 @@ fn GaitAuthored? AppState.author_gait(
 	}
 	AnimTemplate clip = made;
 	self.hold_keys_inside_limits(&view, &clip);
+
+	// Rewriting a cycle keeps what was laid over it, as apply_clip does: a layer
+	// or a look-at is an edit of its own, and re-running the gait to change the
+	// stride should not quietly take it away. The pins are the cycle's and are
+	// written again below, since the old ones were for the old footfalls.
+	if (!spec.drop_layers)
+	{
+		AnimPack* authored = self.authored();
+		if (authored) foreach (held : authored.clips)
+		{
+			if (held.name != name) continue;
+			clip.layers = layers_copy(mem, held.layers);
+			clip.aims = aims_copy(mem, held.aims);
+			clip.aim_targets = aim_targets_copy(mem, held.aim_targets);
+			out.kept_layers = held.layers.len;
+			break;
+		}
+	}
 
 	out.landed = self.author_clip(clip, &out.replaced);
 

@@ -15,10 +15,12 @@
  against the skeleton actually in front of it — the player's, the exporter's, a
  test's — rather than the one the keyframes were written on.
 
- **The author writes no root Y.** The solve supplies stance height. An authored
- root slide adds on top of it, which is where a flight arc, a stumble or a duck
- goes; it does not fight the solve, because the solve is stated as a correction
- rather than as a value.
+ **The author writes no root Y.** The solve supplies stance height. It is added
+ as a correction, but measured from the pose with the root slide already in it,
+ so while any contact is planted it cancels an authored root Y outright — keyed
+ or from a layer — and the pelvis height comes from how the legs bend. An
+ authored root slide survives only while every foot is off the floor (and away
+ from its edges), which is where a flight arc goes.
 *>
 module crig;
 

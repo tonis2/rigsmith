@@ -63,11 +63,12 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
 	"duration":{"type":"number","description":"Seconds. Defaults to the last keyframe's time; must not be shorter than it."},
 	"loop":{"type":"boolean","description":"Whether playback wraps. Default false."},
 	"blend":{"type":"string","enum":["linear","smooth"],"description":"How the clip moves between keyframes. linear (default) goes straight between them; smooth fits a cubic through them and, on a looping clip, through the loop point too — so a cycle can be written as the eight poses it passes through rather than as a resampling of them."},
-	"ground":{"type":"object","description":"Which joints touch the floor and when. Rigsmith then solves the root's height against the rig actually loaded, so the same clip plants correctly on figures with different leg lengths. Write no root Y of your own; an authored one adds on top of the solve, which is where a flight arc goes.","properties":{
+	"ground":{"type":"object","description":"Which joints touch the floor and when. Rigsmith then solves the root's height against the rig actually loaded, so the same clip plants correctly on figures with different leg lengths. While any contact is down the solve sets the root's height outright: an authored root Y, keyed or from a layer, is cancelled then, so stance height comes from how the legs bend. It adds on top only while every foot is off the floor, which is where a flight arc goes. A joint may appear once for each window it is down. Left out, a clip of this name already authored keeps its own spec; null clears it.","properties":{
 		"feet":{"type":"array","items":{"type":"object","properties":{
 			"joint":{"type":"string","description":"A dot name from get_skeleton."},
 			"down":{"type":"number","description":"Cycle phase the foot plants, 0 to 1 — a fraction of the duration, not seconds."},
-			"up":{"type":"number","description":"Cycle phase it leaves. At or below down, the window wraps through the loop point, which is what one foot of a gait always does."}
+			"up":{"type":"number","description":"Cycle phase it leaves. At or below down, the window wraps through the loop point, which is what one foot of a gait always does."},
+			"off_floor":{"type":"boolean","description":"A contact that is not on the floor, such as a hand on a wall: planted and measured, but the height solve leaves it alone. Default false."}
 		},"required":["joint"]}},
 		"floor":{"type":"number","description":"Model-space height the feet rest on. Defaults to the lowest contact joint's own rest height, which is where the modeller put the sole."}
 	},"required":["feet"]},
@@ -174,14 +175,14 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "measure_clip",
-		.description = "Whether a clip is fit to ship, and what to call to make it so. Answers verdict usable or needs_work, an issues list that localizes each fault to a joint, a phase and (for a pop on a key) the key, and fixes: one call per kind of fault with its arguments filled in. Measured as the clip plays and exports — the keys held inside the rig's joint limits, grounded, pinned and aimed. Faults (each marked blocks:false is reported without making the verdict needs_work): limits_inverted / limits_blocked (the rig's knee or elbow limits refuse the natural fold — every clip plays clamped until edit_rig plan_limits mends it), pop (a joint snapping: a leftover partial key, a limit clamp flipping, a loop whose end jumps to its start — found by walking every key and 120 instants a second, so a snap between frames is still seen), root_pop (the body's height jumping where the floor solve changes feet), foot_slide (a planted foot skating; a clip with no ground spec is measured by the feet its motion plants), floor_penetration, limit_saturation (keys turning a joint past its limits, read before the limits hold them; never blocks, since what plays is the held pose), loop_position / loop_velocity (the seam), and aim_stare (a note: a look-at on one still point). Beside them the aggregates: foot_slide, ground_speed (how fast the figure must travel for an in-place cycle not to skate), floor_penetration, stride, root bob, and every joint's travel and height range, as fractions of rig height. Every tool that writes a clip answers with these numbers under metrics; get_crig_docs topic quality is the loop to follow.",
+		.description = "Whether a clip is fit to ship, and what to call to make it so. Answers verdict usable or needs_work, clip_verdict (the same with the rig's own faults, marked of_rig, left out: whether this clip's keys are done), an issues list that localizes each fault to a joint, a phase and (for a pop on a key) the key, the rig's faults last, and fixes: one call per kind of fault with its arguments filled in. Measured as the clip plays and exports — the keys held inside the rig's joint limits, grounded, pinned and aimed. Faults (each marked blocks:false is reported without making the verdict needs_work): limits_inverted / limits_blocked (the rig's knee or elbow limits refuse the natural fold — every clip plays clamped until edit_rig plan_limits mends it), limits_stale (a joint's limit table still pinned to where its bone pointed before it moved; its fix carries that one table onto its bone), pop (a joint snapping: a leftover partial key, a limit clamp flipping, a loop whose end jumps to its start — found by walking every key and 120 instants a second, so a snap between frames is still seen), root_pop (the body's height jumping where the floor solve changes feet), foot_slide (a planted foot skating; a clip with no ground spec is measured by the feet its motion plants), floor_penetration, limit_saturation (keys turning a joint past its limits, read before the limits hold them; never blocks, since what plays is the held pose), loop_position / loop_velocity (the seam), and aim_stare (a note: a look-at on one still point). Beside them the aggregates: foot_slide, ground_speed (how fast the figure must travel for an in-place cycle not to skate), floor_penetration, stride, root bob, and every joint's travel and height range, as fractions of rig height. Every tool that writes a clip answers with these numbers under metrics; get_crig_docs topic quality is the loop to follow.",
 		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"samples":{"type":"number","description":"Even instants for the slide, seam and travel measurements. Default: sixty a second of clip, 32 to 256. Pops are always walked at every key and 120 a second."}},"required":["clip"]}`,
 		.handler = &tool_measure_clip,
 		.user_data = app,
 	});
 	server.add_tool({
 		.name = "get_clip",
-		.description = "A clip's stored keyframes, in exactly the shape apply_clip takes — so a clip can be read, changed and written back without reconstructing it from samples. get_pose samples a clip at an instant and measure_clip measures one; this is the keys themselves, including the ones a person keyed by hand in the timeline. Rotations come back as an axis and an angle, which is what the format actually stores. editable says whether apply_clip would change this clip or fork it: only the authored pack is Rigsmith's to write.",
+		.description = "A clip's stored keyframes, in exactly the shape apply_clip takes — so a clip can be read, changed and written back without reconstructing it from samples. get_pose samples a clip at an instant and measure_clip measures one; this is the keys themselves, including the ones a person keyed by hand in the timeline. Rotations come back as an axis and an angle, which is what the format actually stores. editable says whether apply_clip would change this clip or fork it: only the authored pack is Rigsmith's to write. The ground spec, layers, aims and pins come with it; apply_clip reads the ground and layers back, and keeps a clip's own aims and pins, which set_aim and set_pins change.",
 		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."}},"required":["clip"]}`,
 		.handler = &tool_get_clip,
 		.user_data = app,
@@ -549,9 +550,25 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "merge_layers",
-		.description = "Bake a clip's unmuted layers into its own keys and clear the stack, for a clip that should stop being layered. The result is dense-enough linear keys sampled from the layered clip (the ground spec is kept); muted layers are dropped. One undo step.",
+		.description = "Bake a clip's unmuted layers into its own keys and clear the stack, for a clip that should stop being layered. The result is dense-enough linear keys sampled from the layered clip (the ground spec is kept); muted layers are dropped. With into, the baked keys land as a new clip of that name and the source keeps its layers. One undo step.",
 		.input_schema = MERGE_LAYERS_SCHEMA,
 		.handler = &tool_merge_layers,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "duplicate_clip",
+		.description = "Copy a clip under a new name in the authored pack and bind the copy — the Animations pane's Duplicate. The copy keeps the keys, layers, ground spec, pins and aims, so a variant can be tried without touching the original; a library clip comes over in this rig's joint names. One undo step. Answers as apply_clip does.",
+		.input_schema = DUPLICATE_CLIP_SCHEMA,
+		.handler = &tool_duplicate_clip,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "blend_in",
+		.description = "Write a one-shot clip that starts from the rest pose (a T-pose, on a rig that rests in one) or a saved pose, holds it, eases into another clip at a phase of its cycle, then follows that clip for some cycles — the opening of a shot, where a figure comes out of its bind pose into a walk already under way. The clip's layers are baked into the new keys, and its ground spec is carried with every contact window moved onto the new timing: a foot down where the blend lands is down from the start, one in the air there lifts half way through the blend. Lands in the authored pack, not looping, as one undo step; answers as apply_clip does.",
+		.input_schema = BLEND_IN_SCHEMA,
+		.handler = &tool_blend_in,
 		.user_data = app,
 		.hidden = true,
 	});
@@ -1157,8 +1174,12 @@ fn void append_rig_issues(DString* out, AppState* app, bool always) @private
 		if (i > 0) out.append_char(',');
 		out.append_string(`{"kind":"limits_stale","joint":"`);
 		json_escape_into(out, stale[i].joint);
-		out.appendf(`","drift":%s,"note":"its limit table is pinned to where the bone pointed before the joint moved, so a natural turn reads partly as locked twist and is held back","fix":{"tool":"edit_rig","args":{"ops":[{"op":"plan_limits"}]}}}`,
+		// The fix carries this joint's own table onto its bone and touches no
+		// other: plan_limits would re-plan the whole rig, limits taken off included.
+		out.appendf(`","drift":%s,"note":"its limit table is pinned to where the bone pointed before the joint moved, so a natural turn reads partly as locked twist and is held back","fix":{"tool":"edit_rig","args":{"ops":[{"op":"limits","joint":"`,
 			(JsonFloat)stale[i].drift);
+		json_escape_into(out, stale[i].joint);
+		out.append_string(`","bone_axes":true}]}}}`);
 	}
 	for (usz i = 0; i < count; i++)
 	{
@@ -1430,6 +1451,10 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 	out.append_string(template.ground.solves() ? "true" : "false");
 	out.appendf(`,"feet":"%s"`, template.ground.solves() ? "declared" : (contacts.feet.len > 0 ? "read_from_motion" : "none"));
 	out.appendf(`,"verdict":"%s"`, clip_usable(numbers) ? "usable" : "needs_work");
+	// The verdict on the clip alone: a rig fault (of_rig) makes every clip on the
+	// rig needs_work until edit_rig mends it, which says nothing about whether
+	// this clip's own keys are done.
+	out.appendf(`,"clip_verdict":"%s"`, clip_usable(numbers, ignore_rig: true) ? "usable" : "needs_work");
 	out.appendf(`,"floor":%s,"floor_penetration":%s,"foot_slide":%s,"ground_speed":%s,"stride":%s,"root_bob":%s`,
 		(JsonFloat)numbers.floor, (JsonFloat)numbers.floor_penetration, (JsonFloat)numbers.foot_slide, (JsonFloat)numbers.ground_speed,
 		(JsonFloat)numbers.stride, (JsonFloat)numbers.root_bob);
@@ -1470,7 +1495,9 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 		if (!issue.blocks()) out.append_string(`,"blocks":false`);
 		out.append_char('}');
 	}
-	out.append_string(`],"fixes":`);
+	out.append_char(']');
+	if (numbers.rig_omitted > 0) out.appendf(`,"rig_issues_omitted":%d`, numbers.rig_omitted);
+	out.append_string(`,"fixes":`);
 	append_fixes(&out, *template, numbers);
 	out.appendf(`,"tolerances":{"foot_slide":%.6g,"floor_penetration":%.6g,"limit_saturation":%.6g,"loop_position":%.6g,"loop_velocity":%.6g,"pop":%.6g,"root_pop":%.6g,"note":"an issue is reported only past its tolerance; foot_slide/floor_penetration/loop_position/root_pop are fractions of rig height, limit_saturation and pop are radians, loop_velocity is rig heights per second. A pop is a joint turning more than %.6g radians faster than %.6g radians a second, or an instant standing that far off the path its neighbours set within %.6g s — read from a walk of every key and %.6g instants a second, so a snap between the even samples is still seen. Loop faults are measured with the root's horizontal travel removed, so intended locomotion is not flagged; they need a looping clip and at least four samples. Every number is of the clip as it plays and exports: held inside the rig's joint limits, grounded, pinned and aimed; limit_saturation alone reads the keys before the limits hold them. limits_inverted and limits_blocked are faults of the rig, not the clip: every clip on it plays wrong until they are mended. An issue marked blocks:false is reported and does not make the verdict needs_work: a note, or a limit overshoot — what the limits hold is what plays and is what every other number measures; the overshoot says the keys ask for more than the rig allows, and past %.6g radians a fix is offered."}`,
 		ISSUE_SLIDE_TOLERANCE, ISSUE_PENETRATION_TOLERANCE, ISSUE_LIMIT_TOLERANCE,
@@ -1498,10 +1525,15 @@ fn String issue_unit(ClipIssueKind kind) @private
 	}
 }
 
-// Whether a clip is fit to ship: nothing found but notes.
-fn bool clip_usable(ClipMetrics numbers) @private
+// Whether a clip is fit to ship: nothing found but notes. With ignore_rig, the
+// rig's own faults are left out, which is the verdict on the clip's keys alone.
+fn bool clip_usable(ClipMetrics numbers, bool ignore_rig = false) @private
 {
-	foreach (issue : numbers.issues) if (issue.blocks()) return false;
+	foreach (issue : numbers.issues)
+	{
+		if (ignore_rig && issue.kind.of_rig()) continue;
+		if (issue.blocks()) return false;
+	}
 	return true;
 }
 
@@ -1547,13 +1579,17 @@ fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @priv
 	defer smooth_joints.free();
 	String blocked_joint;
 	String saturated_joint;
+	List{String} stale_joints;
+	stale_joints.init(mem);
+	defer stale_joints.free();
 	foreach (issue : numbers.issues)
 	{
 		switch (issue.kind)
 		{
 			case LIMITS_INVERTED:
-			case LIMITS_STALE:
 				inverted = true;
+			case LIMITS_STALE:
+				if (issue.joint.len > 0) stale_joints.push(issue.joint);
 			case LIMITS_BLOCKED:
 				blocked = true;
 				blocked_joint = issue.joint;
@@ -1598,7 +1634,23 @@ fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @priv
 	if (inverted)
 	{
 		fix_open(out, &written, "limits_inverted", "edit_rig");
-		out.append_string(`{"ops":[{"op":"plan_limits"}]},"why":"the rig's limit tables hold natural motion back — a knee or elbow allowed to fold only the wrong way, or a table still pinned to where its bone pointed before the joint moved — so playback and export clamp it; put the body plan's limits back and carry every table onto its bone, then measure again"}`);
+		out.append_string(`{"ops":[{"op":"plan_limits"}]},"why":"the rig's limit tables hold natural motion back — a knee or elbow allowed to fold only the wrong way — so playback and export clamp it; put the body plan's limits back and carry every table onto its bone, then measure again"}`);
+	}
+	if (stale_joints.len() > 0)
+	{
+		// One limits op per joint, carrying its own table onto its bone: the rows
+		// the person set are kept, and no other joint's table is touched — where
+		// plan_limits would re-plan the whole rig, limits taken off included.
+		fix_open(out, &written, "limits_stale", "edit_rig");
+		out.append_string(`{"ops":[`);
+		foreach (usz i, joint : stale_joints)
+		{
+			if (i > 0) out.append_char(',');
+			out.append_string(`{"op":"limits","joint":"`);
+			json_escape_into(out, joint);
+			out.append_string(`","bone_axes":true}`);
+		}
+		out.append_string(`]},"why":"these limit tables are pinned to where their bones pointed before the joints moved, so a natural turn reads partly as locked twist and is held back; carry each onto its bone, keeping its rows, and leave every other joint's table as it is"}`);
 	}
 	if (blocked)
 	{

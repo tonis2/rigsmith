@@ -27,6 +27,8 @@ module crig;
 
 import image;
 import image::png;
+import cui;
+import three;
 import rig;
 import std::collections::object;
 
@@ -75,7 +77,9 @@ const String RENDER_SCHEMA = `{"type":"object","properties":{
 	"frame":{"type":"boolean","description":"Back off until the whole model is in view before anything else, then put the camera back afterwards like every other argument here. What to ask for when nothing has aimed the camera yet — after build_body it is still wherever the last document left it, and the first render without this is a close-up of a ribcage."},
 	"path":{"type":"string","description":"Also write the PNG here. A run_script call gets the sheet back as base64 text, which cannot be looked at; a file can be opened as an image."},
 	"crop":{"type":"string","enum":["viewport","window"],"description":"viewport, the default, keeps only the part of the window the model is drawn in — the panels are noise in a picture about motion. window keeps the whole thing, which is what to ask for when the question is about the interface."},
-	"cols":{"type":"number","description":"Tiles per row. Default is roughly square."}
+	"cols":{"type":"number","description":"Tiles per row. Default is roughly square."},
+	"overlays":{"type":"boolean","description":"false draws the model alone: no interface, tool column, view gizmo, HUD text or rig overlay, each tile square at the sheet's budget, the floor kept. What to ask for when the picture is to be compared with another — a reference video, a previous take. Default true: the viewport as the person sees it."},
+	"square":{"type":"boolean","description":"Crop each tile to a square at the centre of the viewport, where frame and the named views put the model, so a wide pane does not leave it small in the middle of empty floor. Implied by overlays false."}
 }}`;
 
 const String SET_CAMERA_SCHEMA = `{"type":"object","properties":{
@@ -201,6 +205,34 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 		}
 	}
 
+	bool overlays = true;
+	if (member(args, "overlays") != null)
+	{
+		bool? given = args.get_bool("overlays");
+		if (catch given)
+		{
+			detail.append_string(`"overlays" must be true or false: false draws the model alone, with no interface over it.`);
+			return RENDER_REFUSED~;
+		}
+		overlays = given;
+	}
+	bool square = false;
+	if (member(args, "square") != null)
+	{
+		bool? given = args.get_bool("square");
+		if (catch given)
+		{
+			detail.append_string(`"square" must be true or false: whether each tile is cropped square about the viewport's centre.`);
+			return RENDER_REFUSED~;
+		}
+		square = given;
+	}
+	if (!overlays && (!hosted() || stage_renderer() == null))
+	{
+		detail.append_string(`"overlays": false draws the scene without the interface, which needs the window's renderer; this crig has none. Leave it out for the viewport as it is.`);
+		return RENDER_REFUSED~;
+	}
+
 	// Everything below moves something the user can see. From here on every path
 	// out goes through the restore.
 	bool was_animating = app.animating;
@@ -231,6 +263,28 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 	uint tile_width = 0;
 	uint tile_height = 0;
 
+	// The model alone: the renderer's target made one square tile, the interface
+	// left out of each capture, and the target put back however this returns.
+	uint clean_size = 0;
+	three::Renderer* renderer = overlays ? null : stage_renderer();
+	uint was_width = renderer ? renderer.target.extent.width : 0;
+	uint was_height = renderer ? renderer.target.extent.height : 0;
+	defer if (renderer) (void)renderer.resize_target(was_width, was_height);
+	if (renderer)
+	{
+		if (columns == 0) columns = sheet_columns(frames, 1, 1);
+		usz rows = (frames + columns - 1) / columns;
+		clean_size = math::min(RENDER_MAX_EDGE / (uint)columns, RENDER_MAX_EDGE / (uint)rows);
+		clean_size = math::clamp(clean_size, RENDER_MIN_TILE, RENDER_CLEAN_MOST);
+		// The whole target is the picture; nothing is cropped from it.
+		crop = window;
+		if (catch renderer.resize_target(clean_size, clean_size))
+		{
+			detail.appendf("a %d-pixel target could not be made for a frame without the interface.", clean_size);
+			return RENDER_REFUSED~;
+		}
+	}
+
 	for (usz f = 0; f < frames; f++)
 	{
 		if (ref.valid() && !show_at(app, ref, times[f]))
@@ -239,9 +293,15 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 			return RENDER_REFUSED~;
 		}
 
-		image::Image? grabbed = one_frame(app, crop, detail);
+		image::Image? grabbed = renderer ? clean_frame(app, detail) : one_frame(app, crop, detail);
 		if (catch grabbed) return RENDER_REFUSED~;
 		image::Image tile = grabbed;
+		if (square && !renderer && tile.width != tile.height)
+		{
+			image::Image centred = centre_square(&tile);
+			tile.free();
+			tile = centred;
+		}
 		defer tile.free();
 
 		// The first tile decides the sheet's shape: every frame comes off the same
@@ -644,6 +704,48 @@ fn void restore_playback(AppState* app, bool animating, AnimRef ref, float time,
 	app.current_anim.loop = looping;
 	app.anim_time = time;
 	app.refresh_animation();
+}
+
+// The largest tile a frame without the interface is drawn at, whatever the
+// sheet's budget would allow: past it a tile costs bytes and shows nothing new.
+const uint RENDER_CLEAN_MOST @local = 1024;
+
+<*
+ One frame of the scene as it stands, with nothing over it: the active camera on
+ the whole (square) target, and the interface — tool column, gizmo, HUD, rig
+ overlay — left out of the capture, as `render_poses` draws. The caller owns the
+ result and has sized the target.
+*>
+fn image::Image? clean_frame(AppState* app, DString* detail) @local
+{
+	sync_scene(app);
+	three::MeshPass* pass = stage_pass();
+	three::SceneView[] none = { };
+	pass.set_extra_views(none);
+	pass.follow = {};
+	pass.camera = pose_scene_camera(&app.camera);
+	pass.view_rect = { 0, 0, 1, 1 };
+
+	three::Renderer* renderer = stage_renderer();
+	cui::Ui* ui = renderer.ui.ui;
+	renderer.ui.ui = null;
+	defer renderer.ui.ui = ui;
+	image::Image? captured = renderer.capture();
+	if (catch captured)
+	{
+		detail.append_string("no frame was drawn without the interface: the renderer refused the read back.");
+		return SCREENSHOT_FAILED~;
+	}
+	return captured;
+}
+
+// The largest square at the centre of `tile`, as its own image.
+fn image::Image centre_square(image::Image* tile) @local
+{
+	float side = (float)math::min(tile.width, tile.height);
+	float left = ((float)tile.width - side) * 0.5f / (float)tile.width;
+	float top = ((float)tile.height - side) * 0.5f / (float)tile.height;
+	return cropped(tile, { left, top, left + side / (float)tile.width, top + side / (float)tile.height });
 }
 
 // One frame off the window, cropped to `share`. The caller owns the result.

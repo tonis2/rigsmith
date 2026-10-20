@@ -457,3 +457,55 @@ fn void a_legs_only_walk_keys_nothing_above_the_hips() @test
 			"%s is keyed by a legs-only walk", dot.joint_name);
 	}
 }
+
+// The hips' mean height and the right wrist's forward travel over one cycle.
+fn void walk_shape(Rigged* f, String arguments, float* hips, float* reach)
+{
+	String reason;
+	Object* answer = call(&f.app, arguments, &reason);
+	if (answer == null) { test::@check(false, "author_gait refused: %s", reason); return; }
+	defer answer.free();
+	crig::AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored(answer.get_string("clip")!!));
+	crig::RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	float low = 1e9f;
+	float high = -1e9f;
+	*hips = 0.0f;
+	for (usz i = 0; i < 8; i++)
+	{
+		float t = clip.duration * (float)i / 8.0f;
+		*hips += joint_at(clip, &view, "hips", t).y / 8.0f;
+		float z = joint_at(clip, &view, "wrist_R", t).z;
+		low = math::min(low, z);
+		high = math::max(high, z);
+	}
+	*reach = high - low;
+}
+
+<*
+ pelvis_drop sets how far the hips sit below standing in place of the computed
+ comfort drop, and arms scales the arm swing: a smaller drop stands the walk
+ taller, a doubled swing carries the wrist further.
+
+ Re-introduce: ignore `drop_set` or `arms_set` in `gait_clip`, and the shapes
+ match the defaults.
+*>
+fn void pelvis_drop_and_arms_shape_the_walk() @test
+{
+	io::printn("author_gait pelvis_drop stands the walk taller, arms swing scales the arms");
+	Rigged f;
+	f.open(HUMANOID);
+	defer f.close();
+	float hips_default;
+	float reach_default;
+	walk_shape(&f, `{"name":"Shape Default","duration":1.0,"pin_feet":false}`, &hips_default, &reach_default);
+	float hips_tall;
+	float reach_tall;
+	walk_shape(&f, `{"name":"Shape Tall","duration":1.0,"pin_feet":false,"pelvis_drop":0.0}`, &hips_tall, &reach_tall);
+	float hips_swing;
+	float reach_swing;
+	walk_shape(&f, `{"name":"Shape Swing","duration":1.0,"pin_feet":false,"arms":{"swing":2.0}}`, &hips_swing, &reach_swing);
+	io::printfn("  hips %.4f -> %.4f, wrist reach %.4f -> %.4f", hips_default, hips_tall, reach_default, reach_swing);
+	test::@check(hips_tall > hips_default + 0.002f, "pelvis_drop 0 did not stand the hips taller (%f vs %f)", hips_tall, hips_default);
+	test::@check(reach_swing > reach_default * 1.3f, "arms swing 2 did not swing the wrist further (%f vs %f)", reach_swing, reach_default);
+}

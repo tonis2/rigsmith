@@ -52,12 +52,12 @@ const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 		"keyframes":{"type":"array","description":"A keyed layer's keys, in apply_clip's keyframe shape: [{\"time\":s,\"joints\":[{\"name\":dot,\"rotation\":...,\"move\":[x,y,z]}]}]."},
 		"joint":{"type":"string","description":"A generator's first joint. The chain runs down from it through every joint with one child, or to tip."},
 		"tip":{"type":"string","description":"A generator's last joint, below joint; needed only at a fork."},
-		"axis":{"type":"array","items":{"type":"number"},"description":"[x,y,z], the local axis a generator turns about. Default [1,0,0]."},
+		"axis":{"type":"array","items":{"type":"number"},"description":"[x,y,z], the axis a generator turns about, in the joint's own frame after the clip has turned it: the model's axes at rest, not the bone's. Default [1,0,0]."},
 		"amplitude":{"type":"number","description":"Radians."},
 		"cycles":{"type":"number","description":"Wave and noise: turns per clip duration. Rounded to a whole number on a looping clip so it closes seamlessly."},
 		"lag":{"type":"number","description":"Wave: fraction of a cycle each joint down the chain trails the one above."},
 		"falloff":{"type":"number","description":"Wave: amplitude multiplier per joint down the chain; above 1 grows toward the tip."},
-		"phase":{"type":"number","description":"Wave: fraction of a cycle."},
+		"phase":{"type":"number","description":"Wave: the fraction of a cycle the whole wave is delayed by. The k-th joint down the chain turns amplitude · falloff^k · sin(2π(cycles·t/duration − phase − lag·k)), so 0.25 puts the peak a quarter cycle later."},
 		"seed":{"type":"integer","description":"Noise: the seed."},
 		"at":{"type":"number","description":"Pulse: the moment, in seconds."},
 		"width":{"type":"number","description":"Pulse: its width in seconds."},
@@ -68,7 +68,8 @@ const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 },"required":["clip"]}`;
 
 const String MERGE_LAYERS_SCHEMA = `{"type":"object","properties":{
-	"clip":{"type":"string","description":"The clip whose layers to bake into its keys."}
+	"clip":{"type":"string","description":"The clip whose layers to bake into its keys."},
+	"into":{"type":"string","description":"Bake into a new clip of this name in the authored pack instead, leaving the source clip and its layers as they are. A name the authored pack already holds is refused."}
 },"required":["clip"]}`;
 
 <*
@@ -121,7 +122,9 @@ fn bool parse_layer(AppState* app, Object* obj, AnimLayer* layer, float clip_dur
 			detail.append_string(`a "wave", "noise" or "pulse" layer is generated and takes no "keyframes"`);
 			return false;
 		}
-		AnimTemplate? read = parse_clip(app, obj, detail, clip_duration);
+		// The layer's own name stands in for a clip name: a replace that sends
+		// only new keys keeps the name it had.
+		AnimTemplate? read = parse_clip(app, obj, detail, clip_duration, layer.name.len > 0 ? layer.name : "layer");
 		if (catch read) return false;
 		AnimTemplate parsed = read;
 		// Only the keys are wanted; the rest of the parsed clip is scaffolding.
@@ -231,6 +234,12 @@ fn String layers_answer(AppState* app, AnimRef ref, String op) @local
 	append_json_string(&out, clip.name);
 	out.appendf(`,"op":"%s","layers":`, op)!!;
 	append_layers_json(&out, clip.layers);
+	if (layers_lift_root(app, clip))
+	{
+		out.append_string(`,"note":"`);
+		out.append_string(ROOT_Y_NOTE);
+		out.append_char('"');
+	}
 	append_metrics_member(&out, app, ref);
 	out.append_char('}');
 	return out.copy_str(mem);
@@ -498,6 +507,17 @@ fn String? merge_layers_json(AppState* app, Object* args, DString* detail)
 		detail.append_string(`this clip has no layers to merge.`);
 		return LAYER_REFUSED~;
 	}
+	String into = args.get_string("into") ?? "";
+	if (member(args, "into") != null && into.len == 0)
+	{
+		detail.append_string(`"into" must be a non-empty clip name. Leave it out to bake the clip in place.`);
+		return LAYER_REFUSED~;
+	}
+	if (into.len > 0 && app.clip_named_in_authored(into).valid())
+	{
+		detail.appendf(`the authored pack already has a clip called "%s". Choose another name for "into".`, into);
+		return LAYER_REFUSED~;
+	}
 
 	usz merged = src.layers.len;
 	usz playing = 0;
@@ -509,6 +529,13 @@ fn String? merge_layers_json(AppState* app, Object* args, DString* detail)
 		return LAYER_REFUSED~;
 	}
 	AnimTemplate flat = baked;
+	if (into.len > 0)
+	{
+		// A new clip beside the source, in this rig's own joint names.
+		flat.name.free(mem);
+		flat.name = into.copy(mem);
+		flat = app.in_rig_words(flat, ref);
+	}
 	usz keys = flat.keyframes.len;
 	AnimRef written = app.author_clip(flat);
 	app.refresh_ui();

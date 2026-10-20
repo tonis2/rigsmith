@@ -784,7 +784,7 @@ fn Vec3 posed_centre(AppState* app, Vec3[] at) @local
 <*
  Three's camera for an OrbitCamera, as `scene_camera` makes it for the panes.
 *>
-fn three::Camera pose_scene_camera(OrbitCamera* from) @local
+fn three::Camera pose_scene_camera(OrbitCamera* from)
 {
 	three::Camera camera = {
 		.target = { from.target[0], from.target[1], from.target[2] },

@@ -60,6 +60,16 @@ fn Object* member(Object* obj, String key)
 	return found.is_null() ? null : found;
 }
 
+// Whether `key` was sent as an explicit null, which `member` reads the same as
+// absent. A tool that keeps a field when it is left out clears it on a null.
+fn bool stated_null(Object* obj, String key)
+{
+	if (obj == null || !obj.is_keyable()) return false;
+	Object*? found = obj.get(key);
+	if (catch found) return false;
+	return found.is_null();
+}
+
 // A three-number array as a vector. False for anything else, which is how the
 // rotation forms are told apart.
 fn bool as_vec3(Object* obj, Vec3* into)

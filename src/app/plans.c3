@@ -167,9 +167,10 @@ fn bool AppState.apply_pack_rig(&self, usz index)
  left joints on the other side of X from this rig's means it is turned half round.
 
  @param commit : `Close the undo group; false leaves it to a caller with a larger one open.`
+ @param only : `When not empty, the dots whose tables are re-planned and mended; every other joint's table, a limit taken off included, is left as it is.`
  @return `How many joints took a limit; -1 when the rig has no body plan with limits.`
 *>
-fn sz AppState.reapply_plan_limits(&self, bool commit = true)
+fn sz AppState.reapply_plan_limits(&self, bool commit = true, uint[] only = {})
 {
 	int found = self.plan_pack(self.doc.plan);
 	if (found < 0) return -1;
@@ -209,11 +210,19 @@ fn sz AppState.reapply_plan_limits(&self, bool commit = true)
 
 	sz before = self.undo_stack.edits.len();
 	ConstraintApplyReport report = self.adopt_preset_constraints(
-		pack.constraints, derived, fitted, ids, reversed, pack.rest);
-	self.mend_hinge_limits();
+		pack.constraints, derived, fitted, ids, reversed, pack.rest, only);
+	self.mend_hinge_limits(only: only);
 	if (commit && self.undo_stack.edits.len() != before) self.undo_stack.commit();
 	self.mark_rig_stale();
 	return (sz)report.applied;
+}
+
+// Whether `dot` is one an `only` mask lets through: every dot when it is empty.
+fn bool dot_in(uint[] only, uint dot) @local
+{
+	if (only.len == 0) return true;
+	foreach (id : only) if (id == dot) return true;
+	return false;
 }
 
 <*
@@ -230,9 +239,10 @@ fn sz AppState.reapply_plan_limits(&self, bool commit = true)
 
  @param recorded : `Through the recorded setter; false writes the document directly, for an open, whose history starts empty.`
  @param carry_stale : `Carry every drifted frame onto its bone first. Only on request (edit_rig plan_limits, the Re-apply plan limits menu): a frame an author adjusted on purpose leans off its bone as well, and an open or a fit must not straighten it unasked.`
+ @param only : `When not empty, the dots that may be mended; every other is left alone.`
  @return `How many joints were mended.`
 *>
-fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale = false)
+fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale = false, uint[] only = {})
 {
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return 0;
@@ -247,8 +257,9 @@ fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale 
 	for (usz i = 0; i < drifted; i++)
 	{
 		usz j = stale[i].index;
-		JointRotationLimits carried = carried_limit_frame(&self.doc, &view.skeleton, view.dot_ids, j);
 		uint dot = view.dot_ids[j];
+		if (!dot_in(only, dot)) continue;
+		JointRotationLimits carried = carried_limit_frame(&self.doc, &view.skeleton, view.dot_ids, j);
 		if (recorded ? self.set_rotation_limits_recorded(dot, carried) : self.doc.set_rotation_limits(dot, carried)) mended++;
 	}
 
@@ -256,9 +267,10 @@ fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale 
 	usz count = hinge_issues(&self.doc, &view.skeleton, view.names, view.dot_ids, found[..]);
 	for (usz i = 0; i < count; i++)
 	{
+		uint dot = view.dot_ids[found[i].index];
+		if (!dot_in(only, dot)) continue;
 		JointRotationLimits better;
 		if (!mended_hinge(&self.doc, &view.skeleton, view.names, view.dot_ids, found[i], &better)) continue;
-		uint dot = view.dot_ids[found[i].index];
 		if (recorded ? self.set_rotation_limits_recorded(dot, better) : self.doc.set_rotation_limits(dot, better)) mended++;
 	}
 	if (mended > 0) self.mark_rig_stale();
@@ -295,6 +307,7 @@ fn usz AppState.mend_hinge_limits(&self, bool recorded = true, bool carry_stale 
 
  @param reversed : `Whether the fit put the plan's head toward −Z, turning the source figure half way round about Y.`
  @param source_rest : `The pack's rest skeleton the rows were written against; see apply_preset.`
+ @param only : `When not empty, the target dots a row may land on; the rest are skipped and counted nowhere.`
 *>
 fn ConstraintApplyReport AppState.adopt_preset_constraints(
 	&self,
@@ -303,7 +316,8 @@ fn ConstraintApplyReport AppState.adopt_preset_constraints(
 	FittedDot[] fitted,
 	uint[] ids,
 	bool reversed = false,
-	rig::Skeleton source_rest = {})
+	rig::Skeleton source_rest = {},
+	uint[] only = {})
 {
 	ConstraintApplyReport report = {
 		.unsupported = constraints.skipped + constraints.foreign.len,
@@ -367,6 +381,7 @@ fn ConstraintApplyReport AppState.adopt_preset_constraints(
 			report.missing_joint++;
 			continue;
 		}
+		if (!dot_in(only, target_dot)) continue;
 
 		uint primary_dot = 0;
 		if (source.frame_intent.uses_primary_child())
