@@ -502,6 +502,16 @@ fn ToolTable new_tool_table(AppState* app)
 		.handler = &tool_import_clip,
 		.user_data = app,
 	});
+	// Hidden: a training set is drawn in a loop of calls by whoever trains on it
+	// (llm-runner's creature plugin), not chosen by a session that is rigging.
+	server.add_tool({
+		.name = "render_poses",
+		.description = "Draw the character in random poses inside its joint limits, from given cameras, for training a joint finder on this rig (llm-runner's creature /train). Each picture is an RGBA PNG with a transparent background — nothing but the mesh: no interface, floor or overlay — and poses_<first>.json beside them gives every joint's pixel and depth per picture, and every joint's turn per pose. The same seed and index always draw the same picture, so a set of thousands is drawn a few hundred poses a call (count, first); the window stands still for the length of a call. With motion it draws an exam instead: one smooth movement, a frame per index, from cameras held still. The document is not touched.",
+		.input_schema = RENDER_POSES_SCHEMA,
+		.handler = &tool_render_poses,
+		.user_data = app,
+		.hidden = true,
+	});
 	// --- clip management tools ---
 	server.add_tool({
 		.name = "unbind_clip",

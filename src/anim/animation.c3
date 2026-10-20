@@ -228,6 +228,17 @@ fn Quaternionf bone_carry(Vec3 from, Vec3 to)
 }
 
 <*
+ A turn's part about the vertical: the heading of a figure whose root turns by
+ it. Identity for a turn with none to give (a half turn about a level axis).
+*>
+fn Quaternionf figure_heading(Quaternionf turn)
+{
+	float length = math::sqrt(turn.v.y * turn.v.y + turn.v.w * turn.v.w);
+	if (length < 1.0e-6f) return quaternion::IDENTITY;
+	return { .v = { 0, turn.v.y / length, 0, turn.v.w / length } };
+}
+
+<*
  Whether a clip's bone and the target's differ at rest by an arm held at another
  height — the A-pose against the T-pose — rather than by how the two rigs are
  built.
@@ -1021,6 +1032,8 @@ fn rig::Pose AnimTemplate.pose(
 	usz count = pose.rotations.len;
 	Quaternionf[] authored = alloc::new_array(allocator, Quaternionf, (sz)count);
 	Quaternionf[] carried = alloc::new_array(allocator, Quaternionf, (sz)count);
+	// The figure's heading, read off the root's turn as the root goes by.
+	Quaternionf heading = quaternion::IDENTITY;
 	defer
 	{
 		alloc::free(allocator, authored);
@@ -1090,12 +1103,19 @@ fn rig::Pose AnimTemplate.pose(
 			Vec3 source = base_rotates ? self.span_bone(name, rotation_span) : stack.bone(joint);
 			Vec3 target = joint < bones.len ? bones[joint] : (Vec3){ 0, 0, 0 };
 			Quaternionf onto = bone_carry(source, target);
+			// The carry is between two rigs standing at rest facing +z, so it
+			// rides the figure's heading — the root's turn about the vertical —
+			// rather than the world's axes: a clip of a figure facing a quarter
+			// turn round (a capture from a side camera) plays as it does facing
+			// forward, turned. Facing forward, this is the carry as it always was.
+			if (parent < 0) heading = figure_heading(authored[joint]);
+			Quaternionf ridden = heading.mul(onto).mul(heading.invert()).normalize();
 			// An arm raised or lowered at rest is the source's pose, not a fact
 			// about the target: the target's bone is turned to point where the
 			// source's does, and the clip's motion carried from there.
 			carried[joint] = rest_pose_differs(source, target)
 				? authored[joint].mul(onto.invert()).normalize()
-				: onto.mul(authored[joint]).mul(onto.invert()).normalize();
+				: ridden.mul(authored[joint]).mul(onto.invert()).normalize();
 			pose.rotations[joint] = onto_parent.invert().mul(carried[joint]).normalize();
 		}
 		else

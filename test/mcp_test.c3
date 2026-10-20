@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[65] tool_names @local = {
+String[66] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -451,7 +451,7 @@ String[65] tool_names @local = {
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
-	"import_clip",
+	"import_clip", "render_poses",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and
@@ -5230,6 +5230,27 @@ fn void render_says_when_there_is_nothing_to_photograph() @test
 	test::@check(f.refuses_tool("render", `{"clip":"bend","times":[0,9]}`, "9", "0 to 0.5"),
 		"an instant past the end of the clip is named against the length it overran");
 	test::@check(frames == 0, "and nothing was drawn on the way to refusing");
+}
+
+// render_poses reads all of its arguments before it looks for a renderer, so a
+// wrong one is named even with no window; and with no window it says so.
+fn void render_poses_names_a_bad_argument_and_a_missing_window() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	test::@check(f.refuses_tool("render_poses", `{"count":5}`, "out"),
+		"a set with nowhere to go is refused, naming out");
+	test::@check(f.refuses_tool("render_poses", `{"out":"set","size":100}`, "100", "multiple of 16"),
+		"a size the backbone's patches do not divide is refused");
+	test::@check(f.refuses_tool("render_poses", `{"out":"set","cameras":[{"name":"front"}]}`, "front", "yaw"),
+		"a camera with no yaw is refused by name");
+	test::@check(f.refuses_tool("render_poses", `{"out":"set","fill":[0.9,0.4]}`, "fill"),
+		"a framing whose least is past its most is refused");
+	test::@check(f.refuses_tool("render_poses", `{"out":"set"}`, "headless"),
+		"with no renderer it says so");
 }
 
 // `keys` photographs the poses a clip was written as, which is the question an
