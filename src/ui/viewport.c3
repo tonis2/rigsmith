@@ -1896,9 +1896,10 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 					else if (self.maybe_place && app.brushing)
 					{
-						// A click the brush found no vertex under — a wide face on a
-						// low-poly part — places nothing: the brush leaves the rig
-						// alone. Said, since a click that did nothing reads as broken.
+						// A click on the body the brush found nothing under — only
+						// faces out of sight — places nothing: the brush leaves the
+						// rig alone. Said, since a click that did nothing reads as
+						// broken.
 						if (self.on_body(elem, self.press_at))
 						{
 							app.@notice("nothing under the brush here — hold F and drag to make it bigger");

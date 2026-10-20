@@ -20,6 +20,7 @@ import rig;
 
 import std::math;
 import std::math::vector;
+import std::collections::list;
 
 <*
  The highest share a vertex can be given, and why it is not 1.
@@ -119,6 +120,7 @@ fn void AppState.begin_stroke(&self)
 	self.stroke_seen[..] = 0.0f;
 	self.stroke_open = true;
 	self.stroke_blocked = false;
+	self.stroke_alone = false;
 }
 
 <*
@@ -130,7 +132,8 @@ fn void AppState.begin_stroke(&self)
  mirrored tree and its policy are the expensive half of a rebind. One rebuild
  here, and the overlay's occlusion, the collision tables and the brush's own
  visibility test are exact again before the next press. And a stroke that
- passed off the joint's limb says so here, once rather than on every move.
+ passed off the joint's limb, or tried to take the joint off vertices nothing
+ else holds, says so here, once rather than on every move.
 
  Safe to call with no stroke open; the viewport calls it wherever its latch
  comes down, including when the mode closed under a held button.
@@ -148,6 +151,14 @@ fn void AppState.end_stroke(&self)
 		Dot* dot = self.doc.find(self.selected);
 		self.@notice("%s is only painted on its own limb · Lasso pin (shift+T) hands other vertices over",
 			dot && dot.name.len > 0 ? dot.name : "this joint");
+	}
+	if (self.stroke_alone)
+	{
+		self.stroke_alone = false;
+		Dot* dot = self.doc.find(self.selected);
+		String name = dot && dot.name.len > 0 ? dot.name : "this joint";
+		self.@notice("%s is the only joint on some of these vertices · put another joint on them to take %s off",
+			name, name);
 	}
 	if (!self.surface_stale) return;
 	self.skin_stale = true;
@@ -439,12 +450,17 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
  one stroke is allowed — `brush_strength` — and the rim fades to nothing, so
  clipping a vertex with the edge barely moves it — see `brush_falloff`.
 
+ **Faces, not only vertices.** A face is coloured by its corners, so on a coarse
+ mesh a circle inside one face covers no vertex and would paint nothing. Every
+ face the circle covers passes the pull at its point nearest the centre on to its
+ corners, the nearest corner all of it and the others by how near they are.
+
  **Front faces only, unless `xray`.** A brush that painted through a limb onto
  the one behind it would manufacture exactly the bleed crig exists to remove —
  the user would be correcting an arm and silently correcting the ribs under it.
  `Picker.hidden_surface` is the test for a point *on* the skin; `occluded` is
  built for dots inside the body and answers "visible" for every back-facing
- vertex on the model. X-ray takes every vertex in the circle, for the creases
+ vertex on the model. X-ray takes everything in the circle, for the creases
  and inner shells the front never shows; the limb guard in `brush_share` still
  holds.
 
@@ -463,7 +479,7 @@ fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
  @param viewport : `Size of the region the camera renders into, in pixels.`
  @param eye : `Camera position in model space, for the visibility test.`
  @param at : `Where the brush is, in the same pixels project returns.`
- @param xray : `Take every vertex in the circle, hidden or not.`
+ @param xray : `Take everything in the circle, hidden or not.`
  @return `How many were hit.`
 *>
 fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4f view_projection,
@@ -473,29 +489,152 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 	if (count == 0 || radius <= 0.0f) return 0;
 	if (vertices.len < count || strength.len < count) return 0;
 
-	usz kept = 0;
 	float reach = radius * radius;
+	Vec3[] place = alloc::new_array(mem, Vec3, (sz)count);
+	defer alloc::free(mem, place);
+	Vec2[] pixel = alloc::new_array(mem, Vec2, (sz)count);
+	defer alloc::free(mem, pixel);
+	// Per vertex: 0 off screen, 1 projected, 2 taken in the circle.
+	char[] state = alloc::new_array(mem, char, (sz)count);
+	defer alloc::free(mem, state);
+	List{BrushTouch} touches;
+	touches.init(mem);
+	defer touches.free();
 
 	for (usz v = 0; v < count; v++)
 	{
 		Vec3 position = self.shown_position(v);
 		Vec2? where = project(view_projection, position, viewport);
 		if (catch where) continue;
+		place[v] = position;
+		pixel[v] = where;
+		state[v] = 1;
 
 		Vec2 gap = where - at;
 		float span = gap.x * gap.x + gap.y * gap.y;
 		if (span > reach) continue;
 		if (!xray && self.mesh_hidden_surface(eye, position)) continue;
+		state[v] = 2;
+		touches.push({ .point = position, .closeness = 1.0f - span / reach,
+			.corners = { (uint)v, 0, 0 }, .shares = { 1.0f, 0.0f, 0.0f } });
+	}
 
-		// Closeness for now, not the hit: `brush_surface` finds the vertex under
-		// the cursor as the closest, and the falloff's flat core would tie it.
+	uint[] indices = self.geometry.indices;
+	for (usz t = 0; t + 2 < indices.len; t += 3)
+	{
+		uint[3] corner = { indices[t], indices[t + 1], indices[t + 2] };
+		if (corner[0] >= count || corner[1] >= count || corner[2] >= count) continue;
+		if (state[corner[0]] == 0 || state[corner[1]] == 0 || state[corner[2]] == 0) continue;
+		// Every corner already in: the face has nothing to add.
+		if (state[corner[0]] == 2 && state[corner[1]] == 2 && state[corner[2]] == 2) continue;
+
+		Vec2[3] seen = { pixel[corner[0]], pixel[corner[1]], pixel[corner[2]] };
+		if (math::min(seen[0].x, seen[1].x, seen[2].x) > at.x + radius) continue;
+		if (math::max(seen[0].x, seen[1].x, seen[2].x) < at.x - radius) continue;
+		if (math::min(seen[0].y, seen[1].y, seen[2].y) > at.y + radius) continue;
+		if (math::max(seen[0].y, seen[1].y, seen[2].y) < at.y - radius) continue;
+
+		float[3] weight;
+		Vec2 gap = nearest_on_triangle(at, seen, &weight) - at;
+		float span = gap.x * gap.x + gap.y * gap.y;
+		if (span > reach) continue;
+		Vec3 point = place[corner[0]] * weight[0] + place[corner[1]] * weight[1] + place[corner[2]] * weight[2];
+		if (!xray && self.mesh_hidden_surface(eye, point)) continue;
+
+		float most = math::max(weight[0], weight[1], weight[2]);
+		if (most <= 0.0f) continue;
+		touches.push({ .point = point, .closeness = 1.0f - span / reach, .corners = corner,
+			.shares = { weight[0] / most, weight[1] / most, weight[2] / most } });
+	}
+
+	BrushTouch[] landed = touches.array_view();
+	if (!xray) landed = landed[:self.brush_surface(landed, view_projection, viewport, eye, radius)];
+
+	// Each vertex keeps the hardest of its touches. A vertex in the circle is
+	// taken even where the rim gives it nothing; a corner only where its face does.
+	strength[:count] = -1.0f;
+	foreach (touch : landed)
+	{
+		float pull = brush_falloff(touch.closeness);
+		for (usz k = 0; k < 3; k++)
+		{
+			float share = touch.shares[k];
+			if (share <= 0.0f) continue;
+			float given = pull * share;
+			if (share < 1.0f && given <= 0.0f) continue;
+			uint v = touch.corners[k];
+			if (given > strength[v]) strength[v] = given;
+		}
+	}
+	usz kept = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		if (strength[v] < 0.0f) continue;
 		vertices[kept] = (uint)v;
-		strength[kept] = 1.0f - span / reach;
+		strength[kept] = strength[v] * self.brush_strength;
 		kept++;
 	}
-	if (!xray) kept = self.brush_surface(vertices, strength, kept, view_projection, viewport, eye, radius);
-	for (usz i = 0; i < kept; i++) strength[i] = brush_falloff(strength[i]) * self.brush_strength;
 	return kept;
+}
+
+<*
+ One place the brush lands: a vertex inside the circle, or a face's point
+ nearest the centre. `shares` is how much of the pull each corner takes; a
+ vertex is its own only corner.
+*>
+struct BrushTouch @private
+{
+	Vec3 point;
+	float closeness; // 1 - d²/r² on screen: 1 at the centre, 0 at the ring
+	uint[3] corners;
+	float[3] shares;
+}
+
+<*
+ The point of a screen triangle nearest `at`, and its barycentric weights: `at`
+ itself when inside, otherwise the nearest point of the nearest edge. A triangle
+ seen edge-on has no inside and is only its edges.
+*>
+fn Vec2 nearest_on_triangle(Vec2 at, Vec2[3] corner, float[3]* weight) @private
+{
+	Vec2 ab = corner[1] - corner[0];
+	Vec2 ac = corner[2] - corner[0];
+	float area = ab.x * ac.y - ab.y * ac.x;
+	if (math::abs(area) > 1.0e-6f)
+	{
+		Vec2 b = corner[1] - at;
+		Vec2 c = corner[2] - at;
+		Vec2 a = corner[0] - at;
+		float wa = (b.x * c.y - b.y * c.x) / area;
+		float wb = (c.x * a.y - c.y * a.x) / area;
+		float wc = 1.0f - wa - wb;
+		if (wa >= 0.0f && wb >= 0.0f && wc >= 0.0f)
+		{
+			*weight = { wa, wb, wc };
+			return at;
+		}
+	}
+
+	Vec2 nearest = corner[0];
+	float best = float::max;
+	for (usz e = 0; e < 3; e++)
+	{
+		usz f = (e + 1) % 3;
+		Vec2 edge = corner[f] - corner[e];
+		Vec2 out = at - corner[e];
+		float length = edge.x * edge.x + edge.y * edge.y;
+		float t = length > 0.0f ? math::clamp((out.x * edge.x + out.y * edge.y) / length, 0.0f, 1.0f) : 0.0f;
+		Vec2 on = corner[e] + edge * t;
+		Vec2 gap = on - at;
+		float span = gap.x * gap.x + gap.y * gap.y;
+		if (span >= best) continue;
+		best = span;
+		nearest = on;
+		*weight = { 0.0f, 0.0f, 0.0f };
+		(*weight)[e] = 1.0f - t;
+		(*weight)[f] = t;
+	}
+	return nearest;
 }
 
 // How far past the circle's own radius, in the model, a vertex may sit from the
@@ -503,23 +642,32 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 const float BRUSH_DEPTH_SLACK = 1.25f;
 
 <*
- Keep only the surface under the cursor: the vertices within the brush's radius,
- measured in the model, of the one nearest the centre. A circle on the screen
- also covers whatever else shows through it — a hand held in front of the
- chest, fingers over a palm — and painting the chest must not paint those.
+ Keep only the surface under the cursor: the touches within the brush's radius,
+ measured in the model, of the point under the centre — the closest touch to it
+ on screen, the nearer one where two tie. A circle on the screen also covers
+ whatever else shows through it — a hand held in front of the chest, fingers
+ over a palm — and painting the chest must not paint those. A face is measured
+ at its touch, so the corners of a big face under the cursor stay.
 
- @return `How many of the first kept are left, packed to the front.`
+ @return `How many of the touches are left, packed to the front.`
 *>
-fn usz AppState.brush_surface(&self, uint[] vertices, float[] strength, usz kept, Matrix4f view_projection,
+fn usz AppState.brush_surface(&self, BrushTouch[] touches, Matrix4f view_projection,
 	Vec2 viewport, Vec3 eye, float radius)
 {
+	usz kept = touches.len;
 	if (kept < 2) return kept;
 	usz middle = 0;
+	float nearest = (touches[0].point - eye).length();
 	for (usz i = 1; i < kept; i++)
 	{
-		if (strength[i] > strength[middle]) middle = i;
+		float closeness = touches[i].closeness;
+		if (closeness < touches[middle].closeness) continue;
+		float gap = (touches[i].point - eye).length();
+		if (closeness == touches[middle].closeness && gap >= nearest) continue;
+		middle = i;
+		nearest = gap;
 	}
-	Vec3 centre = self.shown_position(vertices[middle]);
+	Vec3 centre = touches[middle].point;
 
 	// The brush's radius in model units at that depth: a short step across the
 	// view, and how many pixels it covers.
@@ -540,10 +688,8 @@ fn usz AppState.brush_surface(&self, uint[] vertices, float[] strength, usz kept
 	usz left = 0;
 	for (usz i = 0; i < kept; i++)
 	{
-		if ((self.shown_position(vertices[i]) - centre).length() > span) continue;
-		vertices[left] = vertices[i];
-		strength[left] = strength[i];
-		left++;
+		if ((touches[i].point - centre).length() > span) continue;
+		touches[left++] = touches[i];
 	}
 	return left;
 }
@@ -977,7 +1123,8 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
 
  Only on the joint's limb (`limb_family`), or where it already holds some: a
  vertex off it is not given any of the joint, and `stroke_blocked` says so for
- `end_stroke` to tell. Taking the joint off is allowed anywhere.
+ `end_stroke` to tell. Taking the joint off is allowed anywhere something else
+ holds the vertex; where nothing does, it stays, and `stroke_alone` says so.
 
  The undo group is left open; `end_stroke` closes it, so a stroke is one step.
 
@@ -1053,7 +1200,11 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 		if (others <= 1.0e-6f)
 		{
 			// Nothing else to hand a share to: the joint keeps the whole row.
-			if (want < now) continue;
+			if (want < now)
+			{
+				self.stroke_alone = true;
+				continue;
+			}
 			want = 1.0f;
 		}
 		else

@@ -14817,9 +14817,9 @@ fn void a_brush_stroke_paints_under_the_circle() @test
 	// place for redo, so a loop watching the length would never end.
 	sz before = fixture.app.undo_stack.cursor;
 
-	// Aimed at a corner, because that is where this mesh's vertices are: the
-	// fixture cube is eight of them and nothing in between, so a circle anywhere
-	// near the middle covers none and the stroke would land on nothing.
+	// Aimed at a corner, so the circle covers one vertex and not the whole face:
+	// the fixture cube is eight of them and nothing in between, and a circle in
+	// the middle of a face paints all of that face's corners.
 	//
 	// Found by projecting a dot placed there and taking it away again — the dot
 	// and the vertex share a position, so they share a pixel.
@@ -14949,9 +14949,12 @@ fn void a_brush_stroke_on_a_joint_paints_instead_of_picking_it() @test
 }
 
 <*
- With the brush open the rig is left alone. A click the brush found no vertex
- under — the face of a low-poly part — places no joint and chains none, and the
- keys that edit joints are refused out loud. Esc gives them back.
+ With the brush open the rig is left alone. A click on the face of a low-poly
+ part, with no vertex under the circle, paints the face's corners and places no
+ joint and chains none, and the keys that edit joints are refused out loud. Esc
+ gives them back.
+
+ Re-introduce: drop the face pass from `AppState.brush_vertices`.
 *>
 fn void the_brush_never_places_or_edits_joints() @test
 {
@@ -14999,9 +15002,14 @@ fn void the_brush_never_places_or_edits_joints() @test
 	fixture.click(face);
 	test::eq(fixture.doc().dots.len(), dots);
 	test::eq(fixture.doc().edges.len(), edges);
-	test::@check(fixture.app.doc.pins.len() == 0, "the click painted though nothing was under the brush");
+	// The front face's corners are vertices 4 to 7; the far side stays out of it.
+	test::@check(pinned_vertices(&fixture) > 0, "a click on the face painted none of its corners");
+	foreach (pin : fixture.app.doc.pins.array_view())
+	{
+		test::@check(pin.vertex >= 4, "the click on the front face painted vertex %d on the far side", pin.vertex);
+	}
 	test::@check(fixture.app.selected == chest && fixture.app.brushing, "the click changed the joint or closed the brush");
-	test::@check(fixture.app.notice().contains("nothing under the brush"), "the missed click said \"%s\"", fixture.app.notice());
+	test::@check(fixture.app.undo(), "the click's stroke did not undo");
 
 	Key[1] shifted = { Key.LEFT_SHIFT };
 	fixture.feed(face, keys: shifted[..]);
@@ -15193,6 +15201,46 @@ fn void alt_paints_through_with_the_box_off() @test
 	stroke_with(&fixture, taking[..]);
 	usz painted = pinned_vertices(&fixture);
 	test::@check(painted > 0 && painted < 8, "the stroke after alt painted %d corners", painted);
+}
+
+<*
+ A plain drag in Remove mode, started in the middle of a big face with no vertex
+ under the circle, takes the joint off that face's corners — the front ones only
+ — and does not turn the model. The fixture cube is the coarse mesh: eight
+ corners and nothing between them.
+
+ Re-introduce: drop the face pass from `AppState.brush_vertices`; the press then
+ finds nothing and the drag orbits.
+*>
+fn void a_brush_stroke_in_the_middle_of_a_face_paints_it() @test
+{
+	io::printn("a remove stroke in the middle of a big face takes the joint off its corners");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+	test::@check(open_brush_head_on(&fixture), "the brush did not open");
+	fixture.app.brush_radius = crig::BRUSH_RADIUS_DEFAULT;
+	fixture.app.brush_removes = true;
+	uint chest = fixture.app.selected;
+
+	float yaw = fixture.app.camera.yaw;
+	Vec2 to = VIEWPORT_CENTER + (Vec2){ 6, 0 };
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.feed(VIEWPORT_CENTER, left: true);
+	fixture.feed(to, left: true);
+	fixture.feed(to);
+	test::@check(fixture.app.camera.yaw == yaw, "the drag in the middle of the face turned the model");
+	test::@check(pinned_vertices(&fixture) > 0, "the stroke in the middle of the face painted none of its corners");
+	foreach (pin : fixture.app.doc.pins.array_view())
+	{
+		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
+		test::@check(pin.dot_id != chest || pin.share < 1.0f, "the remove stroke put the joint on");
+	}
 }
 
 <*

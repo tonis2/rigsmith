@@ -3614,3 +3614,143 @@ fn void the_xray_brush_takes_everything_under_the_circle() @test
 	}
 	test::@check(behind > 0, "the chest hidden by the hand was not painted");
 }
+
+// Where `v` landed in a `brush_vertices` result, or -1.
+fn float brush_hit(uint[] under, float[] strength, usz hit, uint v)
+{
+	for (usz i = 0; i < hit; i++)
+	{
+		if (under[i] == v) return strength[i];
+	}
+	return -1.0f;
+}
+
+<*
+ A circle inside one big face, with no vertex under it, paints that face's
+ corners: the nearest one all the way, the others by how near they are. Over a
+ corner it paints that corner and leaves the far one alone.
+
+ Re-introduce: drop the face pass from `AppState.brush_vertices`.
+*>
+fn void the_brush_paints_a_face_it_sits_inside() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	// Corners 0 (-1,-1), 1 (1,-1), 2 (-1,1), 3 (1,1); triangles 0-1-2 and 1-3-2.
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 2);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	app.camera.target = { 0, 0, 0 };
+	app.camera.distance = 4.0f;
+	app.camera.yaw = 0.0f;
+	app.camera.pitch = 0.0f;
+
+	Vec2 viewport = { 800, 600 };
+	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
+	Vec3 eye = app.camera.eye();
+	uint[] under = alloc::new_array(mem, uint, 4);
+	defer alloc::free(mem, under);
+	float[] strength = alloc::new_array(mem, float, 4);
+	defer alloc::free(mem, strength);
+
+	// Inside 0-1-2, nearest corner 0 and nowhere near any corner on screen.
+	Vec2 inside = crig::project(vp, { -0.5f, -0.6f, 0 }, viewport)!!;
+	Vec2 corner = crig::project(vp, { -1, -1, 0 }, viewport)!!;
+	test::@check((corner - inside).length() > 40.0f, "the fixture's circle reaches a corner");
+	usz hit = app.brush_vertices(under, strength, vp, viewport, eye, inside, 10.0f);
+	test::eq(hit, (usz)3);
+	float near = brush_hit(under, strength, hit, 0);
+	float far = brush_hit(under, strength, hit, 2);
+	test::@check(math::abs(near - app.brush_strength) < 1.0e-4f, "the nearest corner took %f, not the full stroke", near);
+	test::@check(far > 0.0f && far < near, "the far corner took %f beside the near one's %f", far, near);
+	test::@check(brush_hit(under, strength, hit, 3) < 0.0f, "the other triangle's corner was painted");
+
+	// Over corner 1, the opposite corner 2 gets nothing worth a pin.
+	Vec2 over = crig::project(vp, { 1, -1, 0 }, viewport)!!;
+	hit = app.brush_vertices(under, strength, vp, viewport, eye, over, 10.0f);
+	test::@check(math::abs(brush_hit(under, strength, hit, 1) - app.brush_strength) < 1.0e-4f, "the corner under the circle was not painted fully");
+	test::@check(brush_hit(under, strength, hit, 2) < 1.0e-3f, "the corner across the quad took %f", brush_hit(under, strength, hit, 2));
+}
+
+<*
+ The face pass keeps to the front like the vertices do: a circle in the middle of
+ a big face does not reach the face behind it, unless X-ray is on. The two are a
+ slab's thickness apart, close enough that the depth cut alone would keep both.
+
+ Re-introduce: skip `mesh_hidden_surface` for face touches in
+ `AppState.brush_vertices`.
+*>
+fn void the_face_pass_does_not_paint_through_the_model() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0.05f }, 2.0f, 2);    // the front, vertices 0-3
+	grid_into(&positions, &indices, { 0, 0, -0.05f }, 2.0f, 2);   // the back, 4-7
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	app.camera.target = { 0, 0, 0 };
+	app.camera.distance = 5.0f;
+	app.camera.yaw = 0.0f;
+	app.camera.pitch = 0.0f;
+
+	Vec2 viewport = { 800, 600 };
+	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
+	Vec3 eye = app.camera.eye();
+	uint[] under = alloc::new_array(mem, uint, 8);
+	defer alloc::free(mem, under);
+	float[] strength = alloc::new_array(mem, float, 8);
+	defer alloc::free(mem, strength);
+
+	Vec2 middle = crig::project(vp, { -0.3f, -0.2f, 0.05f }, viewport)!!;
+	Vec2 corner = crig::project(vp, { -1, -1, 0.05f }, viewport)!!;
+	test::@check((corner - middle).length() > 80.0f, "the fixture's circle reaches a corner");
+	usz hit = app.brush_vertices(under, strength, vp, viewport, eye, middle, 40.0f);
+	test::@check(hit > 0, "the circle in the middle of the front face painted nothing");
+	for (usz i = 0; i < hit; i++) test::@check(under[i] < 4, "vertex %d behind the front face was painted", under[i]);
+
+	hit = app.brush_vertices(under, strength, vp, viewport, eye, middle, 40.0f, xray: true);
+	usz behind = 0;
+	for (usz i = 0; i < hit; i++) if (under[i] >= 4) behind++;
+	test::@check(behind > 0, "the x-ray circle did not reach the face behind");
+}
+
+<*
+ A remove stroke over vertices the joint holds alone, with nothing else near to
+ take them, changes nothing and says so on release: a stroke that silently did
+ nothing reads as a broken brush.
+
+ Re-introduce: drop `stroke_alone` from `AppState.brush_share`.
+*>
+fn void removing_a_joint_with_nowhere_to_go_says_so() @test
+{
+	crig::AppState app = shared_app::open_cube();
+	defer app.free();
+	uint only = app.doc.add_dot({ 0, 0, 0 }, "hips");
+	app.select(only);
+
+	usz count = app.geometry.positions.len;
+	uint[] every = alloc::new_array(mem, uint, (sz)count);
+	defer alloc::free(mem, every);
+	float[] pulls = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, pulls);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	pulls[..] = 1.0f;
+
+	sz pins_before = app.doc.pins.len();
+	app.begin_stroke();
+	test::eq(app.brush_share(only, every, 0.0f, pulls), (usz)0);
+	test::@check(app.stroke_alone, "a stroke with nowhere to put the joint was not noted");
+	app.end_stroke();
+	test::@check(app.notice().contains("only joint"), "the stroke ended without saying why: %s", app.notice());
+	test::eq(app.doc.pins.len(), pins_before);
+}

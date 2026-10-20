@@ -352,6 +352,9 @@ struct Character
 	// That the stroke in flight passed over vertices off the joint's limb and
 	// left them alone (`brush_share`); `end_stroke` says so once.
 	bool stroke_blocked;
+	// That it tried to take the joint off vertices nothing else holds, which
+	// keep it; said once the same way.
+	bool stroke_alone;
 	UndoStack undo_stack;
 	bool weights_stale;
 	float weights_due;
