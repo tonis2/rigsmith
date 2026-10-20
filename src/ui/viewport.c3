@@ -138,6 +138,7 @@ struct Viewport (Widget)
 	int area_rings;
 	bool area_painting; // the area drag paints whole UV islands in or out
 	Vec2 island_probe_at;
+	Vec2 weights_probe_at;
 
 	<*
 	 Whether a brush stroke is in flight, and which way it is painting.
@@ -747,6 +748,20 @@ fn void Viewport.probe_chain(&self, Element* elem, AppState* app, Vec2 pixel)
 		app.chain_preview = 0;
 	}
 	if (was || self.chain_valid) elem.request_paint();
+}
+
+<*
+ Re-reads the face under the pointer while the Weights card is open, for its
+ "Under the cursor" line. The card rebuilds itself when what that line says moves.
+*>
+fn void Viewport.probe_weights_at(&self, Element* elem, AppState* app, Vec2 pixel)
+{
+	if (!app.weights_card_open() || elem.size.x <= 0.0f || elem.size.y <= 0.0f) return;
+	if ((pixel - self.weights_probe_at).length() < CHAIN_PROBE_STEP) return;
+	self.weights_probe_at = pixel;
+	OrbitCamera* camera = self.view_camera(elem);
+	Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
+	app.probe_weights(vp, elem.size, app.model_eye(camera), pixel);
 }
 
 <*
@@ -1762,6 +1777,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			{
 				self.probe_chain(elem, app, event.pos);
 				self.probe_island(elem, app, event.pos);
+				self.probe_weights_at(elem, app, event.pos);
 				app.aim_ring_hover = self.pick_aim(elem, event.pos) >= 0;
 				return false;
 			}

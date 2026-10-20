@@ -914,8 +914,9 @@ fn bool[] AppState.area_twin_part(&self, Allocator allocator, uint twin, AreaPar
  (a finger corrected, the next finger applied, and the first one reaching across
  again). Each part row is stated whole, so every other pin on it goes. Outside, a row
  where the joint (or the twin) still holds at least `AREA_LEAK_FLOOR` is
- restated without it — from the row as shown, or from the automatic row where
- an earlier pin had given the joint all of it.
+ restated without it — from the row as shown, or where the two held all of it
+ but a sliver, from the surface around it: a mirrored Apply that took a thigh
+ off the tail root once handed it to the hundredth of a knee left there.
 
  Every row it states is the joint's work (`VertexPin.by`), the twin's part the
  twin's, which is what `reset_area` takes back.
@@ -1045,7 +1046,7 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 			}
 			// The soft edge: the rest of the vertex goes to the other joints as they
 			// hold it now, so a joint an earlier Apply took off it stays off.
-			others_of(painted, automatic, (usz)v * bones, bones, joint, twin_joint, row);
+			self.others_of(painted, automatic, (uint)v, bones, joint, twin_joint, row);
 			usz kept = band_row(row, view.dot_ids, owners[p], share, keep_dots[..], keep_shares[..]);
 			self.keep_stated(&stated, (uint)v, keep_dots[:kept], keep_shares[:kept]);
 			draft.state((uint)v, keep_dots[:kept], keep_shares[:kept], owners[p]);
@@ -1065,7 +1066,7 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 		if (twin_joint >= 0 && painted[at + (usz)twin_joint] / sum >= AREA_LEAK_FLOOR) leaks = true;
 		if (!leaks) continue;
 
-		float left = others_of(painted, automatic, at, bones, joint, twin_joint, row);
+		float left = self.others_of(painted, automatic, (uint)v, bones, joint, twin_joint, row);
 		usz kept = left > 0.0f ? top_row(row, view.dot_ids, -1, keep_dots[..], keep_shares[..]) : 0;
 		// The row is the work of whichever of the two it was taken off more of.
 		uint by = twin_joint >= 0 && painted[at + (usz)twin_joint] > painted[at + (usz)joint] ? twin : dot_id;
@@ -1075,14 +1076,44 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 }
 
 <*
- The rest of a row once a joint (and its twin) are taken off it: the other
- joints as shown, normalised — earlier Applies and brush strokes included — or,
- where the two held the whole row, the automatic row without them.
+ The rest of a row once a joint (and its twin) are taken off it, normalised:
+ the other joints as shown — earlier Applies and brush strokes included.
+
+ **What the others hold together below `AREA_LEAK_FLOOR` says nothing about
+ where the rest belongs.** It is the binder's falloff leaving a hundredth of a
+ knee on the tail, and scaled up it hands the tail to the knee. Then the rest
+ goes to the surface around the vertex (`others_around`), or where that holds
+ nothing else either, to the automatic row without the two; a sliver as shown is
+ the last resort.
 
  @param row : `Filled, one weight per joint.`
  @return `What the rest adds up to; 0 when nothing else holds the vertex.`
 *>
-fn float others_of(float[] painted, float[] automatic, usz at, usz bones, sz joint, sz twin_joint, float[] row) @private
+fn float AppState.others_of(&self, float[] painted, float[] automatic, uint vertex, usz bones, sz joint, sz twin_joint,
+	float[] row)
+{
+	float shown = shown_others(painted, (usz)vertex * bones, bones, joint, twin_joint, row);
+	if (shown >= AREA_LEAK_FLOOR) return shown;
+
+	float left = self.others_around(painted, bones, vertex, joint, twin_joint, row);
+	if (left > 0.0f) return left;
+
+	usz at = (usz)vertex * bones;
+	left = 0.0f;
+	if (automatic.len >= at + bones)
+	{
+		for (usz b = 0; b < bones; b++)
+		{
+			row[b] = ((sz)b == joint || (sz)b == twin_joint) ? 0.0f : automatic[at + b];
+			left += row[b];
+		}
+	}
+	if (left > 0.0f) return left;
+	return shown_others(painted, at, bones, joint, twin_joint, row);
+}
+
+// A row as shown without the joint and its twin, as shares of the vertex.
+fn float shown_others(float[] painted, usz at, usz bones, sz joint, sz twin_joint, float[] row) @private
 {
 	float sum = 0.0f;
 	for (usz b = 0; b < bones; b++) sum += painted[at + b];
@@ -1092,15 +1123,70 @@ fn float others_of(float[] painted, float[] automatic, usz at, usz bones, sz joi
 		row[b] = ((sz)b == joint || (sz)b == twin_joint || sum <= 0.0f) ? 0.0f : painted[at + b] / sum;
 		left += row[b];
 	}
-	if (left > 1.0e-4f) return left;
-
-	left = 0.0f;
-	for (usz b = 0; b < bones; b++)
-	{
-		row[b] = ((sz)b == joint || (sz)b == twin_joint) ? 0.0f : automatic[at + b];
-		left += row[b];
-	}
 	return left;
+}
+
+// How many rings of neighbours `others_around` reads out to before it gives up.
+const usz HANDOFF_RINGS = 3;
+
+<*
+ What the surface around a vertex holds besides a joint and its twin: its
+ neighbours' rows as shown, each as shares and averaged, a ring at a time out to
+ `HANDOFF_RINGS` until they hold at least `AREA_LEAK_FLOOR`. The body the vertex
+ sits in, for where the rest of it goes when its own row cannot say.
+
+ @param row : `Filled, one weight per joint.`
+ @return `What the rest adds up to; 0 when the rings hold nothing else.`
+*>
+fn float AppState.others_around(&self, float[] painted, usz bones, uint vertex, sz joint, sz twin_joint, float[] row)
+{
+	row[..] = 0.0f;
+	usz count = self.geometry.positions.len;
+	rig::MeshAdjacency* around = self.adjacency_for();
+	if ((usz)vertex >= count || around.vertices() != count || !around.usable() || painted.len < count * bones)
+	{
+		return 0.0f;
+	}
+
+	List{uint} seen;
+	seen.init(mem);
+	defer seen.free();
+	seen.push(around.class_of[vertex]);
+
+	float[] theirs = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, theirs);
+	usz rows = 0;
+	float left = 0.0f;
+	sz from = 0;
+	for (usz ring = 0; ring < HANDOFF_RINGS; ring++)
+	{
+		sz to = seen.len();
+		for (sz i = from; i < to; i++)
+		{
+			foreach (cls : around.around(seen[i]))
+			{
+				bool met = false;
+				foreach (had : seen) if (had == cls) met = true;
+				if (met) continue;
+				seen.push(cls);
+				if (shown_others(painted, (usz)around.first[cls] * bones, bones, joint, twin_joint, theirs) <= 0.0f) continue;
+				foreach (b, share : theirs) row[b] += share;
+				rows++;
+			}
+		}
+		if (seen.len() == to) break;
+		from = to;
+		left = 0.0f;
+		foreach (share : row) left += share;
+		if (rows > 0 && left >= AREA_LEAK_FLOOR * (float)rows) break;
+	}
+	if (rows == 0 || left < AREA_LEAK_FLOOR * (float)rows)
+	{
+		row[..] = 0.0f;
+		return 0.0f;
+	}
+	foreach (&share : row) *share /= (float)rows;
+	return left / (float)rows;
 }
 
 <*
@@ -1157,7 +1243,9 @@ fn void AppState.keep_stated(&self, PinIndex* index, uint v, uint[] dots, float[
    beside them at its automatic share scaled the way the row holds them against
    theirs (`held_against_automatic`), which is the row as it was before the
    joint's Apply. A joint the row leaves out stays out: an earlier Apply took it
-   off, and resetting this joint is not resetting that one.
+   off, and resetting this joint is not resetting that one. Not where the joint
+   held all of the automatic row but a sliver: those others came from the
+   surface around (`others_of`), and the row goes back as a whole one does.
  - A row it holds whole — its part's interior, a full stroke — says nothing
    about the others, so they are read off the rows around it: a joint the
    joint's own rows bordering it leave out, though the automatic weights would
@@ -1312,8 +1400,14 @@ fn usz AppState.reset_area(&self, uint dot_id, uint twin = 0)
 			continue;
 		}
 
+		// Where the two held all of the automatic row but a sliver, the others the
+		// row states came from the surface around it (`others_of`) and say nothing
+		// of what it was: it goes back like a whole one.
+		float rest = 0.0f;
+		for (usz b = 0; b < bones; b++) if ((sz)b != joint && (sz)b != twin_joint) rest += automatic[at + b];
+
 		row_w[..] = 0.0f;
-		if (whole[v])
+		if (whole[v] || rest < AREA_LEAK_FLOOR * total)
 		{
 			// The automatic row, less the joints taken off around it.
 			float kept_weight = 0.0f;

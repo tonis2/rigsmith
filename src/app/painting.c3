@@ -637,6 +637,204 @@ fn Vec2 nearest_on_triangle(Vec2 at, Vec2[3] corner, float[3]* weight) @private
 	return nearest;
 }
 
+<*
+ The face under one pixel, for the Weights card's "Under the cursor": its
+ corners and where in it the pixel landed. Kept as corners rather than shares,
+ so the card reads the weights as they stand when it draws — see `probe_row`.
+*>
+struct WeightProbe
+{
+	bool found;
+	uint[3] corners;
+	float[3] lambda;
+	uint shown;      // the readout it gives, hashed: joints and whole percents
+	uint generation; // moves whenever that readout does
+}
+
+// How far off a face, in pixels, the probe still lands on it: a spike seen edge
+// on is a line no hand holds the pointer inside.
+const float PROBE_SLACK = 4.0f;
+
+<*
+ Point "Under the cursor" at the surface under a pixel: of the faces the pixel
+ is inside or within `PROBE_SLACK` of, the one nearest the eye, on the body on
+ screen — posed under a parked clip (`shown_position`). A pixel over nothing
+ leaves the last probe standing, so the readout holds while the pointer
+ crosses the floor to the card.
+
+ @return `Whether the readout it gives changed.`
+*>
+fn bool AppState.probe_weights(&self, Matrix4f view_projection, Vec2 viewport, Vec3 eye, Vec2 at)
+{
+	usz count = self.geometry.positions.len;
+	if (count == 0) return false;
+
+	Vec3[] place = alloc::new_array(mem, Vec3, (sz)count);
+	defer alloc::free(mem, place);
+	Vec2[] pixel = alloc::new_array(mem, Vec2, (sz)count);
+	defer alloc::free(mem, pixel);
+	bool[] seen = alloc::new_array(mem, bool, (sz)count);
+	defer alloc::free(mem, seen);
+	for (usz v = 0; v < count; v++)
+	{
+		Vec3 position = self.shown_position(v);
+		Vec2? where = project(view_projection, position, viewport);
+		if (catch where) continue;
+		place[v] = position;
+		pixel[v] = where;
+		seen[v] = true;
+	}
+
+	bool found = false;
+	uint[3] best;
+	float[3] best_weight;
+	float best_depth = float::max;
+	uint[] indices = self.geometry.indices;
+	for (usz t = 0; t + 2 < indices.len; t += 3)
+	{
+		uint[3] corner = { indices[t], indices[t + 1], indices[t + 2] };
+		if (corner[0] >= count || corner[1] >= count || corner[2] >= count) continue;
+		if (!seen[corner[0]] || !seen[corner[1]] || !seen[corner[2]]) continue;
+
+		Vec2[3] flat = { pixel[corner[0]], pixel[corner[1]], pixel[corner[2]] };
+		if (math::min(flat[0].x, flat[1].x, flat[2].x) > at.x + PROBE_SLACK) continue;
+		if (math::max(flat[0].x, flat[1].x, flat[2].x) < at.x - PROBE_SLACK) continue;
+		if (math::min(flat[0].y, flat[1].y, flat[2].y) > at.y + PROBE_SLACK) continue;
+		if (math::max(flat[0].y, flat[1].y, flat[2].y) < at.y - PROBE_SLACK) continue;
+
+		float[3] weight;
+		if ((nearest_on_triangle(at, flat, &weight) - at).length() > PROBE_SLACK) continue;
+		Vec3 point = place[corner[0]] * weight[0] + place[corner[1]] * weight[1] + place[corner[2]] * weight[2];
+		float depth = (point - eye).length();
+		if (depth >= best_depth) continue;
+		found = true;
+		best = corner;
+		best_weight = weight;
+		best_depth = depth;
+	}
+	if (!found) return false;
+
+	WeightProbe* probe = &self.weight_probe;
+	bool had = probe.found;
+	probe.found = true;
+	probe.corners = best;
+	probe.lambda = best_weight;
+
+	// The card rebuilds on the generation, so it moves only when what the card
+	// would say does — not on every pixel of a hand drifting over one face.
+	uint[SKIN_INFLUENCES] dots;
+	float[SKIN_INFLUENCES] shares;
+	usz held = self.probe_row(dots[..], shares[..]);
+	uint shown = 2166136261;
+	for (usz i = 0; i < held; i++)
+	{
+		shown = (shown ^ dots[i]) * 16777619;
+		shown = (shown ^ (uint)(shares[i] * 100.0f + 0.5f)) * 16777619;
+	}
+	if (had && shown == probe.shown) return false;
+	probe.shown = shown;
+	probe.generation = next_generation();
+	return true;
+}
+
+<*
+ What holds the probed point, strongest first: its face's corners' rows as
+ every view shows them, blended by where the pixel landed, as shares. Joints
+ under `AREA_LEAK_FLOOR` are left out.
+
+ @param dots : `Filled with dot ids.`
+ @param shares : `Filled alongside; at least as long as dots.`
+ @return `How many were written; 0 with no probe or no rig.`
+*>
+fn usz AppState.probe_row(&self, uint[] dots, float[] shares)
+{
+	WeightProbe probe = self.weight_probe;
+	usz count = self.geometry.positions.len;
+	if (!probe.found || dots.len == 0 || shares.len < dots.len) return 0;
+	foreach (corner : probe.corners) if ((usz)corner >= count) return 0;
+
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+	usz bones = view.len();
+	float[] base = self.base_bind_for(&view);
+	if (bones == 0 || base.len < count * bones) return 0;
+
+	float[] row = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, row);
+	float[] blend = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, blend);
+	for (usz k = 0; k < 3; k++)
+	{
+		self.row_as_shown(&view, base, probe.corners[k], row);
+		foreach (b, share : row) blend[b] += share * probe.lambda[k];
+	}
+
+	return strongest_shares(blend, view.dot_ids, dots, shares);
+}
+
+<*
+ A row's strongest joints, strongest first, as dot ids: those holding anything
+ and at least `floor`, as many as `dots` has room for. Takes them out of `row`
+ as it goes.
+
+ @param shares : `Filled alongside; at least as long as dots.`
+ @return `How many were written.`
+*>
+fn usz strongest_shares(float[] row, uint[] dot_ids, uint[] dots, float[] shares, float floor = AREA_LEAK_FLOOR)
+{
+	usz kept = 0;
+	while (kept < dots.len)
+	{
+		sz strongest = -1;
+		foreach (b, share : row)
+		{
+			if (share <= 0.0f || share < floor) continue;
+			if (strongest < 0 || share > row[(usz)strongest]) strongest = (sz)b;
+		}
+		if (strongest < 0) break;
+		dots[kept] = dot_ids[(usz)strongest];
+		shares[kept] = row[(usz)strongest];
+		row[(usz)strongest] = 0.0f;
+		kept++;
+	}
+	return kept;
+}
+
+<*
+ One vertex's row as every view shows it, as shares: the automatic row with the
+ corrections and pins over it — `painted_bind` for one row, without copying the
+ whole mesh.
+
+ @param base : `base_bind_for the same view.`
+ @param row : `Filled; bones long.`
+*>
+fn void AppState.row_as_shown(&self, RigView* view, float[] base, uint vertex, float[] row)
+{
+	usz bones = view.len();
+	usz at = (usz)vertex * bones;
+	row[:bones] = base[at:bones];
+	foreach (column : view.paint)
+	{
+		if (column.vertex == vertex && column.joint < bones) row[column.joint] *= column.factor;
+	}
+
+	// `pin_columns` keeps a vertex's pins together; restated as row 0 of this one.
+	List{PinColumn} stated;
+	stated.init(mem);
+	defer stated.free();
+	foreach (pin : view.pins)
+	{
+		if (pin.vertex == vertex) stated.push({ .vertex = 0, .joint = pin.joint, .share = pin.share });
+	}
+	pin_over(row[:bones], bones, stated.array_view());
+
+	float sum = 0.0f;
+	foreach (share : row[:bones]) sum += share;
+	if (sum > 0.0f) foreach (&share : row[:bones]) *share /= sum;
+}
+
 // How far past the circle's own radius, in the model, a vertex may sit from the
 // point under the cursor and still be the surface being painted.
 const float BRUSH_DEPTH_SLACK = 1.25f;
@@ -1118,8 +1316,9 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
  `target`; the other joints keep their proportions of what is left. The row is
  written as pins — the joint and the strongest few others — so the brush can
  raise a joint the automatic weights gave nothing, and speaks the same language
- as the Area tool. Where the joint held the whole row, what it gives up goes to
- the others by their automatic weights.
+ as the Area tool. Where the joint held all of the row but a sliver, what it
+ gives up goes where the surface around the vertex has it (`others_of`), not to
+ the sliver: a hundredth of a knee on the tail is not where the tail belongs.
 
  Only on the joint's limb (`limb_family`), or where it already holds some: a
  vertex off it is not given any of the joint, and `stroke_blocked` says so for
@@ -1180,23 +1379,9 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 			continue;
 		}
 
-		// The others' proportions: as shown, or where the joint held everything,
-		// the automatic row's.
-		float others = 0.0f;
-		for (usz b = 0; b < bones; b++)
-		{
-			row[b] = (sz)b == joint || sum <= 0.0f ? 0.0f : painted[at + b] / sum;
-			others += row[b];
-		}
-		if (others <= 1.0e-6f && base.len >= count * bones)
-		{
-			others = 0.0f;
-			for (usz b = 0; b < bones; b++)
-			{
-				row[b] = (sz)b == joint ? 0.0f : base[at + b];
-				others += row[b];
-			}
-		}
+		// The others' proportions: as shown, or where the joint held all but a
+		// sliver, the surface around's — see `others_of`.
+		float others = self.others_of(painted, base, v, bones, joint, -1, row);
 		if (others <= 1.0e-6f)
 		{
 			// Nothing else to hand a share to: the joint keeps the whole row.

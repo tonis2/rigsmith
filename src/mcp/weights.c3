@@ -18,6 +18,7 @@ module crig;
 import rig;
 import std::collections::object;
 import std::math;
+import std::collections::list;
 
 faultdef WEIGHTS_BAD_ARGS;
 
@@ -119,18 +120,45 @@ fn String showing_json(AppState* app)
 
  A read, and unconditional: it binds its own copy rather than reporting whatever
  the screen last painted, so it answers with no view on and cannot answer with a
- stale one.
+ stale one. `vertices` adds those vertices' rows, and `strays` the islands of
+ weight a pose pulls out of the body — what to read when a spike shows and
+ nothing on screen says whose it is.
 *>
 fn String? tool_get_weights(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 
 	uint dot = 0;
+	uint[] rows = {};
+	bool strays = false;
 	if (args != null && args.is_keyable())
 	{
 		if (try named = args.get_string("dot")) dot = resolve_dot(app, named, detail)!;
+		if (try Object* listed = args.get("vertices"))
+		{
+			if (!listed.is_indexable())
+			{
+				detail.append_string(`"vertices" is a list of vertex indices.`);
+				return WEIGHTS_BAD_ARGS~;
+			}
+			usz count = app.geometry.positions.len;
+			rows = alloc::new_array(mem, uint, listed.get_len());
+			for (sz i = 0; i < listed.get_len(); i++)
+			{
+				double at = listed.get_float_at(i) ?? -1.0;
+				if (at < 0.0 || at >= (double)count)
+				{
+					alloc::free(mem, rows);
+					detail.appendf(`vertices[%d] is not a vertex of this mesh: it has %d, numbered from 0.`, i, count);
+					return WEIGHTS_BAD_ARGS~;
+				}
+				rows[i] = (uint)at;
+			}
+		}
+		strays = args.get_bool("strays") ?? false;
 	}
-	return weights_json(app, dot, detail);
+	defer if (rows.len > 0) alloc::free(mem, rows);
+	return weights_json(app, dot, detail, rows, strays);
 }
 
 <*
@@ -144,10 +172,16 @@ fn String? tool_get_weights(Object* args, void* user_data, DString* detail) @pri
  overlap, and the size of that overlap is how much they will fight over the mesh
  between them.
 
+ `rows` is each vertex asked for, as the views show it: the joints holding it
+ down to `AREA_LEAK_FLOOR`, and whose edit wrote its pins. `strays` is
+ `AppState.stray_islands`, each with up to `STRAY_LISTED` of its vertices.
+
  @param dot : `The dot to survey, or 0 for the table alone.`
+ @param rows : `Vertices whose rows to add, in range.`
+ @param strays : `Add the stray islands.`
  @return? RIG_EMPTY : `No mesh or no rig; the reason is left in detail.`
 *>
-fn String? weights_json(AppState* app, uint dot, DString* detail)
+fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = {}, bool strays = false)
 {
 	WeightSurvey? surveyed = app.survey_weights(mem, dot);
 	if (catch surveyed)
@@ -198,8 +232,97 @@ fn String? weights_json(AppState* app, uint dot, DString* detail)
 		out.append_char(']');
 	}
 
+	if (rows.len > 0) vertex_rows_json(app, &out, rows);
+	if (strays) strays_json(app, &out);
+
 	out.append_char('}');
 	return out.copy_str(mem);
+}
+
+// How many of a stray island's vertices `get_weights` lists.
+const usz STRAY_LISTED = 32;
+
+// The name a dot goes by in a reply, bone_<id> when it has none.
+fn void append_dot_name(DString* out, AppState* app, uint id) @private
+{
+	Dot* dot = app.doc.find(id);
+	append_bone_name(out, id, dot ? dot.name : "");
+}
+
+fn void vertex_rows_json(AppState* app, DString* out, uint[] rows) @private
+{
+	out.append_string(`,"rows":[`);
+	RigView? opened = app.open_rig(mem);
+	if (try view = opened)
+	{
+		defer view.free(mem);
+		usz bones = view.len();
+		usz count = app.geometry.positions.len;
+		float[] base = app.base_bind_for(&view);
+		float[] row = alloc::new_array(mem, float, (sz)bones);
+		defer alloc::free(mem, row);
+		uint[SKIN_INFLUENCES * 2] dots;
+		float[SKIN_INFLUENCES * 2] shares;
+		foreach (i, v : rows)
+		{
+			if (bones == 0 || base.len < count * bones) break;
+			if (i > 0) out.append_char(',');
+			app.row_as_shown(&view, base, v, row);
+			usz held = strongest_shares(row, view.dot_ids, dots[..], shares[..]);
+			out.appendf(`{"vertex":%d,"at":%s,"joints":[`, v, (JsonVec3)app.geometry.positions[v]);
+			for (usz k = 0; k < held; k++)
+			{
+				if (k > 0) out.append_char(',');
+				out.append_string(`{"name":"`);
+				append_dot_name(out, app, dots[k]);
+				out.appendf(`","share":%.4g}`, shares[k]);
+			}
+			out.append_char(']');
+
+			List{VertexPin} pinned;
+			pinned.init(mem);
+			defer pinned.free();
+			foreach (pin : app.doc.pins.array_view()) if (pin.vertex == v) pinned.push(pin);
+			uint by = row_author(pinned.array_view());
+			if (by != 0)
+			{
+				out.append_string(`,"by":"`);
+				append_dot_name(out, app, by);
+				out.append_char('"');
+			}
+			out.append_char('}');
+		}
+	}
+	out.append_char(']');
+}
+
+fn void strays_json(AppState* app, DString* out) @private
+{
+	StrayIsland[] strays = app.stray_islands(mem);
+	defer free_strays(mem, strays);
+	out.append_string(`,"strays":[`);
+	foreach (i, stray : strays)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_string(`{"joint":"`);
+		append_dot_name(out, app, stray.dot);
+		out.appendf(`","count":%d,"vertices":[`, stray.vertices.len);
+		foreach (k, v : stray.vertices[:math::min((usz)stray.vertices.len, STRAY_LISTED)])
+		{
+			if (k > 0) out.append_char(',');
+			out.appendf("%d", v);
+		}
+		out.appendf(`],"at":%s,"peak":%.3g,"gap":%.3g,"around":[`, (JsonVec3)stray.centre, stray.peak, stray.gap);
+		for (usz k = 0; k < stray.around_count; k++)
+		{
+			if (k > 0) out.append_char(',');
+			out.append_char('"');
+			append_dot_name(out, app, stray.around[k]);
+			out.append_char('"');
+		}
+		out.append_string("]}");
+	}
+	out.append_char(']');
 }
 
 <*

@@ -66,6 +66,10 @@ const String WEIGHTS_APPLY_ID = "weights-apply";
 const String WEIGHTS_RESET_ID = "weights-reset";
 const String WEIGHTS_READOUT_ID = "weights-readout";
 const String WEIGHTS_KNUCKLE_ID = "weights-knuckle";
+// "Under the cursor": one button per joint holding the face under the pointer.
+String[SKIN_INFLUENCES] weights_probe_ids = { "weights-probe-0", "weights-probe-1", "weights-probe-2", "weights-probe-3" };
+OnClick[SKIN_INFLUENCES] weights_probe_picks = { &weights_probe_0, &weights_probe_1, &weights_probe_2, &weights_probe_3 };
+const usz PROBE_TEXT = 48;
 
 // The Part selector's rows, in `AreaPart` order.
 String[3] weights_part_labels = { "Own bone", "With children", "UV islands" };
@@ -278,6 +282,7 @@ struct JointPanelSnapshot
 	bool areaing;
 	bool brushing;
 	uint area_generation;
+	uint probe_generation;
 }
 
 fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
@@ -317,6 +322,7 @@ fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
 		.areaing = app.areaing,
 		.brushing = app.brushing,
 		.area_generation = app.area_generation,
+		.probe_generation = app.weight_probe.generation,
 	};
 }
 
@@ -349,7 +355,8 @@ fn bool JointPanelSnapshot.differs(self, JointPanelSnapshot other)
 		|| self.selection_count != other.selection_count
 		|| self.areaing != other.areaing
 		|| self.brushing != other.brushing
-		|| self.area_generation != other.area_generation;
+		|| self.area_generation != other.area_generation
+		|| self.probe_generation != other.probe_generation;
 }
 
 struct JointPanel (Widget)
@@ -358,6 +365,7 @@ struct JointPanel (Widget)
 	char[320] readout; // the Weights card's readout line, held for the label to borrow
 	char[96] follow_note; // the bone-axes repair line and its button, likewise
 	char[96] follow_label;
+	char[SKIN_INFLUENCES * PROBE_TEXT] probe_text; // "Under the cursor"'s buttons, likewise
 }
 
 fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
@@ -877,6 +885,33 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													.on_commit = &weights_knuckle_committed,
 													.style = PHYSICS_SLIDER_STYLE,
 												}).with_id(WEIGHTS_KNUCKLE_ID);
+											}
+											// Which joints move the spot under the pointer, each a button that
+											// selects it: the way to name a joint a stray spike rides.
+											@node((Label) { .text = "Under the cursor", .size = 12.0f, .color = TEXT_DIM });
+											uint[SKIN_INFLUENCES] probe_dots;
+											float[SKIN_INFLUENCES] probe_shares;
+											usz probed = app.probe_row(probe_dots[..], probe_shares[..]);
+											if (probed == 0)
+											{
+												@node((Label) { .text = "Point at the mesh to see which joints move it.",
+													.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
+											}
+											else
+											{
+												@tree((Wrap) { .gap_x = JOINT_PANEL_GAP, .gap_y = 4, .cross_align = CENTER })
+												{
+													for (usz i = 0; i < probed; i++)
+													{
+														Dot* holder = app.doc.find(probe_dots[i]);
+														String text = string::bformat(self.probe_text[i * PROBE_TEXT:PROBE_TEXT], "%s %d%%",
+															holder && holder.name.len > 0 ? holder.name : "unnamed",
+															(int)math::round(probe_shares[i] * 100.0f));
+														OnClick pick = weights_probe_picks[i];
+														@node(probe_dots[i] == app.selected ? accent_button(text, pick) : panel_button(text, pick))
+															.with_id(weights_probe_ids[i]);
+													}
+												};
 											}
 											// Painting by hand lives here too, beside the parts it corrects.
 											@node((Label) { .text = "Brush", .size = 12.0f, .color = TEXT_DIM });
@@ -1536,7 +1571,7 @@ fn void joint_limits_reset(Ui* ui) @private
 // What the pending part holds, or how to pick one.
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
-	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner.";
+	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner, or under the cursor below.";
 	if (!app.areaing || !app.area_pending()) return "Choose a part above, or paint by hand. Applying a part replaces this joint's weights, brush strokes too.";
 	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
@@ -1707,6 +1742,24 @@ fn void weights_apply_pressed(Ui* ui) @private
 	app.refresh_ui();
 	refresh_joint_panel(ui);
 }
+
+// "Under the cursor": select the joint a button names. The probe has not moved
+// since the card drew it — the pointer is on the card, not the mesh.
+fn void weights_probe_pick(Ui* ui, usz slot) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	uint[SKIN_INFLUENCES] dots;
+	float[SKIN_INFLUENCES] shares;
+	if (slot >= app.probe_row(dots[..], shares[..])) return;
+	app.select(dots[slot]);
+	app.refresh_ui();
+	refresh_joint_panel(ui);
+}
+
+fn void weights_probe_0(Ui* ui) @private => weights_probe_pick(ui, 0);
+fn void weights_probe_1(Ui* ui) @private => weights_probe_pick(ui, 1);
+fn void weights_probe_2(Ui* ui) @private => weights_probe_pick(ui, 2);
+fn void weights_probe_3(Ui* ui) @private => weights_probe_pick(ui, 3);
 
 fn void weights_reset_pressed(Ui* ui) @private
 {

@@ -1114,7 +1114,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 47;
+const int DOCS_VERSION @local = 48;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -7861,4 +7861,41 @@ fn void set_layer_extracts_shares_and_unlinks() @test
 	defer parted.free();
 	other = f.app.clip(f.app.clip_named_in_authored("other"));
 	test::@check(other.layers[0].link.len == 0, "unlink left the copy shared");
+}
+
+<*
+ get_weights with vertices reads each one's row as the views show it — the dots
+ holding it, strongest first, and whose edit wrote its pins — and with strays
+ says what is cut off from its dot, an empty list on a cube with none. A vertex
+ the mesh does not have is refused with a sentence.
+*>
+fn void get_weights_reads_vertex_rows() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	f.call_tool("pin_weights", `{"dot":"knee","vertices":[0]}`)!!.free();
+	Object*? weights = f.call_tool("get_weights", `{"vertices":[0],"strays":true}`);
+	if (catch weights)
+	{
+		test::@check(false, "get_weights takes vertices and strays");
+		return;
+	}
+	defer weights.free();
+
+	Object* rows = weights.get("rows")!!;
+	test::@check(rows.get_len() == 1, "%d rows for one vertex", rows.get_len());
+	Object* row = rows.get_at(0);
+	test::@check((row.get_int("vertex") ?? -1) == 0, "the row is not vertex 0's");
+	Object* joints = row.get("joints")!!;
+	test::@check(joints.get_len() == 1 && joints.get_at(0).get_string("name")!! == "knee",
+		"the pinned vertex is not read as the knee's alone");
+	test::@check(math::abs(joints.get_at(0).get_float("share")!! - 1.0) < 1.0e-3, "the knee's share is not the whole vertex");
+	test::@check((row.get_string("by") ?? "") == "knee", "the row does not say the knee's pin wrote it");
+	test::@check(weights.get("strays")!!.get_len() == 0, "the cube has strays");
+
+	test::@check(f.refuses_tool("get_weights", `{"vertices":[99]}`, "not a vertex of this mesh"),
+		"a vertex past the end is named back");
 }

@@ -355,6 +355,8 @@ struct Character
 	// That it tried to take the joint off vertices nothing else holds, which
 	// keep it; said once the same way.
 	bool stroke_alone;
+	// The face under the pointer, for the Weights card's "Under the cursor".
+	WeightProbe weight_probe;
 	UndoStack undo_stack;
 	bool weights_stale;
 	float weights_due;

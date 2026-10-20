@@ -21,6 +21,8 @@
 module crig;
 
 import rig;
+import std::math::vector;
+import std::collections::list;
 
 
 
@@ -645,4 +647,176 @@ fn sz row_owner(float[] row, float* sum = null, usz* held = null)
 	if (sum) *sum = total;
 	if (held) *held = carrying;
 	return best;
+}
+
+// A joint holds a vertex, for the stray survey, at this share or more.
+const float STRAY_SHARE = 0.25f;
+
+// How far from the rest of a joint's weight, as a fraction of the model's
+// height, an island of it has to sit to be a stray rather than its own blend.
+const float STRAY_GAP = 0.1f;
+
+<*
+ A patch of mesh a joint holds that is cut off from the rest of what it holds,
+ and far from it — three vertices of a tail root given wholly to a knee, which
+ the knee pulls out of the body as a spike. See `stray_islands`.
+*>
+struct StrayIsland
+{
+	uint dot;
+	uint[] vertices;              // owned
+	Vec3 centre;                  // at rest
+	float peak;                   // the joint's largest share in it
+	float gap;                    // nearest rest distance to the joint's own region, over the model's height
+	uint[SKIN_INFLUENCES] around; // the joints holding the mesh around it, strongest first
+	usz around_count;
+}
+
+fn void free_strays(Allocator allocator, StrayIsland[] strays)
+{
+	foreach (stray : strays) if (stray.vertices.len > 0) alloc::free(allocator, stray.vertices);
+	if (strays.len > 0) alloc::free(allocator, strays);
+}
+
+<*
+ Every stray in the bind as shown, farthest first.
+
+ Per joint, the mesh it holds at least `STRAY_SHARE` of, split into connected
+ islands over the welded surface. The largest is its region; a smaller island
+ is a stray when the mesh around it is someone else's — not a whole piece of
+ its own — and it sits at least `STRAY_GAP` of the model's height from the
+ region at rest. A joint's blend into its neighbours stays beside its region,
+ so what this finds is what a pose pulls out of the body.
+
+ The caller owns the result and frees it with `free_strays`.
+*>
+fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
+{
+	usz count = self.geometry.positions.len;
+	rig::MeshAdjacency* around = self.adjacency_for();
+	float height = self.model_height();
+	if (count == 0 || around.vertices() != count || !around.usable() || height <= 0.0f) return {};
+
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return {};
+	RigView view = opened;
+	defer view.free(mem);
+	usz bones = view.len();
+	float[] painted = self.painted_bind(mem, &view);
+	defer if (painted.len > 0) alloc::free(mem, painted);
+	if (bones == 0 || painted.len < count * bones) return {};
+
+	// One row per weld, as shares, and where it is at rest.
+	usz classes = around.classes();
+	float[] share = alloc::new_array(mem, float, (sz)(classes * bones));
+	defer alloc::free(mem, share);
+	Vec3[] point = alloc::new_array(mem, Vec3, (sz)classes);
+	defer alloc::free(mem, point);
+	for (usz c = 0; c < classes; c++)
+	{
+		usz v = (usz)around.first[c];
+		point[c] = self.geometry.positions[v];
+		float sum = 0.0f;
+		for (usz b = 0; b < bones; b++) sum += painted[v * bones + b];
+		if (sum <= 0.0f) continue;
+		for (usz b = 0; b < bones; b++) share[c * bones + b] = painted[v * bones + b] / sum;
+	}
+
+	int[] island = alloc::new_array(mem, int, (sz)classes);
+	defer alloc::free(mem, island);
+	float[] beside = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, beside);
+	List{uint} flood;
+	flood.init(mem);
+	defer flood.free();
+	List{uint} region;
+	region.init(mem);
+	defer region.free();
+	List{StrayIsland} found;
+	found.init(mem);
+	defer found.free();
+	float[SKIN_INFLUENCES] beside_shares;
+
+	for (usz b = 0; b < bones; b++)
+	{
+		// The joint's islands, and which is the largest.
+		island[..] = -1;
+		int islands = 0;
+		int largest = -1;
+		usz largest_size = 0;
+		for (usz c = 0; c < classes; c++)
+		{
+			if (island[c] >= 0 || share[c * bones + b] < STRAY_SHARE) continue;
+			flood.clear();
+			flood.push((uint)c);
+			island[c] = islands;
+			for (sz next = 0; next < flood.len(); next++)
+			{
+				foreach (n : around.around(flood[next]))
+				{
+					if (island[n] >= 0 || share[(usz)n * bones + b] < STRAY_SHARE) continue;
+					island[n] = islands;
+					flood.push(n);
+				}
+			}
+			if ((usz)flood.len() > largest_size)
+			{
+				largest_size = (usz)flood.len();
+				largest = islands;
+			}
+			islands++;
+		}
+		if (islands < 2) continue;
+
+		region.clear();
+		for (usz c = 0; c < classes; c++) if (island[c] == largest) region.push((uint)c);
+
+		for (int k = 0; k < islands; k++)
+		{
+			if (k == largest) continue;
+			bool bordered = false;
+			float nearest = float::max;
+			float peak = 0.0f;
+			Vec3 middle = {};
+			usz members = 0;
+			beside[..] = 0.0f;
+			for (usz c = 0; c < classes; c++)
+			{
+				if (island[c] != k) continue;
+				members++;
+				middle += point[c];
+				peak = math::max(peak, share[c * bones + b]);
+				foreach (n : around.around(c))
+				{
+					if (island[n] == k) continue;
+					if (share[(usz)n * bones + b] < AREA_LEAK_FLOOR) bordered = true;
+					for (usz j = 0; j < bones; j++) if (j != b) beside[j] += share[(usz)n * bones + j];
+				}
+				foreach (r : region) nearest = math::min(nearest, (point[r] - point[c]).length());
+			}
+			if (!bordered || nearest < STRAY_GAP * height) continue;
+
+			StrayIsland stray = { .dot = view.dot_ids[b], .centre = middle / (float)members, .peak = peak, .gap = nearest / height };
+			stray.around_count = strongest_shares(beside, view.dot_ids, stray.around[..], beside_shares[..], 0.0f);
+			usz held = 0;
+			for (usz v = 0; v < count; v++) if (island[around.class_of[v]] == k) held++;
+			stray.vertices = alloc::new_array(allocator, uint, (sz)held);
+			held = 0;
+			for (usz v = 0; v < count; v++) if (island[around.class_of[v]] == k) stray.vertices[held++] = (uint)v;
+			found.push(stray);
+		}
+	}
+
+	StrayIsland[] strays = alloc::new_array(allocator, StrayIsland, found.len());
+	foreach (i, stray : found) strays[i] = stray;
+	for (usz i = 0; i + 1 < strays.len; i++)
+	{
+		usz top = i;
+		for (usz j = i + 1; j < strays.len; j++) if (strays[j].gap > strays[top].gap) top = j;
+		if (top == i) continue;
+		StrayIsland swap = strays[i];
+		strays[i] = strays[top];
+		strays[top] = swap;
+	}
+	return strays;
 }

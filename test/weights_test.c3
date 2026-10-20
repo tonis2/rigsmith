@@ -3754,3 +3754,244 @@ fn void removing_a_joint_with_nowhere_to_go_says_so() @test
 	test::@check(app.notice().contains("only joint"), "the stroke ended without saying why: %s", app.notice());
 	test::eq(app.doc.pins.len(), pins_before);
 }
+
+<*
+ A 5 × 5 grid held wholly by B, but for its middle vertex, 12: A holds all of it
+ but a thousandth, which is F's — the binder's falloff leaving a sliver of a
+ far joint on a vertex, as it left a knee on a tail root. C is spare, for a twin.
+*>
+fn crig::AppState sliver_grid(List{Vec3}* positions, List{uint}* indices)
+{
+	grid_into(positions, indices, { 0, 0, 0 }, 2.0f, 5);
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	uint a = app.doc.add_dot({ 0, 0, 0.5f }, "A");
+	uint b = app.doc.add_dot({ 0, 1, 0.5f }, "B");
+	uint f = app.doc.add_dot({ 0, -3, 0 }, "F");
+	app.doc.add_dot({ 1, 0, 0.5f }, "C");
+
+	uint[] every = alloc::new_array(mem, uint, (sz)positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	app.pin_vertices(every, b, 1.0f);
+	uint[1] middle = { 12 };
+	app.pin_vertices(middle[..], a, 0.999f);
+	app.pin_vertices(middle[..], f, 0.001f, exclusive: false);
+	return app;
+}
+
+<*
+ Taking a joint off a vertex it held all of but a sliver gives the vertex to
+ the surface around it, not to the sliver: the middle of a grid B holds goes to
+ B, and the thousandth of F stays a thousandth.
+
+ Re-introduce: in `AppState.others_of`, hand the rest to the row's own others
+ whatever they hold together.
+*>
+fn void removing_a_joint_hands_it_to_the_surface_around() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	crig::AppState app = sliver_grid(&positions, &indices);
+	defer app.free();
+	uint a = dot_named(&app, "A");
+	uint b = dot_named(&app, "B");
+	uint f = dot_named(&app, "F");
+	test::@check(math::abs(share_of(&app, 12, f) - 0.001f) < 1.0e-4f, "the fixture's sliver is %f", share_of(&app, 12, f));
+
+	uint[1] middle = { 12 };
+	float[1] all = { 1.0f };
+	app.begin_stroke();
+	test::@check(app.brush_share(a, middle[..], 0.0f, all[..]) > 0, "the stroke changed nothing");
+	app.end_stroke();
+	test::@check(share_of(&app, 12, a) < 1.0e-5f, "A kept %f", share_of(&app, 12, a));
+	test::@check(share_of(&app, 12, f) < crig::AREA_LEAK_FLOOR, "the sliver of F grew to %f", share_of(&app, 12, f));
+	test::@check(share_of(&app, 12, b) > 0.99f, "the surface around's B got %f", share_of(&app, 12, b));
+}
+
+<*
+ An Apply that takes a joint's twin off the rows outside its part treats a
+ sliver the same way: a mirrored Apply once handed a tail root to the hundredth
+ of a knee it carried. The middle vertex, A's but for F's thousandth, goes to B
+ with A applied as C's twin elsewhere.
+
+ Re-introduce: in `AppState.others_of`, hand the rest to the row's own others
+ whatever they hold together.
+*>
+fn void an_apply_does_not_hand_a_row_to_a_sliver() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	crig::AppState app = sliver_grid(&positions, &indices);
+	defer app.free();
+	uint a = dot_named(&app, "A");
+	uint b = dot_named(&app, "B");
+	uint c = dot_named(&app, "C");
+	uint f = dot_named(&app, "F");
+
+	// Each side's part is one corner, far from the middle.
+	sz count = positions.len();
+	bool[] mine = alloc::new_array(mem, bool, count);
+	defer alloc::free(mem, mine);
+	bool[] theirs = alloc::new_array(mem, bool, count);
+	defer alloc::free(mem, theirs);
+	mine[0] = true;
+	theirs[4] = true;
+	test::@check(app.apply_area(c, mine, 0.0f, twin: a, twin_mask: theirs, pieces: true) > 0, "the Apply wrote nothing");
+
+	test::@check(share_of(&app, 12, a) < 1.0e-5f, "the twin kept %f", share_of(&app, 12, a));
+	test::@check(share_of(&app, 12, f) < crig::AREA_LEAK_FLOOR, "the sliver of F grew to %f", share_of(&app, 12, f));
+	test::@check(share_of(&app, 12, b) > 0.99f, "the surface around's B got %f", share_of(&app, 12, b));
+}
+
+<*
+ "Under the cursor" reads the face nearest the eye under the pixel, and blends
+ its corners' rows by where the pixel landed: a quad whose corners are A's and
+ C's, with B's quad behind it, reads as A and C in proportion, never B. A pixel
+ over nothing leaves the readout as it was.
+
+ Re-introduce: in `AppState.probe_weights`, keep the last face the pixel is
+ inside rather than the nearest; or read only the nearest corner in `probe_row`.
+*>
+fn void the_probe_reads_the_face_under_the_cursor() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	// Front corners 0 (-1,-1), 1 (1,-1), 2 (-1,1), 3 (1,1); the back quad is 4-7.
+	grid_into(&positions, &indices, { 0, 0, 0.05f }, 2.0f, 2);
+	grid_into(&positions, &indices, { 0, 0, -0.05f }, 2.0f, 2);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint a = app.doc.add_dot({ -1, -1, 0.5f }, "A");
+	uint b = app.doc.add_dot({ 0, 0, -0.5f }, "B");
+	uint c = app.doc.add_dot({ 1, 1, 0.5f }, "C");
+	uint[1] corner = { 0 };
+	uint[3] others = { 1, 2, 3 };
+	uint[4] back = { 4, 5, 6, 7 };
+	app.pin_vertices(corner[..], a, 1.0f);
+	app.pin_vertices(others[..], c, 1.0f);
+	app.pin_vertices(back[..], b, 1.0f);
+	app.camera.target = { 0, 0, 0 };
+	app.camera.distance = 5.0f;
+	app.camera.yaw = 0.0f;
+	app.camera.pitch = 0.0f;
+
+	Vec2 viewport = { 800, 600 };
+	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
+	Vec3 eye = app.camera.eye();
+	uint[crig::SKIN_INFLUENCES] dots;
+	float[crig::SKIN_INFLUENCES] shares;
+	test::eq(app.probe_row(dots[..], shares[..]), (usz)0);
+
+	// Inside 0-1-2 at λ = 0.55, 0.25, 0.2: A holds 0.55 of it, C the rest.
+	Vec2 inside = crig::project(vp, { -0.5f, -0.6f, 0.05f }, viewport)!!;
+	test::@check(app.probe_weights(vp, viewport, eye, inside), "the probe found nothing under the quad");
+	foreach (v : app.weight_probe.corners) test::@check(v < 4, "the probe read vertex %d of the quad behind", v);
+	test::eq(app.probe_row(dots[..], shares[..]), (usz)2);
+	test::@check(dots[0] == a && dots[1] == c, "the probe named %d and %d, not A and C", dots[0], dots[1]);
+	test::@check(math::abs(shares[0] - 0.55f) < 0.02f && math::abs(shares[1] - 0.45f) < 0.02f,
+		"the probe read %f and %f, not 0.55 and 0.45", shares[0], shares[1]);
+
+	// The same spot again says nothing new; a pixel over nothing keeps it.
+	uint was = app.weight_probe.generation;
+	test::@check(!app.probe_weights(vp, viewport, eye, inside), "probing the same spot moved the readout");
+	test::@check(!app.probe_weights(vp, viewport, eye, { 2, 2 }), "a pixel over nothing moved the readout");
+	test::eq(app.weight_probe.generation, was);
+	test::eq(app.probe_row(dots[..], shares[..]), (usz)2);
+}
+
+<*
+ Under a parked clip the probe reads the posed body: at the pixel a bend moved
+ a vertex to, the face found has that vertex as its corner.
+
+ Re-introduce: read `geometry.positions` rather than `shown_position` in
+ `AppState.probe_weights`.
+*>
+fn void the_probe_reads_the_posed_body() @test
+{
+	crig::AppState app = chained();
+	defer app.free();
+	test::@check(park_bent_knee(&app) != 0, "the fixture could not key a bent knee");
+	test::@check(app.posed_surface_shown(), "the parked clip put no posed surface on screen");
+
+	Vec2 viewport = { 800, 600 };
+	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
+	Vec3 eye = app.camera.eye();
+	usz count = app.geometry.positions.len;
+	usz chosen = count;
+	float nearest = float::max;
+	for (usz v = 0; v < count; v++)
+	{
+		Vec3 posed = app.shown_position(v);
+		if ((posed - app.geometry.positions[v]).length() < 0.2f) continue;
+		float gap = (posed - eye).length();
+		if (gap < nearest) { nearest = gap; chosen = v; }
+	}
+	test::@check(chosen < count, "the bend moved no vertex of the cube");
+
+	Vec2 posed_pixel = crig::project(vp, app.shown_position(chosen), viewport)!!;
+	test::@check(app.probe_weights(vp, viewport, eye, posed_pixel), "the probe found nothing at the posed vertex");
+	float held = 0.0f;
+	foreach (k, v : app.weight_probe.corners) if (v == (uint)chosen) held = app.weight_probe.lambda[k];
+	test::@check(held > 0.9f, "the face under the posed vertex's pixel gives it %f", held);
+}
+
+<*
+ A stray is an island of a joint's weight cut off from the rest of it and far
+ away, inside someone else's mesh: on a grid B holds, with K holding its bottom
+ two rows and a separate quad of its own, nothing is a stray — until one vertex
+ at the top is given to K, which is then listed with B around it.
+
+ Re-introduce: in `AppState.stray_islands`, count an island with no border, and
+ K's quad is listed as well.
+*>
+fn void a_stray_is_a_far_island_of_a_joints_weight() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	// A 9 × 9 grid, rows 0.25 apart from y = -1, and a quad off to the side.
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+	grid_into(&positions, &indices, { 3, 0, 0 }, 0.5f, 2);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	app.pin_vertices(every[:81], b, 1.0f);
+	app.pin_vertices(every[:18], k, 1.0f);
+	app.pin_vertices(every[81:4], k, 1.0f);
+
+	crig::StrayIsland[] strays = app.stray_islands(mem);
+	test::@check(strays.len == 0, "%d strays on a clean bind", strays.len);
+	crig::free_strays(mem, strays);
+
+	uint[1] top = { 76 };
+	app.pin_vertices(top[..], k, 1.0f);
+	strays = app.stray_islands(mem);
+	defer crig::free_strays(mem, strays);
+	test::@check(strays.len == 1, "%d strays, not the one given away", strays.len);
+	if (strays.len != 1) return;
+	test::@check(strays[0].dot == k, "the stray is not K's");
+	test::@check(strays[0].vertices.len == 1 && strays[0].vertices[0] == 76, "the stray is not the vertex given away");
+	test::@check(strays[0].around_count > 0 && strays[0].around[0] == b, "B does not hold the mesh around it");
+	test::@check(math::abs(strays[0].gap - 0.875f) < 0.01f, "the stray sits %f of the height from K's rows, not 0.875", strays[0].gap);
+}

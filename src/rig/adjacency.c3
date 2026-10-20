@@ -44,7 +44,8 @@ import std::sort;
 
  `class_of[v]` is the weld `v` belongs to; the neighbours of a weld `g` are
  `neighbours[offsets[g] .. offsets[g + 1]]` and are themselves weld ids. Read it
- through `around`, which does that arithmetic.
+ through `around`, which does that arithmetic. `first[g]` is a vertex of the
+ weld, for reading a per-vertex value — a weight row — back out of one.
 
  A weld is never its own neighbour — a degenerate triangle with two corners at
  one point contributes no edge — and no pair is listed twice however many
@@ -58,6 +59,7 @@ struct MeshAdjacency
 	uint[] class_of;   // weld class per vertex
 	uint[] offsets;    // one per weld class, plus the tail
 	uint[] neighbours; // weld classes, each listed once per neighbour
+	uint[] first;      // the lowest vertex of each weld class
 }
 
 <*
@@ -98,6 +100,7 @@ fn void MeshAdjacency.free(&self, alloc::Allocator allocator)
 	if (self.class_of.len > 0) alloc::free(allocator, self.class_of);
 	if (self.offsets.len > 0) alloc::free(allocator, self.offsets);
 	if (self.neighbours.len > 0) alloc::free(allocator, self.neighbours);
+	if (self.first.len > 0) alloc::free(allocator, self.first);
 	*self = {};
 }
 
@@ -167,10 +170,16 @@ fn MeshAdjacency build_adjacency(alloc::Allocator allocator, TriMesh geometry)
 	}
 	groups++;
 
+	// A vertex to read each weld's row from, the lowest so it does not depend on
+	// how the sort broke ties.
+	uint[] first = alloc::new_array(allocator, uint, (sz)groups);
+	first[..] = uint::max;
+	for (usz v = 0; v < count; v++) if (first[class_of[v]] == uint::max) first[class_of[v]] = (uint)v;
+
 	uint[] offsets = alloc::new_array(allocator, uint, (sz)groups + 1);
 
 	usz sides = (geometry.indices.len / 3) * 3;
-	if (sides == 0) return { .class_of = class_of, .offsets = offsets };
+	if (sides == 0) return { .class_of = class_of, .offsets = offsets, .first = first };
 
 	ClassEdge[] edges = alloc::new_array(allocator, ClassEdge, (sz)sides);
 	defer alloc::free(allocator, edges);
@@ -191,7 +200,7 @@ fn MeshAdjacency build_adjacency(alloc::Allocator allocator, TriMesh geometry)
 		held = push_edge(edges, held, class_of[c], class_of[a]);
 	}
 
-	if (held == 0) return { .class_of = class_of, .offsets = offsets };
+	if (held == 0) return { .class_of = class_of, .offsets = offsets, .first = first };
 
 	quicksort(edges[:held], &by_class_pair);
 
@@ -231,7 +240,7 @@ fn MeshAdjacency build_adjacency(alloc::Allocator allocator, TriMesh geometry)
 		neighbours[cursor[edges[i].high]++] = edges[i].low;
 	}
 
-	return { .class_of = class_of, .offsets = offsets, .neighbours = neighbours };
+	return { .class_of = class_of, .offsets = offsets, .neighbours = neighbours, .first = first };
 }
 
 // ---------------------------------------------------------------------------

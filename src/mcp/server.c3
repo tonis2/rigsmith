@@ -352,8 +352,8 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "get_weights",
-		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, and how much of the mesh no dot is near. Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. Reads the binder's own weights, so it answers whether or not a view is being shown.",
-		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Dot to survey against its neighbours, by the name get_skeleton reports; bone_<id> works here, since a survey reads the bind rather than a clip. Omit for the ownership table alone."}}}`,
+		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, and how much of the mesh no dot is near. Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. vertices adds each named vertex's row: the dots holding it, their shares, and whose edit wrote its pins. strays adds every island of a dot's weight cut off from the rest of it and far away — the spike a pose pulls out of the body — with the dots holding the mesh around it, which is who to give it back to with pin_weights. Reads the binder's own weights, so it answers whether or not a view is being shown.",
+		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Dot to survey against its neighbours, by the name get_skeleton reports; bone_<id> works here, since a survey reads the bind rather than a clip. Omit for the ownership table alone."},"vertices":{"type":"array","items":{"type":"number"},"description":"Vertex indices whose rows to add: the dots holding each, strongest first, as the views show them."},"strays":{"type":"boolean","description":"Add the stray islands, farthest from their dot's region first. Default false."}}}`,
 		.handler = &tool_get_weights,
 		.user_data = app,
 		.hidden = true,
