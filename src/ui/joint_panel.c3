@@ -992,8 +992,10 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 												@node(panel_button("Y", &joint_align_y)).with_id("joint-align-y");
 												@node(panel_button("Z", &joint_align_z)).with_id("joint-align-z");
 											};
-											@node((Label) { .text = "Each takes the first-selected joint's X, Y or Z.",
-												.size = 12.0f, .color = TEXT_DIM });
+											@node((Label) { .text = app.stage == POSE_STAGE
+												? "Turns bones so each joint takes the first-selected one's X, Y or Z in the pose, keyed where Apply to reaches. Pick a chain from its base."
+												: "Each takes the first-selected joint's X, Y or Z on the model.",
+												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
 										}
 										else if (app.selected != 0)
 										{
@@ -1133,6 +1135,10 @@ fn void joint_rename_pressed(Ui* ui) @private => begin_joint_rename(ui);
 // joint on that axis; Centre drops a lone joint onto the mesh middle. Each says
 // what it did, so a button that could not act (a group of one, a lone dot already
 // centred) is a notice rather than a silent nothing.
+//
+// The header's Joints | Pose switch says which: on Joints they move joints on the
+// model; on Pose they turn bones in the animation on show (pose_align.c3) and
+// never touch the model, for the reason a drag on Pose never does.
 fn void joint_align_x(Ui* ui) @private => joint_align_axis(ui, 0);
 fn void joint_align_y(Ui* ui) @private => joint_align_axis(ui, 1);
 fn void joint_align_z(Ui* ui) @private => joint_align_axis(ui, 2);
@@ -1140,15 +1146,28 @@ fn void joint_align_z(Ui* ui) @private => joint_align_axis(ui, 2);
 fn void joint_align_axis(Ui* ui, int component) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (app.stage == POSE_STAGE)
+	{
+		if (app.animating && !app.anim_paused) anim_seek(ui, anim_live_time(app));
+		(void)app.align_pose_to_anchor(component);
+		refresh_pose_views(ui);
+		return;
+	}
 	String axis = component == 0 ? "X" : (component == 1 ? "Y" : "Z");
+	if (app.selection_count() < 2)
+	{
+		app.@notice("select two or more joints to align them on %s", axis);
+		app.refresh_ui();
+		return;
+	}
 	usz moved = app.align_selection_to_anchor(component);
 	if (moved == 0)
 	{
-		app.@notice("select two or more joints to align them on %s", axis);
+		app.@notice("the selected joints are already on the first one's %s on the model", axis);
 	}
 	else
 	{
-		app.@notice("aligned %d joint%s on %s", (int)moved, moved == 1 ? "" : "s", axis);
+		app.@notice("aligned %d joint%s on %s on the model", (int)moved, moved == 1 ? "" : "s", axis);
 	}
 	app.refresh_ui();
 }
@@ -1156,6 +1175,12 @@ fn void joint_align_axis(Ui* ui, int component) @private
 fn void joint_center_on_mesh(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (app.stage == POSE_STAGE)
+	{
+		app.@notice("centring moves the joint on the model · switch to Joints to do it");
+		app.refresh_ui();
+		return;
+	}
 	if (app.center_selected_on_mesh())
 	{
 		app.@notice("centred the joint on the mesh");

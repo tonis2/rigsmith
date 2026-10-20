@@ -134,7 +134,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "Rig menu", .action = "auto-name joints: name what a body plan has a joint for" },
 	{ .binding = "ctrl+A", .action = "select every joint" },
 	{ .binding = "X / del", .action = "delete every selected joint — one undo takes them all back" },
-	{ .binding = "Joint panel", .action = "Align X/Y/Z: line joints up with the first-selected one" },
+	{ .binding = "Joint panel", .action = "Align X/Y/Z: line joints up with the first-selected one (on Pose, in the clip)" },
 	{ .binding = "Joint panel", .action = "Centre on mesh: drop a lone joint to the middle" },
 	{ .binding = "right-click a joint", .action = "move, rotate, select children or whole skeleton, mirror, delete" },
 	{ .binding = "right-click a Scene row", .action = "move or rotate that Skeleton, Model or joint · Move by…" },

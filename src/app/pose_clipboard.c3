@@ -280,14 +280,38 @@ fn bool AppState.mirror_onto_keys(&self, RigView* view)
 		self.@notice("The pose belongs to a different rig; its joints must match.");
 		return false;
 	}
-	AnimTemplate built = clip_with_keys(mem, *clip, keys);
+	if (!self.land_onto_keys(view, ref, clip_with_keys(mem, *clip, keys), written, keyed_first)) return false;
 
-	// The selection by value, put back after the landing as `key_onto_keys` does.
+	// A fork's notice says where the change went, which matters more.
+	if (forked) return true;
+	String reach = self.key_reach == WHOLE_CLIP ? string::tformat("all %d keys", times.len())
+		: string::tformat("%d selected keys", times.len());
+	String missing = unmatched > 0 ? string::tformat("; %d had no twin on this rig", unmatched) : "";
+	self.@notice("%s %d joint%s onto %s%s · Ctrl+Z undoes it", keyed_first ? "Keyed the pose and mirrored" : "Mirrored",
+		count, count == 1 ? "" : "s", reach, missing);
+	return true;
+}
+
+<*
+ Land `built` — the clip being edited, rewritten at the keys Apply to reaches —
+ as one undo step: how `mirror_onto_keys` and `align_onto_keys` finish.
+
+ The sheet's selection is put back by value after the landing, as
+ `key_onto_keys` does, and an open draft is parked across it for the reason
+ `land_pose` gives, then handed what the clip now says for the joints
+ `written`. With `keyed_first`, the keying the caller did a moment ago is
+ reopened so the two are one Ctrl+Z.
+
+ `built` is taken over.
+
+ @return `False when the clip would not land; nothing was changed.`
+*>
+fn bool AppState.land_onto_keys(&self, RigView* view, AnimRef ref, AnimTemplate built, bool[] written, bool keyed_first)
+{
 	float[] picked = self.anim_key_selection.to_tarray();
 	AnimChannelKey[] channels = self.anim_channel_key_selection.to_tarray();
 	foreach (&selected : channels) selected.joint = selected.joint.tcopy();
 
-	// Parked across the landing for the reason `land_pose` gives.
 	PosedJoint[] draft = self.pose_edit_draft;
 	bool active = self.pose_edit_active;
 	self.pose_edit_draft = {};
@@ -309,14 +333,6 @@ fn bool AppState.mirror_onto_keys(&self, RigView* view)
 	foreach (selected : channels) self.select_channel(selected.time, selected.joint, selected.channel);
 	self.settle_key_selection();
 	self.show_landed_pose(view, landed, written, active);
-
-	// A fork's notice says where the change went, which matters more.
-	if (forked) return true;
-	String reach = self.key_reach == WHOLE_CLIP ? string::tformat("all %d keys", times.len())
-		: string::tformat("%d selected keys", times.len());
-	String missing = unmatched > 0 ? string::tformat("; %d had no twin on this rig", unmatched) : "";
-	self.@notice("%s %d joint%s onto %s%s · Ctrl+Z undoes it", keyed_first ? "Keyed the pose and mirrored" : "Mirrored",
-		count, count == 1 ? "" : "s", reach, missing);
 	return true;
 }
 
@@ -362,11 +378,8 @@ fn bool AppState.pose_in_hand_at(&self, RigView* view, float time, bool drafted,
 	AnimTemplate* clip = self.clip(self.editing);
 	if (!clip) return false;
 
-	rig::Pose pose = drafted
-		? self.draft_pose(mem, view)
-		: self.evaluated_clip_pose(mem, view, *clip, self.editing, time, false);
+	rig::Pose pose = self.pose_shown_at(view, time, drafted);
 	defer pose.free(mem);
-	self.lay_clip_holds_over(view, *clip, &pose, time);
 	Vec3[] bones = view.skeleton.bone_directions(mem);
 	defer if (bones.len > 0) alloc::free(mem, bones);
 	AnimKeyframe every = keyframe_of_pose(mem, pose, view.names, bones,
@@ -397,6 +410,23 @@ fn bool AppState.pose_in_hand_at(&self, RigView* view, float time, bool drafted,
 	if (every.dots.len > 0) alloc::free(mem, every.dots);
 	*out = { .time = time, .dots = kept.to_array(mem) };
 	return out.dots.len > 0;
+}
+
+<*
+ The pose on show at `time` in the clip being edited: the open draft, or the
+ clip sampled through the limits, with its pins and targets laid over as the
+ viewport shows them. The caller has checked there is a clip, and owns the pose.
+
+ @param drafted : `Read the open draft, which is the pose at the playhead, rather than the clip.`
+*>
+fn rig::Pose AppState.pose_shown_at(&self, RigView* view, float time, bool drafted)
+{
+	AnimTemplate* clip = self.clip(self.editing);
+	rig::Pose pose = drafted
+		? self.draft_pose(mem, view)
+		: self.evaluated_clip_pose(mem, view, *clip, self.editing, time, false);
+	self.lay_clip_holds_over(view, *clip, &pose, time);
+	return pose;
 }
 
 <*

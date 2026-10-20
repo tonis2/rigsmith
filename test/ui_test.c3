@@ -8236,6 +8236,92 @@ fn void align_lines_the_selection_up_with_the_anchor() @test
 	test::eq(fixture.app.align_selection_to_anchor(1), (usz)0);
 }
 
+// Where the clip being edited puts `dot` at the playhead.
+fn Vec3 posed_at_playhead(crig::AppState* app, uint dot)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = app.evaluated_clip_pose(mem, &view, *app.clip(app.editing), app.editing, app.edit_time, false);
+	defer pose.free(mem);
+	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!!;
+	defer alloc::free(mem, palette);
+	usz joint = (usz)view.joint_of(dot);
+	return view.skeleton.joints[joint].transform(palette[joint]);
+}
+
+<*
+ On Pose, the Align tab's X lines the posed neck, head and head top up by
+ turning bones in the clip, and leaves the joints on the model where they are —
+ the rig is built straight, so moving them would do nothing for the lean.
+*>
+fn void align_on_pose_turns_the_clip_not_the_model() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("Align X on Pose lines the leaning head up in the clip");
+	fixture.reset();
+	if (!fixture.app.apply_plan_named("biped"))
+	{
+		test::@check(false, "SKIPPED — the biped plan could not be fitted to the cube");
+		return;
+	}
+	uint neck, head, top;
+	foreach (dot : fixture.doc().dots.array_view())
+	{
+		if (dot.name == "neck") neck = dot.id;
+		if (dot.name == "head") head = dot.id;
+		if (dot.name == "head_top") top = dot.id;
+	}
+	if (neck == 0 || head == 0 || top == 0)
+	{
+		test::@check(false, "SKIPPED — the fitted plan has no neck, head and head_top");
+		return;
+	}
+
+	AnimRef ref = fixture.app.new_clip("lean", 1.0f, from_rest: true);
+	test::@check(ref.valid(), "a clip could not be started");
+	if (!ref.valid()) return;
+	fixture.app.editing = ref;
+	Vec3 z = { 0, 0, 1 };
+	test::@check(fixture.app.pose_from_clip(ref, 0.0f)
+		&& fixture.app.set_working_pose(neck, quaternion::from_axis_angle{float}(z, 0.35f), {}), "could not lean the neck");
+	fixture.app.pose_edit_pending = true;
+	test::@check(fixture.app.key_pose_edit(), "the lean was not keyed");
+	fixture.app.stop_animation();
+	fixture.app.edit_time = 0.0f;
+	fixture.app.stage = crig::EditStage.POSE_STAGE;
+	fixture.app.select(neck);
+	fixture.app.extend_selection(head);
+	fixture.app.extend_selection(top);
+	fixture.app.show_joint_panel = true;
+	fixture.app.joint_panel_tab = crig::JointPanelTab.ALIGN;
+	fixture.idle_frame();
+	fixture.ui.flush();
+
+	Vec3 head_rest = fixture.doc().find(head).position;
+	Vec3 top_rest = fixture.doc().find(top).position;
+	float before = posed_at_playhead(&fixture.app, head).x - posed_at_playhead(&fixture.app, neck).x;
+	test::@check(math::abs(before) > 0.01f, "the keyed lean does not move the head off the neck's X");
+
+	Vec2? xbtn = fixture.center_of("joint-align-x");
+	if (catch xbtn) { test::@check(false, "no Align X button on Pose"); return; }
+	fixture.click(xbtn);
+	fixture.ui.flush();
+
+	float neck_x = posed_at_playhead(&fixture.app, neck).x;
+	test::@check(math::abs(posed_at_playhead(&fixture.app, head).x - neck_x) < 1.0e-3f
+		&& math::abs(posed_at_playhead(&fixture.app, top).x - neck_x) < 1.0e-3f,
+		"clicking Align X on Pose did not line the posed head up with the neck");
+	test::@check(fixture.doc().find(head).position == head_rest && fixture.doc().find(top).position == top_rest,
+		"Align on Pose moved joints on the model");
+}
+
 <*
  Centre on mesh drops a single selected joint onto the mesh's bounding-box middle,
  and refuses a multi-selection so a group is never stacked onto one point.
