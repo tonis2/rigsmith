@@ -47,6 +47,7 @@ import std::math;
  @param physics : `The rig's jiggle setup, indexed against preset.dots. Only a pack-derived table can carry one, since AnimPack.preset is index-parallel to the pack's joints while a built-in table's mirror rows expand into two dots each.`
  @param constraints : `Reusable anatomical limits in the same source-joint order. Exact rows are matched onto the fitted dots by name and rebuilt in the target rest frame; foreign or unsupported rows are reported and left on the template.`
  @param source_rest : `The pack's own rest skeleton, index-parallel to preset.dots — the joints the constraint rows were written against. Empty for a built-in table, which falls back to the plan's proportions.`
+ @param facing : `AUTO measures which way the mesh faces; FORWARD or REVERSED fits it that way round, for a fit the user turned.`
 *>
 fn void AppState.apply_preset(
 	&self,
@@ -54,10 +55,12 @@ fn void AppState.apply_preset(
 	String plan = "",
 	RigPhysics physics = {},
 	ConstraintRig constraints = {},
-	rig::Skeleton source_rest = {})
+	rig::Skeleton source_rest = {},
+	PresetFacing facing = AUTO)
 {
 	bool reversed = false;
-	FittedDot[] fitted = fit_preset(mem, preset, self.geometry.bounds(), &self.voxels, &reversed);
+	FittedDot[] fitted = fit_preset(mem, preset, self.geometry.bounds(), &self.voxels, &reversed,
+		facing: facing, mesh: self.geometry);
 	if (fitted.len == 0)
 	{
 		self.@notice("the %s skeleton is empty", preset.name);
@@ -99,6 +102,8 @@ fn void AppState.apply_preset(
 
 	self.undo_stack.commit();
 	self.doc.set_plan(plan);
+	// The same plan fitted the other way round is still a new fit to measure against.
+	self.plan_targets_stale = true;
 	self.mark_rig_stale();
 	self.select(ids[0]);
 	self.refresh_ui();
@@ -106,7 +111,7 @@ fn void AppState.apply_preset(
 	// Only what the user can act on follows the count: a fit that came out facing
 	// -Z (the facing is measured and can be wrong), joints outside the mesh, the
 	// rig it replaced, and limits that did not match.
-	String facing = reversed ? " · facing -Z" : "";
+	String facing_note = reversed ? " · facing -Z" : "";
 	String outside = stranded > 0
 		? string::tformat(" · %d joint%s outside the mesh", stranded, stranded == 1 ? " is" : "s are")
 		: "";
@@ -121,7 +126,7 @@ fn void AppState.apply_preset(
 			: string::tformat(" · %d joint limit%s", constraint_report.applied, constraint_report.applied == 1 ? "" : "s");
 	}
 	self.@notice("Fitted the %s skeleton · %d joints%s%s%s%s",
-		preset.name, fitted.len, facing, outside, swapped, limits);
+		preset.name, fitted.len, facing_note, outside, swapped, limits);
 	self.fit_reversed = reversed;
 }
 
@@ -139,7 +144,7 @@ fn void AppState.apply_preset(
 
  @return `False when there is no such pack, or it carries no body to measure against.`
 *>
-fn bool AppState.apply_pack_rig(&self, usz index)
+fn bool AppState.apply_pack_rig(&self, usz index, PresetFacing facing = AUTO)
 {
 	AnimPack* pack = self.pack(index);
 	if (!pack) return false;
@@ -151,8 +156,45 @@ fn bool AppState.apply_pack_rig(&self, usz index)
 
 	Preset derived = pack.preset(mem);
 	defer free_preset(mem, derived);
-	self.apply_preset(derived, pack.plan, pack.physics, pack.constraints, pack.rest);
+	self.apply_preset(derived, pack.plan, pack.physics, pack.constraints, pack.rest, facing);
 	return true;
+}
+
+<*
+ Which way the rig faces at rest, along the floor: where its toes point from
+ their ankles, or its left side turned a quarter (see `rig_facing`). What the
+ viewport's facing arrow draws and what a re-fit the other way round turns from.
+
+ @return `False for a rig with nothing named to read it from.`
+*>
+fn bool AppState.rest_facing(&self, Vec3* out)
+{
+	if (self.doc.dots.len() < 2) return false;
+	@pool()
+	{
+		uint[] dot_ids;
+		rig::Skeleton? built = build_skeleton(&self.doc, tmem, &dot_ids);
+		if (catch built) return false;
+		rig::Skeleton skeleton = built;
+		return rig_facing(&skeleton, self.joint_names(tmem, dot_ids), out);
+	};
+}
+
+<*
+ Fit the rig's body plan again, the other way round from the way it faces now,
+ as one undo step: for a fit whose measured facing came out wrong. It replaces
+ the joints, so anything moved by hand since the fit goes with them — turning a
+ hand-edited rig is Rig > Rotate skeleton's job, which keeps them.
+
+ @return `False when the rig has no body plan in the library, or no facing to turn from.`
+*>
+fn bool AppState.refit_turned(&self)
+{
+	int index = self.plan_pack(self.doc.plan);
+	if (index < 0) return false;
+	Vec3 facing;
+	if (!self.rest_facing(&facing)) return false;
+	return self.apply_pack_rig((usz)index, facing.z < 0.0f ? FORWARD : REVERSED);
 }
 
 <*
@@ -667,7 +709,13 @@ fn void AppState.refit_plan_targets(&self)
 	Preset derived = pack.preset(mem);
 	defer free_preset(mem, derived);
 
-	self.plan_targets = fit_preset(mem, derived, self.geometry.bounds(), &self.voxels);
+	// The way round the rig stands, so a rig fitted or turned against the measured
+	// facing is measured against a plan that agrees with it.
+	PresetFacing facing = AUTO;
+	Vec3 ahead;
+	if (self.rest_facing(&ahead)) facing = ahead.z < 0.0f ? REVERSED : FORWARD;
+	self.plan_targets = fit_preset(mem, derived, self.geometry.bounds(), &self.voxels,
+		facing: facing, mesh: self.geometry);
 }
 
 <*

@@ -628,6 +628,104 @@ fn void a_tail_decides_which_way_the_body_faces() @test
 		"a tail at high Z left the preset facing the way the table wrote it");
 }
 
+<*
+ A figure standing on two legs whose feet reach out one way: the only part of
+ it that is not front-to-back symmetric, so the feet are the whole signal.
+
+ @param toes : `+1 for feet reaching toward +Z, -1 toward -Z.`
+*>
+fn rig::TriMesh standing_mesh(Allocator allocator, float toes)
+{
+	Vec3List positions;
+	UintList indices;
+	positions.init(allocator);
+	indices.init(allocator);
+	defer
+	{
+		positions.free();
+		indices.free();
+	}
+
+	push_box(&positions, &indices, { -0.20, 0.50, -0.08 }, { 0.20, 1.00, 0.08 });
+	float[2] sides = { -1.0f, 1.0f };
+	foreach (side : sides)
+	{
+		push_box(&positions, &indices, { side * 0.10f - 0.04f, 0.0f, -0.05f }, { side * 0.10f + 0.04f, 0.52f, 0.05f });
+		float ahead = toes > 0.0f ? 0.25f : 0.05f;
+		float behind = toes > 0.0f ? -0.05f : -0.25f;
+		push_box(&positions, &indices, { side * 0.10f - 0.05f, 0.0f, behind }, { side * 0.10f + 0.05f, 0.03f, ahead });
+	}
+
+	return { .positions = positions.to_array(allocator), .indices = indices.to_array(allocator) };
+}
+
+<*
+ The feet say which way a figure faces: they reach out ahead of the shins. Read
+ off the mesh's own vertices, so it holds on a figure the snap cost would read
+ backward — a torso off the box's middle, boots open at the sole.
+*>
+fn void the_feet_decide_which_way_a_figure_faces() @test
+{
+	rig::TriMesh forward = standing_mesh(mem, 1.0f);
+	defer forward.free(mem);
+	rig::TriMesh backward = standing_mesh(mem, -1.0f);
+	defer backward.free(mem);
+
+	test::@check(crig::feet_facing(forward, forward.bounds()) == 1, "feet reaching +Z did not read as facing +Z");
+	test::@check(crig::feet_facing(backward, backward.bounds()) == -1, "feet reaching -Z did not read as facing -Z");
+
+	rig::MeshVoxels voxels = rig::build_voxels(mem, backward);
+	defer voxels.free(mem);
+	bool reversed = false;
+	crig::FittedDot[] fitted = crig::fit_preset(mem, biped(), backward.bounds(), &voxels, &reversed,
+		mesh: backward);
+	defer crig::free_fitted(mem, fitted);
+	test::@check(reversed, "a biped on feet reaching -Z was fitted facing +Z");
+
+	// A body with no feet to speak of says nothing, and the snap cost decides.
+	rig::TriMesh bare = body_mesh(mem);
+	defer bare.free(mem);
+	test::@check(crig::feet_facing(bare, bare.bounds()) == 0, "a box with no feet read as facing somewhere");
+}
+
+<*
+ The repo's humanoid faces +Z, and turned half round it faces -Z: its shoes are
+ the clearest thing about it.
+*>
+fn void a_real_figures_feet_face_the_way_it_does() @test
+{
+	rig::TriMesh? loaded = rig::load_gltf(mem, REAL_MESH);
+	if (catch loaded) { test::@check(false, "could not load %s — run from the crig directory", REAL_MESH); return; }
+	rig::TriMesh geometry = loaded;
+	defer geometry.free(mem);
+
+	test::@check(crig::feet_facing(geometry, geometry.bounds()) == 1, "the humanoid's feet did not read as facing +Z");
+	foreach (&p : geometry.positions) *p = { -p.x, p.y, -p.z };
+	test::@check(crig::feet_facing(geometry, geometry.bounds()) == -1, "the turned humanoid's feet did not read as facing -Z");
+}
+
+<*
+ A facing the caller states is the facing the fit takes, whatever the body says:
+ what a re-fit the other way round is built on.
+*>
+fn void a_stated_facing_overrides_the_measurement() @test
+{
+	rig::TriMesh ahead = body_mesh(mem, 1.0f);
+	defer ahead.free(mem);
+	rig::MeshVoxels voxels = rig::build_voxels(mem, ahead);
+	defer voxels.free(mem);
+
+	bool reversed = true;
+	crig::FittedDot[] forward = crig::fit_preset(mem, quadruped(), ahead.bounds(), &voxels, &reversed, facing: FORWARD);
+	defer crig::free_fitted(mem, forward);
+	test::@check(!reversed, "FORWARD was turned around by the tail");
+
+	crig::FittedDot[] backward = crig::fit_preset(mem, quadruped(), ahead.bounds(), &voxels, &reversed, facing: REVERSED);
+	defer crig::free_fitted(mem, backward);
+	test::@check(reversed, "REVERSED was not turned around");
+	test::@check(backward[0].position.z != forward[0].position.z, "the two fits put the root in the same place");
+}
+
 // ---------------------------------------------------------------------------
 // A real model
 // ---------------------------------------------------------------------------

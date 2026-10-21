@@ -1,6 +1,7 @@
 module crig_tests::ui;
 
 import crig;
+import rig;
 import cui;
 import cui::widgets;
 import std::core::test;
@@ -290,49 +291,107 @@ fn void the_move_tool_drags_a_joints_rest_position() @test
 	crig::menu_tweak(fixture.ui);
 }
 
-<*
- After a fit that faces away, the offer's Turn around turns the whole skeleton
- 180° about Y as one undo step.
-*>
-fn void turn_around_turns_the_skeleton_in_one_step() @test
+// The hinge faults `get_scene` reports on the fixture's rig: a knee or elbow
+// whose limits refuse the way it folds.
+fn usz rig_hinge_faults(Fixture* fixture) @local
 {
+	crig::RigView? opened = fixture.app.open_rig(mem);
+	if (catch opened) return 0;
+	crig::RigView view = opened;
+	defer view.free(mem);
+	crig::HingeIssue[16] found;
+	return crig::hinge_issues(&fixture.app.doc, &view.skeleton, view.names, view.dot_ids, found[..]);
+}
+
+<*
+ After a fit that faces away, the offer's Fit facing Front fits the plan again
+ facing +Z, as one undo step: a fresh fit, with every joint inside the body and
+ knees that fold the right way, not the backward fit's joints spun about the
+ middle. Forced backward here on a body that faces Front, which is the case the
+ offer exists for: a measured facing that came out wrong.
+*>
+fn void fit_facing_front_fits_the_plan_again_facing_front() @test
+{
+	rig::TriMesh? loaded = rig::load_gltf(mem, "assets/animations/humanoid.glb");
+	if (catch loaded) { test::@check(false, "humanoid.glb did not load as a mesh"); return; }
+	rig::TriMesh mesh = loaded;
+	defer mesh.free(mem);
 	Fixture harness;
-	if (catch fault error = harness.open())
+	if (catch fault error = harness.open(mesh))
 	{
 		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
 		return;
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("Turn around turns the skeleton in one step");
+	io::printn("Fit facing Front fits the plan again facing Front");
 	fixture.reset();
 
-	uint hips = fixture.app.add_recorded({ 0.1f, 0.0f, 0.3f }, "hips");
-	uint head = fixture.app.add_recorded({ 0.1f, 0.6f, 0.3f }, "head");
-	fixture.app.connect_recorded(hips, head);
-	fixture.app.undo_stack.commit();
+	int pack = fixture.app.plan_pack("biped");
+	test::@check(pack >= 0, "the library has no biped body plan");
+	if (pack < 0) return;
+	test::@check(fixture.app.apply_pack_rig((usz)pack, REVERSED), "the plan would not fit backward");
+	Vec3 facing;
+	test::@check(fixture.app.rest_facing(&facing) && facing.z < -0.7f, "the forced fit does not face -Z (%s)", facing);
 
-	Vec3 centre = fixture.app.geometry.bounds().center();
 	crig::open_turn_offer(fixture.ui);
 	fixture.ui.flush();
 	Vec2? apply = fixture.center_of(crig::TURN_OFFER_APPLY_ID);
 	if (catch apply)
 	{
-		test::@check(false, "the offer has no Turn around button");
+		test::@check(false, "the offer has no Fit facing Front button");
 		return;
 	}
 	fixture.click(apply);
 	test::@check(!fixture.in_tree(crig::TURN_OFFER_APPLY_ID), "the offer stayed open");
 
-	Vec3 turned = fixture.doc().find(hips).position;
-	test::@check(math::abs(turned.x - (2.0f * centre.x - 0.1f)) < 1e-4f
-		&& math::abs(turned.z - (2.0f * centre.z - 0.3f)) < 1e-4f
-		&& math::abs(turned.y) < 1e-4f,
-		"hips did not turn 180° about Y (%.3f, %.3f, %.3f)", turned.x, turned.y, turned.z);
+	test::@check(fixture.app.rest_facing(&facing) && facing.z > 0.7f, "the re-fit does not face Front (%s)", facing);
+	test::@check(fixture.app.dot_named("knee_L").position.x > fixture.app.dot_named("knee_R").position.x,
+		"facing Front, the left knee is not on +X");
+	usz outside = 0;
+	foreach (dot : fixture.doc().dots.array_view())
+	{
+		if (!fixture.app.voxels.grid.inside(dot.position)) outside++;
+	}
+	test::@check(outside <= 2, "%d joints of the re-fit are outside the body", outside);
+	test::@check(rig_hinge_faults(fixture) == 0, "the re-fit's knees or elbows refuse the way they fold");
 
-	test::@check(fixture.app.undo(), "Turn around did not undo");
-	Vec3 back = fixture.doc().find(hips).position;
-	test::@check((back - (Vec3){ 0.1f, 0.0f, 0.3f }).length() < 1e-5f, "one undo did not turn it back");
+	test::@check(fixture.app.undo(), "the re-fit did not undo");
+	test::@check(fixture.app.rest_facing(&facing) && facing.z < -0.7f, "one undo did not bring the backward fit back, so the re-fit was more than one step");
+}
+
+<*
+ Rig > Fit body plan the other way round turns a fitted rig either way, with no
+ offer asking first: for a fit that came out facing Front when the model faces
+ back.
+*>
+fn void fit_the_other_way_round_turns_a_fitted_rig() @test
+{
+	rig::TriMesh? loaded = rig::load_gltf(mem, "assets/animations/humanoid.glb");
+	if (catch loaded) { test::@check(false, "humanoid.glb did not load as a mesh"); return; }
+	rig::TriMesh mesh = loaded;
+	defer mesh.free(mem);
+	Fixture harness;
+	if (catch fault error = harness.open(mesh))
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("Fit body plan the other way round turns a fitted rig");
+	fixture.reset();
+
+	test::@check(crig::query_fitted_plan(fixture.ui).disabled, "the item is offered with no rig to re-fit");
+	test::@check(fixture.app.apply_plan_named("biped"), "the plan would not fit");
+	test::@check(!crig::query_fitted_plan(fixture.ui).disabled, "the item is greyed on a fitted rig");
+	Vec3 facing;
+	test::@check(fixture.app.rest_facing(&facing) && facing.z > 0.7f, "the humanoid did not fit facing Front (%s)", facing);
+
+	crig::refit_turned_reporting(fixture.ui);
+	test::@check(fixture.app.rest_facing(&facing) && facing.z < -0.7f, "the item did not turn the fit to -Z (%s)", facing);
+	crig::refit_turned_reporting(fixture.ui);
+	test::@check(fixture.app.rest_facing(&facing) && facing.z > 0.7f, "a second turn did not bring it back to Front (%s)", facing);
 }
 
 <*
@@ -376,4 +435,64 @@ fn void g_on_pose_never_moves_the_rest_skeleton() @test
 	test::@check(!fixture.app.transform_interaction.active, "G began a rest transform on Pose");
 	test::@check(fixture.doc().find(first).position == first_was, "G on Pose moved a joint on the model");
 	test::@check(fixture.doc().find(second).position == second_was, "G on Pose moved a joint on the model");
+}
+
+// How many lines of this colour the last frame drew of thickness `width`: the
+// facing arrow's own stroke, which nothing else in the viewport draws.
+fn usz facing_strokes(Fixture* fixture, Color color) @local
+{
+	usz count = 0;
+	foreach (drawing : fixture.ui.canvas.drawings.array_view())
+	{
+		if (drawing.kind != DrawingKind.LINE || drawing.color != (Vec4)color) continue;
+		if (math::abs(drawing.border_width - crig::FACING_WIDTH) > 0.01f) continue;
+		count++;
+	}
+	return count;
+}
+
+<*
+ The floor shows which way the rig faces: a blue arrow toward Front when it
+ faces +Z, the warning colour when it faces away, and nothing with View >
+ Facing arrow off.
+*>
+fn void the_floor_arrow_shows_which_way_the_rig_faces() @test
+{
+	rig::TriMesh? loaded = rig::load_gltf(mem, "assets/animations/humanoid.glb");
+	if (catch loaded) { test::@check(false, "humanoid.glb did not load as a mesh"); return; }
+	rig::TriMesh mesh = loaded;
+	defer mesh.free(mem);
+	Fixture harness;
+	if (catch fault error = harness.open(mesh))
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("the floor arrow shows which way the rig faces");
+	fixture.reset();
+	bool hidden = fixture.app.config.hide_facing;
+	defer fixture.app.config.hide_facing = hidden;
+	fixture.app.config.hide_facing = false;
+
+	int pack = fixture.app.plan_pack("biped");
+	if (pack < 0) { test::@check(false, "the library has no biped body plan"); return; }
+
+	test::@check(fixture.app.apply_pack_rig((usz)pack, FORWARD), "the plan would not fit facing Front");
+	fixture.ui.flush();
+	test::@check(facing_strokes(fixture, crig::AXIS_Z) == 3, "facing Front, the arrow is not three blue strokes (%d)",
+		facing_strokes(fixture, crig::AXIS_Z));
+	test::@check(facing_strokes(fixture, crig::DOT_PIN_MISSED) == 0, "facing Front, the arrow wears the warning colour");
+
+	test::@check(fixture.app.apply_pack_rig((usz)pack, REVERSED), "the plan would not fit facing away");
+	fixture.ui.flush();
+	test::@check(facing_strokes(fixture, crig::DOT_PIN_MISSED) == 3, "facing away, the arrow is not three warning strokes (%d)",
+		facing_strokes(fixture, crig::DOT_PIN_MISSED));
+
+	fixture.app.config.hide_facing = true;
+	fixture.ui.request_paint(crig::Viewport);
+	fixture.ui.flush();
+	test::@check(facing_strokes(fixture, crig::DOT_PIN_MISSED) == 0 && facing_strokes(fixture, crig::AXIS_Z) == 0,
+		"with the arrow turned off it was still drawn");
 }

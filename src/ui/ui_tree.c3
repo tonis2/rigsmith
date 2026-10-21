@@ -908,6 +908,16 @@ fn void menu_show_floor(Ui* ui)
 
 fn MenuItemFlags query_show_floor(Ui* ui) => { .checked = !ui.inherit(AppState)!!.config.hide_floor };
 
+fn void menu_show_facing(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.config.hide_facing = !app.config.hide_facing;
+	app.config.save();
+	app.refresh_ui();
+}
+
+fn MenuItemFlags query_show_facing(Ui* ui) => { .checked = !ui.inherit(AppState)!!.config.hide_facing };
+
 // The animation aids: onion-skin ghosts of the mesh around the playhead (tuned in
 // the floating Ghosts panel the transport row's button opens) and the selected
 // joint's path. Remembered in the config like the floor.
@@ -1159,6 +1169,12 @@ fn MenuItemFlags query_any_dots(Ui* ui) => { .disabled = ui.inherit(AppState)!!.
 // with no mesh there is nothing to fit one to — the same reason `--preset`
 // refuses on the command line.
 fn MenuItemFlags query_any_mesh(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_mesh() };
+// A re-fit needs the plan the rig came from, in the library, and a mesh to fit it to.
+fn MenuItemFlags query_fitted_plan(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	return { .disabled = !app.has_mesh() || app.doc.dots.len() == 0 || app.plan_pack(app.doc.plan) < 0 };
+}
 fn MenuItemFlags query_undo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_undo() };
 fn MenuItemFlags query_redo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_redo() };
 <*
@@ -1334,8 +1350,11 @@ MenuItem[6] edit_items = {
 // cell in the Assets pane is the answer. So the item is here and it opens the
 // same panel a skinless import raises, which still gets its list from the packs.
 // The Assets route is unchanged.
-MenuItem[20] rig_items = {
+MenuItem[21] rig_items = {
 	{ .label = "Apply body plan…", .on_select = &menu_apply_body_plan, .state = &query_any_mesh },
+	// Under the fit it redoes: for a fit whose measured facing came out wrong and
+	// no Turn offer asked. Rotate skeleton below turns a rig edited since.
+	{ .label = "Fit body plan the other way round", .on_select = &refit_turned_reporting, .state = &query_fitted_plan },
 	{ .label = "Rotate skeleton…", .on_select = &open_skeleton_rotation_dialog, .state = &query_any_dots },
 	{ .label = "Re-apply plan limits", .on_select = &menu_reapply_plan_limits, .state = &query_any_dots },
 	{ .separator = true },
@@ -1393,7 +1412,7 @@ MenuItem[20] rig_items = {
 //
 // B for the mesh because M is already the mirror. S is free and is the letter
 // the item starts with, which is as much as either key can claim.
-MenuItem[26] view_items = {
+MenuItem[27] view_items = {
 	{ .label = "Front", .shortcut = "1", .on_select = &menu_view_front, .state = &query_has_view },
 	{ .label = "Back", .shortcut = "Ctrl+1", .on_select = &menu_view_back, .state = &query_has_view },
 	{ .label = "Right", .shortcut = "3", .on_select = &menu_view_right, .state = &query_has_view },
@@ -1407,6 +1426,7 @@ MenuItem[26] view_items = {
 	{ .label = "Textured", .on_select = &menu_shading_textured, .state = &query_shading_textured },
 	{ .label = "Wireframe", .shortcut = "Z", .on_select = &menu_wireframe, .state = &query_wireframe },
 	{ .label = "Floor", .on_select = &menu_show_floor, .state = &query_show_floor },
+	{ .label = "Facing arrow", .on_select = &menu_show_facing, .state = &query_show_facing },
 	{ .label = "Ghosts", .on_select = &menu_ghosts, .state = &query_ghosts },
 	{ .label = "Ghost settings...", .on_select = &menu_ghost_settings },
 	{ .label = "Motion path", .on_select = &menu_motion_path, .state = &query_motion_path },

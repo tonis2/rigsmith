@@ -112,7 +112,7 @@ fn void rig_replace_declined(Ui* ui) @private => answer_rig_dialog(ui, false);
 
 <*
  Fits a pack's body plan, and when the fit came out facing -Z offers a one-click
- Turn around (see `open_turn_offer`). The interactive door only: an MCP or
+ Fit facing Front (see `open_turn_offer`). The interactive door only: an MCP or
  scripted fit reports the facing in its notice and is not interrupted.
 *>
 fn void fit_pack_offering_turn(Ui* ui, usz pack)

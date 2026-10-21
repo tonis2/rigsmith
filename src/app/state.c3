@@ -612,7 +612,7 @@ struct AppState
 	bool welcome_checked;
 
 	// Whether the last body plan fitted came out facing -Z (away from the front
-	// view). The interactive fit (`request_pack_rig`) offers Turn around on it.
+	// view). The interactive fit (`request_pack_rig`) offers Fit facing Front on it.
 	bool fit_reversed;
 
 	<*

@@ -988,7 +988,20 @@ fn String? apply_plan(AppState* app, Object* args, DString* detail)
 		return RIG_REFUSED~;
 	}
 
-	if (!app.apply_plan_named(named))
+	PresetFacing facing = AUTO;
+	String asked = args.get_string("facing") ?? "auto";
+	switch (asked)
+	{
+		case "auto": facing = AUTO;
+		case "front": facing = FORWARD;
+		case "back": facing = REVERSED;
+		default:
+			detail.appendf(`"facing" is "auto", "front" or "back", not "%s"`, asked);
+			return RIG_REFUSED~;
+	}
+
+	int index = app.plan_pack(named);
+	if (index < 0 || !app.apply_pack_rig((usz)index, facing))
 	{
 		detail.appendf(`no pack carrying a body answers to "%s"`, named);
 		append_plan_names(detail, app);

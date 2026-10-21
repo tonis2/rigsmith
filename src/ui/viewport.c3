@@ -87,6 +87,14 @@ const float LOCK_RING_WIDTH = 2.0;
 // the missed colour: past what the solve's own tolerance and a pixel of drift explain.
 const float PIN_MISSED_RING = 0.01;
 
+// The facing arrow on the floor: its length and the reach of its barbs, in rig
+// heights; its stroke in pixels; and how near +Z (the cosine of 45°) it must
+// point to read as facing Front.
+const float FACING_LENGTH = 0.22;
+const float FACING_HEAD = 0.05;
+const float FACING_WIDTH = 2.5;
+const float FACING_FRONT = 0.7071;
+
 // Gap between a dot and the name under it, in pixels. Clear of the root ring,
 // which is the widest a dot can wear, so a name never sits inside one.
 const float LABEL_GAP = DOT_RADIUS + ROOT_RING_GAP + 3.0;
@@ -529,6 +537,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	// positions are what a rigger is actually aiming at.
 	if (app.show_physics) self.paint_colliders(elem, painter, view_projection, camera);
 
+	self.paint_facing(elem, painter, view_projection, app);
 	self.paint_chain_preview(elem, painter, view_projection, app);
 	self.paint_motion_path(elem, painter, view_projection, app);
 
@@ -765,6 +774,73 @@ fn void Viewport.probe_island(&self, Element* elem, AppState* app, Vec2 pixel)
 	int was = app.area_hover_island;
 	app.hover_area_island(app.island_under(self.vertex_at(elem, pixel)));
 	if (app.area_hover_island != was) elem.request_paint();
+}
+
+<*
+ Which way the rig faces: an arrow on the floor from under the root, along the
+ rig's own facing at rest (`AppState.rest_facing`).
+
+ Front (+Z, the View > Front side) is the way crig reads every figure and every
+ clip expects, so that is what the arrow is measured against: blue — the Z
+ axis's own colour — when the rig faces it, the warning colour when it does not,
+ with a dashed blue line toward Front beside it. A body plan fitted backwards
+ then shows as backwards on the floor, before a clip plays wrong on it.
+*>
+fn void Viewport.paint_facing(&self, Element* elem, Painter* painter, Matrix4f view_projection, AppState* app)
+{
+	if (app.config.hide_facing) return;
+	Dot* root = app.doc.find(app.doc.root_id);
+	if (!root) return;
+	Vec3 facing;
+	if (!app.rest_facing(&facing)) return;
+	float height = app.model_height();
+	if (height <= 0.0f) return;
+
+	float floor = 0.0f;
+	if (app.geometry.positions.len > 0)
+	{
+		floor = app.geometry.bounds().min.y;
+	}
+	else
+	{
+		floor = (float)math::FLOAT_MAX;
+		foreach (dot : app.doc.dots.array_view()) floor = math::min(floor, dot.position.y);
+	}
+	Vec3 under = app.dot_position(*root);
+	Vec3 origin = { under.x, floor, under.z };
+	float length = height * FACING_LENGTH;
+
+	bool front = facing.z >= FACING_FRONT;
+	if (!front)
+	{
+		Vec2[2]? guide = project_segment(view_projection, origin, origin + (Vec3){ 0, 0, length }, elem.size);
+		if (try guide)
+		{
+			paint_dashed(painter, guide[0], guide[1], FACING_WIDTH * 0.6f, AXIS_Z);
+			paint_facing_label(elem, painter, guide[1], "Front", AXIS_Z);
+		}
+	}
+
+	Color ink = front ? AXIS_Z : DOT_PIN_MISSED;
+	Vec3 tip = origin + facing * length;
+	Vec3 back = tip - facing * (height * FACING_HEAD);
+	Vec3 side = (Vec3){ -facing.z, 0, facing.x } * (height * FACING_HEAD * 0.6f);
+	Vec3[2][3] strokes = { { origin, tip }, { tip, back + side }, { tip, back - side } };
+	foreach (stroke : strokes)
+	{
+		Vec2[2]? at = project_segment(view_projection, stroke[0], stroke[1], elem.size);
+		if (catch at) continue;
+		painter.line(at[0], at[1], FACING_WIDTH, ink);
+	}
+	Vec2? label_at = project(view_projection, tip, elem.size);
+	if (try label_at) paint_facing_label(elem, painter, label_at, front ? "Front" : "Rig faces this way", ink);
+}
+
+// A label just past an arrow's tip, centred on it like a joint's name.
+fn void paint_facing_label(Element* elem, Painter* painter, Vec2 at, String text, Color ink) @private
+{
+	Vec2 size = elem.ui.text.measure(0, text, LABEL_SIZE);
+	painter.text({ at.x - size.x * 0.5f, at.y + 4.0f }, text, { .size = LABEL_SIZE, .color = ink });
 }
 
 <*

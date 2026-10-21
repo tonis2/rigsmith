@@ -139,6 +139,17 @@ const int PRESET_REACH = 8;
 // The fit.
 
 <*
+ Which way round a fit goes: measured, or as the caller says — head toward +Z
+ (the Front view) or toward −Z.
+*>
+enum PresetFacing
+{
+	AUTO,
+	FORWARD,
+	REVERSED,
+}
+
+<*
  The mesh's bounds, and which way round the preset sits in them.
 *>
 struct PresetFit
@@ -366,10 +377,21 @@ fn float snap_cost(collision::VoxelGrid* grid, Vec3 point) @private
  table's own orientation, and the operation reports which way it went, because a
  preset fitted backwards should be legible at a glance rather than mysterious.
 
+ The feet speak first when they are clear (`feet_facing`), because the drag
+ cost is easily outvoted on a figure whose torso sits off the box's middle: a
+ knight with a breastplate in front and a cape-less back reads, by snap cost
+ alone, as a figure facing the other way with its toes in its heels.
+
+ @param mesh : `The mesh itself, in the frame box was measured in; empty leaves the feet out of it.`
  @return `True if the preset should be flipped along Z.`
 *>
-fn bool preset_reversed(Preset preset, rig::Bounds box, rig::MeshVoxels* voxels)
+fn bool preset_reversed(Preset preset, rig::Bounds box, rig::MeshVoxels* voxels, rig::TriMesh mesh = {})
 {
+	if (preset_stands(preset))
+	{
+		int feet = feet_facing(mesh, box);
+		if (feet != 0) return feet < 0;
+	}
 	if (voxels == null || !voxels.usable()) return false;
 
 	collision::VoxelGrid* grid = &voxels.grid;
@@ -396,6 +418,100 @@ fn bool preset_reversed(Preset preset, rig::Bounds box, rig::MeshVoxels* voxels)
 
 const int FACING_SLIDES = 8;
 const float FACING_SLIDE_STEP = 0.03f; // of the box's depth, so ±24% either way
+
+// The feet's slab and the shins' above it, as fractions of the box's height.
+const float FEET_SLAB = 0.04f;
+const float SHIN_LOW = 0.08f;
+const float SHIN_HIGH = 0.16f;
+// How far past the shins the feet must reach, as a fraction of the height, and
+// how many times further than the other way, before the feet decide.
+const float FEET_REACH = 0.03f;
+const float FEET_MARGIN = 2.0f;
+
+<*
+ Whether a plan stands on legs: dots at the floor and dots well above it. A
+ plan that lies along the floor has no feet for `feet_facing` to read.
+*>
+fn bool preset_stands(Preset preset) @private
+{
+	bool floor = false;
+	bool raised = false;
+	foreach (dot : preset.dots)
+	{
+		if (dot.optional) continue;
+		if (dot.at.y < 0.1f) floor = true;
+		if (dot.at.y > 0.3f) raised = true;
+	}
+	return floor && raised;
+}
+
+<*
+ Which way the feet point, read off the mesh: feet reach out ahead of the leg
+ they stand under. A shoe, a paw and a hoof all put more of themselves in front
+ of the shin than behind it, so the floor slab sticks out past the shin slab
+ above it on the side the figure faces.
+
+ Compared by how far each slab reaches along Z rather than where its middle is,
+ so a dense heel or a coarse toe does not move it; and read off the triangles
+ cut to each slab rather than the vertices in it, so a low-poly shin with no
+ vertex between ankle and knee still counts. Undecided when neither side
+ clearly reaches further — a figure facing sideways, a robe to the floor, feet
+ that are only cylinders — and the snap cost decides as before.
+
+ @return `+1 for feet pointing toward +Z, -1 toward -Z, 0 when they do not say.`
+*>
+fn int feet_facing(rig::TriMesh mesh, rig::Bounds box)
+{
+	float height = box.extent().y;
+	if (mesh.triangle_count() == 0 || height <= 0.0f) return 0;
+
+	float[2] feet = { (float)math::FLOAT_MAX, -(float)math::FLOAT_MAX };
+	float[2] shins = feet;
+	float feet_top = box.min.y + height * FEET_SLAB;
+	float shin_low = box.min.y + height * SHIN_LOW;
+	float shin_high = box.min.y + height * SHIN_HIGH;
+	for (usz t = 0; t + 2 < mesh.indices.len; t += 3)
+	{
+		Vec3[3] corner = {
+			mesh.positions[mesh.indices[t]],
+			mesh.positions[mesh.indices[t + 1]],
+			mesh.positions[mesh.indices[t + 2]],
+		};
+		slab_reach(corner, box.min.y - height, feet_top, &feet);
+		slab_reach(corner, shin_low, shin_high, &shins);
+	}
+	if (feet[0] > feet[1] || shins[0] > shins[1]) return 0;
+
+	float ahead = (feet[1] - shins[1]) / height;
+	float behind = (shins[0] - feet[0]) / height;
+	if (ahead >= FEET_REACH && ahead >= FEET_MARGIN * math::max(behind, 0.0f)) return 1;
+	if (behind >= FEET_REACH && behind >= FEET_MARGIN * math::max(ahead, 0.0f)) return -1;
+	return 0;
+}
+
+// Widen `reach` (low and high Z) by the part of a triangle between two heights:
+// its corners inside them, and where its edges cross either one.
+fn void slab_reach(Vec3[3] corner, float low, float high, float[2]* reach) @private
+{
+	for (usz i = 0; i < 3; i++)
+	{
+		Vec3 a = corner[i];
+		Vec3 b = corner[(i + 1) % 3];
+		if (a.y >= low && a.y <= high)
+		{
+			(*reach)[0] = math::min((*reach)[0], a.z);
+			(*reach)[1] = math::max((*reach)[1], a.z);
+		}
+		float[2] planes = { low, high };
+		foreach (plane : planes)
+		{
+			if ((a.y - plane) * (b.y - plane) >= 0.0f) continue;
+			float z = a.z + (b.z - a.z) * (plane - a.y) / (b.y - a.y);
+			(*reach)[0] = math::min((*reach)[0], z);
+			(*reach)[1] = math::max((*reach)[1], z);
+		}
+	}
+}
 
 fn float facing_cost(Preset preset, float[] weights, collision::VoxelGrid* grid, PresetFit fit, Vec3 offset) @private
 {
@@ -467,6 +583,8 @@ fn float[] branch_weights(Allocator allocator, Preset preset) @private
  @param voxels : `Built from the same mesh; null skips both the facing test and the snap.`
  @param reversed : `Receives which way round it went, for callers that report it.`
  @param place_optional : `Place the optional dots as well. For the pack writer, which turns a whole plan into a skeleton; a fit onto a user's mesh wants the default.`
+ @param facing : `AUTO measures which way round it goes; FORWARD and REVERSED say so, for a fit the user has turned.`
+ @param mesh : `The mesh itself, for the feet's vote on facing (see preset_reversed).`
 *>
 fn FittedDot[] fit_preset(
 	Allocator allocator,
@@ -474,7 +592,9 @@ fn FittedDot[] fit_preset(
 	rig::Bounds box,
 	rig::MeshVoxels* voxels,
 	bool* reversed = null,
-	bool place_optional = false)
+	bool place_optional = false,
+	PresetFacing facing = AUTO,
+	rig::TriMesh mesh = {})
 {
 	usz count = 0;
 	foreach (dot : preset.dots)
@@ -504,7 +624,14 @@ fn FittedDot[] fit_preset(
 	bool[] paired = alloc::new_array(allocator, bool, (sz)preset.dots.len);
 	defer alloc::free(allocator, paired);
 
-	PresetFit fit = { .box = box, .reversed = preset_reversed(preset, box, voxels) };
+	bool turned;
+	switch (facing)
+	{
+		case AUTO: turned = preset_reversed(preset, box, voxels, mesh);
+		case FORWARD: turned = false;
+		case REVERSED: turned = true;
+	}
+	PresetFit fit = { .box = box, .reversed = turned };
 	collision::VoxelGrid* grid = voxels != null && voxels.usable() ? &voxels.grid : null;
 	if (reversed) *reversed = fit.reversed;
 

@@ -241,8 +241,8 @@ fn void rig_prompt_dismiss(Ui* ui)
 const String TURN_OFFER_DIALOG_ID = "turn-offer-dialog";
 const String TURN_OFFER_APPLY_ID = "turn-offer-apply";
 
-const String TURN_OFFER_TEXT = "The body plan was fitted facing -Z, away from the front view.";
-const String TURN_OFFER_HELP = "The facing is measured and can be wrong. Turning is one undo step.";
+const String TURN_OFFER_TEXT = "The body plan was fitted facing -Z, away from the Front view: see the arrow on the floor.";
+const String TURN_OFFER_HELP = "The facing is measured and can be wrong. If the model faces Front, fit it again facing Front; Ctrl+Z goes back.";
 
 fn void open_turn_offer(Ui* ui)
 {
@@ -259,7 +259,7 @@ fn Element* build_turn_offer_body(Ui* ui)
 			@node((Label) { .text = TURN_OFFER_HELP, .size = FILE_HEADING_SIZE, .color = TEXT_DIM });
 			@tree((Row) { .gap = RIG_PROMPT_GAP })
 			{
-				@node(accent_button("Turn around", &turn_offer_apply)).with_id(TURN_OFFER_APPLY_ID);
+				@node(accent_button("Fit facing Front", &turn_offer_apply)).with_id(TURN_OFFER_APPLY_ID);
 				@node(panel_button("Keep it", &turn_offer_dismiss));
 			};
 		};
@@ -267,21 +267,36 @@ fn Element* build_turn_offer_body(Ui* ui)
 }
 
 <*
- Turns the whole skeleton 180° about Y, as one undo step — Rig > Rotate
- skeleton's Y 180°, without the dialog.
+ Fits the body plan again facing Front, as one undo step.
+
+ A fit, not a turn: the backward fit pulled every joint into the mesh the wrong
+ way round — toes into the heels, the hips slid to wherever a turned torso fit —
+ so spinning those joints about the middle lands them nowhere a forward fit
+ would, and carries limits mended for the other facing. Fitted afresh, each
+ joint is placed and snapped facing Front and its limits are transferred so.
 *>
 fn void turn_offer_apply(Ui* ui)
 {
-	AppState* app = ui.inherit(AppState)!!;
 	set_dialog_open(ui, TURN_OFFER_DIALOG_ID, false);
-	usz moved = app.rotate_skeleton(1, (float)math::PI);
-	if (moved == 0)
+	refit_turned_reporting(ui);
+}
+
+<*
+ `AppState.refit_turned` with its notice: the Turn offer's door and Rig > Fit
+ body plan the other way round's.
+*>
+fn void refit_turned_reporting(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.refit_turned())
 	{
-		app.@notice("the skeleton could not be turned");
+		app.@notice("no body plan to fit again · Rig > Rotate skeleton turns the joints instead");
 		return;
 	}
+	Vec3 facing;
+	bool front = app.rest_facing(&facing) && facing.z >= 0.0f;
 	app.refresh_pose_display();
-	app.@notice("turned the skeleton around · %d joints · Ctrl+Z turns it back", moved);
+	app.@notice("fitted the body plan facing %s · Ctrl+Z goes back", front ? "Front (+Z)" : "Back (-Z)");
 	app.refresh_ui();
 }
 

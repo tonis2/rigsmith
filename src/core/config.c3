@@ -15,6 +15,7 @@
        "hide_guide": false,
        "tutorial_seen": false,
        "hide_floor": false,
+       "hide_facing": false,
        "viewport_shading": 0,
        "brush_xray": false,
        "show_ghosts": false,
@@ -277,6 +278,10 @@ struct CrigConfig
 	// the guide.
 	bool hide_floor;
 
+	// The arrow on the floor showing which way the rig faces (View > Facing
+	// arrow). Shown unless hidden, like the floor.
+	bool hide_facing;
+
 	// How the 3D view draws the model: Solid, Textured or Wireframe. Solid is
 	// zero, so a config without the key keeps the grey model crig always drew.
 	ShadingMode viewport_shading;
@@ -463,6 +468,7 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	if (try bool wanted = parsed.get_bool("hide_guide")) self.hide_guide = wanted;
 	if (try bool wanted = parsed.get_bool("tutorial_seen")) self.tutorial_seen = wanted;
 	if (try bool wanted = parsed.get_bool("hide_floor")) self.hide_floor = wanted;
+	if (try bool wanted = parsed.get_bool("hide_facing")) self.hide_facing = wanted;
 	if (try double wanted = parsed.get_float("viewport_shading"))
 	{
 		if (wanted >= 0 && wanted <= ShadingMode.WIREFRAME.ordinal) self.viewport_shading = (ShadingMode)(int)wanted;
@@ -799,6 +805,7 @@ struct ConfigFile @private
 	bool hide_guide;
 	bool tutorial_seen;
 	bool hide_floor;
+	bool hide_facing;
 	int viewport_shading;
 	bool brush_xray;
 	bool show_ghosts;
@@ -858,6 +865,7 @@ fn void CrigConfig.save(&self)
 		.hide_guide = self.hide_guide,
 		.tutorial_seen = self.tutorial_seen,
 		.hide_floor = self.hide_floor,
+		.hide_facing = self.hide_facing,
 		.viewport_shading = self.viewport_shading.ordinal,
 		.brush_xray = self.brush_xray,
 		.show_ghosts = self.show_ghosts,

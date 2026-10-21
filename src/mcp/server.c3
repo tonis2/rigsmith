@@ -259,7 +259,7 @@ fn ToolTable new_tool_table(AppState* app)
 	server.add_tool({
 		.name = "apply_plan",
 		.description = "Fit a body plan's own skeleton onto the loaded mesh: seventeen or so named dots under one undo entry, measured against the model's bounding box. The usual first call on a fresh mesh, and what makes it something a clip can be written for — a clip addresses joints by name, and a mesh with no rig has none.",
-		.input_schema = `{"type":"object","properties":{"plan":{"type":"string","description":"A body-plan tag or pack name — biped, quadruped, bird. get_scene lists what the library holds."}},"required":["plan"]}`,
+		.input_schema = `{"type":"object","properties":{"plan":{"type":"string","description":"A body-plan tag or pack name — biped, quadruped, bird. get_scene lists what the library holds."},"facing":{"type":"string","enum":["auto","front","back"],"description":"Which way round to fit it: auto (the default) measures which way the model faces, from its feet and then from how the plan fits its body; front fits it facing +Z, the Front view, the way crig reads every figure; back facing -Z. The answer's notice says \"facing -Z\" when it went that way."}},"required":["plan"]}`,
 		.handler = &tool_apply_plan,
 		.user_data = app,
 		.hidden = true,
