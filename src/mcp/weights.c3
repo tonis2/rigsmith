@@ -1,5 +1,5 @@
 <*
- The weight tools: show_weights, get_weights, paint_weights, pin_weights and
+ The weight tools: show_weights, get_weights, paint_weights, pin_weights, fix_strays and
  get_shells.
 
  Weights are derived rather than authored — every rig edit rebinds from scratch —
@@ -312,7 +312,7 @@ fn void strays_json(AppState* app, DString* out) @private
 			if (k > 0) out.append_char(',');
 			out.appendf("%d", v);
 		}
-		out.appendf(`],"at":%s,"peak":%.3g,"gap":%.3g,"around":[`, (JsonVec3)stray.centre, stray.peak, stray.gap);
+		out.appendf(`],"at":%s,"peak":%.3g,"gap":%.3g,"pull":%.3g,"around":[`, (JsonVec3)stray.centre, stray.peak, stray.gap, stray.pull);
 		for (usz k = 0; k < stray.around_count; k++)
 		{
 			if (k > 0) out.append_char(',');
@@ -503,6 +503,28 @@ fn String? tool_pin_weights(Object* args, void* user_data, DString* detail) @pri
 	app.refresh_ui();
 
 	return pinned_json(app, named, (float)asked, chosen.len, changed);
+}
+
+<*
+ fix_strays: the Weights card's Fix strays over the wire. Every stray get_weights
+ lists goes back to the automatic weights, or where the binder made it, to the
+ mesh around it (`AppState.fix_strays`), as one undo step. Answers how many it
+ found, how many vertices moved, and the strays left in get_weights' words.
+*>
+fn String? tool_fix_strays(Object* args, void* user_data, DString* detail) @private
+{
+	AppState* app = (AppState*)user_data;
+	StrayIsland[] strays = app.stray_islands(mem);
+	defer free_strays(mem, strays);
+	usz fixed = app.fix_strays(strays);
+	app.refresh_ui();
+
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.appendf(`{"found":%d,"fixed":%d`, strays.len, fixed);
+	strays_json(app, &out);
+	out.append_char('}');
+	return out.copy_str(mem);
 }
 
 <*

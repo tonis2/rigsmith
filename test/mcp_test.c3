@@ -438,9 +438,9 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[68] tool_names @local = {
+String[69] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
-	"pin_weights",
+	"pin_weights", "fix_strays",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
 	"delete_clip", "apply_plan", "edit_rig", "set_secondary_motion", "build_body",
 	"undo", "redo", "play", "stop", "show_weights", "save_pack", "screenshot",
@@ -1114,7 +1114,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 48;
+const int DOCS_VERSION @local = 49;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -7898,4 +7898,29 @@ fn void get_weights_reads_vertex_rows() @test
 
 	test::@check(f.refuses_tool("get_weights", `{"vertices":[99]}`, "not a vertex of this mesh"),
 		"a vertex past the end is named back");
+}
+
+<*
+ fix_strays answers what it found and changed, and the strays left, in
+ get_weights' words — on the cube, none of either.
+
+ Re-introduce: leave `fix_strays` out of `install_tools`.
+*>
+fn void fix_strays_answers_what_it_did() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? fixed = f.call_tool("fix_strays", `{}`);
+	if (catch fixed)
+	{
+		test::@check(false, "fix_strays answers");
+		return;
+	}
+	defer fixed.free();
+	test::@check((fixed.get_int("found") ?? -1) == 0, "the cube has strays");
+	test::@check((fixed.get_int("fixed") ?? -1) == 0, "fix_strays changed vertices on a clean cube");
+	test::@check(fixed.get("strays")!!.get_len() == 0, "fix_strays lists strays left on a clean cube");
 }

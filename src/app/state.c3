@@ -1593,6 +1593,7 @@ fn void AppState.free_character_state(&self)
 	self.drop_stroke_memory();
 	self.drop_area_part();
 	self.drop_area_base();
+	self.drop_strays();
 	self.adjacency.free(mem);
 	self.uv_islands.free(mem);
 	self.drop_shell_riders();

@@ -18,7 +18,7 @@
  	rig.c3       edit_rig, as one undo step
  	body.c3      build_body
  	physics.c3   set_secondary_motion and bake_physics
- 	weights.c3   show_weights, get_weights, paint_weights, pin_weights, get_shells
+ 	weights.c3   show_weights, get_weights, paint_weights, pin_weights, fix_strays, get_shells
  	play.c3      play and stop, for the person at the screen
  	pack.c3      save_pack, the one tool that leaves a file behind
  	render.c3    render and set_camera
@@ -352,7 +352,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "get_weights",
-		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, and how much of the mesh no dot is near. Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. vertices adds each named vertex's row: the dots holding it, their shares, and whose edit wrote its pins. strays adds every island of a dot's weight cut off from the rest of it and far away — the spike a pose pulls out of the body — with the dots holding the mesh around it, which is who to give it back to with pin_weights. Reads the binder's own weights, so it answers whether or not a view is being shown.",
+		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, and how much of the mesh no dot is near. Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. vertices adds each named vertex's row: the dots holding it, their shares, and whose edit wrote its pins. strays adds every island of a dot's weight cut off from the rest of it and far away — the spike a pose pulls out of the body — with how far a pose can pull it (pull and gap, over the model's height) and the dots holding the mesh around it; fix_strays puts them back. Reads the binder's own weights, so it answers whether or not a view is being shown.",
 		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Dot to survey against its neighbours, by the name get_skeleton reports; bone_<id> works here, since a survey reads the bind rather than a clip. Omit for the ownership table alone."},"vertices":{"type":"array","items":{"type":"number"},"description":"Vertex indices whose rows to add: the dots holding each, strongest first, as the views show them."},"strays":{"type":"boolean","description":"Add the stray islands, farthest from their dot's region first. Default false."}}}`,
 		.handler = &tool_get_weights,
 		.user_data = app,
@@ -371,6 +371,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "Hand vertices to a dot outright. A pin states the share rather than correcting it, which is the one thing paint_weights cannot do: a correction is a multiplier over the binder's own weight, so where the binder gives a dot nothing, no multiplier reaches — and 'the wrong bone got none of this' is exactly what a pin answers. Applied after the corrections, so a pin is the last word on a vertex. The price is that it does not track the rig: move the dot and a correction re-derives underneath while a pin says what it said before. Vertices are selected the way paint_weights selects them. One call is one undo step; reset takes the whole layer off. The user draws these by hand with the lasso, shift+T.",
 		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Which dot the vertices are handed to, by the name get_skeleton reports."},"share":{"type":"number","description":"0 to 1: what fraction of each vertex this dot ends up holding. 1 is rigid — the vertex is wholly this dot's. 0 removes the pin. Default 1."},"owned_by":{"type":"string","description":"Only vertices this dot owns outright — the 'name' of a shared row from get_weights. Omit for every vertex the bounds match."},"at_least":{"type":"number","description":"Only where the pinned dot already holds at least this share."},"at_most":{"type":"number","description":"Only where it holds at most this share. Default 1."},"vertices":{"type":"array","items":{"type":"number"},"description":"Explicit vertex indices instead of a selection. For a caller that already knows which ones — get_weights reports them, and a script can compute them."},"exclusive":{"type":"boolean","description":"Also take those vertices off every other dot's pins, which is what 'these belong to this dot' means. Default true; false leaves rival pins and the vertex is divided between them."},"reset":{"type":"boolean","description":"Take every pin off the rig and ignore everything else. The corrections are a separate layer and are left alone."}},"required":["dot"]}`,
 		.handler = &tool_pin_weights,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "fix_strays",
+		.description = "Put back every stray get_weights lists — an island of a dot's weight cut off from the rest of it, which a pose pulls out of the body as a spike. Each goes back to the automatic weights, its pins cleared, since a stray is nearly always an edit's leftover; where the automatic weights made it, it takes the weights of the mesh around it instead. One call is one undo step. The Weights card's Find strays and Fix strays are the same two calls. Answers how many strays it found, how many vertices it changed, and the strays left, as get_weights lists them.",
+		.input_schema = `{"type":"object","properties":{}}`,
+		.handler = &tool_fix_strays,
 		.user_data = app,
 		.hidden = true,
 	});

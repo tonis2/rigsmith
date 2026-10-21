@@ -17221,14 +17221,15 @@ fn void the_n_panel_starts_closed() @test
 }
 
 <*
- The Weights card's "Under the cursor" names the joints holding the face under
- the pointer, each with its share, and a click on one selects it — the way to
- learn which joint a stray spike rides, and to pick it for the brush. Head-on,
- the middle of the cube's front face is held by both the hips and the chest.
+ The Weights card finds strays and fixes them. On a clean cube Find strays says
+ there are none and offers no fix; with the lowest corner pinned across to the
+ chest and listed, the card names it, Fix strays takes it off the chest, and
+ the card says nothing is left.
 
- Re-introduce: drop the `probe_weights_at` call from the viewport's hover branch.
+ Re-introduce: in `AppState.fix_found_strays`, skip the survey after the fix,
+ and the card goes back to its hint instead of saying none are left.
 *>
-fn void the_card_names_the_joints_under_the_cursor() @test
+fn void the_card_finds_and_fixes_strays() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -17238,35 +17239,42 @@ fn void the_card_names_the_joints_under_the_cursor() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("the Weights card names the joints under the cursor, and a click selects one");
+	io::printn("the Weights card finds strays and fixes them");
 	fixture.reset();
 	uint chest = fixture.two_dots();
-	uint hips = fixture.app.doc.dots[0].id;
-	fixture.app.camera.snapping = false;
-	fixture.app.camera.yaw = 0.0f;
-	fixture.app.camera.pitch = 0.0f;
-	fixture.feed(VIEWPORT_CENTER);
 	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
 	test::@check(fixture.app.weights_card_open(), "the Weights tab did not open the card");
-	test::@check(!fixture.in_tree(crig::weights_probe_ids[0]), "the card named joints before the pointer was on the mesh");
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card offered a fix before looking");
 
-	fixture.feed(VIEWPORT_CENTER + (Vec2){ 6, 0 });
-	fixture.feed(VIEWPORT_CENTER + (Vec2){ 6, 0 });
-	usz named = 0;
-	Vec2 hips_button;
-	for (usz i = 0; i < crig::SKIN_INFLUENCES; i++)
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_STRAYS_ID)!!);
+	String said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No strays"), "a clean cube reads \"%s\"", said);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card offered to fix nothing");
+
+	// The cube is too small to hold a stray of its own, so one is listed by hand.
+	uint lowest = 0;
+	foreach (v, position : fixture.app.geometry.positions)
 	{
-		Element*? found = fixture.ui.find_id(crig::weights_probe_ids[i]);
-		if (catch found) break;
-		String label = found.widget_as(Button).label;
-		test::@check(label.contains("%"), "the button \"%s\" gives no share", label);
-		if (label.starts_with("hips ")) hips_button = fixture.center_of(crig::weights_probe_ids[i])!!;
-		named++;
+		if (position.y < fixture.app.geometry.positions[lowest].y) lowest = (uint)v;
 	}
-	test::@check(named == 2, "the card named %d joints under the middle of the front face, not the hips and the chest", named);
-	test::@check(hips_button != (Vec2){}, "the card did not name the hips");
-	test::eq(fixture.app.selected, chest);
+	uint[1] corner = { lowest };
+	fixture.app.pin_vertices(corner[..], chest, 1.0f);
+	fixture.app.drop_strays();
+	fixture.app.strays = alloc::new_array(mem, crig::StrayIsland, 1);
+	fixture.app.strays[0] = { .dot = chest, .vertices = alloc::new_array(mem, uint, 1) };
+	fixture.app.strays[0].vertices[0] = lowest;
+	fixture.app.strays_checked = true;
+	fixture.app.strays_revision = fixture.app.undo_stack.revision;
+	fixture.app.strays_generation++;
+	fixture.feed(VIEWPORT_CENTER);
+	said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("chest 1 vertex"), "the listed stray reads \"%s\"", said);
 
-	fixture.click(hips_button);
-	test::eq(fixture.app.selected, hips);
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_STRAYS_ID)!!);
+	float held = 0.0f;
+	foreach (pin : fixture.app.doc.pins.array_view()) if (pin.vertex == lowest && pin.dot_id == chest) held = pin.share;
+	test::@check(held < 0.99f, "the fixed corner is still wholly the chest's");
+	said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No strays"), "after the fix the card reads \"%s\"", said);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card still offers a fix");
 }

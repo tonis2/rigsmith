@@ -378,6 +378,7 @@ fn void AppState.rebind_tints(&self)
 	}
 	self.overlay_area_tints(&view, painted);
 	self.overlay_limb_tints(&view, painted);
+	self.overlay_stray_tints();
 }
 
 <*
@@ -656,6 +657,13 @@ const float STRAY_SHARE = 0.25f;
 // height, an island of it has to sit to be a stray rather than its own blend.
 const float STRAY_GAP = 0.1f;
 
+// How far a pose has to be able to pull an island off the mesh around it, as a
+// fraction of the model's height, for it to be a stray — see `pull_apart`.
+const float STRAY_PULL = 0.05f;
+
+// The colour a stray is marked in while the Weights card lists it.
+const Vec3 STRAY_RED = { 0.95, 0.1, 0.2 };
+
 <*
  A patch of mesh a joint holds that is cut off from the rest of what it holds,
  and far from it — three vertices of a tail root given wholly to a knee, which
@@ -668,6 +676,7 @@ struct StrayIsland
 	Vec3 centre;                  // at rest
 	float peak;                   // the joint's largest share in it
 	float gap;                    // nearest rest distance to the joint's own region, over the model's height
+	float pull;                   // how far a pose can pull it off the mesh around it, over the model's height
 	uint[SKIN_INFLUENCES] around; // the joints holding the mesh around it, strongest first
 	usz around_count;
 }
@@ -679,14 +688,38 @@ fn void free_strays(Allocator allocator, StrayIsland[] strays)
 }
 
 <*
- Every stray in the bind as shown, farthest first.
+ How far a pose can pull a point held by `row` away from the same point held
+ by `other`: per joint, what its whole limb holds of the one less the other,
+ times the point's distance from the joint — what turning that joint alone
+ moves the two apart by, per radian. The most of any joint.
+
+ @param limb : `Scratch, one per joint.`
+*>
+fn float pull_apart(rig::Skeleton* skeleton, float[] row, float[] other, Vec3 point, float[] limb)
+{
+	limb[..] = 0.0f;
+	foreach (k, weight : row)
+	{
+		float apart = weight - other[k];
+		if (apart == 0.0f) continue;
+		for (int j = (int)k; j >= 0; j = skeleton.parents[(usz)j]) limb[(usz)j] += apart;
+	}
+	float most = 0.0f;
+	foreach (j, apart : limb) most = math::max(most, math::abs(apart) * (point - skeleton.joints[j]).length());
+	return most;
+}
+
+<*
+ Every stray in the bind as shown, the ones a pose pulls furthest first.
 
  Per joint, the mesh it holds at least `STRAY_SHARE` of, split into connected
  islands over the welded surface. The largest is its region; a smaller island
  is a stray when the mesh around it is someone else's — not a whole piece of
- its own — and it sits at least `STRAY_GAP` of the model's height from the
- region at rest. A joint's blend into its neighbours stays beside its region,
- so what this finds is what a pose pulls out of the body.
+ its own — it sits at least `STRAY_GAP` of the model's height from the region
+ at rest, and a pose can pull it at least `STRAY_PULL` off the mesh around it
+ (`pull_apart`). A joint's blend into its neighbours stays beside its region,
+ and a blotch the mesh around moves with is no spike, so what this finds is
+ what a pose pulls out of the body.
 
  The caller owns the result and frees it with `free_strays`.
 *>
@@ -724,8 +757,12 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 
 	int[] island = alloc::new_array(mem, int, (sz)classes);
 	defer alloc::free(mem, island);
+	float[] fill = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, fill);
 	float[] beside = alloc::new_array(mem, float, (sz)bones);
 	defer alloc::free(mem, beside);
+	float[] limb = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, limb);
 	List{uint} flood;
 	flood.init(mem);
 	defer flood.free();
@@ -779,7 +816,7 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 			float peak = 0.0f;
 			Vec3 middle = {};
 			usz members = 0;
-			beside[..] = 0.0f;
+			fill[..] = 0.0f;
 			for (usz c = 0; c < classes; c++)
 			{
 				if (island[c] != k) continue;
@@ -790,13 +827,28 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 				{
 					if (island[n] == k) continue;
 					if (share[(usz)n * bones + b] < AREA_LEAK_FLOOR) bordered = true;
-					for (usz j = 0; j < bones; j++) if (j != b) beside[j] += share[(usz)n * bones + j];
+					for (usz j = 0; j < bones; j++) fill[j] += share[(usz)n * bones + j];
 				}
 				foreach (r : region) nearest = math::min(nearest, (point[r] - point[c]).length());
 			}
 			if (!bordered || nearest < STRAY_GAP * height) continue;
 
-			StrayIsland stray = { .dot = view.dot_ids[b], .centre = middle / (float)members, .peak = peak, .gap = nearest / height };
+			// The mesh around it, as one row: what the island moves with once fixed.
+			float total = 0.0f;
+			foreach (weight : fill) total += weight;
+			if (total <= 0.0f) continue;
+			foreach (&weight : fill) *weight /= total;
+			float pull = 0.0f;
+			for (usz c = 0; c < classes; c++)
+			{
+				if (island[c] == k) pull = math::max(pull, pull_apart(&view.skeleton, share[c * bones:bones], fill, point[c], limb));
+			}
+			if (pull < STRAY_PULL * height) continue;
+
+			StrayIsland stray = { .dot = view.dot_ids[b], .centre = middle / (float)members, .peak = peak,
+				.gap = nearest / height, .pull = pull / height };
+			beside[..] = fill[..];
+			beside[b] = 0.0f;
 			stray.around_count = strongest_shares(beside, view.dot_ids, stray.around[..], beside_shares[..], 0.0f);
 			usz held = 0;
 			for (usz v = 0; v < count; v++) if (island[around.class_of[v]] == k) held++;
@@ -812,11 +864,239 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 	for (usz i = 0; i + 1 < strays.len; i++)
 	{
 		usz top = i;
-		for (usz j = i + 1; j < strays.len; j++) if (strays[j].gap > strays[top].gap) top = j;
+		for (usz j = i + 1; j < strays.len; j++) if (strays[j].pull > strays[top].pull) top = j;
 		if (top == i) continue;
 		StrayIsland swap = strays[i];
 		strays[i] = strays[top];
 		strays[top] = swap;
 	}
 	return strays;
+}
+
+<*
+ Put strays back where they belong, as one undo step.
+
+ A stray is nearly always an edit's leftover — a joint taken off a row and the
+ rest handed to a sliver of another — so its vertices go back to the automatic
+ weights: their pins go, and they follow the rig again. Where the automatic row
+ holds the stray's joint itself, the binder made the stray and that would put it
+ back; those take the rows of the surface around the strays instead, averaged
+ ring by ring inward, stated as pins and the stray's joint's work
+ (`VertexPin.by`).
+
+ @return `How many vertices it restated; 0 when nothing changed.`
+*>
+fn usz AppState.fix_strays(&self, StrayIsland[] strays)
+{
+	usz count = self.geometry.positions.len;
+	rig::MeshAdjacency* around = self.adjacency_for();
+	if (strays.len == 0 || count == 0 || around.vertices() != count || !around.usable()) return 0;
+
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+	usz bones = view.len();
+	float[] painted = self.painted_bind(mem, &view);
+	defer if (painted.len > 0) alloc::free(mem, painted);
+	if (bones == 0 || painted.len < count * bones) return 0;
+
+	// The automatic row: the base with the multiplier paint, and no pins.
+	float[] base = self.base_bind_for(&view);
+	if (base.len < count * bones) return 0;
+	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
+	defer alloc::free(mem, automatic);
+	automatic[..] = base[:count * bones];
+	paint_over(automatic, bones, view.paint);
+
+	// Whose stray each weld is, 0 for none: the first island to name it. And
+	// whether the automatic row holds one of the joints that name it.
+	usz classes = around.classes();
+	uint[] owner = alloc::new_array(mem, uint, (sz)classes);
+	defer alloc::free(mem, owner);
+	bool[] binder_made = alloc::new_array(mem, bool, (sz)classes);
+	defer alloc::free(mem, binder_made);
+	foreach (stray : strays)
+	{
+		sz joint = view.joint_of(stray.dot);
+		foreach (v : stray.vertices)
+		{
+			if ((usz)v >= count) continue;
+			uint c = around.class_of[v];
+			if (owner[c] == 0) owner[c] = stray.dot;
+			usz at = (usz)around.first[c] * bones;
+			float sum = 0.0f;
+			for (usz b = 0; b < bones; b++) sum += automatic[at + b];
+			if (joint >= 0 && sum > 0.0f && automatic[at + (usz)joint] >= STRAY_SHARE * sum) binder_made[c] = true;
+		}
+	}
+
+	// Every weld's row as shares: as shown off the strays, automatic on the ones
+	// that go back to it, and the rest filled in below.
+	float[] fill = alloc::new_array(mem, float, (sz)(classes * bones));
+	defer alloc::free(mem, fill);
+	bool[] known = alloc::new_array(mem, bool, (sz)classes);
+	defer alloc::free(mem, known);
+	bool[] back = alloc::new_array(mem, bool, (sz)classes);
+	defer alloc::free(mem, back);
+	List{uint} ring;
+	ring.init(mem);
+	defer ring.free();
+	for (usz c = 0; c < classes; c++)
+	{
+		usz at = (usz)around.first[c] * bones;
+		float[] from = owner[c] != 0 ? automatic : painted;
+		float sum = 0.0f;
+		for (usz b = 0; b < bones; b++) sum += from[at + b];
+		if (sum > 0.0f) for (usz b = 0; b < bones; b++) fill[c * bones + b] = from[at + b] / sum;
+		if (owner[c] != 0)
+		{
+			back[c] = sum > 0.0f && !binder_made[c];
+			if (!back[c])
+			{
+				fill[c * bones:bones] = 0.0f;
+				ring.push((uint)c);
+				continue;
+			}
+		}
+		known[c] = sum > 0.0f;
+	}
+
+	// A ring is the strays touching something known; each reads only what was
+	// known before it, so the order inside a ring does not matter.
+	List{uint} filled;
+	filled.init(mem);
+	defer filled.free();
+	while (ring.len() > 0)
+	{
+		filled.clear();
+		foreach (c : ring)
+		{
+			float[] row = fill[(usz)c * bones:bones];
+			usz rows = 0;
+			foreach (n : around.around(c))
+			{
+				if (!known[n]) continue;
+				for (usz b = 0; b < bones; b++) row[b] += fill[(usz)n * bones + b];
+				rows++;
+			}
+			if (rows == 0) continue;
+			foreach (&weight : row) *weight /= (float)rows;
+			filled.push(c);
+		}
+		if (filled.len() == 0) break;
+		foreach (c : filled) known[c] = true;
+		sz kept = 0;
+		foreach (c : ring) if (!known[c]) ring[kept++] = c;
+		while (ring.len() > kept) ring.pop()!!;
+	}
+
+	PinDraft draft;
+	defer draft.free();
+	draft.init(count);
+	uint[SKIN_INFLUENCES] dots;
+	float[SKIN_INFLUENCES] shares;
+	usz stated = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		uint c = around.class_of[v];
+		if (owner[c] == 0 || !known[c]) continue;
+		if (back[c])
+		{
+			draft.state((uint)v, {}, {});
+			stated++;
+			continue;
+		}
+		usz kept = top_row(fill[(usz)c * bones:bones], view.dot_ids, -1, dots[..], shares[..]);
+		if (kept == 0) continue;
+		draft.state((uint)v, dots[:kept], shares[:kept], owner[c]);
+		stated++;
+	}
+	if (stated == 0 || self.lay_draft(&draft) == 0) return 0;
+	if (self.skinned()) self.refresh_pose_display();
+	return stated;
+}
+
+<*
+ Survey the bind for strays (`stray_islands`) and keep what it found for the
+ Weights card, which lists them and marks them on the mesh until the next edit.
+
+ @return `How many strays there are.`
+*>
+fn usz AppState.find_strays(&self)
+{
+	self.drop_strays();
+	self.strays = self.stray_islands(mem);
+	self.strays_checked = true;
+	self.strays_revision = self.undo_stack.revision;
+	self.strays_generation = next_generation();
+	if (self.tint_mode != OFF)
+	{
+		self.weights_stale = true;
+		self.weights_due = 0.0f;
+	}
+	return self.strays.len;
+}
+
+fn void AppState.drop_strays(&self)
+{
+	free_strays(mem, self.strays);
+	self.strays = {};
+	self.strays_checked = false;
+}
+
+// Whether the last survey still describes the bind: nothing has been edited since.
+fn bool AppState.strays_current(&self) => self.strays_checked && self.strays_revision == self.undo_stack.revision;
+
+// How many vertices the last survey's strays hold together.
+fn usz AppState.stray_vertices(&self)
+{
+	usz held = 0;
+	foreach (stray : self.strays) held += stray.vertices.len;
+	return held;
+}
+
+<*
+ Fix every stray the last survey found (`fix_strays`), then survey again so the
+ card says what is left.
+
+ @return `How many vertices were restated.`
+*>
+fn usz AppState.fix_found_strays(&self)
+{
+	if (!self.strays_current() || self.strays.len == 0)
+	{
+		self.@notice("find strays first");
+		return 0;
+	}
+	usz fixed = self.fix_strays(self.strays);
+	usz left = self.find_strays();
+	if (fixed == 0)
+	{
+		self.@notice("nothing to change — the strays are the automatic weights'");
+	}
+	else if (left == 0)
+	{
+		self.@notice("fixed %d stray vertices", fixed);
+	}
+	else
+	{
+		self.@notice("fixed %d stray vertices · %d %s left", fixed, left, left == 1 ? "stray" : "strays");
+	}
+	return fixed;
+}
+
+<*
+ While the Weights card lists strays, mark their vertices in `STRAY_RED` on
+ whichever view is up, so the few vertices of a spike can be found on the body.
+*>
+fn void AppState.overlay_stray_tints(&self)
+{
+	usz count = self.geometry.positions.len;
+	if (!self.strays_current() || self.tints.len != count) return;
+	uint red = rgb(STRAY_RED.x, STRAY_RED.y, STRAY_RED.z);
+	foreach (stray : self.strays)
+	{
+		foreach (v : stray.vertices) if ((usz)v < count) self.tints[v] = red;
+	}
 }

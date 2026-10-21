@@ -3852,103 +3852,6 @@ fn void an_apply_does_not_hand_a_row_to_a_sliver() @test
 }
 
 <*
- "Under the cursor" reads the face nearest the eye under the pixel, and blends
- its corners' rows by where the pixel landed: a quad whose corners are A's and
- C's, with B's quad behind it, reads as A and C in proportion, never B. A pixel
- over nothing leaves the readout as it was.
-
- Re-introduce: in `AppState.probe_weights`, keep the last face the pixel is
- inside rather than the nearest; or read only the nearest corner in `probe_row`.
-*>
-fn void the_probe_reads_the_face_under_the_cursor() @test
-{
-	List{Vec3} positions;
-	positions.init(mem);
-	defer positions.free();
-	List{uint} indices;
-	indices.init(mem);
-	defer indices.free();
-	// Front corners 0 (-1,-1), 1 (1,-1), 2 (-1,1), 3 (1,1); the back quad is 4-7.
-	grid_into(&positions, &indices, { 0, 0, 0.05f }, 2.0f, 2);
-	grid_into(&positions, &indices, { 0, 0, -0.05f }, 2.0f, 2);
-
-	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
-	defer app.free();
-	uint a = app.doc.add_dot({ -1, -1, 0.5f }, "A");
-	uint b = app.doc.add_dot({ 0, 0, -0.5f }, "B");
-	uint c = app.doc.add_dot({ 1, 1, 0.5f }, "C");
-	uint[1] corner = { 0 };
-	uint[3] others = { 1, 2, 3 };
-	uint[4] back = { 4, 5, 6, 7 };
-	app.pin_vertices(corner[..], a, 1.0f);
-	app.pin_vertices(others[..], c, 1.0f);
-	app.pin_vertices(back[..], b, 1.0f);
-	app.camera.target = { 0, 0, 0 };
-	app.camera.distance = 5.0f;
-	app.camera.yaw = 0.0f;
-	app.camera.pitch = 0.0f;
-
-	Vec2 viewport = { 800, 600 };
-	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
-	Vec3 eye = app.camera.eye();
-	uint[crig::SKIN_INFLUENCES] dots;
-	float[crig::SKIN_INFLUENCES] shares;
-	test::eq(app.probe_row(dots[..], shares[..]), (usz)0);
-
-	// Inside 0-1-2 at λ = 0.55, 0.25, 0.2: A holds 0.55 of it, C the rest.
-	Vec2 inside = crig::project(vp, { -0.5f, -0.6f, 0.05f }, viewport)!!;
-	test::@check(app.probe_weights(vp, viewport, eye, inside), "the probe found nothing under the quad");
-	foreach (v : app.weight_probe.corners) test::@check(v < 4, "the probe read vertex %d of the quad behind", v);
-	test::eq(app.probe_row(dots[..], shares[..]), (usz)2);
-	test::@check(dots[0] == a && dots[1] == c, "the probe named %d and %d, not A and C", dots[0], dots[1]);
-	test::@check(math::abs(shares[0] - 0.55f) < 0.02f && math::abs(shares[1] - 0.45f) < 0.02f,
-		"the probe read %f and %f, not 0.55 and 0.45", shares[0], shares[1]);
-
-	// The same spot again says nothing new; a pixel over nothing keeps it.
-	uint was = app.weight_probe.generation;
-	test::@check(!app.probe_weights(vp, viewport, eye, inside), "probing the same spot moved the readout");
-	test::@check(!app.probe_weights(vp, viewport, eye, { 2, 2 }), "a pixel over nothing moved the readout");
-	test::eq(app.weight_probe.generation, was);
-	test::eq(app.probe_row(dots[..], shares[..]), (usz)2);
-}
-
-<*
- Under a parked clip the probe reads the posed body: at the pixel a bend moved
- a vertex to, the face found has that vertex as its corner.
-
- Re-introduce: read `geometry.positions` rather than `shown_position` in
- `AppState.probe_weights`.
-*>
-fn void the_probe_reads_the_posed_body() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-	test::@check(park_bent_knee(&app) != 0, "the fixture could not key a bent knee");
-	test::@check(app.posed_surface_shown(), "the parked clip put no posed surface on screen");
-
-	Vec2 viewport = { 800, 600 };
-	Matrix4f vp = app.camera.view_projection(viewport.x / viewport.y);
-	Vec3 eye = app.camera.eye();
-	usz count = app.geometry.positions.len;
-	usz chosen = count;
-	float nearest = float::max;
-	for (usz v = 0; v < count; v++)
-	{
-		Vec3 posed = app.shown_position(v);
-		if ((posed - app.geometry.positions[v]).length() < 0.2f) continue;
-		float gap = (posed - eye).length();
-		if (gap < nearest) { nearest = gap; chosen = v; }
-	}
-	test::@check(chosen < count, "the bend moved no vertex of the cube");
-
-	Vec2 posed_pixel = crig::project(vp, app.shown_position(chosen), viewport)!!;
-	test::@check(app.probe_weights(vp, viewport, eye, posed_pixel), "the probe found nothing at the posed vertex");
-	float held = 0.0f;
-	foreach (k, v : app.weight_probe.corners) if (v == (uint)chosen) held = app.weight_probe.lambda[k];
-	test::@check(held > 0.9f, "the face under the posed vertex's pixel gives it %f", held);
-}
-
-<*
  A stray is an island of a joint's weight cut off from the rest of it and far
  away, inside someone else's mesh: on a grid B holds, with K holding its bottom
  two rows and a separate quad of its own, nothing is a stray — until one vertex
@@ -3994,4 +3897,145 @@ fn void a_stray_is_a_far_island_of_a_joints_weight() @test
 	test::@check(strays[0].vertices.len == 1 && strays[0].vertices[0] == 76, "the stray is not the vertex given away");
 	test::@check(strays[0].around_count > 0 && strays[0].around[0] == b, "B does not hold the mesh around it");
 	test::@check(math::abs(strays[0].gap - 0.875f) < 0.01f, "the stray sits %f of the height from K's rows, not 0.875", strays[0].gap);
+}
+
+// A vertex's automatic share for a dot: the base with the paint over it, no pins.
+fn float automatic_share(crig::AppState* app, uint vertex, uint dot)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	usz bones = view.len();
+	float[] base = app.base_bind_for(&view);
+	sz joint = view.joint_of(dot);
+	if (joint < 0 || base.len < ((usz)vertex + 1) * bones) return -1.0f;
+	float sum = 0.0f;
+	for (usz b = 0; b < bones; b++) sum += base[(usz)vertex * bones + b];
+	return sum > 0.0f ? base[(usz)vertex * bones + (usz)joint] / sum : 0.0f;
+}
+
+fn usz pins_on(crig::AppState* app, uint vertex)
+{
+	usz held = 0;
+	foreach (pin : app.doc.pins.array_view()) if (pin.vertex == vertex) held++;
+	return held;
+}
+
+<*
+ Fix strays puts a stray back on the automatic weights: on a grid pinned to B
+ and K at its bottom rows, a top vertex pinned to K is a stray. Fixed, its pin is
+ gone and it is mostly B's again, as the binder has it; a second survey finds
+ nothing, and one undo brings the stray back.
+
+ Re-introduce: in `AppState.fix_strays`, fill every stray from the mesh around
+ it, and the vertex keeps a pin.
+*>
+fn void fixing_a_stray_gives_it_back_to_the_automatic_weights() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	app.pin_vertices(every[18..], b, 1.0f);
+	app.pin_vertices(every[:18], k, 1.0f);
+	test::@check(automatic_share(&app, 76, k) < crig::STRAY_SHARE, "the binder gives K %f of the top", automatic_share(&app, 76, k));
+
+	uint[1] top = { 76 };
+	app.pin_vertices(top[..], k, 1.0f);
+	test::eq(app.find_strays(), (usz)1);
+	usz fixed = app.fix_found_strays();
+	test::eq(fixed, (usz)1);
+	test::eq(pins_on(&app, 76), (usz)0);
+	test::@check(math::abs(share_of(&app, 76, k) - automatic_share(&app, 76, k)) < 1.0e-4f,
+		"the fixed vertex holds K %f, not the binder's %f", share_of(&app, 76, k), automatic_share(&app, 76, k));
+	test::@check(app.strays_current() && app.strays.len == 0, "the survey after the fix still finds strays");
+	test::@check(pins_on(&app, 0) == 1 && pins_on(&app, 75) == 1, "the fix touched rows around the stray");
+
+	test::@check(app.undo(), "nothing to undo");
+	test::@check(share_of(&app, 76, k) > 0.99f, "undo did not bring the stray back");
+	test::@check(!app.strays_current(), "the survey outlived the undo");
+}
+
+<*
+ A stray the automatic weights made itself — the binder's row holds the stray's
+ joint — would come straight back, so it takes the weights of the mesh around
+ it instead, stated as pins and the stray's joint's work.
+
+ Re-introduce: in `AppState.fix_strays`, send every stray back to the automatic
+ weights.
+*>
+fn void a_stray_the_binder_made_takes_the_mesh_around_it() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	// The bottom middle vertex, which the binder gives K, shown as everyone else's B.
+	app.pin_vertices(every, b, 1.0f);
+	test::@check(automatic_share(&app, 4, k) >= crig::STRAY_SHARE, "the binder gives K only %f of its own tip", automatic_share(&app, 4, k));
+
+	uint[1] tip = { 4 };
+	app.pin_vertices(tip[..], k, 1.0f);
+	crig::StrayIsland[1] strays = {{ .dot = k, .vertices = tip[..] }};
+	test::eq(app.fix_strays(strays[..]), (usz)1);
+	test::@check(share_of(&app, 4, b) > 0.99f, "the vertex did not take the B around it: %f", share_of(&app, 4, b));
+	bool by_k = false;
+	foreach (pin : app.doc.pins.array_view()) if (pin.vertex == 4) by_k = pin.by == k;
+	test::@check(by_k, "the fixed row is not K's work");
+}
+
+<*
+ An island a pose cannot pull off the mesh around it is no spike: with K a child
+ of B and standing on the top vertex given to it, turning K turns that vertex in
+ place and turning B carries it with everything else, so nothing is listed.
+
+ Re-introduce: drop the `STRAY_PULL` check in `AppState.stray_islands`.
+*>
+fn void an_island_a_pose_cannot_pull_out_is_not_a_stray() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, 1, 0 }, "K");
+	app.doc.connect(b, k);
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	app.pin_vertices(every[18..], b, 1.0f);
+	app.pin_vertices(every[:18], k, 1.0f);
+	uint[1] top = { 76 };
+	app.pin_vertices(top[..], k, 1.0f);
+
+	crig::StrayIsland[] strays = app.stray_islands(mem);
+	defer crig::free_strays(mem, strays);
+	test::@check(strays.len == 0, "%d strays where K's island turns in place", strays.len);
 }

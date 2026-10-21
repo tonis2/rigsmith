@@ -66,10 +66,9 @@ const String WEIGHTS_APPLY_ID = "weights-apply";
 const String WEIGHTS_RESET_ID = "weights-reset";
 const String WEIGHTS_READOUT_ID = "weights-readout";
 const String WEIGHTS_KNUCKLE_ID = "weights-knuckle";
-// "Under the cursor": one button per joint holding the face under the pointer.
-String[SKIN_INFLUENCES] weights_probe_ids = { "weights-probe-0", "weights-probe-1", "weights-probe-2", "weights-probe-3" };
-OnClick[SKIN_INFLUENCES] weights_probe_picks = { &weights_probe_0, &weights_probe_1, &weights_probe_2, &weights_probe_3 };
-const usz PROBE_TEXT = 48;
+const String WEIGHTS_FIND_STRAYS_ID = "weights-find-strays";
+const String WEIGHTS_FIX_STRAYS_ID = "weights-fix-strays";
+const String WEIGHTS_STRAYS_ID = "weights-strays";
 
 // The Part selector's rows, in `AreaPart` order.
 String[3] weights_part_labels = { "Own bone", "With children", "UV islands" };
@@ -282,7 +281,8 @@ struct JointPanelSnapshot
 	bool areaing;
 	bool brushing;
 	uint area_generation;
-	uint probe_generation;
+	uint strays_generation;
+	bool strays_current;
 }
 
 fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
@@ -322,7 +322,8 @@ fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
 		.areaing = app.areaing,
 		.brushing = app.brushing,
 		.area_generation = app.area_generation,
-		.probe_generation = app.weight_probe.generation,
+		.strays_generation = app.strays_generation,
+		.strays_current = app.strays_current(),
 	};
 }
 
@@ -356,7 +357,8 @@ fn bool JointPanelSnapshot.differs(self, JointPanelSnapshot other)
 		|| self.areaing != other.areaing
 		|| self.brushing != other.brushing
 		|| self.area_generation != other.area_generation
-		|| self.probe_generation != other.probe_generation;
+		|| self.strays_generation != other.strays_generation
+		|| self.strays_current != other.strays_current;
 }
 
 struct JointPanel (Widget)
@@ -365,7 +367,7 @@ struct JointPanel (Widget)
 	char[320] readout; // the Weights card's readout line, held for the label to borrow
 	char[96] follow_note; // the bone-axes repair line and its button, likewise
 	char[96] follow_label;
-	char[SKIN_INFLUENCES * PROBE_TEXT] probe_text; // "Under the cursor"'s buttons, likewise
+	char[320] strays_text; // the Weights card's stray line, likewise
 }
 
 fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
@@ -886,33 +888,6 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													.style = PHYSICS_SLIDER_STYLE,
 												}).with_id(WEIGHTS_KNUCKLE_ID);
 											}
-											// Which joints move the spot under the pointer, each a button that
-											// selects it: the way to name a joint a stray spike rides.
-											@node((Label) { .text = "Under the cursor", .size = 12.0f, .color = TEXT_DIM });
-											uint[SKIN_INFLUENCES] probe_dots;
-											float[SKIN_INFLUENCES] probe_shares;
-											usz probed = app.probe_row(probe_dots[..], probe_shares[..]);
-											if (probed == 0)
-											{
-												@node((Label) { .text = "Point at the mesh to see which joints move it.",
-													.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
-											}
-											else
-											{
-												@tree((Wrap) { .gap_x = JOINT_PANEL_GAP, .gap_y = 4, .cross_align = CENTER })
-												{
-													for (usz i = 0; i < probed; i++)
-													{
-														Dot* holder = app.doc.find(probe_dots[i]);
-														String text = string::bformat(self.probe_text[i * PROBE_TEXT:PROBE_TEXT], "%s %d%%",
-															holder && holder.name.len > 0 ? holder.name : "unnamed",
-															(int)math::round(probe_shares[i] * 100.0f));
-														OnClick pick = weights_probe_picks[i];
-														@node(probe_dots[i] == app.selected ? accent_button(text, pick) : panel_button(text, pick))
-															.with_id(weights_probe_ids[i]);
-													}
-												};
-											}
 											// Painting by hand lives here too, beside the parts it corrects.
 											@node((Label) { .text = "Brush", .size = 12.0f, .color = TEXT_DIM });
 											@node(app.brushing ? accent_button("Stop painting", &menu_weight_brush)
@@ -920,6 +895,19 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 											@node((Label) { .text = "Shift+W · drag the mesh to paint, ctrl-drag takes off, hold F to size",
 												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
 										}
+										// The whole model's, not the joint's: weight a joint holds far
+										// from the rest of it, which a pose pulls out as a spike.
+										@node((Label) { .text = "Strays", .size = 12.0f, .color = TEXT_DIM });
+										@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+										{
+											@node(panel_button("Find strays", &weights_find_strays_pressed)).with_id(WEIGHTS_FIND_STRAYS_ID);
+											if (app.strays_current() && app.strays.len > 0)
+											{
+												@node(accent_button("Fix strays", &weights_fix_strays_pressed)).with_id(WEIGHTS_FIX_STRAYS_ID);
+											}
+										};
+										@node((Label) { .text = strays_readout(app, &self.strays_text),
+											.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
 									};
 								};
 								weights_section.with_id(WEIGHTS_SECTION_ID);
@@ -1571,7 +1559,7 @@ fn void joint_limits_reset(Ui* ui) @private
 // What the pending part holds, or how to pick one.
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
-	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner, or under the cursor below.";
+	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner.";
 	if (!app.areaing || !app.area_pending()) return "Choose a part above, or paint by hand. Applying a part replaces this joint's weights, brush strokes too.";
 	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
@@ -1593,6 +1581,39 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 			held, islands, islands == 1 ? "" : "s", percent, edge);
 	}
 	return string::bformat(buffer, "Showing what Apply would give it: %d vertices (%d%% of the mesh) · %s", held, percent, edge);
+}
+
+// How many joints the stray line names before it only counts.
+const usz STRAYS_NAMED = 4;
+
+// What the last stray survey found, one entry per joint, or what a survey looks for.
+fn String strays_readout(AppState* app, char[] buffer) @private
+{
+	if (!app.strays_current()) return "Weight a joint holds far from the rest of it, which a pose pulls out of the body as a spike.";
+	if (app.strays.len == 0) return "No strays: every joint's weight stays with the rest of it.";
+	DString text = dstring::temp();
+	usz joints = 0;
+	usz unnamed = 0;
+	foreach (usz i, stray : app.strays)
+	{
+		bool listed = false;
+		for (usz j = 0; j < i; j++) if (app.strays[j].dot == stray.dot) listed = true;
+		if (listed) continue;
+		// The ones a pose pulls furthest come first; the rest are counted.
+		if (++joints > STRAYS_NAMED)
+		{
+			unnamed++;
+			continue;
+		}
+		usz held = 0;
+		foreach (other : app.strays[i..]) if (other.dot == stray.dot) held += other.vertices.len;
+		Dot* dot = app.doc.find(stray.dot);
+		if (text.len() > 0) text.append(" · ");
+		text.appendf("%s %d %s", dot && dot.name.len > 0 ? dot.name : "unnamed", held, held == 1 ? "vertex" : "vertices");
+	}
+	if (unnamed > 0) text.appendf(" · %d more %s", unnamed, unnamed == 1 ? "joint" : "joints");
+	text.append(" — marked red. Fix strays hands them back to the automatic weights, or to the mesh around them.");
+	return string::bformat(buffer, "%s", text.str_view());
 }
 
 fn void weights_section_changed(Ui* ui, bool expanded) @private
@@ -1743,23 +1764,21 @@ fn void weights_apply_pressed(Ui* ui) @private
 	refresh_joint_panel(ui);
 }
 
-// "Under the cursor": select the joint a button names. The probe has not moved
-// since the card drew it — the pointer is on the card, not the mesh.
-fn void weights_probe_pick(Ui* ui, usz slot) @private
+fn void weights_find_strays_pressed(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	uint[SKIN_INFLUENCES] dots;
-	float[SKIN_INFLUENCES] shares;
-	if (slot >= app.probe_row(dots[..], shares[..])) return;
-	app.select(dots[slot]);
+	app.find_strays();
 	app.refresh_ui();
 	refresh_joint_panel(ui);
 }
 
-fn void weights_probe_0(Ui* ui) @private => weights_probe_pick(ui, 0);
-fn void weights_probe_1(Ui* ui) @private => weights_probe_pick(ui, 1);
-fn void weights_probe_2(Ui* ui) @private => weights_probe_pick(ui, 2);
-fn void weights_probe_3(Ui* ui) @private => weights_probe_pick(ui, 3);
+fn void weights_fix_strays_pressed(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.fix_found_strays();
+	app.refresh_ui();
+	refresh_joint_panel(ui);
+}
 
 fn void weights_reset_pressed(Ui* ui) @private
 {
