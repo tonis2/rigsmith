@@ -432,3 +432,57 @@ fn void AppState.bound_counts(&self, usz* total, usz* found)
 		if (self.resolve_bound(i).valid()) (*found)++;
 	}
 }
+
+<*
+ Follow a clip renamed inside its file: every character holding it by the old
+ name holds it by the new one.
+
+ 	`app.rename_file_clip(file, "Walk", "Walk fast");`
+
+ The asset browser renames a clip where it lies, in the .glb. A binding is that
+ file and the clip's *name*, so left alone it named a clip the file no longer has,
+ and the Animations pane went on listing the old name over a clip that would not
+ resolve. The undo history's bindings follow too, or an Undo of an earlier bind
+ would bring back the name that is gone.
+
+ Not an undo step itself: the file was written in place and Undo cannot unwrite
+ it. Owes a save, so the project's own record of the name catches up.
+
+ @param file : `The clip's file, as the browser keys it.`
+ @param from : `Its name before. Borrowed.`
+ @param to : `Its name now. Borrowed.`
+*>
+fn void AppState.rename_file_clip(&self, String file, String from, String to)
+{
+	if (file.len == 0 || from.len == 0 || to.len == 0 || from == to) return;
+	self.rename_bindings_held(file, from, to);
+	self.@each_parked(; usz i)
+	{
+		self.rename_bindings_held(file, from, to);
+	};
+	self.refresh_bound_rows();
+}
+
+// `rename_file_clip` for the character in focus.
+fn void AppState.rename_bindings_held(&self, String file, String from, String to)
+{
+	bool renamed = false;
+	foreach (&bound : self.doc.animations)
+	{
+		if (rename_binding(bound, file, from, to)) renamed = true;
+	}
+	foreach (&swap : self.undo_stack.bindings)
+	{
+		rename_binding(&swap.before, file, from, to);
+		rename_binding(&swap.after, file, from, to);
+	}
+	if (renamed) self.authored_dirty = true;
+}
+
+fn bool rename_binding(BoundClip* bound, String file, String from, String to) @private
+{
+	if (bound.file != file || bound.clip != from) return false;
+	bound.clip.free(mem);
+	bound.clip = to.copy(mem);
+	return true;
+}

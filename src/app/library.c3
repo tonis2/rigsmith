@@ -60,6 +60,22 @@ fn LibraryRefs AppState.remember_library_refs(&self)
 	return out;
 }
 
+// A clip renamed in its file: what was remembered by the old name is found by the new.
+fn void LibraryRefs.rename(&self, String file, String from, String to)
+{
+	if (from.len == 0 || to.len == 0) return;
+	if (self.edit_file == file && self.edit_name == from)
+	{
+		self.edit_name.free(mem);
+		self.edit_name = to.copy(mem);
+	}
+	if (self.play_file == file && self.play_name == from)
+	{
+		self.play_name.free(mem);
+		self.play_name = to.copy(mem);
+	}
+}
+
 fn void LibraryRefs.free(&self)
 {
 	if (self.edit_file.len > 0) alloc::free(mem, self.edit_file.ptr);
@@ -390,9 +406,11 @@ fn bool AppState.file_declares_plan(&self, String file)
  some other pack is untouched by any of this.
 
  @param file : `The path of the pack to re-read. Must not be the loaded pack's own path string, which this frees.`
+ @param renamed_from : `A clip the re-read finds under another name, so what was open or playing on it stays on it.`
+ @param renamed_to : `That clip's name in the file now.`
  @return `False when no pack came from that file, or the file no longer reads.`
 *>
-fn bool AppState.reload_pack(&self, String file)
+fn bool AppState.reload_pack(&self, String file, String renamed_from = "", String renamed_to = "")
 {
 	int which = self.loaded_pack_for(file);
 	if (which < 0) return false;
@@ -400,6 +418,7 @@ fn bool AppState.reload_pack(&self, String file)
 	bool affected = self.editing.pack == which || self.current_ref.pack == which;
 	LibraryRefs refs = affected ? self.remember_library_refs() : (LibraryRefs){};
 	defer refs.free();
+	refs.rename(file, renamed_from, renamed_to);
 
 	// A file that names its own body plan has its joints already named in that
 	// plan's words and needs no matching — which is the rule the declared pass
@@ -414,6 +433,7 @@ fn bool AppState.reload_pack(&self, String file)
 	if (catch fresh) return false;
 
 	LibraryRefs[] parked = self.remember_cast_refs(which);
+	foreach (&held : parked) held.rename(file, renamed_from, renamed_to);
 	if (self.animating && self.current_ref.pack == which) self.stop_animation();
 	self.packs[(usz)which].free(mem);
 	self.packs[(usz)which] = fresh;

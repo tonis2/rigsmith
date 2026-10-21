@@ -452,6 +452,10 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 	usz index = entry.index;
 	int library = entry.library;
 	String collection = entry.kind.gltf_collection();
+	// A clip's name is what bindings and the open clip know it by; see below.
+	bool clip = entry.kind == AssetKind.ANIMATION;
+	String was = clip ? entry.name.copy(mem) : "";
+	defer if (was.len > 0) alloc::free(mem, was.ptr);
 
 	gltf_edit::JsonStep[2] plan_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_PLAN } };
 	gltf_edit::JsonStep[2] tags_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_TAGS } };
@@ -477,6 +481,17 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 	self.refresh_categories();
 	self.refresh_visible_assets();
 
+	// The name the clip goes by now, as the re-read index gives it — which is also
+	// the name the pack gives it, the file stem's fallback included.
+	String now = "";
+	if (clip)
+	{
+		foreach (held : self.assets.entries)
+		{
+			if (held.kind == AssetKind.ANIMATION && held.file == file && held.index == index) { now = held.name.tcopy(); break; }
+		}
+	}
+
 	// Both are positions into the index, and the index has just been re-sorted
 	// around a name that changed.
 	self.selected_asset = -1;
@@ -484,7 +499,7 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 
 	// A pack already read from that file is still holding the old name and the old
 	// tags. Nothing else in the library changed, so nothing else is re-read.
-	if (!self.reload_pack(file) && self.file_declares_plan(file))
+	if (!self.reload_pack(file, was, now) && self.file_declares_plan(file))
 	{
 		// Nothing was loaded from it because it declared nothing when the library
 		// was read, and it declares something now — so this is the file the
@@ -499,6 +514,9 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 			self.plan_targets_stale = true;
 		}
 	}
+
+	// The Animations pane lists the character's clips by the name they were bound by.
+	self.rename_file_clip(file, was, now);
 
 	// The export panel's rows borrow from the entries that were just freed.
 

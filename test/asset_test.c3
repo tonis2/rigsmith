@@ -460,6 +460,52 @@ fn void tagging_a_file_makes_it_findable() @test
 }
 
 <*
+ A clip renamed in the browser is renamed on the character that holds it.
+
+ A binding is the file and the clip's name, so a rename written into the file
+ left the Animations pane listing the old name over a clip it no longer found,
+ and the clip open in the timeline let go.
+*>
+fn void renaming_a_bound_clip_in_the_browser_renames_its_binding() @test
+{
+	String folder = scratch_library();
+	if (folder.len == 0)
+	{
+		test::@check(false, "SKIPPED — the scratch library could not be built");
+		return;
+	}
+
+	crig::AppState app = crig::new_app({});
+	defer app.free();
+	app.config.libraries.init(mem);
+	app.config.add_library(folder, "Retag");
+	app.scan_libraries();
+
+	usz which = app.assets.entries.len;
+	foreach (usz i, &entry : app.assets.entries)
+	{
+		if (entry.kind == crig::AssetKind.ANIMATION && which == app.assets.entries.len) which = i;
+	}
+	test::@check(which < app.assets.entries.len, "the scratch library holds no animation");
+	String file = app.assets.entries[which].file.copy(mem);
+	defer file.free(mem);
+	String name = app.assets.entries[which].name.copy(mem);
+	defer name.free(mem);
+
+	test::@check(app.doc.bind_clip(file, name), "could not bind the clip");
+	app.editing = app.resolve_bound(0);
+	test::@check(app.editing.valid(), "the bound clip did not resolve");
+
+	test::@check(app.retag_asset(which, "Renamed Walk", "", ""), "the file could not be written");
+
+	test::eq(app.doc.animations[0].clip, "Renamed Walk");
+	test::@check(app.resolve_bound(0).valid(), "the binding names a clip the file does not hold");
+	test::@check(app.editing.valid() && app.clip(app.editing).name == "Renamed Walk",
+		"the clip open in the timeline let go of the rename");
+	test::@check(app.authored_dirty, "the renamed binding is not owed a save");
+}
+
+<*
  Clearing a tag untags the file rather than tagging it with nothing.
 
  The sidebar groups by plan and gathers everything untagged under one row, so a
