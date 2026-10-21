@@ -561,14 +561,73 @@ fn void animation_workspace_properties_and_duplicates_keep_history() @test
 	test::@check(f.app.clip(f.app.editing).name == "Wave" && f.app.clip(f.app.editing).duration == 3,
 		"properties were not applied");
 	test::@check(f.app.doc.animations.len() == 2, "Rename added another export binding");
-	test::@check(f.app.undo_stack.cursor == before + 4, "Rename should record a clip and binding");
+	String copy_name = "Original copy";
+	test::@check(!f.app.clip_named_in_authored(copy_name).valid(),
+		"Rename left the clip under its old name beside the renamed one");
+	test::@check(visible_animation(&f, copy_name, "") < 0 && visible_animation(&f, "Wave", "") >= 0,
+		"the asset browser still lists the clip under its old name");
+	test::@check(f.app.undo_stack.cursor == before + 5,
+		"Rename should record the renamed clip, its binding and the old name's removal");
 	test::@check(f.app.undo(), "properties could not be undone");
 	test::@check(f.app.doc.bound_index("", "Wave") < 0
-		&& f.app.doc.bound_index("", f.app.clip(duplicate).name) >= 0, "Undo did not restore the binding");
+		&& f.app.doc.bound_index("", copy_name) >= 0, "Undo did not restore the binding");
+	test::@check(f.app.clip_named_in_authored(copy_name).valid() && !f.app.clip_named_in_authored("Wave").valid(),
+		"Undo did not put the clip back under its old name alone");
+	test::@check(f.app.clip(f.app.editing).name == copy_name, "Undo did not go back to editing the clip");
 	test::@check(f.app.undo_stack.cursor == before + 2, "one Undo did not undo the entire rename");
 	test::@check(f.app.undo(), "Duplicate could not be undone");
 	test::@check(f.app.undo_stack.cursor == before && f.app.doc.animations.len() == 1,
 		"one Undo did not remove the entire duplicate");
+}
+
+// Where the asset browser lists an animation of this name from `file` ("" for the
+// project's own clips), or -1.
+fn int visible_animation(Fixture* f, String name, String file)
+{
+	foreach (usz row, which : f.app.visible_assets)
+	{
+		AssetEntry* entry = &f.app.assets.entries[which];
+		if (entry.kind != AssetKind.ANIMATION || entry.name != name) continue;
+		if (file.len == 0 ? entry.authored() : entry.file == file) return (int)row;
+	}
+	return -1;
+}
+
+// A clip of the model's own file renamed in the Animations pane leaves the
+// browser under its old name at once, though the file holds it until the next
+// save; Undo brings the row back with the binding.
+fn void renaming_a_clip_of_the_models_file_lists_it_once() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	AnimRef ref = crig::NO_ANIM;
+	foreach (p, pack : f.app.packs)
+	{
+		if (pack.path.ends_with("humanoid.glb") && pack.clips.len > 0) { ref = { (int)p, 0 }; break; }
+	}
+	test::@check(ref.valid(), "the test library has no humanoid clips");
+	String file = f.app.pack((usz)ref.pack).path;
+	String name = f.app.clip(ref).name.copy(mem);
+	defer name.free(mem);
+	// The library file stands in for the model's: opened, it is the file its rows are from.
+	f.app.source_path = file;
+	f.app.owns_path = false;
+	test::@check(f.app.doc.bind_clip(file, name), "could not bind the file's clip");
+	f.app.undo_stack.commit();
+	f.app.refresh_visible_assets();
+	test::@check(visible_animation(&f, name, file) >= 0, "the file's clip is not in the browser");
+
+	f.app.editing = f.app.land_clip(ref, crig::clip_copy(mem, *f.app.clip(ref), "Renamed in place"));
+	test::@check(f.app.clip(f.app.editing).name == "Renamed in place", "the rename did not land");
+	test::@check(visible_animation(&f, name, file) < 0, "the browser still lists the old name");
+	test::@check(visible_animation(&f, "Renamed in place", "") >= 0, "the browser lost the renamed clip");
+
+	test::@check(f.app.undo(), "the rename did not undo");
+	f.app.refresh_ui();
+	test::@check(visible_animation(&f, name, file) >= 0, "Undo did not bring the file's clip back");
+	test::@check(visible_animation(&f, "Renamed in place", "") < 0, "Undo left the renamed clip");
 }
 
 // Turning Loop on in the transport, over a clip whose last key sits on the end

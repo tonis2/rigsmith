@@ -155,3 +155,70 @@ fn void tooltip_audit_no_icon_only_control_is_without_one() @test
 		}
 	}
 }
+
+// How many Buttons under `e` say something in words.
+fn usz labelled_buttons(Element* e)
+{
+	usz labelled = 0;
+	if (e.is_widget(Button) && e.widget_as(Button).label.len > 0) labelled++;
+	foreach (child : e.children) labelled += labelled_buttons(child);
+	return labelled;
+}
+
+<*
+ The Weights card is a strip of icons, each with a tooltip saying what it does,
+ and narrower than the cards whose controls are words: no button on it carries
+ a label, every one sits under text, Apply and Reset have a row of their own
+ below Mirror and the brush, the Apply cell names its key, the brush puts its
+ keys on the hint bar, and Mirror's tooltip follows the switch.
+
+ *Re-introduce:* put a `panel_button("Grow", …)` back on the card, or drop the
+ `widgets::tip` from `@card_icon`, or move Apply and Reset back into the Mirror row.
+*>
+fn void tooltip_audit_the_weights_card_is_icons_that_say_what_they_do() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	f.two_dots();
+	f.app.show_joint_panel = true;
+	f.app.joint_panel_tab = crig::JointPanelTab.JOINT;
+	f.app.refresh_ui();
+	f.feed(VIEWPORT_CENTER);
+	float joint_w = f.ui.find_id(crig::JOINT_SECTION_ID)!!.size.x;
+	f.click(f.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+	test::@check(f.app.weights_card_open(), "the Weights tab did not open the card");
+
+	Element* card = f.ui.find_id(crig::WEIGHTS_SECTION_ID)!!;
+	test::@check(card.size.x < joint_w, "the Weights card is %f wide, no narrower than the Joint card's %f", card.size.x, joint_w);
+	bool ok = true;
+	usz buttons = tip_audit(card, &ok);
+	test::@check(buttons >= 7, "the card has %d buttons, short of its seven icons", buttons);
+	test::@check(ok, "a button on the Weights card has no tooltip text");
+	test::eq(labelled_buttons(card), (usz)0);
+
+	// Grouped by job: Apply and Reset share a row of their own, below the one
+	// with Mirror and the brush.
+	Vec2 apply = f.center_of(crig::WEIGHTS_APPLY_ID)!!;
+	Vec2 reset = f.center_of(crig::WEIGHTS_RESET_ID)!!;
+	Vec2 mirror_at = f.center_of(crig::WEIGHTS_MIRROR_ID)!!;
+	Vec2 brush_at = f.center_of(crig::WEIGHTS_BRUSH_ID)!!;
+	test::@check(math::abs(apply.y - reset.y) < 0.5f && math::abs(mirror_at.y - brush_at.y) < 0.5f,
+		"Apply and Reset, or Mirror and the brush, are not on one row");
+	test::@check(apply.y > mirror_at.y + 1.0f, "Apply and Reset are not on a row below Mirror and the brush");
+
+	tip_hover(&f, f.center_of(crig::WEIGHTS_APPLY_ID)!!);
+	String shown = widgets::tooltip_shown(f.ui);
+	test::@check(shown.starts_with("Apply") && shown.contains("(Enter)"), "hovering Apply showed \"%s\"", shown);
+	f.feed(f.center_of(crig::WEIGHTS_BRUSH_ID)!!);
+	f.feed(f.center_of(crig::WEIGHTS_BRUSH_ID)!!);
+	test::@check(widgets::tooltip_hint(f.ui).starts_with("Paint brush"), "the brush put \"%s\" on the hint bar",
+		widgets::tooltip_hint(f.ui));
+
+	test::@check(f.app.area_mirrors(), "the card opened with Mirror off");
+	f.click(f.center_of(crig::WEIGHTS_MIRROR_ID)!!);
+	test::@check(!f.app.area_mirrors(), "the Mirror cell did not switch mirroring off");
+	Element* mirror = f.ui.find_id(crig::WEIGHTS_MIRROR_ID)!!;
+	String says = widgets::tooltip_above(mirror).widget_as(Tooltip).text;
+	test::@check(says.starts_with("Mirror is off"), "the switched-off Mirror says \"%s\"", says);
+}

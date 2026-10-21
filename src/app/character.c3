@@ -295,7 +295,7 @@ struct Character
 	 `area_twin_mask` is the same part on `area_twin`, the joint across the
 	 plane, empty when there is none or mirroring is off. Both are what Apply
 	 writes, so the picture and the result cannot disagree. `area_base` is the
-	 part a grow or shrink drag started from. `area_solo` is "Also mirror" off,
+	 part a grow or shrink drag started from. `area_solo` is the card's Mirror switched off,
 	 so the zero value mirrors.
 	*>
 	bool areaing;

@@ -9,8 +9,9 @@
  can be opened with the mouse. Each category keeps its own disclosure state.
  Open with no joint selected the Joint panel prompts for one rather than
  vanishing. The card is assembled from cui's Button, Column, PopupPanel, Grid,
- TextField and Checkbox widgets plus the rotation dials of `joint_dials.c3`;
- this widget owns only the document-specific rebuilding and icon painting.
+ TextField and Checkbox widgets plus the rotation dials of `joint_dials.c3`
+ and the Weights card's icon buttons of `card_icons.c3`; this widget owns only
+ the document-specific rebuilding and the rail's icon painting.
 
  Pose and limits are two separate transactions. Rotation fields edit the pose
  currently shown at the playhead and follow Auto-key/manual Save pose. Rotation
@@ -131,6 +132,13 @@ const float JOINT_ROTATION_CELL_W = 98.0f;
 const float JOINT_PANEL_CELL_W = 72.0f;
 const float JOINT_PANEL_CELL_H = 26.0f;
 const float JOINT_PANEL_GRID_GAP = 6.0f;
+// The Weights card is narrower than the rest: its actions are icons (`card_icons.c3`),
+// and the widest thing left on it is the Part menu with Grow and Shrink beside it.
+const float WEIGHTS_CARD_W = 232.0f;
+const float WEIGHTS_SECTION_W = WEIGHTS_CARD_W + 20.0f;
+const float WEIGHTS_SIDEBAR_W = WEIGHTS_SECTION_W + 16.0f;
+const float CARD_ICON_GAP = 6.0f;
+const float WEIGHTS_PART_W = WEIGHTS_CARD_W - 2.0f * (TOOL_CELL_W + CARD_ICON_GAP);
 
 const PopupPanel JOINT_PANEL_SURFACE = {
 	.style = {
@@ -280,6 +288,7 @@ struct JointPanelSnapshot
 	usz selection_count;
 	bool areaing;
 	bool brushing;
+	bool mirrors;
 	uint area_generation;
 	uint strays_generation;
 	bool strays_current;
@@ -321,6 +330,7 @@ fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
 		.selection_count = app.selection_count(),
 		.areaing = app.areaing,
 		.brushing = app.brushing,
+		.mirrors = app.area_mirrors(),
 		.area_generation = app.area_generation,
 		.strays_generation = app.strays_generation,
 		.strays_current = app.strays_current(),
@@ -356,6 +366,7 @@ fn bool JointPanelSnapshot.differs(self, JointPanelSnapshot other)
 		|| self.selection_count != other.selection_count
 		|| self.areaing != other.areaing
 		|| self.brushing != other.brushing
+		|| self.mirrors != other.mirrors
 		|| self.area_generation != other.area_generation
 		|| self.strays_generation != other.strays_generation
 		|| self.strays_current != other.strays_current;
@@ -368,6 +379,7 @@ struct JointPanel (Widget)
 	char[96] follow_note; // the bone-axes repair line and its button, likewise
 	char[96] follow_label;
 	char[320] strays_text; // the Weights card's stray line, likewise
+	char[96] weights_title; // "Weights · joint", likewise
 }
 
 fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
@@ -601,17 +613,22 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 	}
 	defer if (view_open) view.free(mem);
 
+	// As wide as the tab on show needs: the Weights card's actions are icons.
+	bool narrow = app.joint_panel_tab == JointPanelTab.WEIGHTS;
+	float sidebar_w = narrow ? WEIGHTS_SIDEBAR_W : JOINT_SIDEBAR_W;
+	float section_w = narrow ? WEIGHTS_SECTION_W : JOINT_SECTION_W;
+
 	Element* body = @subtree(elem.ui)
 	{
 		@tree((Row) { .gap = JOINT_TAB_GAP, .cross_align = START })
 		{
 			if (app.show_joint_panel)
 			{
-				@tree((Scroll) { .size = { JOINT_SIDEBAR_W, 0 }, .radii = R8 })
+				@tree((Scroll) { .size = { sidebar_w, 0 }, .radii = R8 })
 				{
 					@tree(JOINT_PANEL_SURFACE)
 					{
-						@tree((Column) { .size = { JOINT_SECTION_W, 0 }, .gap = JOINT_PANEL_GAP })
+						@tree((Column) { .size = { section_w, 0 }, .gap = JOINT_PANEL_GAP })
 						{
 							if (app.joint_panel_tab == JointPanelTab.JOINT)
 							{
@@ -817,97 +834,122 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 							}
 							else if (app.joint_panel_tab == JointPanelTab.WEIGHTS)
 							{
+								// The joint's name rides in the header: a row of its own was the
+								// tallest thing on a card this short.
+								String title = "Weights";
+								if (dot) title = string::bformat(self.weights_title[..], "Weights · %s",
+									dot.name.len > 0 ? dot.name : "unnamed joint");
 								Element* weights_section = @tree((Disclosure) {
-									.label = "Weights", .expanded = !app.weights_info_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+									.label = title, .expanded = !app.weights_info_collapsed,
+									.width = WEIGHTS_SECTION_W, .style = JOINT_SECTION_STYLE,
 									.on_change = &weights_section_changed })
 								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+									@tree((Column) { .size = { WEIGHTS_CARD_W, 0 }, .gap = JOINT_PANEL_GAP })
 									{
 										if (!dot)
 										{
 											@node((Label) { .text = "Select a joint to pick the part of the mesh it moves.",
-												.size = 12.0f, .color = TEXT_DIM });
+												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
+											weights_stray_icons(app);
 										}
 										else
 										{
-											@node((Label) { .text = dot.name.len > 0 ? dot.name : "Unnamed joint",
-												.size = 17.0f, .color = TEXT });
-											@node((Label) { .text = "Part", .size = 12.0f, .color = TEXT_DIM });
-											@node((Select) { .options = weights_part_labels[..],
-												.selected = (usz)(app.areaing ? app.area_origin : AreaPart.OWN),
-												.width = JOINT_PANEL_W, .style = VIEW_MENU_STYLE,
-												.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
-											@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+											// The part, and a ring more or less of it.
+											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 											{
-												@node(panel_button("Grow", &weights_grow_pressed)).with_id(WEIGHTS_GROW_ID);
-												@node(panel_button("Shrink", &weights_shrink_pressed)).with_id(WEIGHTS_SHRINK_ID);
+												@tree(widgets::tip("Part — what Apply gives this joint: its own bone, its bone and its children's, or UV islands you click"))
+												{
+													@node((Select) { .options = weights_part_labels[..],
+														.selected = (usz)(app.areaing ? app.area_origin : AreaPart.OWN),
+														.width = WEIGHTS_PART_W, .style = VIEW_MENU_STYLE,
+														.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
+												};
+												@card_icon(GROW_GLYPH, "Grow — widen the part by one ring of the mesh",
+													&weights_grow_pressed).with_id(WEIGHTS_GROW_ID);
+												@card_icon(SHRINK_GLYPH, "Shrink — narrow the part by one ring of the mesh",
+													&weights_shrink_pressed).with_id(WEIGHTS_SHRINK_ID);
 											};
 											if (app.areaing && app.area_islands)
 											{
 												// Islands picked by hand: start from none, or flip to the rest.
-												@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+												@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 												{
-													@node(panel_button("Clear", &weights_clear_pressed)).with_id(WEIGHTS_CLEAR_ID);
-													@node(panel_button("Invert", &weights_invert_pressed)).with_id(WEIGHTS_INVERT_ID);
+													@card_icon(CLEAR_GLYPH, "Clear — pick no islands, then click the ones you want",
+														&weights_clear_pressed).with_id(WEIGHTS_CLEAR_ID);
+													@card_icon(INVERT_GLYPH, "Invert — swap the picked islands for the rest",
+														&weights_invert_pressed).with_id(WEIGHTS_INVERT_ID);
 												};
 											}
-											@node((Slider) {
-												.label = "Soft edge",
-												.suffix = "% of bone",
-												.value = app.area_soft * 100.0f,
-												.max = AREA_SOFT_MAX * 100.0f,
-												.step = 5.0f,
-												.on_change = &weights_soft_moved,
-												.on_commit = &weights_soft_committed,
-												.style = PHYSICS_SLIDER_STYLE,
-											}).with_id(WEIGHTS_SOFT_ID);
-											@node((Checkbox) { .label = "Also mirror", .checked = app.area_mirrors(),
-												.on_change = &weights_mirror_toggled, .style = CHECKBOX_STYLE })
-												.with_id(WEIGHTS_MIRROR_ID);
-											@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+											@tree(widgets::tip("Soft edge — how far the part's edge fades, as a share of the bone's length"))
 											{
-												@node(accent_button("Apply", &weights_apply_pressed)).with_id(WEIGHTS_APPLY_ID);
-												@node(panel_button("Reset to automatic", &weights_reset_pressed)).with_id(WEIGHTS_RESET_ID);
+												@node((Slider) {
+													.label = "Soft edge",
+													.suffix = "%",
+													.value = app.area_soft * 100.0f,
+													.max = AREA_SOFT_MAX * 100.0f,
+													.step = 5.0f,
+													.on_change = &weights_soft_moved,
+													.on_commit = &weights_soft_committed,
+													.style = PHYSICS_SLIDER_STYLE,
+												}).with_id(WEIGHTS_SOFT_ID);
 											};
-											@node((Label) { .text = weights_readout(app, &self.readout),
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
 											// The model's, not the joint's: shown on the joints it decides.
 											if (app.knuckle_blend_applies(dot.id))
 											{
-												@node((Label) { .text = "Knuckle blend · whole model", .size = 12.0f, .color = TEXT_DIM });
-												@node((Slider) {
-													.label = "Blend",
-													.suffix = "%",
-													.value = app.doc.knuckle_blend_fraction() * 100.0f,
-													.max = KNUCKLE_BLEND_MAX * 100.0f,
-													.step = 5.0f,
-													.disabled = app.doc.skin_from_file,
-													.on_change = &weights_knuckle_moved,
-													.on_commit = &weights_knuckle_committed,
-													.style = PHYSICS_SLIDER_STYLE,
-												}).with_id(WEIGHTS_KNUCKLE_ID);
+												@tree(widgets::tip("Knuckle blend — the whole model's: how much of each finger segment fades into the next knuckle"))
+												{
+													@node((Slider) {
+														.label = "Knuckles",
+														.suffix = "%",
+														.value = app.doc.knuckle_blend_fraction() * 100.0f,
+														.max = KNUCKLE_BLEND_MAX * 100.0f,
+														.step = 5.0f,
+														.disabled = app.doc.skin_from_file,
+														.on_change = &weights_knuckle_moved,
+														.on_commit = &weights_knuckle_committed,
+														.style = PHYSICS_SLIDER_STYLE,
+													}).with_id(WEIGHTS_KNUCKLE_ID);
+												};
 											}
-											// Painting by hand lives here too, beside the parts it corrects.
-											@node((Label) { .text = "Brush", .size = 12.0f, .color = TEXT_DIM });
-											@node(app.brushing ? accent_button("Stop painting", &menu_weight_brush)
-												: panel_button("Paint brush", &menu_weight_brush)).with_id(WEIGHTS_BRUSH_ID);
-											@node((Label) { .text = "Shift+W · drag the mesh to paint, ctrl-drag takes off, hold F to size",
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
-										}
-										// The whole model's, not the joint's: weight a joint holds far
-										// from the rest of it, which a pose pulls out as a spike.
-										@node((Label) { .text = "Strays", .size = 12.0f, .color = TEXT_DIM });
-										@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
-										{
-											@node(panel_button("Find strays", &weights_find_strays_pressed)).with_id(WEIGHTS_FIND_STRAYS_ID);
-											if (app.strays_current() && app.strays.len > 0)
+											// How the joint is worked on — mirrored, painted by hand — and the
+											// model's strays at the far end, a different job on the same row.
+											@tree((Row) { .size = { WEIGHTS_CARD_W, 0 }, .main_align = SPACE_BETWEEN,
+												.cross_align = CENTER })
 											{
-												@node(accent_button("Fix strays", &weights_fix_strays_pressed)).with_id(WEIGHTS_FIX_STRAYS_ID);
-											}
-										};
-										@node((Label) { .text = strays_readout(app, &self.strays_text),
-											.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
+												@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+												{
+													@card_icon(MIRROR_GLYPH, app.area_mirrors()
+														? "Mirror is on — Apply and Reset change the twin joint on the other side too. Click for this side only"
+														: "Mirror is off — Apply and Reset change this side only. Click to do the twin joint too",
+														&weights_mirror_pressed, app.area_mirrors() ? LIT : PLAIN).with_id(WEIGHTS_MIRROR_ID);
+													@card_icon(BRUSH_GLYPH, app.brushing
+														? "Stop painting (Shift+W) — put the brush away"
+														: "Paint brush (Shift+W) — paint this joint's weights by hand",
+														&menu_weight_brush, app.brushing ? LIT : PLAIN,
+														"Paint brush · shift+W     drag the mesh · paint     ctrl-drag · take off     hold F · size")
+														.with_id(WEIGHTS_BRUSH_ID);
+												};
+												weights_stray_icons(app);
+											};
+											// What is written to the joint, on a row of its own: the commit and
+											// its undoing are the last step, and the ones not to hit by mistake.
+											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+											{
+												@card_icon(APPLY_GLYPH,
+													"Apply (Enter) — give this joint the part on show; it replaces the joint's weights, brush strokes too",
+													&weights_apply_pressed, COMMIT).with_id(WEIGHTS_APPLY_ID);
+												@card_icon(RESET_GLYPH,
+													"Reset to automatic — take back this joint's parts and brush strokes",
+													&weights_reset_pressed).with_id(WEIGHTS_RESET_ID);
+											};
+											@node((Label) { .text = weights_readout(app, &self.readout),
+												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
+										}
+										if (app.strays_current())
+										{
+											@node((Label) { .text = strays_readout(app, &self.strays_text),
+												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
+										}
 									};
 								};
 								weights_section.with_id(WEIGHTS_SECTION_ID);
@@ -1554,42 +1596,42 @@ fn void joint_limits_reset(Ui* ui) @private
 }
 
 // ---------------------------------------------------------------------------
-// The Weights card: the Area tool's controls, as buttons and a slider
+// The Weights card: the Area tool's controls, as icons and a slider
 
-// What the pending part holds, or how to pick one.
+<*
+ What the part on show holds, in a line: the numbers only. What each control
+ does is in its tooltip, and the edge is on its own slider.
+*>
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
-	if (app.brushing) return "Painting by hand — the brush strip at the top sets its size, strength and add or remove. Pick another joint in the Scene outliner.";
-	if (!app.areaing || !app.area_pending()) return "Choose a part above, or paint by hand. Applying a part replaces this joint's weights, brush strokes too.";
+	if (app.brushing) return "Painting by hand — size, strength and add or remove are in the strip at the top.";
+	if (!app.areaing || !app.area_pending()) return "Pick a part, or paint by hand.";
 	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
 	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;
-	String edge = app.area_soft > 0.0f
-		? string::tformat("edge fades over %d%% of the bone", (int)math::round(app.area_soft * 100.0f))
-		: "hard edge";
 	if (!app.area_preview)
 	{
 		// The card's own pick: the mesh still shows the weights, the brush's numbers.
-		return string::bformat(buffer, "Showing its weights as they are. Apply would give it its own bone's part: %d vertices (%d%% of the mesh) · %s — choose it above, Grow or Shrink to see it first.",
-			held, percent, edge);
+		return string::bformat(buffer, "Showing its weights as they are · its own bone's part is %d vertices (%d%%)",
+			held, percent);
 	}
 	if (app.area_islands)
 	{
 		if (held == 0) return "No islands picked — click the mesh to add one, or shift-drag across several.";
 		usz islands = app.area_island_count();
-		return string::bformat(buffer, "holds %d vertices in %d UV island%s (%d%% of the mesh) · %s · click an island to add or remove it, shift-drag paints islands in, ctrl-drag paints them out",
-			held, islands, islands == 1 ? "" : "s", percent, edge);
+		return string::bformat(buffer, "Apply gives it %d vertices in %d UV island%s (%d%%) · click an island to add or remove it, shift-drag paints in, ctrl-drag out",
+			held, islands, islands == 1 ? "" : "s", percent);
 	}
-	return string::bformat(buffer, "Showing what Apply would give it: %d vertices (%d%% of the mesh) · %s", held, percent, edge);
+	return string::bformat(buffer, "Apply gives it %d vertices (%d%% of the mesh)", held, percent);
 }
 
 // How many joints the stray line names before it only counts.
 const usz STRAYS_NAMED = 4;
 
-// What the last stray survey found, one entry per joint, or what a survey looks for.
+// What the last stray survey found, one entry per joint. Shown only while the
+// survey is current; what a survey looks for is Find strays' tooltip.
 fn String strays_readout(AppState* app, char[] buffer) @private
 {
-	if (!app.strays_current()) return "Weight a joint holds far from the rest of it, which a pose pulls out of the body as a spike.";
 	if (app.strays.len == 0) return "No strays: every joint's weight stays with the rest of it.";
 	DString text = dstring::temp();
 	usz joints = 0;
@@ -1612,8 +1654,28 @@ fn String strays_readout(AppState* app, char[] buffer) @private
 		text.appendf("%s %d %s", dot && dot.name.len > 0 ? dot.name : "unnamed", held, held == 1 ? "vertex" : "vertices");
 	}
 	if (unnamed > 0) text.appendf(" · %d more %s", unnamed, unnamed == 1 ? "joint" : "joints");
-	text.append(" — marked red. Fix strays hands them back to the automatic weights, or to the mesh around them.");
+	text.append(" — marked red");
 	return string::bformat(buffer, "%s", text.str_view());
+}
+
+<*
+ Find strays, and Fix strays once a survey that is still current found some.
+ The whole model's, not the joint's, so the card shows them with no joint too.
+*>
+fn void weights_stray_icons(AppState* app) @private
+{
+	@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+	{
+		@card_icon(FIND_STRAYS_GLYPH,
+			"Find strays — weight a joint holds far from the rest of it, which a pose pulls out of the body as a spike. They show red",
+			&weights_find_strays_pressed).with_id(WEIGHTS_FIND_STRAYS_ID);
+		if (app.strays_current() && app.strays.len > 0)
+		{
+			@card_icon(FIX_STRAYS_GLYPH,
+				"Fix strays — hand the red vertices back to the automatic weights, or to the mesh around them. One undo step",
+				&weights_fix_strays_pressed, COMMIT).with_id(WEIGHTS_FIX_STRAYS_ID);
+		}
+	};
 }
 
 fn void weights_section_changed(Ui* ui, bool expanded) @private
@@ -1744,16 +1806,17 @@ fn void joint_pose_weight_auto(Ui* ui)
 	refresh_joint_panel(ui);
 }
 
-fn void weights_mirror_toggled(Ui* ui, bool checked) @private
+fn void weights_mirror_pressed(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	app.area_solo = !checked;
+	app.area_solo = !app.area_solo;
 	if (app.areaing)
 	{
 		app.refresh_area_twin();
 		app.area_changed();
 	}
 	app.refresh_ui();
+	refresh_joint_panel(ui);
 }
 
 fn void weights_apply_pressed(Ui* ui) @private

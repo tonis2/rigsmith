@@ -100,7 +100,7 @@ fn void the_brush_button_and_strip_paint_without_a_modifier() @test
 	test::@check(fixture.app.brushing && !fixture.app.areaing, "the card's brush button did not open the brush");
 	fixture.feed(VIEWPORT_CENTER);
 	Element* button = fixture.ui.find_id(crig::WEIGHTS_BRUSH_ID)!!;
-	test::@check(button.widget_as(Button).label == "Stop painting", "the brush button does not say it stops painting");
+	test::@check(button.parent.widget_as(Tooltip).text.starts_with("Stop painting"), "the brush button does not say it stops painting");
 	test::@check(fixture.in_tree(crig::BRUSH_MODE_ID) && fixture.in_tree(crig::BRUSH_SIZE_ID)
 		&& fixture.in_tree(crig::BRUSH_STRENGTH_ID), "the options strip did not appear with the brush");
 

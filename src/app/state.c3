@@ -658,6 +658,11 @@ struct AppState
 	// Set by `swap_authored_clip`, read by `refresh_ui`; see `reindex_authored_clips`.
 	bool authored_index_stale;
 
+	// Clips of the model's own file renamed this session, by their old names. The
+	// file holds them until a save rewrites it with the bound clips, and the browser
+	// leaves them out meanwhile; see `hide_renamed_file_clip`.
+	StringList renamed_file_clips;
+
 	<*
 	 The dot whose name is open in the Joint card's field, or 0 when the title
 	 is a title.
@@ -1548,6 +1553,7 @@ fn void AppState.free(&self)
 	self.drop_lasso_memory();
 	self.drop_packs();
 	if (self.library_path.len > 0) alloc::free(mem, self.library_path.ptr);
+	self.forget_renamed_file_clips();
 	free_assets(mem, self.assets);
 	if (self.asset_categories.len > 0) alloc::free(mem, self.asset_categories);
 	if (self.visible_assets.len > 0) alloc::free(mem, self.visible_assets);

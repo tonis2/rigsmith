@@ -690,9 +690,10 @@ fn void AppState.shift_authored_refs(&self, int at, int by)
  `tool_apply_clip`.
 
  @param replaced : `Set to whether a clip of this name was already there, if given.`
+ @param slot : `Where a clip of a new name goes in the pack; -1 appends it.`
  @return `Where the clip landed, or NO_ANIM for an empty template, which writes nothing.`
 *>
-fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced = null)
+fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced = null, int slot = -1)
 {
 	// Taken before the swap, while the template is still the caller's. After it
 	// the same bytes are the pack's, which is just as alive but no longer ours to
@@ -706,9 +707,9 @@ fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced =
 
 	AnimRef landed = NO_ANIM;
 	clip.compile_tracks(mem);
-	AnimTemplate had = self.swap_authored_clip(name, clip, &landed);
+	AnimTemplate had = self.swap_authored_clip(name, clip, &landed, slot);
 	// Taken before the record, which may run past the pack: the slot the clip is in.
-	int slot = landed.clip;
+	slot = landed.clip;
 	// Clip replacement can also come from MCP/import, not only land_clip.
 	// Group edits restore their transformed selection after landing; other
 	// replacements must not leave selected times pointing at unrelated poses.

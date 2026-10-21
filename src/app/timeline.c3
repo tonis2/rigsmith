@@ -292,9 +292,16 @@ fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, b
 	}
 	String named = built.name.copy(mem);
 	defer named.free(mem);
+	// A rename: the clip at `ref` under another name, not a second clip beside it.
+	String was_named = source_name.copy(mem);
+	defer was_named.free(mem);
+	bool renamed = was_named.len > 0 && was_named != named;
 
 	bool replaced = false;
-	AnimRef landed = self.put_authored_clip(built, &replaced);
+	// A renamed authored clip goes in just before the one it replaces, which then
+	// leaves the slot it held — so the pack keeps its order, and undo puts the old
+	// name back where it was.
+	AnimRef landed = self.put_authored_clip(built, &replaced, slot: renamed && !fork ? ref.clip : -1);
 	if (!landed.valid()) return NO_ANIM;
 
 	// Editing changes what this character exports. Redirect the original bound
@@ -309,6 +316,65 @@ fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, b
 		sz at = binding >= 0 ? binding : self.doc.animations.len();
 		BoundClip parked = self.doc.swap_bound((uint)at, owned_binding("", named));
 		self.undo_stack.record_binding_swap((uint)at, parked, owned_binding("", named));
+	}
+
+	if (renamed && !fork)
+	{
+		// Out of the pack after the binding has moved off it, so undo puts the old
+		// name back before its row returns to it. Left in, it stayed in the browser
+		// under the old name beside the renamed one.
+		landed = self.drop_renamed_authored(was_named, landed);
+	}
+	else if (renamed && source_file.len > 0 && source_file == self.source_path)
+	{
+		// The model's file still holds the clip under its old name until a save
+		// rewrites it with the bound clips; the browser stops listing it now.
+		self.hide_renamed_file_clip(was_named);
+	}
+	return landed;
+}
+
+<*
+ Take the authored clip called `name` out of the pack, recorded, when a rename has
+ just put it back in under another name at `landed`.
+
+ The two are the same clip to everything holding a reference, so what pointed
+ at the old slot — the clip being edited, the active layer, the player — is
+ pointed at the renamed one, and playback carries on where it was.
+
+ @return `Where the renamed clip is now: the removal closes the gap behind it.`
+*>
+fn AnimRef AppState.drop_renamed_authored(&self, String name, AnimRef landed)
+{
+	AnimPack* pack = self.authored();
+	if (!pack) return landed;
+	int slot = -1;
+	foreach (usz i, held : pack.clips)
+	{
+		if (held.name == name) { slot = (int)i; break; }
+	}
+	if (slot < 0) return landed;
+
+	AnimRef going = { self.authored_pack, slot };
+	bool edited = self.editing.same(going);
+	bool layer = self.active_layer_ref.same(going);
+	bool watched = self.animating && self.current_ref.same(going);
+	bool paused = self.anim_paused;
+	float resume = self.anim_time;
+
+	AnimTemplate had = self.swap_authored_clip(name, {});
+	self.clear_animation_key_selection();
+	self.undo_stack.record_clip_swap(name.copy(mem), had, slot);
+
+	if (landed.clip > slot) landed.clip--;
+	if (edited) self.editing = landed;
+	if (layer) self.active_layer_ref = landed;
+	if (watched && self.start_animation_ref(landed))
+	{
+		self.anim_time = math::clamp(resume, 0.0f, self.clip(landed).duration);
+		self.anim_paused = paused;
+		if (self.current_ref.same(self.editing)) self.edit_time = self.anim_time;
+		self.refresh_animation();
 	}
 	return landed;
 }

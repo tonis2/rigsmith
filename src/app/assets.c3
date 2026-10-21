@@ -200,6 +200,7 @@ fn void AppState.mark_current_entries(&self)
 *>
 fn void AppState.reindex_current_model(&self)
 {
+	self.forget_renamed_file_clips();
 	self.assets.set_current_model(mem, self.source_path);
 	self.list_authored_clips();
 	self.refresh_categories();
@@ -327,6 +328,57 @@ fn void AppState.refresh_visible_assets(&self)
 {
 	if (self.visible_assets.len > 0) alloc::free(mem, self.visible_assets);
 	self.visible_assets = self.assets.matching(mem, self.asset_filter);
+	if (self.renamed_file_clips.len() == 0) return;
+	usz kept = 0;
+	foreach (which : self.visible_assets)
+	{
+		if (!self.renamed_away(&self.assets.entries[which])) self.visible_assets[kept++] = which;
+	}
+	if (kept == 0)
+	{
+		alloc::free(mem, self.visible_assets);
+		self.visible_assets = {};
+	}
+	else
+	{
+		self.visible_assets = self.visible_assets[:kept];
+	}
+}
+
+<*
+ Leave a clip of the model's file out of the browser: it was renamed, and the
+ renamed clip is what the character holds now. The file is left as it is until
+ the next save, which writes the bound clips and so drops the old name; until
+ then the browser would list one clip twice.
+
+ By name and only while nothing binds the file's clip by it, so Undo of the
+ rename, which binds it back, brings the row back with it.
+
+ @param name : `The clip's name in the file. Borrowed; copied in.`
+*>
+fn void AppState.hide_renamed_file_clip(&self, String name)
+{
+	foreach (held : self.renamed_file_clips) if (held == name) return;
+	if (!self.renamed_file_clips.allocator) self.renamed_file_clips.init(mem);
+	self.renamed_file_clips.push(name.copy(mem));
+}
+
+// Whether the browser leaves this entry out; see `hide_renamed_file_clip`.
+fn bool AppState.renamed_away(&self, AssetEntry* entry)
+{
+	if (entry.kind != AssetKind.ANIMATION || self.source_path.len == 0 || entry.file != self.source_path) return false;
+	foreach (held : self.renamed_file_clips)
+	{
+		if (held == entry.name) return self.doc.bound_index(self.source_path, entry.name) < 0;
+	}
+	return false;
+}
+
+// The file was re-read, or another model opened: what it holds is what it shows.
+fn void AppState.forget_renamed_file_clips(&self)
+{
+	foreach (held : self.renamed_file_clips) held.free(mem);
+	self.renamed_file_clips.free();
 }
 
 <*
