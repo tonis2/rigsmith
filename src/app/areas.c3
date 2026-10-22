@@ -1963,9 +1963,7 @@ fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 			if (column >= 0) stated[kept++] = { .vertex = 0, .joint = (usz)column, .share = pin.share };
 		}
 		pin_over(row, bones, stated[:kept]);
-		uint tint = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
-		// A row Apply will state takes the hand-edit cast it will have once written.
-		self.tints[v] = draft.held[v] > 0 ? edited_cast(tint) : tint;
+		self.tints[v] = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
 	}
 
 	rig::MeshShells* split = self.islands_for();

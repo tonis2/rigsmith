@@ -88,8 +88,6 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "ctrl-drag", .action = "shrink it" },
 	{ .binding = "Reset", .action = "the joint back on its automatic edge, its edits taken back" },
 	{ .binding = "Mirror", .action = "every weight tool does the twin joint too" },
-	{ .binding = "Compare", .action = "show the automatic weights, to see what the hand edits changed" },
-	{ .binding = "blue-cast mesh", .action = "a hand edit stated that row; it holds when the joint moves" },
 	{ .binding = "Part menu", .action = "With children or UV islands: a part on show for Apply" },
 	{ .binding = "click, on UV islands", .action = "add the island clicked to the part, or take it out" },
 	{ .binding = "dark grey mesh", .action = "off the joint's limb: Apply leaves it, but UV islands go whole" },

@@ -529,8 +529,9 @@ fn void AppState.rebind_tints(&self)
 
 	// Bound once here rather than twice inside the colourings below, so a stroke
 	// pays for one copy of a cached matrix instead of a fresh geodesic bind per
-	// frame. The automatic weights instead while the card compares against them.
-	float[] painted = self.weights(mem, &view, self.compare_automatic ? AUTOMATIC : EDITED);
+	// frame. Always the edited weights: the views show what the mesh wears, and
+	// nothing else.
+	float[] painted = self.weights(mem, &view, EDITED);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 
 	switch (self.tint_mode)
@@ -553,63 +554,10 @@ fn void AppState.rebind_tints(&self)
 		default:
 			self.tints = vertex_tints(mem, painted, self.geometry.positions.len, view.len());
 	}
-	if (!self.compare_automatic)
-	{
-		// The cast first and the part over it: a row the part claims is drawn
-		// once, as Apply will leave it — stated, so cast too.
-		self.overlay_edit_tints();
-		self.overlay_area_tints(&view, painted);
-	}
+	self.overlay_area_tints(&view, painted);
 	self.overlay_limb_tints(&view, painted);
 	self.overlay_stray_tints();
 }
-
-// The cast a hand-edited vertex takes on the weight views — see `overlay_edit_tints`.
-const Vec3 EDITED_CAST = { 0.25, 0.65, 1.0 };
-const float EDITED_MIX = 0.35;
-
-<*
- While a weight tool is open, every vertex a hand edit states — a stroke, an
- Apply, a lasso, a share asked for — takes a cool cast over its colour, so the
- rows somebody wrote read apart from the ones the automatic weights derive. A
- stated row does not follow the rig when a dot moves, and seeing where they are
- is what tells Reset and the Compare switch apart from guesswork.
-*>
-fn void AppState.overlay_edit_tints(&self)
-{
-	usz count = self.geometry.positions.len;
-	if (!(self.areaing || self.brushing || self.lassoing) || self.tints.len != count) return;
-	bool[] cast = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, cast);
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count || cast[pin.vertex]) continue;
-		cast[pin.vertex] = true;
-		self.tints[pin.vertex] = edited_cast(self.tints[pin.vertex]);
-	}
-}
-
-// A tint with the hand-edit cast over it — see `overlay_edit_tints`.
-fn uint edited_cast(uint tint)
-{
-	float r = (float)(tint & 0xFF) / 255.0f;
-	float g = (float)((tint >> 8) & 0xFF) / 255.0f;
-	float b = (float)((tint >> 16) & 0xFF) / 255.0f;
-	return rgb(r + (EDITED_CAST.x - r) * EDITED_MIX, g + (EDITED_CAST.y - g) * EDITED_MIX, b + (EDITED_CAST.z - b) * EDITED_MIX);
-}
-
-<*
- The card's Compare switch: the views draw the automatic weights, or the edited
- ones again.
-*>
-fn void AppState.toggle_compare(&self)
-{
-	self.compare_automatic = !self.compare_automatic;
-	if (self.tint_mode == OFF) self.show_tint(FALLOFF);
-	self.weights_stale = true;
-	self.weights_due = 0.0f;
-}
-
 
 <*
  One joint's share of the mesh, the number behind the TERRITORY view.

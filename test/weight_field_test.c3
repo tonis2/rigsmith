@@ -416,10 +416,10 @@ fn void taking_the_hips_off_a_vertex_they_hold_whole_hands_it_to_the_leg() @test
 }
 
 <*
- Compare draws the automatic weights: hand edits disappear from the view while
- it is on, and come back, cast, when it is off.
+ The view draws the weights the mesh wears and nothing over them: a hand edit
+ shows as its new share, in the same colours as every other vertex.
 *>
-fn void compare_shows_the_automatic_weights_and_edits_are_cast() @test
+fn void the_view_shows_the_edited_weights_plainly() @test
 {
 	crig::AppState app;
 	rig::TriMesh mesh;
@@ -450,17 +450,7 @@ fn void compare_shows_the_automatic_weights_and_edits_are_cast() @test
 	app.paint_share(knee, one[..], 0.0f);
 	app.rebind_tints();
 	test::@check(app.tints[one[0]] != automatic[one[0]], "the edited vertex looks as it did");
-
-	app.toggle_compare();
-	app.rebind_tints();
-	usz apart = 0;
-	foreach (i, tint : app.tints) if (tint != automatic[i]) apart++;
-	test::@check(apart == 0, "Compare draws %d vertices differently from the automatic weights", apart);
-
-	app.toggle_compare();
-	app.rebind_tints();
-	uint plain = crig::share_tint(0.0f);
-	test::@check(app.tints[one[0]] == crig::edited_cast(plain), "the edited vertex is not cast as a hand edit");
+	test::@check(app.tints[one[0]] == crig::share_tint(0.0f), "the edited vertex is not drawn as the share it now holds");
 }
 
 <*

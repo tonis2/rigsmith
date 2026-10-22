@@ -231,10 +231,6 @@ struct AppState
 	TintMode brush_tint;
 	TintMode lasso_tint;
 
-	// The Weights card's Compare: the views draw the automatic weights instead of
-	// the edited ones, so what the hand edits changed can be seen by switching.
-	bool compare_automatic;
-
 	// How far one stroke carries a vertex toward the target, 0 to 1 — the
 	// strip's Strength slider. See `BRUSH_STRENGTH_DEFAULT`.
 	float brush_strength;

@@ -60,7 +60,6 @@ const String WEIGHTS_GROW_ID = "weights-grow";
 const String WEIGHTS_CLEAR_ID = "weights-clear";
 const String WEIGHTS_BRUSH_ID = "weights-brush";
 const String WEIGHTS_LASSO_ID = "weights-lasso";
-const String WEIGHTS_COMPARE_ID = "weights-compare";
 const String WEIGHTS_INVERT_ID = "weights-invert";
 const String WEIGHTS_SHRINK_ID = "weights-shrink";
 const String WEIGHTS_SOFT_ID = "weights-soft";
@@ -939,10 +938,6 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 														&menu_lasso_mode, pinning ? LIT : PLAIN,
 														"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
 														.with_id(WEIGHTS_LASSO_ID);
-													@card_icon(COMPARE_GLYPH, app.compare_automatic
-														? "Showing the automatic weights — click to see the edited ones again"
-														: "Compare — show the automatic weights, without the hand edits, to see what they changed",
-														&weights_compare_pressed, app.compare_automatic ? LIT : PLAIN).with_id(WEIGHTS_COMPARE_ID);
 												};
 												weights_stray_icons(app);
 											};
@@ -1772,14 +1767,6 @@ fn void weights_invert_pressed(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	app.invert_area_islands();
 	app.refresh_ui();
-}
-
-fn void weights_compare_pressed(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.toggle_compare();
-	app.refresh_ui();
-	refresh_joint_panel(ui);
 }
 
 fn void weights_grow_pressed(Ui* ui) @private => weights_resize(ui, 1);
