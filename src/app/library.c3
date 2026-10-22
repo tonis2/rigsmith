@@ -1104,7 +1104,7 @@ fn int? AppState.save_authored_pack(&self, String file, String display, String p
 	float[] physical_skin = {};
 	if (body == MESH && constraints.present())
 	{
-		physical_skin = self.bind_dense(mem, &view);
+		physical_skin = self.weights(mem, &view);
 	}
 	defer if (physical_skin.len > 0) alloc::free(mem, physical_skin);
 

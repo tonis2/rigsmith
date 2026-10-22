@@ -81,15 +81,19 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "X / Y / Z", .action = "confine the move to that axis" },
 	{ .binding = "esc", .action = "put the joint back where it was" },
 
-	{ .heading = "While the Area tool is open" },
-	{ .binding = "Part menu", .action = "pick the part the joint moves — a click on the mesh never does" },
-	{ .binding = "click, on UV islands", .action = "add the island clicked to the part, or take it out" },
-	{ .binding = "wheel", .action = "zoom, as always — the part stays as it is" },
-	{ .binding = "shift-drag", .action = "grow the part from where you press, a tenth of the bone per step" },
+	{ .heading = "While the Weights card is open" },
+	{ .binding = "Grow / Shrink", .action = "push the joint's edge out or in, a tenth of its bone, live — no Apply" },
+	{ .binding = "Soft edge", .action = "how far the joint blends with its neighbours, live" },
+	{ .binding = "shift-drag", .action = "grow the joint, a tenth of its bone per step" },
 	{ .binding = "ctrl-drag", .action = "shrink it" },
-	{ .binding = "after Apply", .action = "the mesh is left alone until a part is picked again" },
-	{ .binding = "dark grey mesh", .action = "off the joint's limb: Apply leaves it, but a whole piece goes whole" },
-	{ .binding = "enter", .action = "apply: the joint moves exactly that part" },
+	{ .binding = "Reset", .action = "the joint back on its automatic edge, its edits taken back" },
+	{ .binding = "Mirror", .action = "every weight tool does the twin joint too" },
+	{ .binding = "Compare", .action = "show the automatic weights, to see what the hand edits changed" },
+	{ .binding = "blue-cast mesh", .action = "a hand edit stated that row; it holds when the joint moves" },
+	{ .binding = "Part menu", .action = "With children or UV islands: a part on show for Apply" },
+	{ .binding = "click, on UV islands", .action = "add the island clicked to the part, or take it out" },
+	{ .binding = "dark grey mesh", .action = "off the joint's limb: Apply leaves it, but UV islands go whole" },
+	{ .binding = "enter", .action = "apply the part on show" },
 	{ .binding = "esc", .action = "drop the part, then close the tool" },
 
 	{ .heading = "While the weight brush is open" },
@@ -116,7 +120,7 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "shift+T", .action = "the same lasso, straight to pinning vertices to the selected joint" },
 	// The tool column shows the one tool that has an icon; everything else in this
 	// section is a key or a menu item, which is why the column is small.
-	{ .binding = "tool column", .action = "top-left of the view: select, move, rotate, lasso, area and weight brush" },
+	{ .binding = "tool column", .action = "top-left of the view: tweak, move, rotate, scale, lasso and sketch" },
 	{ .binding = "Move tool, drag a joint", .action = "move its rest position — no alt needed" },
 	// No key of its own — a pane rather than a mode — and the only route to a
 	// whole piece at once, so it is also the only way to see which pieces a model

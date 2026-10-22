@@ -43,7 +43,6 @@ fn void AppState.apply_one(&self, Edit edit)
 	{
 		case REPLACE_CLIP: self.swap_clip_edit(edit);
 		case REBIND_CLIP: self.apply_binding_edit(edit, true);
-		case PAINT_STROKE: self.replay_stroke(edit, forwards: true);
 		case PIN_STROKE: self.replay_pin_stroke(edit, forwards: true);
 		case SET_ROTATION_LIMITS: self.replay_rotation_limits(edit, forwards: true);
 		case SET_JOINT_MAPS: self.replay_joint_maps(edit, forwards: true);
@@ -67,7 +66,6 @@ fn void AppState.revert_one(&self, Edit edit)
 	{
 		case REPLACE_CLIP: self.swap_clip_edit(edit);
 		case REBIND_CLIP: self.apply_binding_edit(edit, false);
-		case PAINT_STROKE: self.replay_stroke(edit, forwards: false);
 		case PIN_STROKE: self.replay_pin_stroke(edit, forwards: false);
 		case SET_ROTATION_LIMITS: self.replay_rotation_limits(edit, forwards: false);
 		case SET_JOINT_MAPS: self.replay_joint_maps(edit, forwards: false);
@@ -102,35 +100,9 @@ fn void AppState.replay_rotation_limits(&self, Edit edit, bool forwards)
 }
 
 <*
- Puts a stroke's dabs back on the document, one side or the other.
-
- Unlike a clip swap this is *not* self-inverse — a dab has a before and an after
- and they are different numbers — so the direction is a parameter rather than
- something the payload can work out for itself.
-
- The changes are replayed in the order they were recorded going forwards and in
- reverse going back. It makes no difference today, since a stroke never writes
- the same `(vertex, dot)` twice, but the reverse order is what stays correct if
- one ever does.
-
- @param forwards : `True to lay the stroke down, false to take it back off.`
-*>
-fn void AppState.replay_stroke(&self, Edit edit, bool forwards)
-{
-	sz count = (sz)edit.other;
-	for (sz i = 0; i < count; i++)
-	{
-		sz at = (sz)edit.id + (forwards ? i : count - 1 - i);
-		PaintChange change = self.undo_stack.strokes[(sz)at];
-		self.doc.set_paint(change.vertex, change.dot_id, forwards ? change.after : change.before);
-	}
-}
-
-<*
  Puts a lasso's pins back on the document, one side or the other.
 
- `replay_stroke` for the other layer, with one difference that is not cosmetic:
- it goes through `write_pins` rather than through `set_pin` per change. A stroke
+ It goes through `write_pins` rather than through `set_pin` per change. A stroke
  is thousands of dabs and so is a region, but `set_pin` is a scan of the whole
  layer, so a per-change replay would make Ctrl+Z quadratic in exactly the
  gesture the layer exists for — a lasso of twenty thousand vertices would take
@@ -359,7 +331,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	RigView view = opened;
 	defer view.free(mem);
 
-	float[] skin = self.bind_dense(mem, &view);
+	float[] skin = self.weights(mem, &view);
 	defer alloc::free(mem, skin);
 
 	// **Nothing is pruned.** An export writes its `<stem>.crig.json` beside it, so
@@ -997,15 +969,25 @@ fn void AppState.load_session(&self)
 	self.authored_dirty = false;
 	self.source_has_model_transform = loaded.model_transform_in_mesh;
 
+	self.mark_rig_stale();
+	self.bake_legacy_paint();
 	self.undo_stack.clear();
 	self.select(0);
 
-	self.mark_rig_stale();
 	self.restore_library_refs(&refs);
 	self.refresh_ui();
 	// stderr rather than stdout: an MCP server built out of these sources may
 	// have JSON-RPC on stdout, where one stray line is a parse error at the far
 	// end. A terminal shows both streams, so the full path is still readable.
 	io::eprintfn("loaded %s (%d joints, %d bones)", path, self.doc.dots.len(), self.doc.edges.len());
+	// A rig saved before the automatic weights ended at a band binds differently
+	// now — tighter, with no joint's tail across the body — and a model that
+	// suddenly deforms otherwise with nothing said would read as a broken file.
+	if (self.doc.read_version < WINDOWED_SESSION && !self.doc.skin_from_file && self.doc.dots.len() > 1)
+	{
+		self.@notice("loaded %s · its weights were re-derived: each joint now ends a band past its neighbours instead of reaching the whole body",
+			base_name(path));
+		return;
+	}
 	self.@notice("loaded %s · %d joints, %d bones", base_name(path), self.doc.dots.len(), self.doc.edges.len());
 }

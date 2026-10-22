@@ -125,18 +125,16 @@ fn String hint_line(AppState* app)
 
 	if (app.areaing)
 	{
-		// The mesh shapes only a part on show; otherwise it is the camera's.
+		// A part waiting for Apply, or the joint's own bone, changed live.
 		if (app.area_shaping() && app.area_islands)
 		{
 			return "click · add or remove an island     shift-drag · paint islands in     ctrl-drag · paint them out     enter · apply     esc · drop";
 		}
 		if (app.area_shaping())
 		{
-			return "shift-drag · grow from a point     ctrl-drag · shrink     enter · apply     esc · drop";
+			return "enter · apply the part on show     esc · drop it";
 		}
-		return app.area_pending()
-			? "Part menu · show a part to shape it     enter · apply its own part     shift+W · paint by hand     esc · drop"
-			: "Part menu · pick a part to shape it     shift+W · paint by hand     esc · leave";
+		return "shift-drag the mesh · grow the joint     ctrl-drag · shrink it     shift+W · paint by hand     esc · leave";
 	}
 
 	String tool = transform_tool_hint(app);

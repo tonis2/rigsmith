@@ -830,7 +830,7 @@ fn void a_reach_of_zero_binds_exactly_as_before() @test
 }
 
 // The share below which crig stops reporting a dot as reaching a vertex at all
-// — `BLEND_FLOOR` in `app/weights.c3`, restated here rather than imported so
+// — `SHOWN_FLOOR` in `app/weights.c3`, restated here rather than imported so
 // this file keeps saying what it means by "stops".
 const float REPORTED_AT = 0.05f;
 
@@ -2011,4 +2011,78 @@ fn void joints_inside_one_voxel_still_split_the_skin() @test
 		owned[best]++;
 	}
 	test::@check(owned[0] > 0 && owned[1] > 0, "the bones did not split the stretch: %d / %d", owned[0], owned[1]);
+}
+
+<*
+ A loose piece at one ankle — a buckle — rides that leg, not the hips.
+
+ The carrier rule sums each bone's straight-line pull on the piece and walks up
+ the tree to the deepest subtree holding most of it. Summed over every bone, the
+ far ones' tails — the other leg, both arms, the spine — took enough that the
+ near leg's subtree fell under the bar and only the hips qualified, so a buckle
+ on a boot swung with the pelvis. Only bones near the piece get a say now.
+*>
+fn void a_buckle_at_an_ankle_rides_its_leg() @test
+{
+	Vec3List positions;
+	UintList indices;
+	positions.init(mem);
+	indices.init(mem);
+	defer
+	{
+		positions.free();
+		indices.free();
+	}
+	// A torso and two legs, in one piece; the buckle beside the right ankle.
+	add_box(&positions, &indices, { -0.2, 0.0, -0.1 }, { 0.2, 0.6, 0.1 }, 5);
+	add_box(&positions, &indices, { -0.18, -0.9, -0.08 }, { -0.04, 0.02, 0.08 }, 5);
+	add_box(&positions, &indices, { 0.04, -0.9, -0.08 }, { 0.18, 0.02, 0.08 }, 5);
+	usz body = (usz)positions.len();
+	add_box(&positions, &indices, { -0.32, -0.87, -0.02 }, { -0.28, -0.83, 0.02 }, 1);
+	rig::TriMesh mesh = { .positions = positions.to_array(mem), .indices = indices.to_array(mem) };
+	defer mesh.free(mem);
+
+	// hips, spine, chest, two arms out to the side, two three-joint legs — and a
+	// hand of five three-joint fingers on each arm, the far bones whose tails
+	// outvoted the leg.
+	Vec3[11] body_joints = {
+		{ 0, 0.05, 0 }, { 0, 0.3, 0 }, { 0, 0.55, 0 },
+		{ -0.35, 0.55, 0 }, { 0.35, 0.55, 0 },
+		{ -0.11, 0.0, 0 }, { -0.11, -0.45, 0 }, { -0.11, -0.8, 0 },
+		{ 0.11, 0.0, 0 }, { 0.11, -0.45, 0 }, { 0.11, -0.8, 0 },
+	};
+	int[11] body_parents = { -1, 0, 1, 2, 2, 0, 5, 6, 0, 8, 9 };
+	Vec3[41] joints;
+	int[41] parents;
+	joints[:11] = body_joints[..];
+	parents[:11] = body_parents[..];
+	usz at = 11;
+	for (usz side = 0; side < 2; side++)
+	{
+		float out = side == 0 ? -1.0f : 1.0f;
+		for (usz finger = 0; finger < 5; finger++)
+		{
+			for (usz k = 0; k < 3; k++)
+			{
+				joints[at] = { out * (0.45f + 0.04f * (float)k), 0.5f + 0.025f * (float)finger, 0 };
+				parents[at] = k == 0 ? (int)(3 + side) : (int)(at - 1);
+				at++;
+			}
+		}
+	}
+
+	rig::MeshVoxels voxels = rig::build_voxels(mem, mesh);
+	defer voxels.free(mem);
+	rig::MeshShells shells = rig::build_shells(mem, mesh);
+	defer shells.free(mem);
+	int buckle = shells.of[mesh.positions.len - 1];
+	int[] riders = alloc::new_array(mem, int, (sz)shells.count);
+	defer alloc::free(mem, riders);
+
+	float[] bound = rig::bind_geodesic(mem, &voxels, mesh.positions, joints[..], parents[..], &shells, riders: riders);
+	defer alloc::free(mem, bound);
+
+	int rider = riders[buckle];
+	test::@check(rider >= 5 && rider <= 7, "the buckle rides joint %d, not the right leg (5 to 7)", rider);
+	test::@check(shells.of[body - 1] != buckle, "the buckle is not a piece of its own");
 }

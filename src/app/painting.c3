@@ -1,17 +1,12 @@
 <*
- Hand corrections to the bind, as an operation rather than as storage.
+ The weight brush and the share request: hand edits to the bind, as an
+ operation rather than as storage.
 
- `core/document.c3` holds one dab and the primitive that sets it; this is the
- layer above, where a set of dabs becomes one undoable stroke and the views are
- told to catch up. The split is the same one `core/editing.c3` describes for
- every other edit: the primitive does exactly what it says and records nothing,
- and what the user asked for is assembled here.
-
- **The brush states shares; the paint layer multiplies.** A brush stroke is
- written as pins (`brush_share`), so it can put a joint where the automatic
- weights gave it nothing. `PaintDab` is the older layer: a multiplier over
- whatever the binder produces, which cannot lift a zero. It stays for
- `paint_weights` over MCP and for sessions that carry it.
+ Both write through one primitive, `restate_share`, as stated rows on the one
+ hand-edit layer (`app/pinning.c3` keeps it), so a share given or taken means
+ the same thing whichever asked — and where a joint is taken off a vertex, the
+ field decides who gets it (`others_of`). The multipliers sessions before
+ version 31 carried are turned into rows as they load (`bake_legacy_paint`).
 *>
 module crig;
 
@@ -21,22 +16,6 @@ import rig;
 import std::math;
 import std::math::vector;
 import std::collections::list;
-
-<*
- The highest share a vertex can be given, and why it is not 1.
-
- A share is relative: `w / sum(w)`. Scaling one column can drive its share as
- close to 1 as you like but never reach it, because the others are still there —
- exactly 1 would mean every other dot holds *nothing*, which is a statement about
- those dots rather than about this one, and painting it would silently rewrite
- their corrections too.
-
- So "full" stops here. Past `sparsify_weights` and the renormalisation that
- follows it, the difference between this and 1 is far below anything a deformation
- shows; what it buys is that the multiplier stays finite and the other dots keep
- whatever the user gave them.
-*>
-const float PAINT_SHARE_CEILING = 0.99f;
 
 <*
  The brush's radius in screen pixels when it is first opened, and the range a
@@ -121,6 +100,43 @@ fn void AppState.begin_stroke(&self)
 	self.stroke_open = true;
 	self.stroke_blocked = false;
 	self.stroke_alone = false;
+
+	// One Mirror for every weight tool: with it on, the stroke paints the twin
+	// across the plane as it paints the joint.
+	self.drop_stroke_mirror();
+	uint twin = self.area_mirrors() ? self.mirror_twin(self.selected) : 0;
+	if (twin != 0 && count > 0)
+	{
+		self.stroke_twin = twin;
+		self.stroke_mirror = self.mesh_mirror(mem);
+	}
+}
+
+// Forgets the stroke's mirror. Safe with none.
+fn void AppState.drop_stroke_mirror(&self)
+{
+	if (self.stroke_twin != 0) self.stroke_mirror.free(mem);
+	self.stroke_twin = 0;
+	self.stroke_mirror = {};
+}
+
+<*
+ The vertices across the plane from `vertices`, aligned with them: the partner
+ of each, or `count` (past the mesh) where it has none or sits on the plane — a
+ vertex the joint and its twin would both claim is the joint's alone.
+*>
+fn uint[] AppState.mirrored_vertices(&self, Allocator allocator, rig::MirrorLookup* across, uint[] vertices)
+{
+	usz count = self.geometry.positions.len;
+	uint[] partners = alloc::new_array(allocator, uint, (sz)vertices.len);
+	foreach (i, v : vertices)
+	{
+		partners[i] = (uint)count;
+		if ((usz)v >= count) continue;
+		sz partner = across.twin_of(self.geometry.positions[v]);
+		if (partner >= 0 && (uint)partner != v) partners[i] = (uint)partner;
+	}
+	return partners;
 }
 
 <*
@@ -142,6 +158,7 @@ fn void AppState.end_stroke(&self)
 {
 	if (!self.stroke_open) return;
 	self.stroke_open = false;
+	self.drop_stroke_mirror();
 	// The stroke's pins went on the ledger with the group left open; closing it
 	// here makes the whole press-to-release one undo step.
 	self.undo_stack.commit();
@@ -263,8 +280,8 @@ fn void AppState.end_brush(&self)
 	// here.
 	self.end_stroke();
 
-	// Only when the mode is still showing what it put up: a user who reached for U
-	// while painting has said what they want more clearly than the view this mode
+	// Only when the mode is still showing what it put up: a user who switched the
+	// view while painting has said what they want more clearly than the view this mode
 	// saved on the way in.
 	if (self.tint_mode == FALLOFF) self.show_tint(self.brush_tint);
 }
@@ -336,109 +353,15 @@ fn bool AppState.size_brush(&self, float notches)
  What a share request did, counted by what it could not do.
 
  A brush can ignore this; an agent cannot. "340 vertices asked for, 12 of them
- unreachable" is the difference between a correction that worked and one that
- looked like it did — and the two failures below are not user error, they are the
- rig saying something about itself.
+ off the limb" is the difference between an edit that worked and one that looked
+ like it did — and the two refusals below are not user error, they are the rig
+ saying something about itself.
 *>
 struct PaintResult
 {
-	usz changed;     // dabs that actually moved
-	usz unreachable; // the binder gives this dot nothing here, so no multiplier reaches
-	usz alone;       // nothing else holds this vertex, so there is no share to take
-
-	<*
-	 Requested vertices carrying a pin — where the correction was made and will
-	 not be visible.
-
-	 Not a failure and not counted as one: the dab is written and comes back the
-	 moment the pin is lifted. But `pin_over` runs after `paint_over` and states
-	 the share outright, so the deformation the caller is looking at does not
-	 move, and "340 painted, 340 pinned" is the difference between a correction
-	 that did nothing and one whose effect is simply somewhere else in the stack.
-	*>
-	usz pinned;
-}
-
-<*
- Write a set of dabs onto the document, saying what each one changed.
-
- 	`usz changed = app.write_paint(dabs, changes);`
-
- The half of `paint_dabs` that touches the document and nothing else: no
- ledger entry, no commit, no view told. For a caller assembling a larger edit
- — a mirror, which crosses a dot's paint onto its twin inside the same undo
- step as the twin itself — which records the changes as a stroke of its own
- and commits when the whole edit is in.
-
- @param dabs : `What to set, borrowed for the call. A factor of 1 clears a dab.`
- @param changes : `Filled with both sides of each change, in order.`
- @require changes.len >= dabs.len : `Every dab may turn out to be a change.`
- @return `How many actually changed, which is how much of changes was written.`
-*>
-fn usz AppState.write_paint(&self, PaintDab[] dabs, PaintChange[] changes)
-{
-	usz changed = 0;
-	foreach (dab : dabs)
-	{
-		// Negative is clamped by `set_paint`, so ask it what it would store rather
-		// than comparing against what was asked for — otherwise a dab of -1 over a
-		// vertex already at 0 would look like a change and record an identity one.
-		float before = self.doc.paint_of(dab.vertex, dab.dot_id);
-		if (!self.doc.set_paint(dab.vertex, dab.dot_id, dab.factor)) continue;
-
-		changes[changed++] = {
-			.vertex = dab.vertex,
-			.dot_id = dab.dot_id,
-			.before = before,
-			.after = self.doc.paint_of(dab.vertex, dab.dot_id),
-		};
-	}
-	return changed;
-}
-
-<*
- Lay a set of dabs onto the document as one undoable stroke.
-
- 	`usz changed = app.paint_dabs(dabs);`
-
- One undo step however many vertices were touched, because a stroke is one action
- to the person who made it. The previous factor of each dab is read here rather
- than being asked of the caller — a brush knows where it went and what it wants,
- not what was already there.
-
- Dabs that change nothing are dropped rather than recorded, so a brush dragged
- back over mesh it has already painted to the same value leaves the history
- alone. A stroke where *every* dab is like that records nothing at all and
- returns 0, which is what makes it safe to call on every mouse move.
-
- Marks the *paint* stale rather than the rig, which is what gets the view back
- on the very next frame instead of once the hand stops — see `mark_paint_stale`.
- A posed body is reskinned before this returns, so the deformation the stroke
- was aimed at moves under the circle on the same frame as the colour.
-
- @param dabs : `What to set, borrowed for the call. A factor of 1 clears a dab.`
- @return `How many actually changed.`
-*>
-fn usz AppState.paint_dabs(&self, PaintDab[] dabs)
-{
-	if (dabs.len == 0) return 0;
-
-	PaintChange[] changes = alloc::new_array(mem, PaintChange, (sz)dabs.len);
-	defer alloc::free(mem, changes);
-
-	usz changed = self.write_paint(dabs, changes);
-	if (changed == 0) return 0;
-
-	self.undo_stack.record_stroke(changes[:changed]);
-	self.undo_stack.commit();
-	self.mark_paint_stale();
-	// A parked clip is not ticking and a pose draft never does, so nothing
-	// would rebind the skin under the palette until the playhead moved: the
-	// tints would follow the stroke and the body would not. Same door the
-	// history steps use, and cheap for the same reason the tints are — the
-	// base bind is cached, and a stroke keeps the surface over it standing.
-	if (self.skinned()) self.refresh_pose_display();
-	return changed;
+	usz changed;   // pin entries that actually moved
+	usz blocked;   // off the joint's limb, where it held nothing: not given any of it
+	usz alone;     // nothing else can hold this vertex, so there is no share to take
 }
 
 <*
@@ -666,36 +589,14 @@ fn usz strongest_shares(float[] row, uint[] dot_ids, uint[] dots, float[] shares
 }
 
 <*
- One vertex's row as every view shows it, as shares: the automatic row with the
- corrections and pins over it — `painted_bind` for one row, without copying the
- whole mesh.
-
- @param base : `base_bind_for the same view.`
- @param row : `Filled; bones long.`
+ One row as shares of its vertex: `row` filled with `weights / sum(weights)`,
+ or zeros for a row that holds nothing.
 *>
-fn void AppState.row_as_shown(&self, RigView* view, float[] base, uint vertex, float[] row)
+fn void share_row(float[] weights, float[] row)
 {
-	usz bones = view.len();
-	usz at = (usz)vertex * bones;
-	row[:bones] = base[at:bones];
-	foreach (column : view.paint)
-	{
-		if (column.vertex == vertex && column.joint < bones) row[column.joint] *= column.factor;
-	}
-
-	// `pin_columns` keeps a vertex's pins together; restated as row 0 of this one.
-	List{PinColumn} stated;
-	stated.init(mem);
-	defer stated.free();
-	foreach (pin : view.pins)
-	{
-		if (pin.vertex == vertex) stated.push({ .vertex = 0, .joint = pin.joint, .share = pin.share });
-	}
-	pin_over(row[:bones], bones, stated.array_view());
-
 	float sum = 0.0f;
-	foreach (share : row[:bones]) sum += share;
-	if (sum > 0.0f) foreach (&share : row[:bones]) *share /= sum;
+	foreach (weight : weights) sum += weight;
+	foreach (b, weight : weights) row[b] = sum > 0.0f ? weight / sum : 0.0f;
 }
 
 // How far past the circle's own radius, in the model, a vertex may sit from the
@@ -811,7 +712,7 @@ fn uint[] AppState.pick_vertices(&self, Allocator allocator, uint dot_id, PaintP
 	// brush stroke, and the base underneath it does not change while one is in
 	// flight. The copy stays — the corrections have to be painted somewhere, and
 	// that somewhere cannot be the cache.
-	float[] dense = self.painted_bind(mem, &view);
+	float[] dense = self.weights(mem, &view);
 	defer alloc::free(mem, dense);
 	if (dense.len < count * bones) return {};
 
@@ -841,194 +742,40 @@ fn uint[] AppState.pick_vertices(&self, Allocator allocator, uint dot_id, PaintP
 }
 
 <*
- Say what share of these vertices a dot should hold, and solve for the paint that
- reaches it.
+ Say what share of these vertices a dot should hold, and state it.
 
  	`PaintResult did = app.paint_share(knee, vertices, 0.0f);`
 
- **The public verb.** Everything under it is multipliers, which are unstateable —
- `1 / (d² + ε)` spans orders of magnitude, so "multiply by 0.03" means nothing
- without knowing the base. A *share* means the same thing to a person, to a test
- and to an agent, at every vertex, before and after `sparsify_weights`
- renormalises. So this is what a caller says, and the multiplier is worked out
- from whatever the binder currently produces.
+ **The public verb** — what `paint_weights` says over MCP, in the words the
+ survey reads back: a share means the same thing to a person, a test and an
+ agent, at every vertex. Written the way the brush writes, as stated rows
+ (`restate_share`), so a share asked for is the share measured and a joint can
+ be given a vertex the automatic weights gave it nothing on. What a share is
+ taken from, or handed to, is the same as for every other edit — see
+ `others_of`.
 
- The arithmetic, per vertex: with `b` the binder's own weight for this dot, `R`
- the painted weights of every *other* dot, and `S` the share asked for, the
- correction that lands it is
-
- 	`p = S·R / ((1 − S)·b)`
-
- from `S = pb / (pb + R)`. Note `R` is the *painted* total — a share is a
- statement about the rig as it now stands, so painting one dot down and then
- another up gives the second one the room the first gave up.
-
- **It stays a correction, not a value.** Move the dot afterwards and `b` changes
- underneath while `p` does not, so the share drifts. That is the whole bargain of
- §7's correction layer — the alternative is an auto-rig that stops helping the
- moment you touch it — and it is why "paint what you see" is a promise about the
- session rather than about the file.
-
- Two vertices cannot be served, and both are the rig talking rather than the
- caller being wrong. Where the binder gives this dot **nothing** — a vertex its
- geodesic flood never reached — no finite multiplier reaches any share at all;
- zero times anything is zero, and the dot needs moving or its reach widening.
- Where **nothing else** holds the vertex, there is no share to take: the dot
- already has all of it and the request has no meaning until a second dot is near.
-
- One undoable stroke, through `paint_dabs`, so all of the above is one Ctrl+Z.
+ One undoable step.
 
  **Partly, when asked.** `strengths` moves each vertex a fraction of the way from
- where it is now toward the target rather than all of it, which is what makes a
- brush able to produce every value in between without a second control: the same
- request applied softly twice lands further than once and never past the target.
- Empty means all the way, which is what a caller naming vertices outright wants.
+ where it is now toward the target rather than all of it — the same request
+ applied softly twice lands further than once and never past the target. Empty
+ means all the way, which is what a caller naming vertices outright wants.
 
  @param dot_id : `The dot whose share is being set.`
  @param vertices : `Which vertices. Out-of-range entries are skipped.`
- @param share : `0 to 1. Clamped into [0, PAINT_SHARE_CEILING] — see there for why 1 is not reachable.`
+ @param share : `0 to 1, clamped.`
  @param strengths : `Optional, one per vertex: how far toward the target to move, 0 to 1. Empty goes the whole way.`
 *>
 fn PaintResult AppState.paint_share(&self, uint dot_id, uint[] vertices, float share, float[] strengths = {})
 {
 	PaintResult result;
-	if (vertices.len == 0 || !self.doc.find(dot_id)) return result;
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return result;
-	RigView view = opened;
-	defer view.free(mem);
-
-	sz found = view.joint_of(dot_id);
-	usz bones = view.len();
-	if (found < 0 || bones == 0) return result;
-	usz mine = (usz)found;
-
-	float wanted = share;
-	wanted = math::clamp(wanted, 0.0f, PAINT_SHARE_CEILING);
-
-	// The base underneath the corrections. `b` has to come from here rather than
-	// from the painted bind, because a vertex already painted to zero has lost the
-	// number this solves against — zero divided by zero is not the way back.
-	//
-	// Borrowed from the cache and never freed here — see `base_bind_for`. Nothing
-	// below this line may reach `mark_rig_stale`, which would release the array
-	// this is still reading: a stroke records its dabs through `paint_dabs`, which
-	// marks the *paint* stale and leaves the base alone, and that is the only
-	// write this makes.
-	float[] base = self.base_bind_for(&view);
-
-	usz count = self.geometry.positions.len;
-	if (base.len < count * bones) return result;
-
-	// Where each requested vertex sits in the working arrays, so the paint can be
-	// scattered in one pass over the dabs instead of one search per bone.
-	int[] slot = alloc::new_array(mem, int, (sz)count);
-	defer alloc::free(mem, slot);
-	slot[:count] = -1;
-
-	usz asked = 0;
-	foreach (v : vertices)
-	{
-		if ((usz)v >= count || slot[v] >= 0) continue;
-		slot[v] = (int)asked++;
-	}
-	if (asked == 0) return result;
-
-	// Counted here, while `slot` still names every requested vertex — the dab loop
-	// below clears each entry as it takes it. One walk of the pin layer rather
-	// than a lookup per vertex, and one flag per requested row so a vertex with
-	// two pins on it is one answer rather than two.
-	bool[] stated = alloc::new_array(mem, bool, (sz)asked);
-	defer alloc::free(mem, stated);
-	foreach (column : view.pins)
-	{
-		int row = slot[column.vertex];
-		if (row < 0 || stated[row]) continue;
-		stated[row] = true;
-		result.pinned++;
-	}
-
-	// Current corrections for the requested vertices only, one row per vertex.
-	float[] factors = alloc::new_array(mem, float, (sz)(asked * bones));
-	defer alloc::free(mem, factors);
-	factors[..] = 1.0f;
-
-	foreach (column : view.paint)
-	{
-		int row = slot[column.vertex];
-		if (row >= 0) factors[(usz)row * bones + column.joint] = column.factor;
-	}
-
-	PaintDab[] dabs = alloc::new_array(mem, PaintDab, (sz)asked);
-	defer alloc::free(mem, dabs);
-
-	usz ready = 0;
-	foreach (usz i, v : vertices)
-	{
-		int row = slot[v];
-		if (row < 0) continue;
-		slot[v] = -1; // taken; a repeated vertex is one dab, not two
-
-		usz at = (usz)v * bones;
-		float held = base[at + mine];
-		if (held <= 0.0f)
-		{
-			result.unreachable++;
-			continue;
-		}
-
-		float rest = 0.0f;
-		for (usz b = 0; b < bones; b++)
-		{
-			if (b == mine) continue;
-			rest += base[at + b] * factors[(usz)row * bones + b];
-		}
-
-		if (rest <= 0.0f)
-		{
-			// Already the whole of this vertex. Asking for more is satisfied and
-			// asking for less has nowhere to put what is given up.
-			if (wanted < PAINT_SHARE_CEILING) result.alone++;
-			continue;
-		}
-
-		// Where this vertex stands right now, so a partial request can move it
-		// from there rather than from wherever the binder alone would have put it.
-		float target = wanted;
-		if (i < strengths.len)
-		{
-			float pull = strengths[i];
-			if (pull <= 0.0f) continue;
-			if (pull > 1.0f) pull = 1.0f;
-
-			float carried = held * factors[(usz)row * bones + mine];
-			float now = carried / (carried + rest);
-			target = now + (wanted - now) * pull;
-		}
-		if (target > PAINT_SHARE_CEILING) target = PAINT_SHARE_CEILING;
-		if (target < 0.0f) target = 0.0f;
-
-		dabs[ready++] = {
-			.vertex = v,
-			.dot_id = dot_id,
-			.factor = target * rest / ((1.0f - target) * held),
-		};
-	}
-
-	result.changed = self.paint_dabs(dabs[:ready]);
-	return result;
+	if (vertices.len == 0) return result;
+	float[] pulls = alloc::new_array(mem, float, (sz)vertices.len);
+	defer alloc::free(mem, pulls);
+	foreach (i, &pull : pulls) *pull = i < strengths.len ? strengths[i] : 1.0f;
+	return self.restate_share(dot_id, vertices, math::clamp(share, 0.0f, 1.0f), pulls, limb: false);
 }
 
-<*
- The share of a vertex's automatic row its limb has to hold before the brush or
- an Apply may give the joint any of it — see `limb_family`.
-
- A hundredth, the floor `AREA_LEAK_FLOOR` leaves a hold alone below: geodesic
- weights reach almost everywhere, faintly, and a floor of nothing would let a
- finger reach the boot it was meant to stay off.
-*>
-const float LIMB_FLOOR = 0.01;
 
 <*
  The joints whose part of the body `joint` may be painted onto: itself, its
@@ -1175,20 +922,9 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
 
  	`app.brush_share(knee, under[:hit], 1.0f, pulls[:hit]);`
 
- Each vertex moves `pull` of the way from the joint's share as shown toward
- `target`; the other joints keep their proportions of what is left. The row is
- written as pins — the joint and the strongest few others — so the brush can
- raise a joint the automatic weights gave nothing, and speaks the same language
- as the Area tool. Where the joint held all of the row but a sliver, what it
- gives up goes where the surface around the vertex has it (`others_of`), not to
- the sliver: a hundredth of a knee on the tail is not where the tail belongs.
-
- Only on the joint's limb (`limb_family`), or where it already holds some: a
- vertex off it is not given any of the joint, and `stroke_blocked` says so for
- `end_stroke` to tell. Taking the joint off is allowed anywhere something else
- holds the vertex; where nothing does, it stays, and `stroke_alone` says so.
-
- The undo group is left open; `end_stroke` closes it, so a stroke is one step.
+ `restate_share` on the joint's limb, with the undo group left open so the
+ press-to-release is one step (`end_stroke` closes it), and the refusals kept
+ for `end_stroke` to say once rather than on every move.
 
  @param target : `1 puts the joint on, 0 takes it off.`
  @param strengths : `One per vertex: how far toward the target, 0 to 1.`
@@ -1196,24 +932,70 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
 *>
 fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, float[] strengths)
 {
+	PaintResult did = self.restate_share(dot_id, vertices, target, strengths, limb: true, commit: false);
+	if (did.blocked > 0) self.stroke_blocked = true;
+	if (did.alone > 0) self.stroke_alone = true;
+	usz changed = did.changed;
+
+	// With Mirror on, the same stroke across the plane on the twin.
+	if (self.stroke_twin != 0 && dot_id == self.selected)
+	{
+		uint[] across = self.mirrored_vertices(mem, &self.stroke_mirror, vertices);
+		defer alloc::free(mem, across);
+		changed += self.restate_share(self.stroke_twin, across, target, strengths, limb: true, commit: false).changed;
+	}
+	if (changed > 0 && self.skinned()) self.refresh_pose_display();
+	return changed;
+}
+
+<*
+ Move each vertex's share of a joint toward a target, and state the rows.
+
+ 	`PaintResult did = app.restate_share(knee, vertices, 0.0f, pulls, limb: true);`
+
+ **The one row edit.** The brush and `paint_weights` both come through here, so
+ a share given or taken means the same thing whichever asked. Each vertex moves
+ `pull` of the way from the joint's share as shown toward `target`; the rest of
+ the row is shared out by `others_of` — the other joints as shown when they hold
+ a real share, the field's answer when they do not — and written as pins, the
+ joint and the strongest others (`top_row`), authored by the joint. So a joint
+ can be raised where the automatic weights gave it nothing, and taking one off
+ hands the vertex to the joints that would own it, never to a sliver.
+
+ **Two refusals.** With `limb`, a vertex off the joint's limb (`limb_family`)
+ that it holds nothing of is not given any — counted in `blocked`. And where
+ nothing else can hold a vertex, taking the joint off leaves it — `alone`.
+
+ @param target : `The share to move toward, 0 to 1.`
+ @param pulls : `One per vertex: how far toward the target, 0 to 1. A vertex without one is skipped.`
+ @param limb : `Refuse to give the joint vertices off its limb.`
+ @param commit : `Close the undo group — false for a stroke still in flight.`
+*>
+fn PaintResult AppState.restate_share(&self, uint dot_id, uint[] vertices, float target, float[] pulls,
+	bool limb, bool commit = true)
+{
+	PaintResult result;
 	usz count = self.geometry.positions.len;
-	if (vertices.len == 0 || count == 0 || !self.doc.find(dot_id)) return 0;
+	if (vertices.len == 0 || count == 0 || !self.doc.find(dot_id)) return result;
 
 	RigView? opened = self.open_rig(mem);
-	if (catch opened) return 0;
+	if (catch opened) return result;
 	RigView view = opened;
 	defer view.free(mem);
 
 	usz bones = view.len();
 	sz joint = view.joint_of(dot_id);
-	if (joint < 0 || bones == 0) return 0;
+	if (joint < 0 || bones == 0) return result;
 
-	float[] painted = self.painted_bind(mem, &view);
+	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
-	if (painted.len < count * bones) return 0;
-	float[] base = self.base_bind_for(&view);
+	if (painted.len < count * bones) return result;
+	float[] automatic = limb ? self.weights(mem, &view, AUTOMATIC) : (float[]){};
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
 	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
 	defer alloc::free(mem, family);
+	Handoff handoff = self.handoff_for(&view);
+	defer handoff.free();
 
 	float[] row = alloc::new_array(mem, float, (sz)bones);
 	defer alloc::free(mem, row);
@@ -1226,8 +1008,8 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 
 	foreach (i, v : vertices)
 	{
-		if ((usz)v >= count || i >= strengths.len) continue;
-		float pull = math::clamp(strengths[i], 0.0f, 1.0f);
+		if ((usz)v >= count || i >= pulls.len) continue;
+		float pull = math::clamp(pulls[i], 0.0f, 1.0f);
 		if (pull <= 0.0f) continue;
 
 		usz at = (usz)v * bones;
@@ -1236,21 +1018,20 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 		float now = sum > 0.0f ? painted[at + (usz)joint] / sum : 0.0f;
 		float want = now + (target - now) * pull;
 		if (math::abs(want - now) < 1.0e-6f) continue;
-		if (want > now && now < AREA_LEAK_FLOOR && base.len >= count * bones && !on_limb(base[at:bones], family))
+		if (limb && want > now && now < AREA_LEAK_FLOOR && automatic.len >= count * bones
+			&& !on_limb(automatic[at:bones], family))
 		{
-			self.stroke_blocked = true;
+			result.blocked++;
 			continue;
 		}
 
-		// The others' proportions: as shown, or where the joint held all but a
-		// sliver, the surface around's — see `others_of`.
-		float others = self.others_of(painted, base, v, bones, joint, -1, row);
+		float others = self.others_of(painted, &view, &handoff, v, joint, -1, row);
 		if (others <= 1.0e-6f)
 		{
 			// Nothing else to hand a share to: the joint keeps the whole row.
 			if (want < now)
 			{
-				self.stroke_alone = true;
+				result.alone++;
 				continue;
 			}
 			want = 1.0f;
@@ -1266,32 +1047,7 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 		draft.state(v, dots[:kept], shares[:kept], dot_id);
 	}
 
-	usz changed = self.lay_draft(&draft, commit: false);
-	if (changed > 0 && self.skinned()) self.refresh_pose_display();
-	return changed;
+	result.changed = self.lay_draft(&draft, commit: commit);
+	return result;
 }
 
-<*
- Take every correction off the rig, as one undoable step.
-
- The way out of a layer that has been painted into a corner. One stroke rather
- than one per dab, for the same reason painting is.
-
- @return `How many dabs were cleared.`
-*>
-fn usz AppState.clear_paint(&self)
-{
-	sz held = self.doc.paint.len();
-	if (held == 0) return 0;
-
-	// Copied out first: `paint_dabs` walks the same list this is emptying, and a
-	// list being written while it is read is a different bug every time.
-	PaintDab[] dabs = alloc::new_array(mem, PaintDab, held);
-	defer alloc::free(mem, dabs);
-
-	foreach (usz i, dab : self.doc.paint.array_view())
-	{
-		dabs[i] = { .vertex = dab.vertex, .dot_id = dab.dot_id, .factor = 1.0f };
-	}
-	return self.paint_dabs(dabs);
-}

@@ -55,6 +55,13 @@ fn crig::AppState chained()
 	return app;
 }
 
+// Takes a dot off every vertex of the cube, through the one hand edit.
+fn void take_all_off(crig::AppState* app, uint dot)
+{
+	uint[8] all = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	app.paint_share(dot, all[..], 0.0f);
+}
+
 // The dot id `name` was given, or 0.
 fn uint dot_named(crig::AppState* app, String name)
 {
@@ -314,114 +321,11 @@ fn float weight_on(crig::AppState* app, uint vertex, uint dot)
 	sz joint = view.joint_of(dot);
 	if (joint < 0) return -1.0f;
 
-	float[] dense = app.bind_dense(mem, &view);
+	float[] dense = app.weights(mem, &view);
 	defer alloc::free(mem, dense);
 
 	usz at = (usz)vertex * view.len() + (usz)joint;
 	return at < dense.len ? dense[at] : -1.0f;
-}
-
-<*
- A dab scales exactly one dot's hold on exactly one vertex.
-
- The narrowest thing the layer promises, and the one a wrong row stride would
- break silently — a dab landing on the right vertex of the wrong joint still
- looks like paint doing something.
-*>
-fn void a_dab_scales_one_dots_hold_on_one_vertex() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
-
-	float hips_was = weight_on(&app, 0, hips);
-	float knee_was = weight_on(&app, 0, knee);
-	float hips_elsewhere = weight_on(&app, 5, hips);
-
-	test::@check(app.doc.set_paint(0, hips, 0.25f), "the dab took");
-
-	test::@check(math::abs(weight_on(&app, 0, hips) - hips_was * 0.25f) < 1.0e-9f,
-		"the painted column is scaled by exactly the factor");
-	test::@check(weight_on(&app, 0, knee) == knee_was,
-		"the other joints on that vertex are untouched");
-	test::@check(weight_on(&app, 5, hips) == hips_elsewhere,
-		"and the same joint on other vertices is untouched");
-}
-
-<*
- A correction outlives the base it was painted over.
-
- The whole reason the layer is multiplicative rather than additive. The binder
- returns `1 / (d^2 + eps)`, so moving the dot changes the base by orders of
- magnitude — an absolute correction would mean something different afterwards,
- while a ratio means the same thing. This is what lets a dot be dragged after a
- stroke without the stroke being redone.
-*>
-fn void a_dab_survives_the_dot_moving() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	test::@check(app.doc.set_paint(0, hips, 0.25f), "the dab took");
-
-	app.doc.move_dot(hips, { 0, 0.8, 0 });
-
-	// Re-derived from scratch at the new position, so this is not the old number.
-	float painted = weight_on(&app, 0, hips);
-	test::@check(app.doc.set_paint(0, hips, 1.0f), "clearing the dab took");
-	float bare = weight_on(&app, 0, hips);
-
-	test::@check(bare > 0.0f && math::abs(painted - bare * 0.25f) < 1.0e-9f,
-		"the correction is still a quarter of whatever the binder now says");
-}
-
-<*
- A factor of one is stored as nothing.
-
- "Is anything painted" has to stay a length test, and a stroke that puts a vertex
- back where the binder had it should leave no trace — otherwise the layer grows
- forever under a brush being used to undo itself.
-*>
-fn void painting_back_to_one_leaves_nothing_behind() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-
-	test::@check(app.doc.set_paint(0, hips, 0.5f) && app.doc.paint.len() == 1, "one dab stored");
-	test::@check(!app.doc.set_paint(0, hips, 0.5f), "setting the same factor again changes nothing");
-	test::@check(app.doc.set_paint(0, hips, 1.0f) && app.doc.paint.len() == 0, "back to one clears it");
-	test::@check(!app.doc.set_paint(0, hips, 1.0f), "and clearing an absent dab is not a change");
-	test::@check(app.doc.paint_of(0, hips) == 1.0f, "an unpainted vertex reads as no correction");
-}
-
-<*
- A dab on a dot that is no longer in the rig is skipped, not carried.
-
- The document keeps it so undo can bring it back with the dot — the rule the
- attachment and pose lists already follow — but there is no column to multiply
- while the dot is gone, and resolving one would land on whichever joint inherited
- the index.
-*>
-fn void a_dab_on_a_deleted_dot_binds_as_if_it_were_not_there() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
-	test::@check(app.doc.set_paint(0, hips, 0.25f), "the dab took");
-
-	float knee_was = weight_on(&app, 0, knee);
-	app.doc.remove_dot(hips);
-
-	test::@check(app.doc.paint.len() == 1, "the document still holds the dab for undo");
-	test::@check(weight_on(&app, 0, knee) == knee_was,
-		"but nothing in the rig that is left has been scaled by it");
 }
 
 <*
@@ -450,7 +354,7 @@ fn void the_survey_counts_painted_weights() @test
 	test::@check(owned_before > 0, "hips owns something to take away");
 
 	// Nothing at all, everywhere: the strongest statement the layer can make.
-	for (uint v = 0; v < (uint)cube_positions.len; v++) app.doc.set_paint(v, hips, 0.0f);
+	take_all_off(&app, hips);
 
 	crig::WeightSurvey after = app.survey_weights(mem)!!;
 	defer after.free(mem);
@@ -484,7 +388,7 @@ fn void the_territory_view_shows_painted_weights() @test
 	uint[8] before;
 	foreach (usz i, tint : app.tints) before[i] = tint;
 
-	for (uint v = 0; v < (uint)cube_positions.len; v++) app.doc.set_paint(v, hips, 0.0f);
+	take_all_off(&app, hips);
 	app.rebind_tints();
 
 	usz moved = 0;
@@ -518,7 +422,7 @@ fn void the_falloff_view_shows_painted_weights() @test
 	uint[8] before;
 	foreach (usz i, tint : app.tints) before[i] = tint;
 
-	for (uint v = 0; v < (uint)cube_positions.len; v++) app.doc.set_paint(v, hips, 0.0f);
+	take_all_off(&app, hips);
 	app.rebind_tints();
 
 	usz moved = 0;
@@ -540,7 +444,7 @@ fn void the_falloff_view_runs_grey_to_orange() @test
 
 	uint hips = dot_named(&app, "hips");
 	app.selected = hips;
-	for (uint v = 0; v < (uint)cube_positions.len; v++) app.doc.set_paint(v, hips, 0.0f);
+	take_all_off(&app, hips);
 	app.show_tint(crig::TintMode.FALLOFF);
 	app.rebind_tints();
 	foreach (usz i, tint : app.tints)
@@ -573,22 +477,22 @@ fn void a_stroke_undoes_in_one_step() @test
 
 	uint hips = dot_named(&app, "hips");
 
-	crig::PaintDab[4] stroke = {
-		{ .vertex = 0, .dot_id = hips, .factor = 0.25f },
-		{ .vertex = 1, .dot_id = hips, .factor = 0.25f },
-		{ .vertex = 2, .dot_id = hips, .factor = 0.5f },
-		{ .vertex = 3, .dot_id = hips, .factor = 0.5f },
+	crig::VertexPin[4] stroke = {
+		{ .vertex = 0, .dot_id = hips, .share = 0.25f },
+		{ .vertex = 1, .dot_id = hips, .share = 0.25f },
+		{ .vertex = 2, .dot_id = hips, .share = 0.5f },
+		{ .vertex = 3, .dot_id = hips, .share = 0.5f },
 	};
 
-	test::eq(app.paint_dabs(stroke[..]), (usz)4);
-	test::eq(app.doc.paint.len(), (sz)4);
+	test::eq(app.pin_dabs(stroke[..]), (usz)4);
+	test::eq(app.doc.pins.len(), (sz)4);
 
 	test::@check(app.undo(), "the stroke is one step on the ledger");
-	test::eq(app.doc.paint.len(), (sz)0);
+	test::eq(app.doc.pins.len(), (sz)0);
 
 	test::@check(app.redo(), "and it redoes as one step");
-	test::eq(app.doc.paint.len(), (sz)4);
-	test::@check(app.doc.paint_of(2, hips) == 0.5f, "with every dab's own factor, not one of them repeated");
+	test::eq(app.doc.pins.len(), (sz)4);
+	test::@check(app.doc.pin_of(2, hips) == 0.5f, "with every dab's own factor, not one of them repeated");
 }
 
 <*
@@ -606,18 +510,18 @@ fn void a_stroke_undoes_to_the_stroke_beneath_it() @test
 
 	uint hips = dot_named(&app, "hips");
 
-	crig::PaintDab[1] first = {{ .vertex = 0, .dot_id = hips, .factor = 0.25f }};
-	crig::PaintDab[1] second = {{ .vertex = 0, .dot_id = hips, .factor = 0.75f }};
+	crig::VertexPin[1] first = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
+	crig::VertexPin[1] second = {{ .vertex = 0, .dot_id = hips, .share = 0.75f }};
 
-	app.paint_dabs(first[..]);
-	app.paint_dabs(second[..]);
-	test::@check(app.doc.paint_of(0, hips) == 0.75f, "the second stroke is what stands");
+	app.pin_dabs(first[..]);
+	app.pin_dabs(second[..]);
+	test::@check(app.doc.pin_of(0, hips) == 0.75f, "the second stroke is what stands");
 
 	test::@check(app.undo(), "taking back the second");
-	test::@check(app.doc.paint_of(0, hips) == 0.25f, "leaves the first, not bare mesh");
+	test::@check(app.doc.pin_of(0, hips) == 0.25f, "leaves the first, not bare mesh");
 
 	test::@check(app.undo(), "taking back the first");
-	test::@check(app.doc.paint_of(0, hips) == 1.0f, "leaves nothing");
+	test::@check(app.doc.pin_of(0, hips) == 0.0f, "leaves nothing");
 }
 
 <*
@@ -633,12 +537,12 @@ fn void a_stroke_that_changes_nothing_is_not_recorded() @test
 	defer app.free();
 
 	uint hips = dot_named(&app, "hips");
-	crig::PaintDab[1] dab = {{ .vertex = 0, .dot_id = hips, .factor = 0.25f }};
+	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
 
-	test::eq(app.paint_dabs(dab[..]), (usz)1);
+	test::eq(app.pin_dabs(dab[..]), (usz)1);
 	sz after_first = app.undo_stack.edits.len();
 
-	test::eq(app.paint_dabs(dab[..]), (usz)0);
+	test::eq(app.pin_dabs(dab[..]), (usz)0);
 	test::eq(app.undo_stack.edits.len(), after_first);
 }
 
@@ -656,55 +560,29 @@ fn void forking_the_timeline_drops_the_abandoned_stroke() @test
 	defer app.free();
 
 	uint hips = dot_named(&app, "hips");
-	crig::PaintDab[1] first = {{ .vertex = 0, .dot_id = hips, .factor = 0.25f }};
-	crig::PaintDab[2] second = {
-		{ .vertex = 1, .dot_id = hips, .factor = 0.5f },
-		{ .vertex = 2, .dot_id = hips, .factor = 0.5f },
+	crig::VertexPin[1] first = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
+	crig::VertexPin[2] second = {
+		{ .vertex = 1, .dot_id = hips, .share = 0.5f },
+		{ .vertex = 2, .dot_id = hips, .share = 0.5f },
 	};
 
-	app.paint_dabs(first[..]);
-	app.paint_dabs(second[..]);
+	app.pin_dabs(first[..]);
+	app.pin_dabs(second[..]);
 	test::@check(app.undo(), "step back over the second stroke");
 	test::@check(app.undo_stack.can_redo(), "it is sitting in the redo tail");
 
 	// A third stroke forks the timeline, discarding the second's range.
-	crig::PaintDab[1] third = {{ .vertex = 3, .dot_id = hips, .factor = 0.1f }};
-	app.paint_dabs(third[..]);
+	crig::VertexPin[1] third = {{ .vertex = 3, .dot_id = hips, .share = 0.1f }};
+	app.pin_dabs(third[..]);
 
 	test::@check(!app.undo_stack.can_redo(), "the tail is gone");
-	test::@check(app.doc.paint_of(0, hips) == 0.25f && app.doc.paint_of(3, hips) == 0.1f,
+	test::@check(app.doc.pin_of(0, hips) == 0.25f && app.doc.pin_of(3, hips) == 0.1f,
 		"the branch that was kept is intact");
-	test::@check(app.doc.paint_of(1, hips) == 1.0f, "and the abandoned one left nothing behind");
+	test::@check(app.doc.pin_of(1, hips) == 0.0f, "and the abandoned one left nothing behind");
 
 	// Both surviving strokes back off, which walks the store down to empty.
 	test::@check(app.undo() && app.undo(), "both surviving strokes still undo");
-	test::eq(app.doc.paint.len(), (sz)0);
-}
-
-<*
- Clearing takes the whole layer off in one step.
-*>
-fn void clearing_the_paint_is_one_step() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	crig::PaintDab[2] stroke = {
-		{ .vertex = 0, .dot_id = hips, .factor = 0.25f },
-		{ .vertex = 1, .dot_id = hips, .factor = 0.5f },
-	};
-	app.paint_dabs(stroke[..]);
-
-	test::eq(app.clear_paint(), (usz)2);
-	test::eq(app.doc.paint.len(), (sz)0);
-
-	test::@check(app.undo(), "the clear is one step");
-	test::@check(app.doc.paint_of(0, hips) == 0.25f && app.doc.paint_of(1, hips) == 0.5f,
-		"and it comes back with each dab's own factor");
-
-	test::@check(app.redo() && app.doc.paint.len() == 0, "the clear redoes");
-	test::@check(app.clear_paint() == 0, "clearing an empty layer is not a step");
+	test::eq(app.doc.pins.len(), (sz)0);
 }
 
 // ---------------------------------------------------------------------------
@@ -726,7 +604,7 @@ fn float share_of(crig::AppState* app, uint vertex, uint dot)
 	sz joint = view.joint_of(dot);
 	if (joint < 0) return -1.0f;
 
-	float[] dense = app.bind_dense(mem, &view);
+	float[] dense = app.weights(mem, &view);
 	defer alloc::free(mem, dense);
 
 	usz bones = view.len();
@@ -754,7 +632,7 @@ fn void a_share_asked_for_is_the_share_measured() @test
 	foreach (want : targets)
 	{
 		crig::PaintResult did = app.paint_share(hips, one[..], want);
-		test::@check(did.unreachable == 0 && did.alone == 0,
+		test::@check(did.blocked == 0 && did.alone == 0,
 			"the vertex can be given a share of %s", want);
 		test::@check(math::abs(share_of(&app, 0, hips) - want) < 1.0e-5f,
 			"asked for %s, measured %s", want, share_of(&app, 0, hips));
@@ -804,10 +682,9 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 <*
  A share is relative to the rig as it now stands.
 
- `R` in the solve is the *painted* total of the other dots, not the binder's — so
- painting one dot down gives the room up and the next dot asked for a share takes
- it from what is left. A solve against the raw base would drift the moment two
- dots were painted on the same vertex.
+ The rest of a row is shared out from the row as shown — so painting one dot
+ down gives the room up and the next dot asked for a share takes it from what
+ is left, rather than from what the binder alone would have said.
 *>
 fn void shares_compose_across_two_dots() @test
 {
@@ -829,13 +706,10 @@ fn void shares_compose_across_two_dots() @test
 }
 
 <*
- A share of one is not reachable, and the ceiling is what happens instead.
-
- Exactly 1 would mean every other dot holds nothing — a statement about those
- dots, not this one — so the request stops just short and the others keep
- whatever they were given.
+ A share of one is the whole vertex: a stated row can say every other dot holds
+ nothing, which the multipliers this replaced could only approach.
 *>
-fn void asking_for_all_of_a_vertex_stops_at_the_ceiling() @test
+fn void asking_for_all_of_a_vertex_gives_it_all() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -846,9 +720,7 @@ fn void asking_for_all_of_a_vertex_stops_at_the_ceiling() @test
 	app.paint_share(hips, one[..], 1.0f);
 
 	float got = share_of(&app, 0, hips);
-	test::@check(math::abs(got - crig::PAINT_SHARE_CEILING) < 1.0e-4f,
-		"asking for all of it lands on the ceiling, measured %s", got);
-	test::@check(got < 1.0f, "and never actually reaches one");
+	test::@check(math::abs(got - 1.0f) < 1.0e-6f, "asking for all of it measured %s", got);
 }
 
 <*
@@ -868,17 +740,15 @@ fn void a_lone_dot_reports_that_there_is_no_share_to_take() @test
 	crig::PaintResult did = app.paint_share(only, one[..], 0.5f);
 	test::@check(did.alone == 1 && did.changed == 0,
 		"a one-dot rig cannot give half of a vertex to anything else");
-	test::@check(app.doc.paint.len() == 0, "and nothing was written");
+	test::@check(app.doc.pins.len() == 0, "and nothing was written");
 }
 
 <*
- The correction outlives the share it was solved for.
-
- The documented bargain, asserted rather than assumed: `p` is stored and `b` is
- not, so moving the dot moves the share. A test that expected the share to hold
- would be describing an auto-rig that stops helping the moment it is touched.
+ A share asked for is a stated row, so it holds where it was put when the dot
+ moves. What re-derives with the dot is the automatic weights under it, and a
+ grow — never a share somebody named.
 *>
-fn void a_share_drifts_when_the_dot_moves() @test
+fn void a_stated_share_holds_when_the_dot_moves() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -894,11 +764,12 @@ fn void a_share_drifts_when_the_dot_moves() @test
 	// `segment_distance_sq` clamps to the segment — so for a vertex behind the
 	// joint the closest point is the knee end either way, and the base does not
 	// move. The same clamping PLAN.md calls the sibling tie.
+	usz stated = (usz)app.doc.pins.len();
 	app.doc.move_dot(hips, { -0.9, -0.9, -0.9 });
 
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) > 1.0e-4f,
-		"moving the dot moves the share, because the correction is a ratio and not a value");
-	test::@check(app.doc.paint.len() == 1, "the correction itself is untouched");
+	test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) < 1.0e-5f,
+		"moving the dot moved a stated share to %s", share_of(&app, 0, hips));
+	test::@check((usz)app.doc.pins.len() == stated, "the stated row changed");
 }
 
 <*
@@ -913,10 +784,14 @@ fn void a_share_request_is_one_step() @test
 	uint[4] some = { 0, 1, 2, 3 };
 
 	crig::PaintResult did = app.paint_share(hips, some[..], 0.2f);
-	test::eq(did.changed, (usz)4);
+	test::@check(did.changed >= 4, "four vertices restated %d pins", did.changed);
+	for (uint v = 0; v < 4; v++)
+	{
+		test::@check(math::abs(share_of(&app, v, hips) - 0.2f) < 1.0e-5f, "vertex %d measured %s", v, share_of(&app, v, hips));
+	}
 
 	test::@check(app.undo(), "the whole request is one step");
-	test::eq(app.doc.paint.len(), (sz)0);
+	test::eq(app.doc.pins.len(), (sz)0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,11 +1066,11 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	app.connect_recorded(dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
-	crig::PaintDab[2] dabs = {
-		{ .vertex = 0, .dot_id = arm, .factor = 0.3f },
-		{ .vertex = 7, .dot_id = arm, .factor = 0.6f },
+	crig::VertexPin[2] dabs = {
+		{ .vertex = 0, .dot_id = arm, .share = 0.3f },
+		{ .vertex = 7, .dot_id = arm, .share = 0.6f },
 	};
-	test::eq(app.paint_dabs(dabs[..]), (usz)2);
+	test::eq(app.pin_dabs(dabs[..]), (usz)2);
 	crig::VertexPin[1] pins = {{ .vertex = 4, .dot_id = arm, .share = 0.8f }};
 	test::eq(app.pin_dabs(pins[..]), (usz)1);
 	sz history = app.undo_stack.cursor;
@@ -1209,23 +1084,21 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	test::@check(total == 1 && moved == 1 && unmatched == 0, "the arm's paint did not cross (total %d, moved %d, unmatched %d)", total, moved, unmatched);
 	test::@check(painted, "the mirror did not report the paint crossing");
 
-	test::@check(app.doc.paint_of(1, twin) == 0.3f, "corner 0's dab did not land on corner 1 (%.2f)", app.doc.paint_of(1, twin));
-	test::@check(app.doc.paint_of(6, twin) == 0.6f, "corner 7's dab did not land on corner 6 (%.2f)", app.doc.paint_of(6, twin));
+	test::@check(app.doc.pin_of(1, twin) == 0.3f, "corner 0's dab did not land on corner 1 (%.2f)", app.doc.pin_of(1, twin));
+	test::@check(app.doc.pin_of(6, twin) == 0.6f, "corner 7's dab did not land on corner 6 (%.2f)", app.doc.pin_of(6, twin));
 	test::@check(app.doc.pin_of(5, twin) == 0.8f, "corner 4's pin did not land on corner 5 (%.2f)", app.doc.pin_of(5, twin));
-	test::@check(app.doc.paint_of(0, twin) == 1.0f && app.doc.paint_of(0, arm) == 0.3f,
+	test::@check(app.doc.pin_of(0, twin) == 0.0f && app.doc.pin_of(0, arm) == 0.3f,
 		"the crossing painted the wrong side");
-	test::eq(app.doc.paint.len(), (sz)4);
-	test::eq(app.doc.pins.len(), (sz)2);
+	test::eq(app.doc.pins.len(), (sz)6);
 
 	// One undo takes the paint back off the twin — the twin dot stays, it was
 	// there before the mirror; one redo brings the crossed paint back.
 	test::@check(app.undo(), "the mirror would not undo");
 	test::eq(app.undo_stack.cursor, history);
 	test::@check(dot_named(&app, "arm_R") == twin, "undo disturbed the pre-placed twin");
-	test::eq(app.doc.paint.len(), (sz)2);
-	test::eq(app.doc.pins.len(), (sz)1);
+	test::eq(app.doc.pins.len(), (sz)3);
 	test::@check(app.redo(), "the mirror would not redo");
-	test::@check(app.doc.paint_of(1, twin) == 0.3f && app.doc.pin_of(5, twin) == 0.8f,
+	test::@check(app.doc.pin_of(1, twin) == 0.3f && app.doc.pin_of(5, twin) == 0.8f,
 		"redo did not bring the twin's paint back");
 }
 
@@ -1249,12 +1122,12 @@ fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 	app.connect_recorded(dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
-	crig::PaintDab[3] dabs = {
-		{ .vertex = 0, .dot_id = arm, .factor = 0.3f },  // crosses onto corner 1
-		{ .vertex = 1, .dot_id = twin, .factor = 0.9f }, // overwritten by it
-		{ .vertex = 2, .dot_id = twin, .factor = 0.1f }, // corner 3 is clean on the source: cleared
+	crig::VertexPin[3] dabs = {
+		{ .vertex = 0, .dot_id = arm, .share = 0.3f },  // crosses onto corner 1
+		{ .vertex = 1, .dot_id = twin, .share = 0.9f }, // overwritten by it
+		{ .vertex = 2, .dot_id = twin, .share = 0.1f }, // corner 3 is clean on the source: cleared
 	};
-	test::eq(app.paint_dabs(dabs[..]), (usz)3);
+	test::eq(app.pin_dabs(dabs[..]), (usz)3);
 
 	app.select(arm);
 	usz moved;
@@ -1264,9 +1137,9 @@ fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 	usz total = app.mirror_selection(&moved, &square, &unmatched, &painted);
 	test::@check(total == 1 && moved == 1 && unmatched == 0 && painted,
 		"a square twin with the wrong paint was not pulled into line (total %d, moved %d)", total, moved);
-	test::@check(app.doc.paint_of(1, twin) == 0.3f, "the source's dab did not overwrite the twin's (%.2f)", app.doc.paint_of(1, twin));
-	test::@check(app.doc.paint_of(2, twin) == 1.0f, "a dab the source has no partner for was kept (%.2f)", app.doc.paint_of(2, twin));
-	test::eq(app.doc.paint.len(), (sz)2);
+	test::@check(app.doc.pin_of(1, twin) == 0.3f, "the source's dab did not overwrite the twin's (%.2f)", app.doc.pin_of(1, twin));
+	test::@check(app.doc.pin_of(2, twin) == 0.0f, "a dab the source has no partner for was kept (%.2f)", app.doc.pin_of(2, twin));
+	test::eq(app.doc.pins.len(), (sz)2);
 
 	// Mirrored again, there is nothing left to do — and the notice can say so.
 	total = app.mirror_selection(&moved, &square, &unmatched, &painted);
@@ -1289,12 +1162,12 @@ fn void painting_does_not_wait_for_the_debounce() @test
 	defer app.free();
 
 	uint hips = dot_named(&app, "hips");
-	crig::PaintDab[1] dab = {{ .vertex = 0, .dot_id = hips, .factor = 0.5f }};
+	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = hips, .share = 0.5f }};
 
 	app.mark_rig_stale();
 	test::@check(app.weights_due > 0.0f, "a rig edit stopped waiting out its debounce");
 
-	app.paint_dabs(dab[..]);
+	app.pin_dabs(dab[..]);
 	test::@check(app.weights_due == 0.0f, "a stroke was made to wait out the rig debounce");
 	test::@check(app.weights_stale, "and it did not ask for the view back at all");
 }
@@ -1318,8 +1191,8 @@ fn void a_stroke_keeps_the_bind_underneath_it() @test
 	app.rebind_tints();
 	test::@check(app.base_bind.len > 0, "the view did not leave a bind behind to reuse");
 
-	crig::PaintDab[1] dab = {{ .vertex = 0, .dot_id = hips, .factor = 0.5f }};
-	app.paint_dabs(dab[..]);
+	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = hips, .share = 0.5f }};
+	app.pin_dabs(dab[..]);
 	test::@check(app.base_bind.len > 0, "a stroke threw away the bind it did not change");
 
 	app.mark_rig_stale();
@@ -1480,7 +1353,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 	app.paint_share(hips, one[..], 0.0f);
 	test::@check(share_of(&app, 0, hips) < 1.0e-4f, "the vertex did not start at nothing");
 
-	float target = crig::PAINT_SHARE_CEILING;
+	float target = 1.0f;
 
 	// Through `stroke_pull`, which is what the viewport does — going straight to
 	// `paint_share` would leave the stroke memory empty and the checks below
@@ -1686,8 +1559,8 @@ fn void sharpening_narrows_the_transition_band() @test
 <*
  The bind the app hands out carries the document's sharpness.
 
- `bind_dense` is the funnel the preview, the export and the paint solver all come
- through, so this is the check that the setting reaches anything at all: the
+ `AppState.weights` is the funnel the preview, the export and the paint solver
+ all come through, so this is the check that the setting reaches anything at all: the
  dominant dot's share of a vertex rises and a rival's falls, without either of
  them moving.
 *>
@@ -1696,7 +1569,9 @@ fn void a_sharpened_document_binds_sharper() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	// The knee and the foot share the fixture's corner; the hips are a band too
+	// far from it to hold any.
+	uint hips = dot_named(&app, "knee");
 	uint foot = dot_named(&app, "foot");
 
 	float hips_soft = share_of(&app, 0, hips);
@@ -1738,7 +1613,7 @@ fn void a_share_asked_for_survives_a_sharpened_bind() @test
 	app.mark_rig_stale();
 
 	crig::PaintResult did = app.paint_share(hips, one[..], 0.7f);
-	test::@check(did.unreachable == 0 && did.alone == 0, "the vertex can be given a share under gamma 2");
+	test::@check(did.blocked == 0 && did.alone == 0, "the vertex can be given a share under gamma 2");
 	test::@check(math::abs(share_of(&app, 0, hips) - 0.7f) < 1.0e-5f,
 		"asked for 0.7 under gamma 2, measured %s", share_of(&app, 0, hips));
 }
@@ -1746,16 +1621,15 @@ fn void a_share_asked_for_survives_a_sharpened_bind() @test
 <*
  The survey reads the sharpened bind too.
 
- It is the second funnel — it binds for itself, because it needs the riders and
- the per-vertex distances that only come out of the bind — so a sharpness
- applied in `bind_dense` alone would leave `get_weights` reporting overlaps the
- mesh no longer has, which is the one thing a diagnostic must not do.
+ The survey reads the same funnel, so a sharpness applied anywhere else would
+ leave `get_weights` reporting overlaps the mesh no longer has, which is the one
+ thing a diagnostic must not do.
 
  Measured as reach beyond ownership: how many (dot, vertex) pairs a joint holds
  a reportable share of without owning. That is exactly the overlap the setting
  exists to shrink, and unlike an individual share it can only fall — a joint
  that owns a vertex still owns it, and the ones underneath it are pushed toward
- zero and out from under `BLEND_FLOOR`.
+ zero and out from under `SHOWN_FLOOR`.
 *>
 fn void the_survey_reads_the_sharpened_bind() @test
 {
@@ -1780,9 +1654,17 @@ fn void the_survey_reads_the_sharpened_bind() @test
 	usz overlap_sharp = 0;
 	foreach (stake : sharp.stakes) overlap_sharp += stake.reaches - stake.owns;
 
-	test::@check(overlap_sharp < overlap_soft,
-		"the survey still reports %d shared holds, against %d before the sharpening",
+	test::@check(overlap_sharp <= overlap_soft,
+		"the survey reports %d shared holds, against %d before the sharpening",
 		overlap_sharp, overlap_soft);
+
+	// And what the knee still takes from its neighbours is less of each vertex.
+	float taken_soft = 0.0f;
+	foreach (share : soft.shared) taken_soft += share.mean * (float)share.vertices;
+	float taken_sharp = 0.0f;
+	foreach (share : sharp.shared) taken_sharp += share.mean * (float)share.vertices;
+	test::@check(taken_sharp < taken_soft, "the knee takes %f of its neighbours' vertices sharpened, %f soft",
+		taken_sharp, taken_soft);
 
 	// Ownership is an argmax and a power is monotone, so nothing changed hands —
 	// which is what makes the shrinking overlap a narrower band rather than a
@@ -2338,12 +2220,8 @@ fn void clearing_the_pins_is_one_step() @test
 	uint[2] region = { 0, 1 };
 	app.pin_vertices(region[..], hips, 1.0f);
 
-	crig::PaintDab[1] dab = {{ .vertex = 0, .dot_id = hips, .factor = 0.25f }};
-	app.paint_dabs(dab[..]);
-
 	test::eq(app.clear_pins(), (usz)2);
 	test::eq(app.doc.pins.len(), (sz)0);
-	test::@check(app.doc.paint_of(0, hips) == 0.25f, "clearing the pins took a correction with it");
 
 	test::@check(app.undo() && app.doc.pins.len() == (sz)2, "the clear is one step");
 	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(1, hips) == 1.0f,
@@ -2357,9 +2235,8 @@ fn void clearing_the_pins_is_one_step() @test
 <*
  A pinned vertex owns its dot in the survey.
 
- The survey binds for itself rather than through `bind_dense` — it needs the
- riders and the distances only the bind itself produces — so the pins have to be
- applied there too, or the numbers report a bind nobody is looking at.
+ The survey reads the bind through `AppState.weights`, pins included, or the
+ numbers would report a bind nobody is looking at.
 *>
 fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 {
@@ -2400,56 +2277,28 @@ fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 }
 
 <*
- A correction on a pinned vertex is written and is not visible, and the result
- says so.
-
- Precedence stated as a number. The dab lands — it comes back the moment the pin
- is lifted — but `pin_over` runs after `paint_over`, so the deformation does not
- move; a caller reading "painted 1" with no other word would take that for an
- effect it can see.
+ A share asked for over a pinned vertex restates the pin: the request and the
+ pin are the same kind of edit now, so the one asked for last is the one that
+ holds, and the vertex measures what it asked for.
 *>
-fn void a_correction_under_a_pin_is_counted_and_invisible() @test
+fn void a_share_over_a_pin_restates_it() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
 
 	uint hips = dot_named(&app, "hips");
+	uint knee = dot_named(&app, "knee");
 
 	uint[1] one = { 0 };
 	app.pin_vertices(one[..], hips, 1.0f);
+	test::@check(math::abs(share_of(&app, 0, hips) - 1.0f) < 1.0e-6f, "the pin did not take the vertex");
 
-	crig::PaintResult did = app.paint_share(hips, one[..], 0.0f);
-	test::eq(did.pinned, (usz)1);
-
-	crig::RigView? opened = app.open_rig(mem);
-	if (catch opened)
-	{
-		test::@check(false, "the fixture produced no skeleton");
-		return;
-	}
-	crig::RigView view = opened;
-	defer view.free(mem);
-
-	float[] painted = app.painted_bind(mem, &view);
-	defer alloc::free(mem, painted);
-
-	usz bones = view.len();
-	sz mine = view.joint_of(hips);
-	test::@check(mine >= 0, "the pinned dot is not in the rig");
-
-	float[] row = row_of(painted, 0, bones);
-	for (usz b = 0; b < bones; b++)
-	{
-		float want = b == (usz)mine ? 1.0f : 0.0f;
-		test::@check(row[b] == want, "column %d of a pinned vertex is %.9f rather than %.9f", b, row[b], want);
-	}
-
-	// And an unpinned vertex still answers to the brush, so the check above is
-	// about the pin and not about the paint having stopped working.
-	uint[1] other = { 1 };
-	crig::PaintResult elsewhere = app.paint_share(hips, other[..], 0.0f);
-	test::eq(elsewhere.pinned, (usz)0);
-	test::@check(app.doc.paint_of(1, hips) < 1.0f, "the brush did nothing on an unpinned vertex either");
+	crig::PaintResult did = app.paint_share(knee, one[..], 0.4f);
+	test::@check(did.changed > 0 && did.alone == 0, "the share over the pin changed nothing");
+	test::@check(math::abs(share_of(&app, 0, knee) - 0.4f) < 1.0e-5f,
+		"the knee measured %s over the pin", share_of(&app, 0, knee));
+	test::@check(math::abs(share_of(&app, 0, hips) - 0.6f) < 1.0e-5f,
+		"the hips kept %s rather than the rest", share_of(&app, 0, hips));
 }
 
 <*
@@ -3291,7 +3140,7 @@ fn float[] shares_of(crig::AppState* app, uint dot)
 	sz joint = view.joint_of(dot);
 	usz bones = view.len();
 
-	float[] painted = app.painted_bind(mem, &view);
+	float[] painted = app.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (joint < 0 || painted.len == 0) return {};
 

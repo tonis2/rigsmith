@@ -177,7 +177,7 @@ fn void a_rename_keeps_the_imported_weights() @test
 	usz differ = 0;
 	for (sz i = 0; i < after.len && i < before.len; i++) if (after[i] != before[i]) differ++;
 	test::eq(differ, (usz)0);
-	float[] shown = app.bind_dense(mem, &view);
+	float[] shown = app.weights(mem, &view);
 	alloc::free(mem, shown);
 	view.free(mem);
 
@@ -186,7 +186,7 @@ fn void a_rename_keeps_the_imported_weights() @test
 	view = app.open_rig(mem)!!;
 	float[] gone = app.imported_dense(mem, &view);
 	test::eq(gone.len, (sz)0);
-	shown = app.bind_dense(mem, &view);
+	shown = app.weights(mem, &view);
 	alloc::free(mem, shown);
 	view.free(mem);
 	test::@check(app.notice().contains("replaces the model's own skin weights"),

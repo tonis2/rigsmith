@@ -239,7 +239,18 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // in an older file, which reads as unshared layers on the clip's own clock. The
 // bump is the usual direction — a version 29 binary would play a shared layer's
 // keys in the clip's seconds and stop keeping its copies in step.
-const uint SESSION_VERSION = 30;
+//
+// 31 ends the automatic weights at a band: a joint holds a vertex only while it
+// is nearly as near as the vertex's owner (`rig::window_bind`), and a share asked
+// for is written as a stated row rather than a multiplier. Nothing in the file
+// changed shape; the bump is so a rig saved by an older binary says once, on
+// opening, that its weights were re-derived (`WINDOWED_SESSION`). A dot may
+// carry `grow` (model units) and `band` (a share of its bone) — the Weights
+// card's Grow and Soft edge — written only when set.
+const uint SESSION_VERSION = 31;
+
+// The first version whose weights end at a band — see 31 above.
+const uint WINDOWED_SESSION = 31;
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -419,6 +430,10 @@ fn String session_text(
 		if (dot.reach > 0.0f) text.appendf(",\"reach\":%s", (JsonFloat)dot.reach)!!;
 		// Only when set, on the same reasoning: the mesh's own weight is the default.
 		if (dot.pose_weight > 0.0f) text.appendf(",\"pose_weight\":%s", (JsonFloat)dot.pose_weight)!!;
+		// And the Weights card's Grow and Soft edge, only when moved off the
+		// automatic edge and the model's default.
+		if (dot.grow != 0.0f) text.appendf(",\"grow\":%s", (JsonFloat)dot.grow)!!;
+		if (dot.band > 0.0f) text.appendf(",\"band\":%s", (JsonFloat)dot.band)!!;
 
 		text.append_char('}');
 	}
@@ -449,34 +464,17 @@ fn String session_text(
 		pinned++;
 	}
 
-	// The hand corrections, on the same terms as the attachments above: dropped
-	// here when the dot they name is gone, not when it went, because until the
-	// file is written a deletion is still one Ctrl+Z from coming back.
-	//
-	// Written flat rather than grouped by dot. A stroke is thousands of these and
-	// the grouped form would save a few bytes per dab while making the reader
-	// carry a second shape; `%.9g` round-trips a float exactly, which matters more
-	// here than anywhere else in the file — a correction read back a hair off is a
-	// deformation nobody authored.
-	text.append_string("],\n");
-	text.append_string(`  "paint": [`);
-	usz dabs = 0;
-	foreach (dab : doc.paint.array_view())
-	{
-		if (dab.dot_id == 0 || !doc.find(dab.dot_id)) continue;
-		if (dabs > 0) text.append_char(',');
-		text.appendf("[%d,%d,%s]", dab.vertex, dab.dot_id, (JsonFloat)dab.factor)!!;
-		dabs++;
-	}
+	// No "paint": the multipliers sessions before version 31 carried are read
+	// below and turned into stated rows as they load (`bake_legacy_paint`), so a
+	// document has none to write.
+	text.append_string("]");
 
-	text.append_char(']');
-
-	// The pins, on the paint's terms exactly — flat triples, `%.9g` so a share
+	// The pins: flat triples, `%.9g` so a share
 	// round-trips a float exactly, and an entry naming a dot that has gone
 	// dropped here rather than when the dot went, because until the file is
 	// written a deletion is still one Ctrl+Z from coming back.
 	//
-	// **Omitted entirely when there is none**, unlike the four lists above and
+	// **Omitted entirely when there is none**, unlike the lists above and
 	// like the physics below: this key arrived in version 12, so every earlier
 	// file simply has none, and writing `"pins": []` onto every session crig has
 	// ever saved would be a line of noise for a layer most rigs never use.
@@ -1353,6 +1351,7 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 	RigDocument doc = {
 		.auto_connect = true,
 		.sym_x = fallback_sym_x,
+		.read_version = (uint)version,
 	};
 	doc.dots.init(allocator);
 	doc.edges.init(allocator);
@@ -1516,6 +1515,9 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		// insert_dot refuses the duplicate and the null id, which is the
 		// validation above said out loud; and it keeps next_id honest.
 		if (!doc.insert_dot(id, position, name, reach, pose_weight)) return SESSION_SHAPE~;
+		// Absent before version 31 and for every joint on its automatic edge.
+		if (try double g = entry.get_float("grow")) doc.set_grow(id, (float)g);
+		if (try double b = entry.get_float("band")) doc.set_band(id, (float)b);
 
 	}
 

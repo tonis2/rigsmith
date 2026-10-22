@@ -123,7 +123,7 @@ fn uint rigged_tube(crig::AppState* app, Vec2[] uvs)
 	return hip;
 }
 
-fn void the_uv_islands_part_takes_whole_islands_and_steps_by_them() @test
+fn void the_uv_islands_part_takes_whole_islands() @test
 {
 	Vec2[] uvs;
 	rig::TriMesh mesh = tube(&uvs, seams: true);
@@ -146,18 +146,6 @@ fn void the_uv_islands_part_takes_whole_islands_and_steps_by_them() @test
 	test::@check(exactly(app.area_mask, 0b0011), "the hip's islands are %b, not the lower two", islands_in(app.area_mask));
 	test::eq(app.area_island_count(), (usz)2);
 
-	// Grow takes the island across the seam; shrink walks it back.
-	test::@check(app.resize_area(1), "grow did not add an island");
-	test::@check(exactly(app.area_mask, 0b0111), "grow took %b, not the next island up", islands_in(app.area_mask));
-	test::@check(app.area_islands, "growing by islands dropped the island mode");
-	test::@check(app.resize_area(-1), "shrink did not take an island off");
-	test::@check(exactly(app.area_mask, 0b0011), "shrink left %b, not the hip's own islands", islands_in(app.area_mask));
-
-	// Past its own islands a shrink keeps the largest, never empties the part.
-	test::@check(app.resize_area(-1), "shrink stopped at the hip's own islands");
-	test::eq(app.area_island_count(), (usz)1);
-	test::@check(!app.resize_area(-1), "shrink took the last island");
-	test::eq(app.area_island_count(), (usz)1);
 	uint left = islands_in(app.area_mask);
 
 	// A click adds the island under it and a second click takes it out again.
@@ -167,23 +155,26 @@ fn void the_uv_islands_part_takes_whole_islands_and_steps_by_them() @test
 	test::@check(app.area_click((sz)top_vertex), "a second click did not take the top island out");
 	test::@check(exactly(app.area_mask, left), "the second click left %b", islands_in(app.area_mask));
 
-	// The last island can go too, and an empty part is not applied.
-	sz last = -1;
-	foreach (v, on : app.area_mask) if (on) { last = (sz)v; break; }
-	test::@check(app.area_click(last), "the last island could not be taken out");
+	// Every island can go, the last one too, and an empty part is not applied.
+	for (usz taken = 0; taken < 2; taken++)
+	{
+		sz last = -1;
+		foreach (v, on : app.area_mask) if (on) { last = (sz)v; break; }
+		test::@check(app.area_click(last), "island %d could not be taken out", taken);
+	}
 	test::@check(app.area_pending() && app.area_empty(), "taking the last island out did not leave an empty part");
 	test::eq(app.commit_area(), (usz)0);
 	test::@check(app.notice().contains("island"), "an empty part was refused without saying why: %s", app.notice());
 
 	// Applied, the hip moves its islands and nothing past the seam.
-	app.area_soft = 0.0f;
+	app.doc.set_band(hip, 1.0e-4f);
 	test::@check(app.set_area_part(ISLANDS), "could not pick the islands again");
 	test::@check(app.commit_area() > 0, "applying the islands wrote nothing");
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
 	usz joint = (usz)view.joint_of(hip);
-	float[] painted = app.painted_bind(mem, &view);
+	float[] painted = app.weights(mem, &view);
 	defer alloc::free(mem, painted);
 	for (usz v = 0; v < app.geometry.positions.len; v++)
 	{

@@ -3,10 +3,10 @@
  get_shells.
 
  Weights are derived rather than authored — every rig edit rebinds from scratch —
- so nothing here owns any of it. What these five do is *report* on the bind and
- put two layers on top of it: corrections, which are multipliers over whatever the
- binder currently says and therefore survive moving a dot, and pins, which state a
- share outright and do not. `AppState` does the arithmetic; this file is the
+ so nothing here owns any of it. What these do is *report* on the bind and state
+ rows over it: paint_weights a share, pin_weights the blunt form, both the one
+ layer of hand edits the brush writes too (the multipliers sessions from before
+ carry still apply until reset). `AppState` does the arithmetic; this file is the
  selection language, the payloads, and the refusals.
 
  The pairing that repeats: `show_weights` puts a picture in front of a person and
@@ -197,7 +197,7 @@ fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = 
 	defer out.free();
 
 	out.appendf(`{"vertices":%d,"unclaimed":%d,"floor":%s,"dots":[`,
-		survey.vertices, survey.unclaimed, (JsonFloat)BLEND_FLOOR);
+		survey.vertices, survey.unclaimed, (JsonFloat)SHOWN_FLOOR);
 
 	foreach (i, stake : survey.stakes)
 	{
@@ -258,16 +258,18 @@ fn void vertex_rows_json(AppState* app, DString* out, uint[] rows) @private
 		defer view.free(mem);
 		usz bones = view.len();
 		usz count = app.geometry.positions.len;
-		float[] base = app.base_bind_for(&view);
+		// The rows the views paint, through the one funnel.
+		float[] shown = app.weights(mem, &view);
+		defer if (shown.len > 0) alloc::free(mem, shown);
 		float[] row = alloc::new_array(mem, float, (sz)bones);
 		defer alloc::free(mem, row);
 		uint[SKIN_INFLUENCES * 2] dots;
 		float[SKIN_INFLUENCES * 2] shares;
 		foreach (i, v : rows)
 		{
-			if (bones == 0 || base.len < count * bones) break;
+			if (bones == 0 || shown.len < count * bones) break;
 			if (i > 0) out.append_char(',');
-			app.row_as_shown(&view, base, v, row);
+			share_row(shown[(usz)v * bones:bones], row);
 			usz held = strongest_shares(row, view.dot_ids, dots[..], shares[..]);
 			out.appendf(`{"vertex":%d,"at":%s,"joints":[`, v, (JsonVec3)app.geometry.positions[v]);
 			for (usz k = 0; k < held; k++)
@@ -350,7 +352,8 @@ fn String? tool_paint_weights(Object* args, void* user_data, DString* detail) @p
 
 	if ((args.get_bool("reset") ?? false))
 	{
-		usz cleared = app.clear_paint();
+		// Every hand edit: the stated rows this tool, the brush and the card write.
+		usz cleared = app.clear_pins();
 		app.refresh_ui();
 		return string::format(mem, `{"reset":true,"cleared":%d}`, cleared);
 	}
@@ -434,22 +437,17 @@ fn String painted_json(AppState* app, String dot, float share, usz asked, PaintR
 
 	// Only when there is something to say. A caller that got what it asked for
 	// should not have to read two zeroes to find that out.
-	if (did.unreachable > 0)
-	{
-		out.appendf(`,"unreachable":%d`, did.unreachable)!!;
-		out.append_string(`,"unreachable_means":"the binder gives this dot no weight at all on those vertices, so no correction reaches them — the dot has to move closer or its reach has to widen"`);
-	}
 	if (did.alone > 0)
 	{
 		out.appendf(`,"alone":%d`, did.alone)!!;
-		out.append_string(`,"alone_means":"no other dot holds those vertices, so there is no share to take — they are already wholly this dot's"`);
+		out.append_string(`,"alone_means":"no other dot can hold those vertices, so there is no share to take — they are already wholly this dot's"`);
 	}
 	if (asked == 0)
 	{
 		out.append_string(`,"note":"nothing matched the selection: get_weights lists which dots actually share vertices with this one"`);
 	}
 
-	out.appendf(`,"painting":"corrections ride over the binder, so moving a dot re-derives the mesh underneath them"}`)!!;
+	out.appendf(`,"painting":"shares are stated rows, the brush's: they hold where they were put when a dot moves, and Reset on the Weights card or reset:true takes them off"}`)!!;
 	return out.copy_str(mem);
 }
 
@@ -528,12 +526,9 @@ fn String? tool_fix_strays(Object* args, void* user_data, DString* detail) @priv
 }
 
 <*
- What a pin call did. `painted_json`'s voice, minus its two diagnoses.
-
- Neither of those has a reading here. "Unreachable" is a statement about a
- multiplier, and a pin does not multiply; "alone" is about there being no share
- to take, and a pin takes the whole vertex by saying so. What is left is what
- was asked for, what was selected and what moved.
+ What a pin call did. `painted_json`'s voice, minus its diagnosis: "alone" is
+ about there being no share to take, and a pin takes the whole vertex by saying
+ so. What is left is what was asked for, what was selected and what moved.
 *>
 fn String pinned_json(AppState* app, String dot, float share, usz asked, usz changed) @private
 {

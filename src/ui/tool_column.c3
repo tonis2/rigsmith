@@ -17,8 +17,8 @@
  opened from the keyboard reaches the screen by `update` noticing and asking for
  another build.
 
- **Seven cells.** Select/Tweak, Move, Rotate, Scale, Lasso, Area, the weight
- brush and Sketch. Scale always resizes the whole model, whatever is selected. While the brush is open its options strip (`BrushOptions`) shows beside
+ **Six cells.** Tweak, Move, Rotate, Scale, Lasso and Sketch. The Area tool and
+ the weight brush open from the Weights card. Scale always resizes the whole model, whatever is selected. While the brush is open its options strip (`BrushOptions`) shows beside
  the column, so painting needs no modifier; while sketching, the Sketch strip
  (`SketchToolbar`) offers the colours and the eraser. Sketch has no key at all —
  this cell is its one door.

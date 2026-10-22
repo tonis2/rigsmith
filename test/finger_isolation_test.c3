@@ -90,7 +90,7 @@ fn void a_finger_holds_nothing_of_its_neighbour() @test
 	f.open();
 	defer f.close();
 
-	float[] shown = f.app.painted_bind(mem, &f.view);
+	float[] shown = f.app.weights(mem, &f.view);
 	defer alloc::free(mem, shown);
 	float[] binder = rig::bind_geodesic(mem, &f.app.voxels, f.app.geometry.positions,
 		f.view.skeleton.joints, f.view.skeleton.parents, &f.app.shells, f.view.attachments,
@@ -126,7 +126,7 @@ fn void bending_one_finger_leaves_the_next_still() @test
 
 	usz bones = f.view.len();
 	usz count = f.app.geometry.positions.len;
-	float[] painted = f.app.painted_bind(mem, &f.view);
+	float[] painted = f.app.weights(mem, &f.view);
 	defer alloc::free(mem, painted);
 
 	gltf::SkinBinding binding = gltf::sparsify_weights(mem, painted, count, bones, crig::SKIN_INFLUENCES)!!;

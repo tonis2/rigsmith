@@ -203,7 +203,7 @@ struct Character
 	 An output of the bind rather than a property of the mesh: `rig::rigid_shells`
 	 makes the choice for every piece the flood never reached and for every piece
 	 that turns out to be one bone's outright, and until this array existed it
-	 made it inside `bind_dense` and threw it away. What it buys is that
+	 made it inside `bind_base` and threw it away. What it buys is that
 	 `get_shells` can say *why* a piece is rigid without binding again to find
 	 out — and so could a Shells pane, which read them until it went for now.
 
@@ -294,9 +294,12 @@ struct Character
 	 `area_mask` is one flag per vertex, empty while nothing is picked;
 	 `area_twin_mask` is the same part on `area_twin`, the joint across the
 	 plane, empty when there is none or mirroring is off. Both are what Apply
-	 writes, so the picture and the result cannot disagree. `area_base` is the
-	 part a grow or shrink drag started from. `area_solo` is the card's Mirror switched off,
-	 so the zero value mirrors.
+	 writes, so the picture and the result cannot disagree. `area_solo` is the
+	 card's Mirror switched off, so the zero value mirrors.
+
+	 The joint's own bone is never pending: Grow, Shrink and the soft edge change
+	 the joint live (`Dot.grow`, `Dot.band`). `grow_drag` is a shift- or ctrl-drag
+	 doing that on the mesh, with where the joint and its twin started.
 	*>
 	bool areaing;
 	AreaPart area_part;
@@ -306,9 +309,11 @@ struct Character
 	sz area_seed;
 	bool[] area_mask;
 	bool[] area_twin_mask;
-	bool[] area_base;
-	float area_soft; // fraction of the joint's own bone
 	bool area_solo;
+	bool grow_drag;
+	float grow_drag_from;
+	uint grow_drag_twin;
+	float grow_drag_twin_from;
 	bool area_by_card; // opened by showing the Weights card, so hiding it closes it
 	bool area_islands; // the part is whole UV islands, and grows, shrinks and clicks by island
 	int area_hover_island; // the island under the pointer while picking islands, or -1
@@ -324,9 +329,27 @@ struct Character
 	 A bind is the expensive thing in crig and a correction is the cheap one, so
 	 caching the half that a stroke does not change is what lets the falloff
 	 repaint on every mouse move. Dropped by `mark_rig_stale` — see
-	 `painted_bind`, which is the only thing that fills it.
+	 `AppState.weights`, the funnel every reader of the weights goes through.
 	*>
 	float[] base_bind;
+	ulong base_key; // `AppState.bind_key` of the inputs `base_bind` was bound from
+
+	<*
+	 The squared distance from each vertex to its nearest bone, and the joint
+	 each shell rode, from the same bind as `base_bind` — what the unclaimed count
+	 reads. Kept beside it and dropped with it; see `AppState.bind_field`.
+	*>
+	float[] field_nearest;
+	int[] field_riders;
+
+	<*
+	 Vertices x joints: the distance each base weight was scored at, grown —
+	 `rig::NO_DISTANCE` where a joint holds nothing. The field every weight tool
+	 reads beside the base: the window that ends the automatic weights, and where
+	 a vertex goes when a joint is taken off it. Empty for a rig wearing its
+	 file's weights.
+	*>
+	float[] field_distances;
 
 	<*
 	 How far the stroke in flight has already carried each vertex, 0 to 1.
@@ -355,6 +378,11 @@ struct Character
 	// That it tried to take the joint off vertices nothing else holds, which
 	// keep it; said once the same way.
 	bool stroke_alone;
+	// The twin a stroke in flight paints too, with Mirror on, and the vertex
+	// lookup across the plane it maps the circle's vertices through — built once
+	// per stroke rather than per move. 0 and empty with Mirror off.
+	uint stroke_twin;
+	rig::MirrorLookup stroke_mirror;
 	// The Weights card's stray survey, and the revision it read — see `find_strays`.
 	StrayIsland[] strays;
 	bool strays_checked;
@@ -367,7 +395,7 @@ struct Character
 	uint tint_generation;
 
 	<*
-	 How many vertices the falloff view's joint holds at least `BLEND_FLOOR` of,
+	 How many vertices the falloff view's joint holds at least `SHOWN_FLOOR` of,
 	 counted in the same pass that paints the ramp.
 
 	 How many vertices the falloff view's joint holds: the count `get_weights`
@@ -928,7 +956,6 @@ fn Character new_character(rig::TriMesh geometry, String source_path,
 
 		// Zero is a real shell id, so "nothing is being pointed at" has to be said
 		// with a number that is not one.
-		.area_soft = AREA_SOFT_DEFAULT,
 		.area_seed = -1,
 		.area_hover_island = -1,
 

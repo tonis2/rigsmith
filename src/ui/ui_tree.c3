@@ -280,7 +280,7 @@ fn void menu_lasso_mode(Ui* ui)
 
 	if (app.lassoing && app.lasso_job == LassoJob.PIN)
 	{
-		app.end_lasso();
+		app.leave_lasso();
 	}
 	else if (!app.begin_lasso(PIN))
 	{
@@ -2239,7 +2239,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			}
 			else if (app.lassoing)
 			{
-				app.end_lasso();
+				app.leave_lasso();
 			}
 			else if (app.areaing && app.area_pending())
 			{

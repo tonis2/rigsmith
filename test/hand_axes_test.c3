@@ -389,14 +389,14 @@ fn void an_older_sessions_finger_tables_keep_their_axes() @test
 
 	String text = crig::session_text(mem, doc, "hand.glb", limits: true);
 	defer text.free(mem);
-	test::@check(text.contains(`"version": 30`), "the session is not version 30");
+	test::@check(text.contains(`"version": 31`), "the session is not version 31");
 	crig::RigDocument? current = crig::parse_session(mem, text);
 	if (catch current) { test::@check(false, "today's session did not read"); return; }
 	crig::RigDocument today = current;
 	defer today.free();
 	test::@check(!today.rotation_limits_of(index).has_saved_frame, "a current table was pinned");
 
-	String older = text.replace(mem, `"version": 30`, `"version": 28`);
+	String older = text.replace(mem, `"version": 31`, `"version": 28`);
 	defer older.free(mem);
 	crig::RigDocument? opened = crig::parse_session(mem, older);
 	if (catch opened) { test::@check(false, "the version 28 session did not read"); return; }

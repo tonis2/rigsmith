@@ -49,7 +49,7 @@ fn void a_model_facing_back_turns_with_its_rig() @test
 	test::@check(facing.import_rig_from_source(), "the humanoid rig must import");
 	crig::RigView view = facing.open_rig(mem)!!;
 	defer view.free(mem);
-	float[] weights = facing.bind_dense(mem, &view);
+	float[] weights = facing.weights(mem, &view);
 	defer alloc::free(mem, weights);
 
 	// Turned round and written out: what a model authored facing −Z looks like.

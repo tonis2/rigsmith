@@ -5866,6 +5866,50 @@ fn void a_batch_of_moves_undoes_in_one_step() @test
 }
 
 <*
+ edit_rig's grow sets the Weights card's Grow and Soft edge by number: the joint
+ holds more without moving, get_skeleton reports both, and one undo takes the
+ batch back.
+*>
+fn void a_grow_crosses_the_wire_and_undoes() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+	f.app.doc.skin_from_file = false;
+
+	uint knee = f.app.doc.dots[1].id;
+	Vec3 was = f.app.doc.find(knee).position;
+
+	f.call_tool("edit_rig", `{"ops":[{"op":"grow","joint":"knee","grow":0.1,"soft":0.8}]}`)!!.free();
+	test::@check(math::abs(f.app.doc.find(knee).grow - 0.1f) < 1.0e-6f, "the grow came out as %.4f", f.app.doc.find(knee).grow);
+	test::@check(math::abs(f.app.doc.find(knee).band - 0.8f) < 1.0e-6f, "the soft edge came out as %.4f", f.app.doc.find(knee).band);
+	test::@check((f.app.doc.find(knee).position - was).length() < 1.0e-6f, "growing a joint moved it");
+
+	Object* seen = f.call_tool("get_skeleton", "{}")!!;
+	defer seen.free();
+	bool reported = false;
+	Object* dots = seen.get("dots")!!;
+	for (sz i = 0; i < dots.get_len(); i++)
+	{
+		Object* entry = dots.get_at(i);
+		if ((entry.get_string("name") ?? "") != "knee") continue;
+		reported = math::abs((float)(entry.get_float("grow") ?? 0.0) - 0.1f) < 1.0e-6f
+			&& math::abs((float)(entry.get_float("soft") ?? 0.0) - 0.8f) < 1.0e-6f;
+	}
+	test::@check(reported, "get_skeleton does not report the grow and soft edge");
+
+	f.call_tool("undo", "{}")!!.free();
+	test::@check(f.app.doc.find(knee).grow == 0.0f && f.app.doc.find(knee).band == 0.0f, "one undo did not take the grow back");
+
+	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"grow","joint":"knee","soft":5}]}`, "share of the bone"),
+		"a soft edge past the range was not named back");
+	f.app.doc.skin_from_file = true;
+	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"grow","joint":"knee","grow":0.1}]}`, "own weights"),
+		"a grow on the file's weights was not refused");
+}
+
+<*
  A reach travels the wire, changes the bind and undoes.
 
  The point of the op is that it changes what a dot holds *without moving it*, so
@@ -7074,7 +7118,7 @@ fn void painting_is_undoable_and_resettable() @test
 	}
 	defer painted.free();
 	test::@check((painted.get_int("painted") ?? 0) > 0, "the explicit list was painted");
-	test::@check(f.app.doc.paint.len() > 0, "and the document holds it");
+	test::@check(f.app.doc.pins.len() > 0, "and the document holds it");
 
 	Object*? stepped = f.call_tool("undo", "{}");
 	if (catch stepped)
@@ -7083,10 +7127,10 @@ fn void painting_is_undoable_and_resettable() @test
 		return;
 	}
 	stepped.free();
-	test::@check(f.app.doc.paint.len() == 0, "one undo took the whole call back");
+	test::@check(f.app.doc.pins.len() == 0, "one undo took the whole call back");
 
 	f.call_tool("redo", "{}")!!.free();
-	test::@check(f.app.doc.paint.len() > 0, "and redo put it back");
+	test::@check(f.app.doc.pins.len() > 0, "and redo put it back");
 
 	Object*? cleared = f.call_tool("paint_weights", `{"dot":"knee","reset":true}`);
 	if (catch cleared)
@@ -7095,7 +7139,7 @@ fn void painting_is_undoable_and_resettable() @test
 		return;
 	}
 	defer cleared.free();
-	test::@check((cleared.get_bool("reset") ?? false) && f.app.doc.paint.len() == 0,
+	test::@check((cleared.get_bool("reset") ?? false) && f.app.doc.pins.len() == 0,
 		"reset took every correction off");
 }
 
@@ -7220,13 +7264,11 @@ fn void pinning_is_selectable_and_undoable() @test
 }
 
 <*
- The two layers are independent: resetting one leaves the other standing.
-
- They are written by different verbs and mean different things — a correction
- rides the binder, a pin overrules it — so a caller clearing the regions it drew
- must not silently lose the corrections it painted.
+ paint_weights and pin_weights write the same layer: a share asked for is a
+ stated row, like a pin, so the two are one kind of edit and a reset of every
+ hand edit takes both — while pin_weights' own reset still clears the rows.
 *>
-fn void resetting_the_pins_leaves_the_corrections() @test
+fn void paint_and_pin_weights_write_one_layer() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -7235,21 +7277,14 @@ fn void resetting_the_pins_leaves_the_corrections() @test
 
 	f.call_tool("paint_weights", `{"dot":"knee","share":0.1,"vertices":[0,1]}`)!!.free();
 	f.call_tool("pin_weights", `{"dot":"knee","vertices":[2,3]}`)!!.free();
+	test::@check(f.app.doc.pins.len() > 0 && f.app.doc.paint.len() == 0, "a share was not written as a stated row");
 
-	test::@check(f.app.doc.paint.len() > 0 && f.app.doc.pins.len() > 0, "the fixture has both layers");
-
-	// Both directions, because either one sweeping the other is the same defect
-	// and neither is visible from the reply.
 	f.call_tool("paint_weights", `{"dot":"knee","reset":true}`)!!.free();
-	test::eq(f.app.doc.paint.len(), (sz)0);
-	test::@check(f.app.doc.pins.len() > 0, "resetting the corrections took the pins with it");
+	test::eq(f.app.doc.pins.len(), (sz)0);
 
 	f.call_tool("paint_weights", `{"dot":"knee","share":0.1,"vertices":[0,1]}`)!!.free();
-	test::@check(f.app.doc.paint.len() > 0, "the corrections did not come back");
-
 	f.call_tool("pin_weights", `{"dot":"knee","reset":true}`)!!.free();
 	test::eq(f.app.doc.pins.len(), (sz)0);
-	test::@check(f.app.doc.paint.len() > 0, "resetting the pins took the corrections with it");
 }
 
 <*

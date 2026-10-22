@@ -3,17 +3,14 @@
 
  `core/document.c3` holds one pin and the primitive that sets it; this is the
  layer above, where a region of the mesh becomes one undoable gesture and the
- views are told to catch up. The same split `app/painting.c3` describes for the
- other correction layer, and this file is deliberately its mirror — a reader who
- knows one should be able to guess the other.
+ views are told to catch up.
 
- **What a pin is, against what a stroke is.** A `PaintDab` multiplies whatever
- the binder currently says, so it cannot lift a weight the binder left at zero:
- no finite multiplier reaches a share from nothing. That is precisely the defect
- a region tool is reached for — "the wrong bone got none of this" — so a lasso
- writes `VertexPin`s, which state the share outright and are written over the
- corrections rather than under them. The price is stated in `VertexPin`: a pin
- is absolute and does not move when the dot does.
+ **The one hand-edit layer.** The lasso, the brush, the Area tool's Apply, the
+ stray fixer and MCP all write `VertexPin`s, which state a share outright — so
+ they can give a joint a vertex the automatic weights gave it nothing on, which
+ is precisely the defect a region tool is reached for. The price is stated in
+ `VertexPin`: a pin is absolute and does not move when the dot does; the edit
+ that moves with the rig is a grow (`Dot.grow`).
 
  **Everything here is bulk.** `set_pin` and `pin_of` are scans of the layer, so
  a twenty-thousand-vertex lasso through them is quadratic in the region. The
@@ -245,7 +242,7 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 
  Entries that change nothing are dropped rather than recorded, and a batch where
  *every* entry is like that records nothing at all and returns 0 — the
- `paint_dabs` rule, and what makes a second lasso over the same region cost
+ stroke rule, and what makes a second lasso over the same region cost
  nothing on the ledger.
 
  Marks the *paint* stale rather than the rig. A pin changes no dot, so the base
@@ -273,7 +270,7 @@ fn usz AppState.pin_dabs(&self, VertexPin[] batch, bool commit = true)
 	self.mark_paint_stale();
 	// Under a parked clip or a pose draft nothing else rebinds the skin, so the
 	// posed body would keep the old weights until the playhead moved — the same
-	// door `paint_dabs` takes.
+	// door a brush stroke takes.
 	if (self.skinned()) self.refresh_pose_display();
 	return changed;
 }
@@ -476,7 +473,7 @@ fn uint row_author(VertexPin[] row)
  @param exclusive : `Also clear every other dot's pins on those vertices.`
  @return `How many entries changed.`
 *>
-fn usz AppState.pin_vertices(&self, uint[] vertices, uint dot_id, float share, bool exclusive = true)
+fn usz AppState.pin_vertices(&self, uint[] vertices, uint dot_id, float share, bool exclusive = true, bool commit = true)
 {
 	if (vertices.len == 0) return 0;
 	if (dot_id == 0 && share != 0.0f) return 0;
@@ -537,14 +534,35 @@ fn usz AppState.pin_vertices(&self, uint[] vertices, uint dot_id, float share, b
 		}
 	}
 
-	return self.pin_dabs(batch[:at]);
+	return self.pin_dabs(batch[:at], commit);
+}
+
+<*
+ The lasso's region across the plane, given to the selected joint's twin — or
+ taken off it — while Mirror is on: the one Mirror every weight tool reads.
+ Leaves the group open for the caller, so the region and its mirror are one
+ undo step.
+
+ @return `How many pins changed on the twin's side.`
+*>
+fn usz AppState.lasso_mirror(&self, uint[] caught, float share)
+{
+	uint twin = self.area_mirrors() ? self.mirror_twin(self.selected) : 0;
+	if (twin == 0 || caught.len == 0) return 0;
+	rig::MirrorLookup across = self.mesh_mirror(mem);
+	defer across.free(mem);
+	uint[] partners = self.mirrored_vertices(mem, &across, caught);
+	defer alloc::free(mem, partners);
+	usz count = self.geometry.positions.len;
+	usz kept = 0;
+	foreach (partner : partners) if ((usz)partner < count) partners[kept++] = partner;
+	return self.pin_vertices(partners[:kept], twin, share, commit: false);
 }
 
 <*
  Take every pin off the rig, as one undoable step.
 
- `clear_paint` for the other layer, and the way out of a region handed to the
- wrong dot. One gesture rather than one per vertex, for the reason pinning is.
+ The way out of a region handed to the wrong dot. One gesture rather than one per vertex, for the reason pinning is.
 
  @return `How many pins were cleared.`
 *>
@@ -678,7 +696,7 @@ fn usz AppState.harden_weights(&self)
 	// The bind as the screen has it: base, sharpness, corrections and the pins
 	// already stated. An owned copy — `base_bind_for` hands out the cache itself,
 	// and this is about to write pins that mark it stale.
-	float[] painted = self.painted_bind(mem, &view);
+	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 
 	if (bones == 0 || painted.len == 0)
@@ -805,7 +823,7 @@ fn usz AppState.smooth_boundaries(&self)
 	defer view.free(mem);
 
 	usz bones = view.len();
-	float[] painted = self.painted_bind(mem, &view);
+	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 
 	if (bones == 0 || painted.len == 0)
@@ -1132,6 +1150,10 @@ fn bool AppState.begin_lasso(&self, LassoJob job)
 	self.lasso_job = job;
 	self.lasso_active = false;
 	self.drop_lasso_stroke();
+	// Pinning edits the selected joint's weights, so it shows them, the way the
+	// brush and the Area tool do; selecting joints leaves the view alone.
+	self.lasso_tint = self.tint_mode;
+	if (job == PIN) self.show_tint(FALLOFF);
 	return true;
 }
 
@@ -1168,9 +1190,19 @@ fn bool AppState.advance_lasso(&self)
 fn void AppState.end_lasso(&self)
 {
 	if (!self.lassoing) return;
+	bool pinning = self.lasso_job == PIN;
 	self.lassoing = false;
 	self.lasso_active = false;
 	self.drop_lasso_stroke();
+	if (pinning && self.tint_mode == FALLOFF) self.show_tint(self.lasso_tint);
+}
+
+// Close the lasso and give the Weights card its Area tool back, as `leave_brush`
+// does for the brush.
+fn void AppState.leave_lasso(&self)
+{
+	self.end_lasso();
+	self.sync_weights_card();
 }
 
 // The polygon in flight, forgotten. The buffer's own storage stays, since the
@@ -1459,7 +1491,9 @@ fn void AppState.lasso_commit(&self, Matrix4f view_projection, Vec2 viewport, Ve
 		}
 		else if (!removing)
 		{
-			self.pin_vertices(caught[:found], self.selected, 1.0f);
+			self.pin_vertices(caught[:found], self.selected, 1.0f, commit: false);
+			self.lasso_mirror(caught[:found], 1.0f);
+			self.undo_stack.commit();
 
 			// What the region now says, not what changed: drawing over vertices
 			// already this dot's writes nothing and has still said the true thing
@@ -1472,7 +1506,9 @@ fn void AppState.lasso_commit(&self, Matrix4f view_projection, Vec2 viewport, Ve
 			// Removal is the other way round: what was taken is the only number
 			// there is to report, since the region caught mesh that was never
 			// pinned as readily as mesh that was.
-			usz did = self.pin_vertices(caught[:found], self.selected, 0.0f);
+			usz did = self.pin_vertices(caught[:found], self.selected, 0.0f, commit: false);
+			did += self.lasso_mirror(caught[:found], 0.0f);
+			self.undo_stack.commit();
 			if (did > 0)
 			{
 				self.@notice("unpinned %d vertices", did);

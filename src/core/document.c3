@@ -108,6 +108,27 @@ struct Dot
 	float reach;
 
 	<*
+	 How far this joint's region is pushed out past where the automatic weights
+	 put its edge, in model units — negative pulls it in. Zero is the automatic
+	 edge, which is what every dot has until the Weights card's Grow or Shrink.
+
+	 Live rather than written into the weights: the bind measures every joint's
+	 distance through the body, and a grown joint is measured that much nearer
+	 (`rig::grown_d2`), so it owns exactly the vertices up to that much further
+	 from it than from its neighbours — and moving the dot later carries the
+	 grown edge with it. The same distances the automatic weights are made from,
+	 so a Grow and a Reset are one operation run two ways.
+	*>
+	float grow;
+
+	<*
+	 How far this joint blends with its neighbours, as a share of its own bone —
+	 the Weights card's Soft edge. Zero is the model's default
+	 (`BAND_SHARE_DEFAULT`); see `rig::window_bind` for what the band ends.
+	*>
+	float band;
+
+	<*
 	 How much this joint holds its ground when a pose is pulled, as a multiplier
 	 on the weight its body part has (`AppState.body_part_masses`): above 1 it
 	 is moved later and less, below 1 sooner. Zero means 1, the weight read off
@@ -261,9 +282,9 @@ struct PinColumn
 }
 
 <*
- One dab either side of a stroke, for the ledger.
+ One vertex's share either side of a gesture, for the ledger.
 
- A stroke is thousands of these and one undo step, so `PAINT_STROKE` names a
+ A stroke is thousands of these and one undo step, so `PIN_STROKE` names a
  *range* of them rather than carrying any inline — `Edit.id` is where the range
  starts and `Edit.other` is how long it is.
 
@@ -539,6 +560,13 @@ struct RigDocument
 	 lookup and nothing else.
 	*>
 	bool skin_from_file;
+
+	<*
+	 The session version this document was read from, or 0 for one made in this
+	 run. Not saved — a session always writes the current version — and read only
+	 to say once what changed under a rig saved by an older binary.
+	*>
+	uint read_version;
 
 	<*
 	 The clips the user has bound to this character, in the order they chose.
@@ -918,6 +946,39 @@ fn bool RigDocument.set_reach(&self, uint id, float reach)
 	Dot* dot = self.find(id);
 	if (!dot) return false;
 	dot.reach = reach > 0.0f ? reach : 0.0f;
+	return true;
+}
+
+<*
+ Sets how far a joint's region is pushed past its automatic edge — see
+ `Dot.grow`. Nothing is refused; a shrink past the joint's own bone leaves it
+ holding only what nothing else is nearer.
+
+ @param grow : `Model units; negative pulls the edge in.`
+ @return `True if the dot existed.`
+*>
+fn bool RigDocument.set_grow(&self, uint id, float grow)
+{
+	Dot* dot = self.find(id);
+	if (!dot) return false;
+	dot.grow = grow;
+	return true;
+}
+
+// The widest band a joint's soft edge takes, as a share of its bone.
+const float BAND_SHARE_MAX = 2.0;
+
+<*
+ Sets how far a joint blends with its neighbours — see `Dot.band`.
+
+ @param band : `A share of the joint's bone; zero or less is the model's default, and above BAND_SHARE_MAX is clamped.`
+ @return `True if the dot existed.`
+*>
+fn bool RigDocument.set_band(&self, uint id, float band)
+{
+	Dot* dot = self.find(id);
+	if (!dot) return false;
+	dot.band = band > 0.0f ? math::min(band, BAND_SHARE_MAX) : 0.0f;
 	return true;
 }
 
@@ -1372,6 +1433,8 @@ enum EditKind
 	MOVE_DOT,
 	RENAME_DOT,
 	SET_REACH,
+	SET_GROW,
+	SET_BAND,
 	SET_POSE_WEIGHT,
 	SET_SHARPNESS,
 	SET_KNUCKLE_BLEND,
@@ -1399,7 +1462,6 @@ enum EditKind
 	// `carries_payload`.
 	REPLACE_CLIP,
 	REBIND_CLIP,
-	PAINT_STROKE,
 	PIN_STROKE,
 	SET_JOINT_MAPS,
 	SET_POSES,
@@ -1419,7 +1481,7 @@ enum EditKind
  `SET_ROTATION_LIMITS`, the start of a range of `Edit.other` of them for the two
  stroke kinds.
 *>
-fn bool EditKind.carries_payload(self) => self == REPLACE_CLIP || self == REBIND_CLIP || self == PAINT_STROKE
+fn bool EditKind.carries_payload(self) => self == REPLACE_CLIP || self == REBIND_CLIP
 	|| self == PIN_STROKE || self == SET_ROTATION_LIMITS || self == SET_JOINT_MAPS
 	|| self == SET_POSES;
 
@@ -1457,6 +1519,14 @@ struct Edit
 	// carrying the reach it was deleted with rather than an unlimited one.
 	float reach_before;
 	float reach_after;
+
+	// SET_GROW and SET_BAND both ways, and DELETE_DOT's `grow_before` and
+	// `band_before`, on the reach's reasoning. Their own pairs: a band is a share,
+	// not a distance, and a grow can be negative where a reach cannot.
+	float grow_before;
+	float grow_after;
+	float band_before;
+	float band_after;
 
 	// SET_POSE_WEIGHT both ways, and DELETE_DOT's `pose_weight_before`, on the
 	// reach's reasoning: a deleted joint comes back holding as it did.

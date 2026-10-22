@@ -49,7 +49,7 @@ fn float[] shares_of(crig::AppState* app, uint dot_id)
 	usz bones = view.len();
 	usz count = app.geometry.positions.len;
 	usz joint = (usz)view.joint_of(dot_id);
-	float[] painted = app.painted_bind(mem, &view);
+	float[] painted = app.weights(mem, &view);
 	defer alloc::free(mem, painted);
 	float[] out = alloc::new_array(mem, float, (sz)count);
 	for (usz v = 0; v < count; v++)
@@ -68,7 +68,7 @@ fn uint[] owners_of(crig::AppState* app)
 	defer view.free(mem);
 	usz bones = view.len();
 	usz count = app.geometry.positions.len;
-	float[] painted = app.painted_bind(mem, &view);
+	float[] painted = app.weights(mem, &view);
 	defer alloc::free(mem, painted);
 	uint[] out = alloc::new_array(mem, uint, (sz)count);
 	for (usz v = 0; v < count; v++)
@@ -430,7 +430,7 @@ fn void a_version_26_session_reads_its_pins_with_no_author() @test
 
 	String older = text.replace(mem, four, three);
 	defer older.free(mem);
-	String versioned = older.replace(mem, `"version": 30`, `"version": 26`);
+	String versioned = older.replace(mem, `"version": 31`, `"version": 26`);
 	defer versioned.free(mem);
 	crig::RigDocument doc = crig::parse_session(mem, versioned)!!;
 	defer doc.free();
@@ -517,7 +517,7 @@ fn float[] shown_rows(crig::AppState* app, usz* bones)
 	defer view.free(mem);
 	usz stride = view.len();
 	*bones = stride;
-	float[] rows = app.painted_bind(mem, &view);
+	float[] rows = app.weights(mem, &view);
 	for (usz v = 0; v < app.geometry.positions.len; v++)
 	{
 		float sum = 0.0f;

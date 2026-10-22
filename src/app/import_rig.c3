@@ -766,7 +766,7 @@ fn ImportedSkin AppState.read_imported_skin(
  How many joints a vertex may ride, in the preview and in every file crig
  writes.
 
- Named here beside `bind_dense` because the two have to agree: the preview
+ Named here beside `bind_base` because the two have to agree: the preview
  sparsifies the dense matrix itself, the exporter sparsifies it again on the way
  into the file, and a preview keeping four influences where the file keeps two
  shows a shoulder that does not exist anywhere else. Four is glTF's own
@@ -775,28 +775,27 @@ fn ImportedSkin AppState.read_imported_skin(
 const uint SKIN_INFLUENCES = 4;
 
 <*
- The dense weight matrix for this rig: the file's, when it covers the rig, and
- the binder's otherwise.
+ The base bind for this rig, with no hand edit on it: the file's weights when
+ they cover the rig, and the binder's otherwise.
 
- The one place either answer is chosen. Both the preview and the exporter come
- through here, which is the whole point — a preview bound one way and a file
- written the other is the defect this consolidation exists to prevent, and it is
- invisible until the file is opened somewhere else.
+ The one place either answer is chosen, and only `base_bind_for` calls it — it
+ is the half of every bind that does not change while the user paints, so it is
+ cached there and everything that reads weights takes them from
+ `AppState.weights`, which lays the hand edits over this copy. A preview bound
+ one way and a file written the other is the defect that funnel exists to
+ prevent, and it is invisible until the file is opened somewhere else.
 
  The binder's answer is bound with a softness sized to the model (`bind_eps`)
  and its fingers re-blended along their knuckles (`shape_bind`), so a finger
- joint holds its own segment rather than a share of the whole hand.
+ joint holds its own segment rather than a share of the whole hand. The same
+ bind fills the distances `bind_field` hands out.
 
  The caller owns the returned array.
 
  @param view : `Whose joint order the columns come back in.`
- @param painted : `False for the base underneath the hand corrections. Only a caller solving for a correction wants this — everything that displays or writes weights wants what the user sees, which is the default.`
 *>
-fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool painted = true)
+fn float[] AppState.bind_base(&self, Allocator allocator, RigView* view)
 {
-	// Painted over on the way out whichever answer was chosen — a correction is a
-	// correction to whatever is underneath it, and a rig whose weights came from a
-	// file is exactly the case where somebody has something to fix.
 	if (self.doc.skin_from_file)
 	{
 		float[] taken = self.imported_dense(allocator, view);
@@ -814,51 +813,56 @@ fn float[] AppState.bind_dense(&self, Allocator allocator, RigView* view, bool p
 			// hold a share of a sibling chain (a finger of the next finger). Files
 			// from other tools often blend them, and the mesh then shows a wedge
 			// between two fingers whenever one bends. The binder's own rule, so
-			// both branches answer alike; under the paint, like the binder's.
+			// both branches answer alike; under the hand edits, like the binder's.
 			rig::isolate_chains(allocator, taken, view.skeleton.parents);
-			if (painted)
-			{
-				paint_over(taken, view.len(), view.paint);
-				// Over imported weights too, unlike the sharpening below: what an
-				// artist painted elsewhere is ground truth about the *blend*, and a
-				// pin is the user saying this vertex is not part of any blend. The
-				// one layer that overrules a file, and it does so having been asked.
-				pin_over(taken, view.len(), view.pins);
-			}
 			return taken;
 		}
 	}
 
 	// App-owned, and refilled here rather than by the caller: this is called with
-	// whatever allocator the caller is building into — a temporary one, twice in a
-	// frame — while the answer outlives all of them. See `blank_shell_riders`.
+	// whatever allocator the caller is building into, while the answer outlives
+	// it. See `blank_shell_riders`.
 	int[] riders = self.blank_shell_riders();
+
+	self.drop_field();
+	usz vertices = self.geometry.positions.len;
+	usz bones = view.len();
+	if (vertices > 0)
+	{
+		self.field_nearest = alloc::new_array(mem, float, (sz)vertices);
+		self.field_distances = alloc::new_array(mem, float, (sz)(vertices * bones));
+	}
 
 	float[] bound = rig::bind_geodesic(allocator, &self.voxels, self.geometry.positions,
 		view.skeleton.joints, view.skeleton.parents, &self.shells,
-		view.attachments, riders, reaches: view.reaches, eps: self.bind_eps());
+		view.attachments, riders, reaches: view.reaches, nearest: self.field_nearest, eps: self.bind_eps(),
+		grow: view.grows, distances: self.field_distances);
 	self.riders_stale = false;
+	if (riders.len > 0)
+	{
+		self.field_riders = alloc::new_array(mem, int, (sz)riders.len);
+		self.field_riders[..] = riders[..];
+	}
+
 
 	// The binder's own branch only. Imported columns are what an artist painted
 	// somewhere else, and sharpening or re-blending those would be crig overruling
 	// a bind it did not make — the one thing the import exists to preserve.
 	//
-	// Before the paint and inside the *unpainted* answer too, so the cached base
-	// carries it: a correction is a correction to what the user can see, and
-	// `paint_share` solves against this base. Changing it is therefore a
-	// `mark_rig_stale`, never a `mark_paint_stale`.
+	// Inside the base, so the cache carries it: a correction is a correction to
+	// what the user can see, and `paint_share` solves against this base. Changing
+	// it is therefore a `mark_rig_stale`, never a `mark_paint_stale`.
 	self.shape_bind(bound, view, riders);
-	if (painted)
-	{
-		paint_over(bound, view.len(), view.paint);
 
-		// After the corrections and outside the *unpainted* answer, which is the
-		// mirror of the sharpening above: the cached base has to stay pin-free so
-		// `paint_share` keeps solving against the weights a correction is a
-		// correction *to*. A base that already carried the pins would report a
-		// pinned vertex as needing no correction at all.
-		pin_over(bound, view.len(), view.pins);
-	}
+	// Last, every joint's weight ends a band behind the vertex's owner — see
+	// `rig::window_bind` — so the automatic weights stop where the joint stops
+	// mattering instead of fading over the whole body. After the shaping, so the
+	// knuckle bands split a hand the binder measured whole: cut first, a palm
+	// vertex's thin finger shares fall under the bands' trust gate and come out
+	// half banded.
+	float[] bands = self.bind_bands(mem, view);
+	defer alloc::free(mem, bands);
+	rig::window_bind(bound, self.field_distances, bones, bands);
 	return bound;
 }
 
@@ -895,6 +899,35 @@ fn float AppState.bind_eps(&self)
 	return soft * soft;
 }
 
+<*
+ How far behind a vertex's owner each joint may sit and still blend with it, in
+ model units — the bands `rig::window_bind` ends the automatic weights at.
+
+ A share of the joint's own bone — its Soft edge (`Dot.band`), or the model's
+ default (`BAND_SHARE_DEFAULT`) — measured along the
+ segment the binder scores it against, so a finger blends over a finger's
+ length and a thigh over a thigh's. Never narrower than a hundredth of the
+ model, or a joint with no bone to speak of would hold only what it sits on.
+
+ The caller owns the result.
+*>
+fn float[] AppState.bind_bands(&self, Allocator allocator, RigView* view)
+{
+	usz bones = view.len();
+	float[] bands = alloc::new_array(allocator, float, (sz)bones);
+	if (bones == 0) return bands;
+	Vec3[] tails = view.skeleton.tails(mem);
+	defer alloc::free(mem, tails);
+	float floor = math::sqrt(self.bind_eps()) * 10.0f;
+	foreach (b, joint : view.skeleton.joints)
+	{
+		float bone = (tails[b] - joint).length();
+		float share = b < view.bands.len && view.bands[b] > 0.0f ? view.bands[b] : BAND_SHARE_DEFAULT;
+		bands[b] = math::max(share * bone, floor);
+	}
+	return bands;
+}
+
 // The softness a bind takes as a share of the model's longest side, and the one
 // it falls back to with no size to take a share of — `bind_geodesic`'s own.
 const float BIND_SOFTNESS_SHARE = 1.0e-3;
@@ -905,8 +938,8 @@ const float BIND_SOFTNESS_DEFAULT = 1.0e-4;
  sharpness, then the fingers re-blended along their knuckles at the model's
  knuckle blend (`rig::band_digits`).
 
- Called on the binder's answer only, wherever it binds — `bind_dense` and
- `survey_weights` — so the views, the file and the guide describe one bind.
+ Called on the binder's answer only, in `bind_base`, so the views, the file and
+ the guide describe one bind.
 
  The bands come after the sharpness, not before: a power applied on top would
  narrow every knuckle ramp again, so the blend the slider names would depend on
@@ -920,7 +953,7 @@ fn void AppState.shape_bind(&self, float[] dense, RigView* view, int[] riders)
 	normalise_loud_rows(dense, view.len());
 	sharpen_weights(dense, self.doc.sharpness);
 	rig::band_digits(mem, dense, self.geometry.positions, &view.skeleton,
-		self.doc.knuckle_blend_fraction(), self.shells.of, riders);
+		self.doc.knuckle_blend_fraction(), self.shells.of, riders, view.grows);
 }
 
 <*

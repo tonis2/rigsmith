@@ -47,6 +47,8 @@ enum CardGlyph
 	INVERT_GLYPH,
 	FIND_STRAYS_GLYPH,
 	FIX_STRAYS_GLYPH,
+	LASSO_GLYPH,
+	COMPARE_GLYPH,
 }
 
 <*
@@ -186,5 +188,17 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			float tick = arm * 0.55f;
 			painter.line(spark + (Vec2){ -tick, -tick }, spark + (Vec2){ tick, tick }, 1.0f, ink);
 			painter.line(spark + (Vec2){ -tick, tick }, spark + (Vec2){ tick, -tick }, 1.0f, ink);
+		case LASSO_GLYPH:
+			// A loop drawn round something, its rope trailing off below.
+			Vec2 loop = c + (Vec2){ 0, -r * 0.2f };
+			painter.arc(loop, r * 0.75f, (float)math::PI * 0.65f, (float)math::PI * 1.75f, w, ink);
+			Vec2 knot = loop + (Vec2){ -r * 0.6f, r * 0.45f };
+			painter.line(knot, c + (Vec2){ -r * 0.2f, r }, w, ink);
+		case COMPARE_GLYPH:
+			// An eye: look at the automatic weights instead.
+			float lid = r * 1.25f;
+			painter.arc(c + (Vec2){ 0, r * 0.55f }, lid, (float)math::PI * 1.22f, (float)math::PI * 0.56f, w, ink);
+			painter.arc(c + (Vec2){ 0, -r * 0.55f }, lid, (float)math::PI * 0.22f, (float)math::PI * 0.56f, w, ink);
+			painter.circle(c, r * 0.32f, { .color = ink });
 	}
 }

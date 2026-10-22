@@ -140,7 +140,7 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 	// word on which joint is loose, so it is named here instead.
 	if (!one_skeleton(self, &view, path)) return false;
 
-	float[] skin = self.bind_dense(mem, &view);
+	float[] skin = self.weights(mem, &view);
 	defer alloc::free(mem, skin);
 
 	usz bones = view.len();
@@ -219,7 +219,7 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 	// crig cannot reproduce" — a shoulder somebody painted — and it is what stops
 	// the binder overwriting them. Weights crig itself just derived are not that:
 	// setting the flag would make the next reach the user sizes do nothing, since
-	// `bind_dense` would keep handing back what the file says instead of binding
+	// `bind_base` would keep handing back what the file says instead of binding
 	// the rig again.
 	io::printfn("wrote the rig into %s (%d joints, %d vertices)", path, bones, parts.vertices);
 	return true;

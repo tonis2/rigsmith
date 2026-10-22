@@ -59,6 +59,8 @@ const String WEIGHTS_PART_ID = "weights-part";
 const String WEIGHTS_GROW_ID = "weights-grow";
 const String WEIGHTS_CLEAR_ID = "weights-clear";
 const String WEIGHTS_BRUSH_ID = "weights-brush";
+const String WEIGHTS_LASSO_ID = "weights-lasso";
+const String WEIGHTS_COMPARE_ID = "weights-compare";
 const String WEIGHTS_INVERT_ID = "weights-invert";
 const String WEIGHTS_SHRINK_ID = "weights-shrink";
 const String WEIGHTS_SOFT_ID = "weights-soft";
@@ -138,7 +140,7 @@ const float WEIGHTS_CARD_W = 232.0f;
 const float WEIGHTS_SECTION_W = WEIGHTS_CARD_W + 20.0f;
 const float WEIGHTS_SIDEBAR_W = WEIGHTS_SECTION_W + 16.0f;
 const float CARD_ICON_GAP = 6.0f;
-const float WEIGHTS_PART_W = WEIGHTS_CARD_W - 2.0f * (TOOL_CELL_W + CARD_ICON_GAP);
+const float WEIGHTS_PART_W = WEIGHTS_CARD_W - 3.0f * (TOOL_CELL_W + CARD_ICON_GAP);
 
 const PopupPanel JOINT_PANEL_SURFACE = {
 	.style = {
@@ -854,20 +856,24 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 										}
 										else
 										{
-											// The part, and a ring more or less of it.
+											// The part, and the joint's edge pushed out or pulled in.
 											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 											{
-												@tree(widgets::tip("Part — what Apply gives this joint: its own bone, its bone and its children's, or UV islands you click"))
+												@tree(widgets::tip("Part — Own bone is changed live by Grow, Shrink and Soft edge; With children or UV islands you click are a part Apply gives this joint"))
 												{
 													@node((Select) { .options = weights_part_labels[..],
 														.selected = (usz)(app.areaing ? app.area_origin : AreaPart.OWN),
 														.width = WEIGHTS_PART_W, .style = VIEW_MENU_STYLE,
 														.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
 												};
-												@card_icon(GROW_GLYPH, "Grow — widen the part by one ring of the mesh",
+												@card_icon(GROW_GLYPH, "Grow — push this joint's edge out by a tenth of its bone, live; Reset puts it back",
 													&weights_grow_pressed).with_id(WEIGHTS_GROW_ID);
-												@card_icon(SHRINK_GLYPH, "Shrink — narrow the part by one ring of the mesh",
+												@card_icon(SHRINK_GLYPH, "Shrink — pull this joint's edge in by a tenth of its bone, live; Reset puts it back",
 													&weights_shrink_pressed).with_id(WEIGHTS_SHRINK_ID);
+												@card_icon(MIRROR_GLYPH, app.area_mirrors()
+													? "Mirror is on — Grow, Shrink, Soft edge, the brush, the lasso, Apply and Reset change the twin joint on the other side too. Click for this side only"
+													: "Mirror is off — every weight tool changes this side only. Click to do the twin joint too",
+													&weights_mirror_pressed, app.area_mirrors() ? LIT : PLAIN).with_id(WEIGHTS_MIRROR_ID);
 											};
 											if (app.areaing && app.area_islands)
 											{
@@ -880,14 +886,16 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 														&weights_invert_pressed).with_id(WEIGHTS_INVERT_ID);
 												};
 											}
-											@tree(widgets::tip("Soft edge — how far the part's edge fades, as a share of the bone's length"))
+											@tree(widgets::tip("Soft edge — how far this joint blends with its neighbours, as a share of its bone; an Apply's part fades over the same edge"))
 											{
 												@node((Slider) {
 													.label = "Soft edge",
 													.suffix = "%",
-													.value = app.area_soft * 100.0f,
-													.max = AREA_SOFT_MAX * 100.0f,
+													.value = app.band_share(dot.id) * 100.0f,
+													.min = SOFT_EDGE_MIN * 100.0f,
+													.max = BAND_SHARE_MAX * 100.0f,
 													.step = 5.0f,
+													.disabled = app.doc.skin_from_file,
 													.on_change = &weights_soft_moved,
 													.on_commit = &weights_soft_committed,
 													.style = PHYSICS_SLIDER_STYLE,
@@ -911,23 +919,30 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													}).with_id(WEIGHTS_KNUCKLE_ID);
 												};
 											}
-											// How the joint is worked on — mirrored, painted by hand — and the
-											// model's strays at the far end, a different job on the same row.
+											// The hand tools — brush, lasso, and a look at the weights without
+											// them — and the model's strays at the far end, a different job.
 											@tree((Row) { .size = { WEIGHTS_CARD_W, 0 }, .main_align = SPACE_BETWEEN,
 												.cross_align = CENTER })
 											{
 												@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 												{
-													@card_icon(MIRROR_GLYPH, app.area_mirrors()
-														? "Mirror is on — Apply and Reset change the twin joint on the other side too. Click for this side only"
-														: "Mirror is off — Apply and Reset change this side only. Click to do the twin joint too",
-														&weights_mirror_pressed, app.area_mirrors() ? LIT : PLAIN).with_id(WEIGHTS_MIRROR_ID);
 													@card_icon(BRUSH_GLYPH, app.brushing
 														? "Stop painting (Shift+W) — put the brush away"
 														: "Paint brush (Shift+W) — paint this joint's weights by hand",
 														&menu_weight_brush, app.brushing ? LIT : PLAIN,
-														"Paint brush · shift+W     drag the mesh · paint     ctrl-drag · take off     hold F · size")
+														"Paint brush · shift+W     drag the mesh · paint     ctrl-drag · put on     ctrl+shift-drag · take off     hold F · size")
 														.with_id(WEIGHTS_BRUSH_ID);
+													bool pinning = app.lassoing && app.lasso_job == LassoJob.PIN;
+													@card_icon(LASSO_GLYPH, pinning
+														? "Stop pinning (Shift+T) — put the lasso away"
+														: "Lasso pin (Shift+T) — draw round vertices to give them wholly to this joint",
+														&menu_lasso_mode, pinning ? LIT : PLAIN,
+														"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
+														.with_id(WEIGHTS_LASSO_ID);
+													@card_icon(COMPARE_GLYPH, app.compare_automatic
+														? "Showing the automatic weights — click to see the edited ones again"
+														: "Compare — show the automatic weights, without the hand edits, to see what they changed",
+														&weights_compare_pressed, app.compare_automatic ? LIT : PLAIN).with_id(WEIGHTS_COMPARE_ID);
 												};
 												weights_stray_icons(app);
 											};
@@ -935,11 +950,12 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 											// its undoing are the last step, and the ones not to hit by mistake.
 											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 											{
-												@card_icon(APPLY_GLYPH,
-													"Apply (Enter) — give this joint the part on show; it replaces the joint's weights, brush strokes too",
-													&weights_apply_pressed, COMMIT).with_id(WEIGHTS_APPLY_ID);
+												@card_icon(APPLY_GLYPH, app.areaing && app.area_pending()
+													? "Apply (Enter) — give this joint the part on show; it replaces the joint's weights, brush strokes too"
+													: "Apply (Enter) — nothing waits: the joint's own bone changes live. Pick With children or UV islands for a part to apply",
+													&weights_apply_pressed, app.areaing && app.area_pending() ? COMMIT : PLAIN).with_id(WEIGHTS_APPLY_ID);
 												@card_icon(RESET_GLYPH,
-													"Reset to automatic — take back this joint's parts and brush strokes",
+													"Reset to automatic — the joint back on its automatic edge, its grow, soft edge, parts and strokes taken back",
 													&weights_reset_pressed).with_id(WEIGHTS_RESET_ID);
 											};
 											@node((Label) { .text = weights_readout(app, &self.readout),
@@ -1605,16 +1621,20 @@ fn void joint_limits_reset(Ui* ui) @private
 fn String weights_readout(AppState* app, char[] buffer) @private
 {
 	if (app.brushing) return "Painting by hand — size, strength and add or remove are in the strip at the top.";
-	if (!app.areaing || !app.area_pending()) return "Pick a part, or paint by hand.";
-	usz held = app.area_held();
 	usz total = app.geometry.positions.len;
-	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;
-	if (!app.area_preview)
+	if (!app.areaing || !app.area_pending())
 	{
-		// The card's own pick: the mesh still shows the weights, the brush's numbers.
-		return string::bformat(buffer, "Showing its weights as they are · its own bone's part is %d vertices (%d%%)",
-			held, percent);
+		// The joint itself, live: what it holds, and how far its edge was moved.
+		Dot* dot = app.doc.find(app.selected);
+		if (!dot) return "Pick a part, or paint by hand.";
+		int steps = (int)math::round(dot.grow / math::max(app.grow_step(dot.id), 1.0e-9f));
+		String grown = steps == 0 ? "on its automatic edge" : string::tformat("grown %s%d", steps > 0 ? "+" : "", steps);
+		if (app.tint_mode != FALLOFF) return string::bformat(buffer, "Own bone, live · %s", grown);
+		int percent = total > 0 ? (int)math::round((float)app.falloff_held * 100.0f / (float)total) : 0;
+		return string::bformat(buffer, "Own bone, live · holds %d vertices (%d%%) · %s", app.falloff_held, percent, grown);
 	}
+	usz held = app.area_held();
+	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;
 	if (app.area_islands)
 	{
 		if (held == 0) return "No islands picked — click the mesh to add one, or shift-drag across several.";
@@ -1724,18 +1744,20 @@ fn void weights_part_chosen(Ui* ui, usz row) @private
 	refresh_joint_panel(ui);
 }
 
-fn void weights_resize(Ui* ui, int rings) @private
+fn void weights_resize(Ui* ui, int steps) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	if (!app.areaing || !app.area_pending())
+	if (!app.doc.find(app.selected))
 	{
-		app.@notice("choose a part above first");
+		app.@notice("select a joint first");
 	}
-	else if (!app.resize_area(rings))
+	else if (app.grow_joint(steps))
 	{
-		app.@notice(rings > 0 ? "the part cannot grow any further" : "the part cannot shrink any further");
+		app.@notice("%s %s · Ctrl+Z or Reset puts it back", app.area_joint_name(),
+			steps > 0 ? "grown a tenth of its bone" : "shrunk a tenth of its bone");
 	}
 	app.refresh_ui();
+	refresh_joint_panel(ui);
 }
 
 fn void weights_clear_pressed(Ui* ui) @private
@@ -1752,28 +1774,37 @@ fn void weights_invert_pressed(Ui* ui) @private
 	app.refresh_ui();
 }
 
+fn void weights_compare_pressed(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.toggle_compare();
+	app.refresh_ui();
+	refresh_joint_panel(ui);
+}
+
 fn void weights_grow_pressed(Ui* ui) @private => weights_resize(ui, 1);
 fn void weights_shrink_pressed(Ui* ui) @private => weights_resize(ui, -1);
 
-// Live while the handle moves: the card is not rebuilt under the drag, only the
-// mesh repainted.
+// Live while the handle moves: the joint takes each value and the mesh rebinds,
+// but the undo group stays open until the release, so a drag is one step.
 fn void weights_soft_moved(Ui* ui, float value) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	float soft = math::round(value / 5.0f) * 0.05f;
-	if (math::abs(soft - app.area_soft) < 1.0e-4f) return;
-	app.area_soft = soft;
-	// Moving the edge is shaping the part, so the mesh shows what Apply would leave.
-	if (app.areaing && app.area_pending()) app.area_preview = true;
-	if (app.tint_mode != OFF)
-	{
-		app.weights_stale = true;
-		app.weights_due = 0.0f;
-	}
+	float soft = math::max(math::round(value / 5.0f) * 0.05f, SOFT_EDGE_MIN);
+	if (math::abs(soft - app.band_share(app.selected)) < 1.0e-4f) return;
+	if (app.soften_joint(soft)) app.refresh_ui();
 }
 
-// The readout names the edge width, so the card catches up once the handle is let go.
-fn void weights_soft_committed(Ui* ui, float value) @private => refresh_joint_panel(ui);
+fn void weights_soft_committed(Ui* ui, float value) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.undo_stack.commit();
+	refresh_joint_panel(ui);
+}
+
+// The narrowest soft edge the card offers: a joint that blends with nothing
+// creases at every boundary.
+const float SOFT_EDGE_MIN = 0.05;
 
 // Live while the handle moves: the document takes each value and the hand
 // rebinds, but the undo group stays open until the release, so a drag is one step.

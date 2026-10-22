@@ -254,7 +254,7 @@ fn usz hud_lines(AppState* app, HudSnapshot shown, char[] buffer, HudLine[] out)
 				// The joint being shown is the selection, and the chip names it —
 				// "falloff" alone does not say falloff of what.
 				String about = selected_label(app, &text);
-				tinting = text.@printf(" · falloff of %s", about);
+				tinting = text.@printf(" · falloff of %s%s", about, app.compare_automatic ? ", automatic" : "");
 			}
 		default:
 			break;

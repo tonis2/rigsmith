@@ -185,6 +185,8 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 
 		Vec3 position = dot.position;
 		float reach = dot.reach;
+		float grow = dot.grow;
+		float band = dot.band;
 		float pose_weight = dot.pose_weight;
 		String dot_name = (String)@clone_slice((char[])dot.name);
 		uint previous_root = self.doc.root_id;
@@ -197,6 +199,8 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 			.other = previous_root,
 			.name = dot_name,
 			.reach_before = reach,
+			.grow_before = grow,
+			.band_before = band,
 			.pose_weight_before = pose_weight,
 		});
 		diff.removed++;

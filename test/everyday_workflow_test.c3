@@ -188,7 +188,7 @@ fn void a_clip_made_edited_saved_and_exported_replays_as_shown() @test
 	test::@check(back.uses_interpolation(HOLD), "the hold did not survive save and reopen");
 
 	// --- Export what came back, and replay it independently ------------------
-	float[] dense = app.bind_dense(mem, &view);
+	float[] dense = app.weights(mem, &view);
 	defer alloc::free(mem, dense);
 	AnimTemplate[1] exporting = { back };
 	if (catch fault error = crig::export_rigged_animated_glb(mem, EXPORT, app.geometry, &view.skeleton,

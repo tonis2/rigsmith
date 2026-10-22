@@ -197,15 +197,21 @@ fn void tooltip_audit_the_weights_card_is_icons_that_say_what_they_do() @test
 	test::@check(ok, "a button on the Weights card has no tooltip text");
 	test::eq(labelled_buttons(card), (usz)0);
 
-	// Grouped by job: Apply and Reset share a row of their own, below the one
-	// with Mirror and the brush.
+	// Grouped by job: the joint's edge — Grow, Shrink, Mirror — on one row; the
+	// hand tools — the brush, the lasso, Compare — on another; Apply and Reset on
+	// a row of their own, last.
 	Vec2 apply = f.center_of(crig::WEIGHTS_APPLY_ID)!!;
 	Vec2 reset = f.center_of(crig::WEIGHTS_RESET_ID)!!;
+	Vec2 grow_at = f.center_of(crig::WEIGHTS_GROW_ID)!!;
 	Vec2 mirror_at = f.center_of(crig::WEIGHTS_MIRROR_ID)!!;
 	Vec2 brush_at = f.center_of(crig::WEIGHTS_BRUSH_ID)!!;
-	test::@check(math::abs(apply.y - reset.y) < 0.5f && math::abs(mirror_at.y - brush_at.y) < 0.5f,
-		"Apply and Reset, or Mirror and the brush, are not on one row");
-	test::@check(apply.y > mirror_at.y + 1.0f, "Apply and Reset are not on a row below Mirror and the brush");
+	Vec2 lasso_at = f.center_of(crig::WEIGHTS_LASSO_ID)!!;
+	Vec2 compare_at = f.center_of(crig::WEIGHTS_COMPARE_ID)!!;
+	test::@check(math::abs(apply.y - reset.y) < 0.5f && math::abs(grow_at.y - mirror_at.y) < 0.5f
+		&& math::abs(brush_at.y - lasso_at.y) < 0.5f && math::abs(brush_at.y - compare_at.y) < 0.5f,
+		"Apply and Reset, the edge row or the hand tools are not each on one row");
+	test::@check(brush_at.y > mirror_at.y + 1.0f && apply.y > brush_at.y + 1.0f,
+		"the rows are not edge, hand tools, then Apply and Reset");
 
 	tip_hover(&f, f.center_of(crig::WEIGHTS_APPLY_ID)!!);
 	String shown = widgets::tooltip_shown(f.ui);

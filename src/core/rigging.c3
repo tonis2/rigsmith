@@ -430,42 +430,19 @@ const float TINT_SATURATION = 0.72;
  Colours are packed r|g<<8|b<<16|a<<24 and unpacked with the same shifts in
  `mesh.shady`, so no byte order is assumed on either side.
 
- The caller owns the returned array. It is exactly as long as `positions`.
+ The caller owns the returned array. It is exactly `vertices` long.
 
- @param voxels : `The mesh's interior; null measures straight lines instead.`
- @param shells : `The mesh's separate pieces; null leaves loose ones to the ordinary rules.`
- @param attachments : `One joint index per shell, -1 to decide automatically.`
- @param reaches : `One per joint, in model units, 0 for no limit. Empty leaves every dot unlimited.`
+ @param dense : `The bind to colour, from AppState.weights — the one bind every view draws.`
 *>
-fn uint[] vertex_tints(
-	Allocator allocator,
-	Vec3[] positions,
-	rig::Skeleton* skeleton,
-	rig::MeshVoxels* voxels = null,
-	rig::MeshShells* shells = null,
-	int[] attachments = {},
-	float[] reaches = {},
-	PaintColumn[] paint = {},
-	float[] bound = {})
+fn uint[] vertex_tints(Allocator allocator, float[] dense, usz vertices, usz bones)
 {
-	uint[] tints = alloc::new_array(allocator, uint, (sz)positions.len);
-
-	usz bones = skeleton.joints.len;
-	if (bones == 0)
+	uint[] tints = alloc::new_array(allocator, uint, (sz)vertices);
+	if (bones == 0 || dense.len < vertices * bones)
 	{
 		tints[..] = 0;
 		return tints;
 	}
-
-	bool given = bound.len == positions.len * bones;
-	float[] dense = given ? bound : rig::bind_geodesic(
-		allocator, voxels, positions, skeleton.joints, skeleton.parents,
-		shells, attachments, reaches: reaches);
-	defer if (!given) alloc::free(allocator, dense);
-	if (!given) paint_over(dense, bones, paint);
-
-	for (usz v = 0; v < positions.len; v++) tints[v] = joint_tint(strongest_joint(dense[v * bones:bones]));
-
+	for (usz v = 0; v < vertices; v++) tints[v] = joint_tint(strongest_joint(dense[v * bones:bones]));
 	return tints;
 }
 
@@ -506,47 +483,24 @@ fn float joint_share(float[] row, usz joint)
  orders of magnitude and a ramp over it would paint almost everything at one
  end.
 
- The caller owns the returned array. It is exactly as long as `positions`.
+ The caller owns the returned array. It is exactly `vertices` long.
 
- @param voxels : `The mesh's interior; null measures straight lines instead.`
- @param shells : `The mesh's separate pieces; null leaves loose ones to the ordinary rules.`
- @param attachments : `One joint index per shell, -1 to decide automatically.`
- @param reaches : `One per joint, in model units, 0 for no limit. Empty leaves every dot unlimited.`
- @param floor : `The share at which a vertex counts towards held — see BLEND_FLOOR, which is what the app passes.`
+ @param dense : `The bind to colour, from AppState.weights — the one bind every view draws.`
+ @param floor : `The share at which a vertex counts towards held — see SHOWN_FLOOR, which is what the app passes.`
  @param held : `Filled with how many vertices the joint holds at least floor of. Null to not ask. Free beside the ramp it is counted from: the same pass produces both, so asking costs a comparison per vertex and nothing else.`
 *>
-fn uint[] falloff_tints(
-	Allocator allocator,
-	Vec3[] positions,
-	rig::Skeleton* skeleton,
-	usz joint,
-	rig::MeshVoxels* voxels = null,
-	rig::MeshShells* shells = null,
-	int[] attachments = {},
-	float[] reaches = {},
-	float floor = 0.0f,
-	usz* held = null,
-	PaintColumn[] paint = {},
-	float[] bound = {})
+fn uint[] falloff_tints(Allocator allocator, float[] dense, usz vertices, usz bones, usz joint,
+	float floor = 0.0f, usz* held = null)
 {
-	uint[] tints = alloc::new_array(allocator, uint, (sz)positions.len);
+	uint[] tints = alloc::new_array(allocator, uint, (sz)vertices);
 	if (held) *held = 0;
-
-	usz bones = skeleton.joints.len;
-	if (bones == 0 || joint >= bones)
+	if (bones == 0 || joint >= bones || dense.len < vertices * bones)
 	{
 		tints[..] = 0;
 		return tints;
 	}
 
-	bool given = bound.len == positions.len * bones;
-	float[] dense = given ? bound : rig::bind_geodesic(
-		allocator, voxels, positions, skeleton.joints, skeleton.parents,
-		shells, attachments, reaches: reaches);
-	defer if (!given) alloc::free(allocator, dense);
-	if (!given) paint_over(dense, bones, paint);
-
-	for (usz v = 0; v < positions.len; v++)
+	for (usz v = 0; v < vertices; v++)
 	{
 		float share = joint_share(dense[v * bones:bones], joint);
 		tints[v] = weight_ramp(share);
@@ -622,7 +576,7 @@ fn bool[] unclaimed_mask(
 	PinColumn[] pins = {})
 {
 	bool[] stray = alloc::new_array(allocator, bool, (sz)vertices);
-	if (vertices == 0) return stray;
+	if (vertices == 0 || nearest.len < vertices) return stray;
 
 	float worst = 0.0f;
 	for (usz v = 0; v < vertices; v++)

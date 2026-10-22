@@ -61,31 +61,11 @@ struct BindingSwap
 alias BindingStore = List{BindingSwap};
 
 <*
- `PAINT_STROKE`'s payload: the dabs a stroke changed, both sides of each.
-
- A range rather than a slot, because a stroke is one undo step over thousands of
- vertices — `Edit.id` is where it starts and `Edit.other` is how many. Same stack
- discipline as `clips`, a different element, which is the whole reason the store
- is per-type rather than one tagged list: a change is 16 bytes against an
- `AnimTemplate`'s ~72, and a shared slot would cost a stroke four times its data
- to buy a homogeneity nothing reads.
-*>
-alias StrokeStore = List{PaintChange};
-
-<*
  `PIN_STROKE`'s payload: the pins a gesture changed, both sides of each.
 
- Exactly `StrokeStore`'s element, because the shape of the question is the same
- one: a vertex, a dot, and a number either side. What the number *means* differs
- — `before` and `after` read as shares here, where a `PaintChange` in the store
- above reads as multipliers — and that is the whole of the difference, since
- neither store is ever read without knowing which edit named it.
-
- **A store of its own rather than a second range in that one**, and the reason
- is the invariant rather than the element: each store is stack-shaped, so
- `drop_last`'s "the edit being dropped owns the top of the store" precondition
- has to hold per kind. Interleaving pins and dabs in one list would break it the
- first time a stroke was recorded between two lasso commits.
+ A range rather than a slot, because a brush stroke or a lasso is one undo step
+ over thousands of vertices — `Edit.id` is where it starts and `Edit.other` is
+ how many. `before` and `after` read as shares.
 *>
 alias PinStore = List{PaintChange};
 
@@ -166,7 +146,6 @@ struct UndoStack
 	uint revision;
 	ClipStore clips;
 	BindingStore bindings;
-	StrokeStore strokes;
 	PinStore pins;
 	RotationLimitStore rotation_limits;
 	JointMapStore joint_maps;
@@ -179,7 +158,6 @@ fn void UndoStack.free(&self)
 	self.edits.free();
 	self.clips.free();
 	self.bindings.free();
-	self.strokes.free();
 	self.pins.free();
 	self.rotation_limits.free();
 	self.joint_maps.free();
@@ -227,8 +205,7 @@ fn void UndoStack.clear(&self)
  from here — hence a precondition rather than a comment.
 
  @require edit.kind != REPLACE_CLIP || (sz)edit.id + 1 == stack.clips.len() : `Payload slots are handed out in record order, so only the newest edit owns the top of the store.`
- @require edit.kind != PAINT_STROKE || (sz)(edit.id + edit.other) == stack.strokes.len() : `A stroke's range is the top of the store, for the same reason a clip's slot is.`
- @require edit.kind != PIN_STROKE || (sz)(edit.id + edit.other) == stack.pins.len() : `A pin gesture's range is the top of its own store, on the same terms as a stroke's.`
+ @require edit.kind != PIN_STROKE || (sz)(edit.id + edit.other) == stack.pins.len() : `A pin gesture's range is the top of its own store, for the same reason a clip's slot is.`
  @require edit.kind != SET_ROTATION_LIMITS || (sz)edit.id + 1 == stack.rotation_limits.len() : `A limit edit's pair is the top of its own store, on the same terms as a clip.`
 *>
 fn void drop_last(UndoStack* stack, Edit edit) @local
@@ -252,8 +229,6 @@ fn void drop_last(UndoStack* stack, Edit edit) @local
 			if (swap.before.clip.len > 0) alloc::free(mem, swap.before.clip.ptr);
 			if (swap.after.file.len > 0) alloc::free(mem, swap.after.file.ptr);
 			if (swap.after.clip.len > 0) alloc::free(mem, swap.after.clip.ptr);
-		case PAINT_STROKE:
-			for (uint i = 0; i < edit.other; i++) stack.strokes.pop()!!;
 		case PIN_STROKE:
 			for (uint i = 0; i < edit.other; i++) stack.pins.pop()!!;
 		case SET_ROTATION_LIMITS:
@@ -286,7 +261,6 @@ fn void UndoStack.use_heap(&self)
 	if (!self.edits.is_initialized()) self.edits.init(mem);
 	if (!self.clips.is_initialized()) self.clips.init(mem);
 	if (!self.bindings.is_initialized()) self.bindings.init(mem);
-	if (!self.strokes.is_initialized()) self.strokes.init(mem);
 	if (!self.pins.is_initialized()) self.pins.init(mem);
 	if (!self.rotation_limits.is_initialized()) self.rotation_limits.init(mem);
 	if (!self.joint_maps.is_initialized()) self.joint_maps.init(mem);
@@ -381,46 +355,21 @@ fn void UndoStack.record_rotation_limits(&self, JointRotationLimits before, Join
 }
 
 <*
- Records a stroke: every dab it changed, both sides of each, as one step.
-
- 	`app.undo_stack.record_stroke(changes);`
-
- One edit however many vertices the brush touched — a stroke is one action to the
- person who made it, and an edit per vertex would make Ctrl+Z useless exactly
- where it is most wanted. The tail goes first for the reason `record_clip_swap`
- gives.
-
- A stroke that changed nothing records nothing, so a brush dragged over mesh it
- has already painted to the same value leaves the history alone.
-
- @param changes : `Borrowed for the call — the values are copied into the store.`
-*>
-fn void UndoStack.record_stroke(&self, PaintChange[] changes)
-{
-	if (changes.len == 0) return;
-
-	drop_redo_tail(self);
-	uint at = (uint)self.strokes.len();
-	foreach (change : changes) self.strokes.push(change);
-	self.record({ .kind = PAINT_STROKE, .id = at, .other = (uint)changes.len });
-}
-
-<*
  Records a pin gesture: every vertex it handed over or took back, as one step.
 
  	`app.undo_stack.record_pin_stroke(changes);`
 
- `record_stroke` for the other layer, and the same bargain — one edit however
- many vertices a lasso caught, since the region is what the person drew. A
- gesture that changed nothing records nothing, so a lasso drawn over mesh
- already pinned the same way leaves the history alone.
+ One edit however many vertices a stroke or a lasso caught, since the region is
+ what the person drew — an edit per vertex would make Ctrl+Z useless exactly
+ where it is most wanted. A gesture that changed nothing records nothing, so a
+ lasso drawn over mesh already pinned the same way leaves the history alone.
 
  The two differ in when they are called rather than in what they do: a brush
  commits per mouse move, because a stroke is a stream the hand is still adding
  to, while a lasso commits once on release because a region is not finished
  until it is closed.
 
- @param changes : `Borrowed for the call — the values are copied into the store. Both sides read as shares here, not as multipliers.`
+ @param changes : `Borrowed for the call — the values are copied into the store. Both sides read as shares.`
 *>
 fn void UndoStack.record_pin_stroke(&self, PaintChange[] changes)
 {
@@ -496,6 +445,8 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case MOVE_DOT: self.move_dot(edit.id, edit.after);
 		case RENAME_DOT: self.rename_dot(edit.id, edit.name);
 		case SET_REACH: self.set_reach(edit.id, edit.reach_after);
+		case SET_GROW: self.set_grow(edit.id, edit.grow_after);
+		case SET_BAND: self.set_band(edit.id, edit.band_after);
 		case SET_POSE_WEIGHT: self.set_pose_weight(edit.id, edit.pose_weight_after);
 		case SET_SHARPNESS: self.set_sharpness(edit.sharp_after);
 		case SET_KNUCKLE_BLEND: self.set_knuckle_blend(edit.knuckle_after);
@@ -515,7 +466,6 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case SET_POSES:
 		case REPLACE_CLIP:
 		case REBIND_CLIP:
-		case PAINT_STROKE:
 		case PIN_STROKE:
 			unreachable(PAYLOAD_IS_THE_APPS);
 	}
@@ -534,6 +484,8 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.remove_dot(edit.id);
 		case DELETE_DOT:
 			self.insert_dot(edit.id, edit.before, edit.name, edit.reach_before, edit.pose_weight_before);
+			self.set_grow(edit.id, edit.grow_before);
+			self.set_band(edit.id, edit.band_before);
 			// `remove_dot` hands the root to whatever was left, so putting the
 			// dot back is not enough to put the root back. Restored from the
 			// edit rather than re-derived, because the guess it made on the way
@@ -545,6 +497,10 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.rename_dot(edit.id, edit.prior_name);
 		case SET_REACH:
 			self.set_reach(edit.id, edit.reach_before);
+		case SET_GROW:
+			self.set_grow(edit.id, edit.grow_before);
+		case SET_BAND:
+			self.set_band(edit.id, edit.band_before);
 		case SET_POSE_WEIGHT:
 			self.set_pose_weight(edit.id, edit.pose_weight_before);
 		case SET_SHARPNESS:
@@ -588,7 +544,6 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 		case SET_POSES:
 		case REPLACE_CLIP:
 		case REBIND_CLIP:
-		case PAINT_STROKE:
 		case PIN_STROKE:
 			unreachable(PAYLOAD_IS_THE_APPS);
 	}

@@ -17,7 +17,7 @@
 
  The riders half is the binder's own opinion: `rig::rigid_shells` decides which
  bone an unreachable piece must ride, and until now that decision was computed
- and thrown away inside the bind. `bind_dense` writes it into `shell_riders`,
+ and thrown away inside the bind. `bind_base` writes it into `shell_riders`,
  `mark_rig_stale` marks it stale, and nothing may read it while it is — joint
  indices are BFS output and shift on every edit to the rig, so a stale index
  names a different bone rather than no bone. `refresh_shell_riders` is how a
@@ -107,7 +107,7 @@ fn ShellRow[] AppState.shell_rows(&self, Allocator allocator)
  Sizes `shell_riders` to the piece count and blanks it, ready for a bind to
  write into.
 
- Called from both of `bind_dense`'s branches so the array is always the shape
+ Called from both of `bind_base`'s branches so the array is always the shape
  `rig::bind_geodesic` requires — it fills by shell id and skips anything past
  the end, so an array left at the previous mesh's length would silently answer
  for the wrong pieces.
@@ -145,7 +145,7 @@ fn void AppState.drop_shell_riders(&self)
  already fresh.
 
  `base_bind_for` rather than a bind of its own: the riders are a side effect of
- `bind_dense`, and going through the cache means a reader costs nothing extra
+ `bind_base`, and going through the cache means a reader costs nothing extra
  on top of a preview that was going to bind anyway. A document with no rig, or
  a mesh with no vertices, never reaches the binder at all — so the flag is
  lowered here instead, or a per-frame reader would ask again on every frame for

@@ -4272,20 +4272,20 @@ fn void the_mirror_notice_says_when_paint_crossed() @test
 	uint left = fixture.app.add_recorded({ plane - unit, 0.5f, 0.0f }, "arm_L");
 	fixture.app.add_recorded({ plane + unit, 0.5f, 0.0f }, "arm_R");
 	fixture.app.undo_stack.commit();
-	crig::PaintDab[1] dab = {{ .vertex = 0, .dot_id = left, .factor = 0.4f }};
-	test::eq(fixture.app.paint_dabs(dab[..]), (usz)1);
+	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = left, .share = 0.4f }};
+	test::eq(fixture.app.pin_dabs(dab[..]), (usz)1);
 
 	fixture.app.select(left);
 	fixture.tap(SPOT_LEFT, Key.M);
 	test::@check(fixture.doc().dots.len() == 2, "the arm did not mirror: \"%s\"", fixture.notice_text());
 	test::@check(fixture.notice_text().ends_with("weight paint crossed too"),
 		"the notice does not mention the paint: \"%s\"", fixture.notice_text());
-	test::@check(fixture.doc().paint.len() == 2, "the dab did not cross (%d dabs)", fixture.doc().paint.len());
+	test::@check(fixture.doc().pins.len() == 2, "the pin did not cross (%d pins)", fixture.doc().pins.len());
 
 	// Nothing painted on the source: the plain wording — the pair is now square
 	// with no paint, so the mirror finds nothing to do.
 	fixture.chord(SPOT_LEFT, Key.LEFT_CTRL, Key.Z);
-	test::@check(fixture.app.clear_paint() > 0, "the paint would not clear");
+	test::@check(fixture.app.clear_pins() > 0, "the pins would not clear");
 	fixture.app.select(left);
 	fixture.tap(SPOT_LEFT, Key.M);
 	test::@check(fixture.doc().dots.len() == 2 && !fixture.notice_text().contains("paint"),
@@ -6182,7 +6182,7 @@ fn void a_hint_lasts_exactly_as_long_as_its_mode() @test
 		"an idle viewport is hinting at something: \"%s\"", crig::hint_line(&fixture.app));
 
 	fixture.feed_key(Key.W);
-	test::@check(crig::hint_line(&fixture.app).contains("Part menu"),
+	test::@check(crig::hint_line(&fixture.app).contains("grow the joint"),
 		"the Area tool is open and the hint reads \"%s\"", crig::hint_line(&fixture.app));
 	test::@check(fixture.notice_text().len == 0,
 		"the invitation went to the result line, which cannot take it back: \"%s\"",
@@ -6275,6 +6275,10 @@ fn void every_hint_fits_the_bar() @test
 		fixture.feed_key(Key.ESCAPE);
 	}
 
+	// The Weights card W opened keeps its tool open under every mode the walk
+	// closed; hiding the card closes it.
+	if (fixture.app.weights_card_open()) fixture.feed_key(Key.W);
+
 	// With the pointer over the mesh and a joint selected, the only line left is
 	// auto-connect's chaining line — which has to fit too.
 	String left = crig::hint_line(&fixture.app);
@@ -6282,9 +6286,9 @@ fn void every_hint_fits_the_bar() @test
 		"a mode was left open behind the walk: \"%s\"", left);
 	test::@check(hint_width(&fixture) <= crig::HINT_BOX_W, "the chaining line is clipped: \"%s\"", left);
 
-	// The Area tool's second line, once a part is picked.
+	// The Area tool's second line, once a part is waiting for Apply.
 	fixture.feed_key(Key.W);
-	test::@check(fixture.app.set_area_part(OWN), "the chest owns none of the cube");
+	test::@check(fixture.app.set_area_part(WITH_CHILDREN), "the chest owns none of the cube");
 	String picked = crig::hint_line(&fixture.app);
 	float picked_wide = hint_width(&fixture);
 	test::@check(picked.contains("apply") && picked_wide <= crig::HINT_BOX_W,
@@ -8523,98 +8527,6 @@ fn void turning_holds_the_joint_and_carries_the_limb() @test
 	test::@check((swung - tip_px).length() > 20.0f,
 		"the ankle only travelled %.1f px", (swung - tip_px).length());
 	test::@check(fixture.app.drag.dot == 0, "the confirming click left the turn active");
-}
-
-<*
- The paint layer survives the session file, and a stale dab does not.
-
- The corrections are the one part of the document that changes how the mesh
- *deforms* rather than what the rig looks like, so a round trip that dropped them
- loses work with nothing on screen to say so — which is why version 8 is a bump
- rather than another optional key.
-
- They are also the reason the document stopped riding inside the `.glb`: one
- entry per (vertex, dot) pair means a painted humanoid is megabytes, and this is
- the test that says how much text that is.
-
- The second half is the rule the attachments already follow: an entry naming a
- dot that has been deleted waits in the document, because until the file is
- written the deletion is still one Ctrl+Z from coming back, and is dropped on the
- way out because by then it is permanent.
-*>
-fn void the_paint_layer_round_trips_through_the_session() @test
-{
-	io::printn("hand corrections round-trip through the session file");
-
-	RigDocument doc;
-	doc.dots.init(mem);
-	doc.edges.init(mem);
-	doc.attachments.init(mem);
-	doc.paint.init(mem);
-	defer doc.free();
-
-	uint hips = doc.add_dot({ 0, 0, 0 }, "hips");
-	uint knee = doc.add_dot({ 0, -0.5f, 0 }, "knee");
-	doc.connect(hips, knee);
-
-	// Awkward on purpose: a factor that needs all nine digits to come back as
-	// itself, and a zero, which is a real correction meaning "not this dot at all"
-	// rather than an absent one.
-	doc.set_paint(3, hips, 0.123456789f);
-	doc.set_paint(3, knee, 0.0f);
-	doc.set_paint(41, knee, 2.5f);
-
-	// A dab on a dot that is about to go. It stays in the document — undo could
-	// still bring the dot back — and must not reach either file.
-	uint doomed = doc.add_dot({ 1, 0, 0 }, "doomed");
-	doc.set_paint(7, doomed, 0.5f);
-	doc.remove_dot(doomed);
-	test::@check(doc.paint.len() == 4, "the document kept the stale dab for undo");
-
-	// --- the session ------------------------------------------------------
-
-	if (catch io::file::delete(SESSION_FILE)) {}
-	if (catch fault error = crig::write_session(SESSION_FILE, &doc, SESSION_MESH))
-	{
-		test::@check(false, "could not write the session (%s)", error);
-		return;
-	}
-
-	RigDocument? reloaded = crig::read_session(mem, SESSION_FILE);
-	if (catch reloaded)
-	{
-		test::@check(false, "the session did not read back");
-		return;
-	}
-	RigDocument back = reloaded;
-	defer back.free();
-	(void)io::file::delete(SESSION_FILE);
-
-	// %.9g round-trips a float32 exactly, so this is equality and not an epsilon.
-	test::@check(back.paint_of(3, hips) == 0.123456789f,
-		"the correction came back as %s", back.paint_of(3, hips));
-	test::@check(back.paint_of(3, knee) == 0.0f, "a zero is a correction and not an absence");
-	test::@check(back.paint_of(41, knee) == 2.5f, "a factor above one came back");
-	test::@check(back.paint.len() == 3, "the stale dab was dropped on the way out");
-
-	// --- and straight through the text, which is the same bytes -----------
-
-	String text = crig::session_text(mem, &doc, SESSION_MESH);
-	defer text.free(mem);
-
-	RigDocument? through_text = crig::parse_session(mem, text);
-	if (catch through_text)
-	{
-		test::@check(false, "the document text is not a session");
-		return;
-	}
-	RigDocument carried = through_text;
-	defer carried.free();
-
-	test::@check(carried.paint_of(3, hips) == 0.123456789f,
-		"the correction came back out of the text as %s", carried.paint_of(3, hips));
-	test::@check(carried.paint_of(41, knee) == 2.5f, "and so did the one above one");
-	test::@check(carried.paint.len() == 3, "with the stale dab still gone");
 }
 
 <*
@@ -14735,7 +14647,7 @@ fn void a_brush_stroke_over_a_parked_clip_reskins_as_it_goes() @test
 
 	// The corner's pixel, read before the clip goes up — a clip keyed from rest
 	// leaves every vertex where it was, so the pixel holds.
-	uint probe = fixture.doc().add_dot({ -1, -1, 1 }, "probe");
+	uint probe = fixture.doc().add_dot({ -1, 1, 1 }, "probe");
 	fixture.app.refresh_ui();
 	Vec2? corner = fixture.pixel_of(probe);
 	fixture.doc().remove_dot(probe);
@@ -15157,8 +15069,12 @@ fn void the_xray_box_paints_through_the_model() @test
 	test::@check(fixture.app.config.brush_xray, "clicking X-ray did not tick it");
 
 	Key[2] taking = { Key.LEFT_CTRL, Key.LEFT_SHIFT };
+	// The chest holds the top four corners and nothing of the bottom four — its
+	// weight ends a band past the hips' — so a stroke through the model takes it
+	// off all four, the far two included.
 	stroke_with(&fixture, taking[..]);
-	test::eq(pinned_vertices(&fixture), (usz)8);
+	test::eq(pinned_vertices(&fixture), (usz)4);
+	test::@check(far_side_pinned(&fixture) == 2, "the X-ray stroke did not reach the far side");
 
 	test::@check(fixture.app.undo(), "the stroke did not undo");
 	test::eq(pinned_vertices(&fixture), (usz)0);
@@ -15166,7 +15082,7 @@ fn void the_xray_box_paints_through_the_model() @test
 	Key[3] front_only = { Key.LEFT_ALT, Key.LEFT_CTRL, Key.LEFT_SHIFT };
 	stroke_with(&fixture, front_only[..]);
 	usz painted = pinned_vertices(&fixture);
-	test::@check(painted > 0 && painted < 8, "alt with X-ray ticked painted %d corners, not the front ones", painted);
+	test::@check(painted > 0 && painted < 4, "alt with X-ray ticked painted %d corners, not the front ones", painted);
 	foreach (pin : fixture.app.doc.pins.array_view())
 	{
 		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
@@ -15193,14 +15109,16 @@ fn void alt_paints_through_with_the_box_off() @test
 
 	Key[3] through = { Key.LEFT_ALT, Key.LEFT_CTRL, Key.LEFT_SHIFT };
 	stroke_with(&fixture, through[..]);
-	test::eq(pinned_vertices(&fixture), (usz)8);
+	test::eq(pinned_vertices(&fixture), (usz)4);
+	test::@check(far_side_pinned(&fixture) == 2, "alt did not reach the far side");
 
 	// The next stroke without alt is front only again.
 	test::@check(fixture.app.undo(), "the stroke did not undo");
 	Key[2] taking = { Key.LEFT_CTRL, Key.LEFT_SHIFT };
 	stroke_with(&fixture, taking[..]);
 	usz painted = pinned_vertices(&fixture);
-	test::@check(painted > 0 && painted < 8, "the stroke after alt painted %d corners", painted);
+	test::@check(painted > 0 && far_side_pinned(&fixture) == 0, "the stroke after alt painted %d corners, %d of them behind",
+		painted, far_side_pinned(&fixture));
 }
 
 <*
@@ -15319,7 +15237,7 @@ fn float brush_share_of(Fixture* f, uint vertex, uint dot)
 	sz joint = view.joint_of(dot);
 	if (joint < 0) return -1.0f;
 
-	float[] dense = f.app.bind_dense(mem, &view);
+	float[] dense = f.app.weights(mem, &view);
 	defer alloc::free(mem, dense);
 
 	usz bones = view.len();
@@ -16424,6 +16342,47 @@ fn void a_drawn_region_selects_the_joints_inside_it() @test
 }
 
 <*
+ The lasso pins under any transform tool. Opening it does not reset the tool
+ column, and a Move tool left on used to turn the drag into an orbit before the
+ lasso ever saw it.
+*>
+fn void the_lasso_pins_with_the_move_tool_left_on() @test
+{
+	io::printn("the lasso pins what it is drawn around with the Move tool still on");
+
+	Fixture fixture;
+	if (catch fault error = fixture.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer fixture.close();
+
+	fixture.two_dots();
+	Vec2? found = corner_pixel(&fixture, { -1, -1, 1 });
+	if (catch found)
+	{
+		test::@check(false, "the cube's corner does not project into the viewport");
+		return;
+	}
+	Vec2[3] shape = triangle_around(found);
+
+	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
+	test::@check(fixture.app.lassoing, "the lasso did not open");
+	fixture.app.transform_tool = MOVE_TOOL;
+
+	fixture.feed(shape[0]);
+	fixture.feed(shape[0], left: true);
+	fixture.feed(shape[1], left: true);
+	fixture.feed(shape[2], left: true);
+	fixture.feed(shape[2]);
+	fixture.feed(shape[2]);
+
+	test::@check(fixture.app.doc.pins.len() > 0, "with the Move tool on, the lasso pinned nothing: %s",
+		fixture.notice_text());
+}
+
+<*
  A drawn region pins what is inside it, in one Ctrl+Z, and the outline is on
  screen while it is being drawn.
 
@@ -16816,15 +16775,15 @@ fn Vec2? Fixture.visible_vertex(&self, bool top)
 }
 
 <*
- The Area tool from the viewport: W opens it on the selected joint, the Part
- menu picks a part and a click on the mesh never does — neither picking one nor
- stepping it to the next — a wheel notch zooms and leaves the part alone, a
- shift-drag grows only a part on show, and Enter applies it as one undo step,
- without ever placing a joint.
+ The Area tool from the viewport: W opens it on the selected joint, live — a
+ shift-drag on the mesh grows the joint itself as one undo step, with nothing
+ waiting for Apply — the Part menu picks a part to apply and a click on the mesh
+ never does, a wheel notch zooms and leaves the part alone, and Enter applies a
+ chosen part as one undo step, without ever placing a joint.
 *>
-fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
+fn void the_area_tool_grows_live_and_applies_a_chosen_part() @test
 {
-	io::printn("the Area tool picks a part from the menu, not a click, grows it and applies it");
+	io::printn("the Area tool grows the joint live, and picks a part from the menu to apply");
 
 	Fixture fixture;
 	if (catch fault error = fixture.open())
@@ -16836,14 +16795,10 @@ fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
 	uint chest = fixture.two_dots();
 	fixture.app.undo_stack.clear();
 
-	// W shows the Weights card, which picks the joint's own part straight away;
-	// escape drops it so the clicks below start from nothing.
+	// W shows the Weights card on the joint itself: nothing waits for Apply.
 	fixture.feed_key(Key.W);
 	test::@check(fixture.app.areaing && fixture.app.weights_card_open(), "W did not open the Weights card");
-	test::@check(fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.OWN,
-		"the card did not open on the joint's own part");
-	fixture.feed_key(Key.ESCAPE);
-	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "escape did not drop just the part");
+	test::@check(!fixture.app.area_pending(), "the card opened with a part waiting");
 
 	Vec2? top = fixture.visible_vertex(true);
 	if (catch top)
@@ -16855,35 +16810,7 @@ fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
 	test::eq(fixture.doc().dots.len(), (sz)2);
 	test::@check(!fixture.app.area_pending(), "a click on the mesh picked a part");
 
-	// The menu picks; a click after it leaves the part as it is.
-	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
-	fixture.click(fixture.center_of("Own bone")!!);
-	test::@check(fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.OWN,
-		"the Part menu did not pick the chest's own part: %s", fixture.notice_text());
-	usz own = fixture.app.area_held();
-	fixture.click(top);
-	test::@check(fixture.app.area_part == crig::AreaPart.OWN && fixture.app.area_held() == own,
-		"a click on the mesh stepped the part to %s", fixture.app.area_part.label());
-	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
-	fixture.click(fixture.center_of("With children")!!);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "the Part menu did not pick with children");
-
-	// The wheel is the camera's, part picked or not: the Weights card always has
-	// one picked, and a notch that stepped it took the zoom away while weighting.
-	float distance = fixture.app.camera.distance;
-	usz held = fixture.app.area_held();
-	fixture.scroll(top, { 0.0, 1.0 }, precise: false);
-	test::@check(fixture.app.camera.distance < distance, "a wheel notch over a picked part did not zoom");
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_held() == held,
-		"a wheel notch changed the part to %s", fixture.app.area_part.label());
-	fixture.scroll(top, { 0.0, -1.0 }, precise: false);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a wheel notch back changed the part");
-	test::@check(!fixture.app.set_area_part(PIECE), "a one-piece mesh let Whole piece take all of it");
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "refusing Whole piece dropped the part");
-
-	// Esc drops the part and keeps the tool; a shift-drag then grows nothing.
-	fixture.feed_key(Key.ESCAPE);
-	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "escape did not drop just the part");
+	// A shift-drag on the mesh grows the chest, live, as one undo step.
 	Key[1] shift = { Key.LEFT_SHIFT };
 	Vec2 below = top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f };
 	fixture.feed(top, keys: shift[..]);
@@ -16891,30 +16818,30 @@ fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
 	fixture.feed(below, left: true, keys: shift[..]);
 	fixture.feed(below, keys: shift[..]);
 	fixture.feed(below);
-	test::@check(!fixture.app.area_pending(), "a shift-drag with no part on show grew one");
+	test::@check(fixture.doc().find(chest).grow > 0.0f, "a shift-drag did not grow the chest");
+	test::@check(!fixture.app.area_pending() && fixture.doc().pins.len() == 0, "the grow left a part or pins");
+	test::@check(fixture.app.undo(), "the grow left nothing to undo");
+	test::@check(fixture.doc().find(chest).grow == 0.0f, "the drag was more than one undo step");
 
-	// With the own part on show, a shift-drag grows it into a custom part. Found
-	// again first: the shift-drag above was the camera's, and panned it.
+	// The menu picks a part; a click after it leaves the part as it is.
 	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
-	fixture.click(fixture.center_of("Own bone")!!);
-	Vec2? panned = fixture.visible_vertex(true);
-	if (catch panned)
-	{
-		test::@check(false, "no visible vertex on the top of the cube after the pan");
-		return;
-	}
-	top = panned;
-	below = top + (Vec2){ 0.0f, crig::AREA_RING_PIXELS * 2.5f };
-	fixture.feed(top, keys: shift[..]);
-	fixture.feed(top, left: true, keys: shift[..]);
-	test::@check(fixture.app.area_part == crig::AreaPart.CUSTOM && fixture.app.area_pending(),
-		"a shift-press on the mesh did not start a custom part");
-	usz seed_held = fixture.app.area_held();
-	fixture.feed(below, left: true, keys: shift[..]);
-	fixture.feed(below, keys: shift[..]);
-	fixture.feed(below);
-	test::@check(fixture.app.area_held() > seed_held, "a shift-drag did not grow the part (%d)", fixture.app.area_held());
-	test::@check(!fixture.app.undo_stack.can_undo(), "picking a part wrote to the ledger");
+	fixture.click(fixture.center_of("With children")!!);
+	test::@check(fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.WITH_CHILDREN,
+		"the Part menu did not pick the chest with its children: %s", fixture.notice_text());
+	usz held = fixture.app.area_held();
+	fixture.click(top);
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_held() == held,
+		"a click on the mesh stepped the part to %s", fixture.app.area_part.label());
+
+	// The wheel is the camera's, part picked or not.
+	float distance = fixture.app.camera.distance;
+	fixture.scroll(top, { 0.0, 1.0 }, precise: false);
+	test::@check(fixture.app.camera.distance < distance, "a wheel notch over a picked part did not zoom");
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_held() == held,
+		"a wheel notch changed the part to %s", fixture.app.area_part.label());
+	fixture.scroll(top, { 0.0, -1.0 }, precise: false);
+	test::@check(!fixture.app.set_area_part(PIECE), "a one-piece mesh let Whole piece take all of it");
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "refusing Whole piece dropped the part");
 
 	fixture.feed_key(Key.RETURN);
 	test::@check(!fixture.app.area_pending(), "enter left the part pending");
@@ -16924,8 +16851,7 @@ fn void the_area_tool_picks_from_the_menu_grows_and_applies_a_part() @test
 	test::@check(mine, "the pins were not the chest's");
 	test::@check(fixture.app.undo(), "the apply left nothing to undo");
 	test::eq(fixture.doc().pins.len(), (sz)0);
-	test::@check(!fixture.app.undo(), "the apply was more than one undo step");
-	test::@check(own > 0, "the chest owned nothing to begin with");
+	test::@check(held > 0, "the chest owned nothing to begin with");
 }
 
 <*
@@ -16960,17 +16886,21 @@ fn void the_weights_card_drives_the_area_tool() @test
 		&& fixture.in_tree(crig::WEIGHTS_MIRROR_ID) && fixture.in_tree(crig::WEIGHTS_RESET_ID),
 		"the card is missing a control");
 
-	// Showing the card on a joint opens the tool with its own part picked, so the
-	// buttons below have something to act on straight away.
-	test::@check(fixture.app.areaing && fixture.app.area_pending() && fixture.app.area_part == crig::AreaPart.OWN,
-		"the card opened without the chest's own part picked: %s", fixture.notice_text());
+	// Showing the card on a joint opens the tool on its own bone, live: nothing
+	// waits for Apply, and Grow moves the joint's edge as it is pressed.
+	test::@check(fixture.app.areaing && !fixture.app.area_pending(),
+		"the card opened with a part waiting: %s", fixture.notice_text());
 	test::eq(fixture.doc().pins.len(), (sz)0);
 	fixture.feed(VIEWPORT_CENTER);
-	usz own = fixture.app.area_held();
 
 	fixture.click(fixture.center_of(crig::WEIGHTS_GROW_ID)!!);
-	test::@check(fixture.app.area_part == crig::AreaPart.CUSTOM && fixture.app.area_held() > own,
-		"Grow did not grow the part into a custom one");
+	crig::Dot* grown_dot = fixture.doc().find(chest);
+	test::@check(grown_dot != null && grown_dot.grow > 0.0f, "Grow did not push the chest's edge out");
+	test::@check(!fixture.app.area_pending() && fixture.doc().pins.len() == 0, "Grow left a part or pins behind");
+	test::@check(fixture.app.undo() && fixture.doc().find(chest).grow == 0.0f, "one undo did not take the Grow back");
+	fixture.app.set_area_part(WITH_CHILDREN);
+	fixture.app.refresh_ui();
+	fixture.feed(VIEWPORT_CENTER);
 
 	// Clear and Invert belong to a part of UV islands only.
 	test::@check(!fixture.in_tree(crig::WEIGHTS_CLEAR_ID) && !fixture.in_tree(crig::WEIGHTS_INVERT_ID),
@@ -16996,7 +16926,8 @@ fn void the_weights_card_drives_the_area_tool() @test
 	SliderStyle style = slider.widget_as(Slider).style.resolved();
 	Vec2 near_max = slider.absolute + (Vec2){ slider.size.x - style.value_width - style.gap - 2.0f, slider.size.y * 0.5f };
 	fixture.click(near_max);
-	test::@check(fixture.app.area_soft >= crig::AREA_SOFT_MAX * 0.9f, "the slider left the soft edge at %f", fixture.app.area_soft);
+	test::@check(fixture.app.band_share(chest) >= crig::BAND_SHARE_MAX * 0.9f, "the slider left the soft edge at %f",
+		fixture.app.band_share(chest));
 
 	fixture.click(fixture.center_of(crig::WEIGHTS_MIRROR_ID)!!);
 	test::@check(!fixture.app.area_mirrors(), "the mirror box did not untick");
@@ -17009,21 +16940,22 @@ fn void the_weights_card_drives_the_area_tool() @test
 
 	fixture.click(fixture.center_of(crig::WEIGHTS_RESET_ID)!!);
 	test::eq(fixture.doc().pins.len(), (sz)0);
-	// The paint follows at once: the part is the chest's automatic one again.
-	test::@check(fixture.app.area_part == crig::AreaPart.OWN && fixture.app.area_held() == own,
-		"reset left the old part on screen: %d of %d", fixture.app.area_held(), own);
+	// The paint follows at once: nothing waits, the chest is on its automatic edge.
+	test::@check(!fixture.app.area_pending(), "reset left a part waiting");
 	test::@check(fixture.app.undo(), "reset left nothing to undo");
 	test::@check(fixture.doc().pins.len() > 0, "undoing the reset did not bring the part back");
 	fixture.app.redo();
 	fixture.feed(VIEWPORT_CENTER);
 
-	// A grown part never applied: nothing to clear, but the paint still goes back.
+	// A grown joint, with no pins at all: Reset puts its edge back, as one step.
 	fixture.click(fixture.center_of(crig::WEIGHTS_GROW_ID)!!);
-	test::@check(fixture.app.area_held() > own, "Grow did not grow the part");
+	test::@check(fixture.doc().find(chest).grow > 0.0f, "Grow did not grow the chest");
 	fixture.click(fixture.center_of(crig::WEIGHTS_RESET_ID)!!);
-	test::@check(fixture.app.area_part == crig::AreaPart.OWN && fixture.app.area_held() == own,
-		"reset kept the grown part: %d of %d", fixture.app.area_held(), own);
+	test::@check(fixture.doc().find(chest).grow == 0.0f && fixture.doc().find(chest).band == 0.0f,
+		"reset kept the grown edge");
 	test::@check(fixture.notice_text().contains("back to automatic"), "reset said: %s", fixture.notice_text());
+	test::@check(fixture.app.undo() && fixture.doc().find(chest).grow > 0.0f, "one undo did not bring the grow back");
+	fixture.app.redo();
 
 	// Leaving the card closes the tool it opened.
 	fixture.click(fixture.center_of(crig::JOINT_TAB_JOINT_ID)!!);
@@ -17031,12 +16963,11 @@ fn void the_weights_card_drives_the_area_tool() @test
 }
 
 <*
- Paint, press Apply, and the painting is over: clicks and shift- or ctrl-drags
- on the mesh change no weights and pick no part, and the Part menu stays where it
- was. A part chosen in the menu is the one the mesh then shapes, and a click on
- it does not step it to another. Clicks after Apply used to pick the own part and
- then With children, and a shift-drag grew a region, which read as the brush
- never having closed.
+ Paint, press Apply, and the painting is over: clicks on the mesh change no
+ weights and pick no part, and the Part menu stays where it was. A part chosen
+ in the menu is the one the mesh then shapes, and a click on it does not step it
+ to another. Clicks after Apply used to pick the own part and then With
+ children, which read as the brush never having closed.
 
  *Re-introduce:* let a click on the mesh pick and step the part again, and the
  Part menu moves under the clicks after Apply.
@@ -17088,19 +17019,9 @@ fn void after_apply_the_mesh_takes_no_edits() @test
 	crig::VertexPin[] pins = alloc::clone_slice(mem, fixture.doc().pins.array_view());
 	defer alloc::free(mem, pins);
 	sz cursor = fixture.app.undo_stack.cursor;
-	Key[1] shift = { Key.LEFT_SHIFT };
-	Key[1] ctrl = { Key.LEFT_CTRL };
 	for (int round = 0; round < 2; round++)
 	{
 		fixture.click(corner);
-		fixture.feed(corner, keys: shift[..]);
-		fixture.feed(corner, left: true, keys: shift[..]);
-		fixture.feed({ corner.x + 60, corner.y }, left: true, keys: shift[..]);
-		fixture.feed({ corner.x + 60, corner.y });
-		fixture.feed(corner, keys: ctrl[..]);
-		fixture.feed(corner, left: true, keys: ctrl[..]);
-		fixture.feed({ corner.x + 60, corner.y }, left: true, keys: ctrl[..]);
-		fixture.feed({ corner.x + 60, corner.y });
 		fixture.feed(VIEWPORT_CENTER);
 	}
 	test::@check(!fixture.app.brushing && !fixture.app.area_pending(),
@@ -17118,7 +17039,7 @@ fn void after_apply_the_mesh_takes_no_edits() @test
 	// With children from the menu, then a click on the mesh: it stays.
 	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
 	fixture.click(fixture.center_of("With children")!!);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_preview,
+	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_shaping(),
 		"the Part menu did not show With children");
 	fixture.click(corner);
 	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a click on the mesh stepped the part to %s",
@@ -17198,6 +17119,20 @@ fn void the_knuckle_blend_slider_is_one_undo_step() @test
 }
 
 // How many unique vertices carry a pin.
+// How many corners on the cube's far face (z = -1, vertices 0 to 3) carry a pin.
+fn usz far_side_pinned(Fixture* fixture)
+{
+	bool[4] seen;
+	usz far = 0;
+	foreach (pin : fixture.app.doc.pins.array_view())
+	{
+		if (pin.vertex >= 4 || seen[pin.vertex]) continue;
+		seen[pin.vertex] = true;
+		far++;
+	}
+	return far;
+}
+
 fn usz pinned_vertices(Fixture* fixture)
 {
 	usz count = fixture.app.geometry.positions.len;

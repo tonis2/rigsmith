@@ -57,7 +57,7 @@ fn uint open_card_on_a_finger(crig::AppState* app)
 	app.show_joint_panel = true;
 	app.joint_panel_tab = WEIGHTS;
 	app.sync_weights_card();
-	test::@check(app.areaing && app.area_pending(), "the card picked no part for its buttons");
+	test::@check(app.areaing && !app.area_pending(), "the card opened with a part waiting for Apply");
 	return finger;
 }
 
@@ -120,16 +120,16 @@ fn void the_card_and_the_brush_draw_the_same_weights() @test
 }
 
 <*
- A part grown on the card shows the weights Apply leaves, so pressing Apply — on
- the falloff ramp or the territory map — changes nothing on screen, and the
- brush then paints on what the card showed.
+ Grow on the card is live: the mesh shows the joint's new edge the moment it is
+ pressed, with nothing waiting for Apply, and the brush then paints on exactly
+ what the card showed — on the falloff ramp and the territory map alike.
 
- *Re-introduce:* draw the part as a highlight of its own (a share of 0.2 to 1
- inside, grey outside), and the picture changes on Apply.
+ *Re-introduce:* make Grow shape a pending part, and the picture waits for Apply
+ while the brush draws the old weights.
 *>
-fn void a_grown_part_shows_what_apply_leaves() @test
+fn void a_grown_joint_shows_at_once_and_the_brush_draws_it() @test
 {
-	io::printn("a grown part shows what Apply leaves, on either view");
+	io::printn("a grown joint shows at once, and the brush draws what the card showed");
 	crig::TintMode[2] modes = { FALLOFF, TERRITORY };
 	foreach (mode : modes)
 	{
@@ -137,70 +137,95 @@ fn void a_grown_part_shows_what_apply_leaves() @test
 		rig::TriMesh mesh;
 		open_card_fixture(&app, &mesh);
 		defer close_card_fixture(&app, &mesh);
-		open_card_on_a_finger(&app);
+		uint finger = open_card_on_a_finger(&app);
 		if (mode != app.tint_mode) app.show_tint(mode);
+
+		// Wearing the file's own weights there is no automatic edge to move, and
+		// Grow says so rather than doing nothing.
+		app.doc.skin_from_file = true;
+		test::@check(!app.grow_joint(2) && app.notice().contains("own weights"),
+			"Grow on the file's weights said: %s", app.notice());
+		app.doc.skin_from_file = false;
 
 		uint[] before = drawn(&app);
 		defer alloc::free(mem, before);
-		test::@check(app.resize_area(1), "the part would not grow");
-		uint[] preview = drawn(&app);
-		defer alloc::free(mem, preview);
-		test::@check(drawn_apart(before, preview) > 0, "growing the part changed nothing on the %s view", mode);
-
-		test::@check(app.commit_area() > 0, "Apply wrote nothing");
-		uint[] applied = drawn(&app);
-		defer alloc::free(mem, applied);
-		usz apart = drawn_apart(preview, applied);
-		test::@check(apart == 0, "Apply recoloured %d vertices on the %s view", apart, mode);
+		test::@check(app.grow_joint(2), "the joint would not grow");
+		test::@check(!app.area_pending(), "Grow left a part waiting");
+		uint[] grown = drawn(&app);
+		defer alloc::free(mem, grown);
+		test::@check(drawn_apart(before, grown) > 0, "growing the joint changed nothing on the %s view", mode);
+		test::@check(app.doc.find(finger).grow > 0.0f, "the grow is not on the joint");
 
 		if (mode != FALLOFF) continue;
 		test::@check(app.begin_brush(), "the brush would not open");
 		uint[] brush = drawn(&app);
 		defer alloc::free(mem, brush);
-		apart = drawn_apart(applied, brush);
-		test::@check(apart == 0, "the brush colours %d vertices differently from the applied part", apart);
+		usz apart = drawn_apart(grown, brush);
+		test::@check(apart == 0, "the brush colours %d vertices differently from the grown joint", apart);
 	}
 }
 
 <*
- The part the card picks for itself is not on show until the card is asked for
- it, and a click on the mesh never picks or steps a part: the first click used to
- show the joint's own part and the next to step it to With children, so a click
- meant for the view — after an Apply, say — changed the Part menu. The Part
- menu, growing, shrinking or the soft edge show it, and opening the brush over a
- part on show says the part was not applied.
-
- *Re-introduce:* let a click on the mesh pick the own part and step it after,
- and the click shows a part and the next one moves to With children.
+ A part chosen in the Part menu shows the weights Apply leaves, so pressing
+ Apply changes nothing on screen.
 *>
-fn void the_cards_own_pick_waits_for_the_card() @test
+fn void a_chosen_part_shows_what_apply_leaves() @test
 {
-	io::printn("the card's own pick waits for the card, and a click on the mesh picks nothing");
+	io::printn("a part chosen in the menu shows what Apply leaves");
+	crig::AppState app;
+	rig::TriMesh mesh;
+	open_card_fixture(&app, &mesh);
+	defer close_card_fixture(&app, &mesh);
+	open_card_on_a_finger(&app);
+
+	test::@check(app.set_area_part(WITH_CHILDREN), "the finger has no part with its children");
+	test::@check(app.area_shaping(), "the chosen part is not on show");
+	uint[] preview = drawn(&app);
+	defer alloc::free(mem, preview);
+	test::@check(app.commit_area() > 0, "Apply wrote nothing");
+	uint[] applied = drawn(&app);
+	defer alloc::free(mem, applied);
+	usz apart = drawn_apart(preview, applied);
+	test::@check(apart == 0, "Apply recoloured %d vertices", apart);
+}
+
+<*
+ The card opens on the joint itself, with nothing waiting: a click on the mesh
+ picks no part, the Part menu shows one, and Own bone puts it away again.
+ Opening the brush over a part on show says the part was not applied.
+
+ *Re-introduce:* pick the own part quietly when the card opens, and Enter writes
+ a part nobody saw.
+*>
+fn void the_card_opens_on_the_joint_with_nothing_waiting() @test
+{
+	io::printn("the card opens on the joint with nothing waiting, and a click on the mesh picks nothing");
 	crig::AppState app;
 	rig::TriMesh mesh;
 	open_card_fixture(&app, &mesh);
 	defer close_card_fixture(&app, &mesh);
 	uint finger = open_card_on_a_finger(&app);
-	test::@check(!app.area_preview, "the card's own pick went on show by itself");
 
 	sz inside = -1;
-	foreach (v, on : app.area_mask) if (on) { inside = (sz)v; break; }
-	test::@check(inside >= 0, "the own part holds no vertex");
-	test::@check(!app.area_click(inside), "a click on the mesh changed the part");
-	test::@check(app.area_part == OWN && !app.area_preview, "the click showed %s", app.area_part.label());
+	foreach (v, p : app.geometry.positions)
+	{
+		inside = (sz)v;
+		break;
+	}
+	test::@check(!app.area_click(inside), "a click on the mesh picked a part");
+	test::@check(!app.area_pending(), "the click left a part");
+	usz pins = (usz)app.doc.pins.len();
+	test::@check(app.commit_area() == 0 && (usz)app.doc.pins.len() == pins, "Enter on the live joint wrote a part");
 
-	// The Part menu shows it, and a click after changes nothing.
-	test::@check(app.set_area_part(OWN) && app.area_preview, "choosing Own bone did not show the part");
-	test::@check(!app.area_click(inside), "a click on a part on show changed it");
-	test::@check(app.area_part == OWN && app.area_origin == OWN, "the click stepped the part to %s", app.area_part.label());
+	test::@check(app.set_area_part(WITH_CHILDREN) && app.area_shaping(), "With children did not put a part on show");
+	test::@check(app.set_area_part(OWN) && !app.area_pending(), "Own bone did not put the part away");
 
-	// Picked again by selecting the joint afresh: quiet once more.
+	// Selecting the joint afresh leaves nothing waiting either.
 	app.select(0);
 	app.select(finger);
-	test::@check(app.area_pending() && !app.area_preview, "the new pick went on show by itself");
-	test::@check(app.resize_area(-1), "the part would not shrink");
-	test::@check(app.area_preview, "shrinking did not show the part");
+	test::@check(!app.area_pending(), "selecting the joint again picked a part");
 
+	test::@check(app.set_area_part(WITH_CHILDREN), "the finger has no part with its children");
 	app.notice_length = 0;
 	test::@check(app.begin_brush(), "the brush would not open");
 	test::@check(app.notice_length > 0 && app.notice().contains("not applied"),
@@ -208,25 +233,24 @@ fn void the_cards_own_pick_waits_for_the_card() @test
 }
 
 <*
- Apply ends the editing: the brush closes, no part is left, and the mesh is
- left alone — a click picks nothing and a shift- or ctrl-drag grows or shrinks
- nothing — until a part is chosen in the Part menu again. Clicks and drags after
- an Apply used to pick a part, step it to With children, or grow a region from
- the point pressed, which read as the brush still painting.
+ Apply ends the editing: the brush closes and no part is left, and a click on
+ the mesh after it picks nothing and writes nothing.
 
- *Re-introduce:* let the mesh's gestures act with no part on show, and the
- first click after the Apply picks one.
+ *Re-introduce:* let a click on the mesh pick a part, and the first click after
+ the Apply picks one.
 *>
 fn void after_apply_the_mesh_is_left_alone() @test
 {
-	io::printn("after Apply the mesh is left alone until a part is chosen again");
+	io::printn("after Apply a click on the mesh picks nothing");
 	crig::AppState app;
 	rig::TriMesh mesh;
 	open_card_fixture(&app, &mesh);
 	defer close_card_fixture(&app, &mesh);
 	uint finger = open_card_on_a_finger(&app);
+	bool[] own = app.area_part_mask(mem, finger, OWN);
+	defer alloc::free(mem, own);
 	sz inside = -1;
-	foreach (v, on : app.area_mask) if (on) { inside = (sz)v; break; }
+	foreach (v, on : own) if (on) { inside = (sz)v; break; }
 	test::@check(inside >= 0, "the own part holds no vertex");
 
 	crig::AreaPart[2] ends = { OWN, WITH_CHILDREN };
@@ -252,8 +276,6 @@ fn void after_apply_the_mesh_is_left_alone() @test
 		sz cursor = app.undo_stack.cursor;
 		test::@check(!app.area_click(inside), "a click after Apply changed the part");
 		test::@check(!app.area_click(inside), "a second click after Apply changed the part");
-		test::@check(!app.begin_area_resize(inside, true), "a shift-drag after Apply started growing a part");
-		test::@check(!app.begin_area_resize(inside, false), "a ctrl-drag after Apply started shrinking a part");
 		test::@check(!app.area_pending() && app.area_origin == OWN, "the mesh's gestures left a part after Apply");
 		test::eq(app.doc.pins.len(), pins);
 		test::eq(app.undo_stack.cursor, cursor);

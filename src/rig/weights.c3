@@ -187,7 +187,9 @@ fn void fill_geometric(
     Vec3[] tails,
     float[] reaches,
     float[] nearest,
-    float eps) @private
+    float eps,
+    float[] grow = {},
+    float[] distances = {}) @private
 {
     usz bones = joints.len;
     bool wants_nearest = nearest.len == positions.len;
@@ -200,12 +202,45 @@ fn void fill_geometric(
         foreach (usz b, joint : joints)
         {
             float d2 = segment_distance_sq(position, joint, tails[b]);
-            dense[base + b] = reach_bias(d2, reach_of(reaches, b)) / (d2 + eps);
+            score_at(dense, distances, base + b, d2, b, reaches, grow, eps);
             if (d2 < closest) closest = d2;
         }
 
         if (wants_nearest) nearest[v] = closest;
     }
+}
+
+<*
+ How far a bone reaches past its own segment, given its grow: the squared
+ distance `d2` as the bone sees it once it has been grown by `grow[b]` (or
+ shrunk, for a negative one). Short arrays are read as no grow from here on.
+
+ A grow moves the bone's boundary through the same distances every other bone
+ is measured by, which is what makes it the same operation as the automatic
+ bind rather than a second one: a joint grown by a tenth of its bone owns
+ exactly the vertices that sit up to a tenth of a bone further from it than from
+ its neighbours.
+*>
+fn float grown_d2(float d2, float[] grow, usz b) @private
+{
+    if (b >= grow.len || grow[b] == 0.0f) return d2;
+    float d = math::sqrt(d2) - grow[b];
+    return d > 0.0f ? d * d : 0.0f;
+}
+
+<*
+ Write one bone's score for one vertex, and the distance it was scored at.
+
+ Every path in `bind_geodesic` that gives a vertex a weight comes through here,
+ so the weight and the distance `window_bind` reads beside it can never
+ describe two different measurements.
+*>
+fn void score_at(float[] dense, float[] distances, usz at, float d2, usz b, float[] reaches, float[] grow,
+    float eps) @private
+{
+    float near = grown_d2(d2, grow, b);
+    dense[at] = reach_bias(near, reach_of(reaches, b)) / (near + eps);
+    if (at < distances.len) distances[at] = math::sqrt(near);
 }
 
 <*
@@ -299,6 +334,8 @@ fn float[] bind_geometric(
  @param reaches : `One per joint, in model units, 0 for no limit — see reach_bias. Shorter than the joint count is allowed; the rest are unlimited.`
  @param nearest : `Filled with the squared distance to the closest bone, the same distance the weights were made from — geodesic where the flood arrived, straight-line elsewhere. Caller-sized to the vertex count; empty to not ask. This is the honest way to ask how well served a vertex is, because a weight scaled by a reach can no longer be inverted back into a distance.`
  @param eps : `Softness of the falloff, in the model's own units. The default is a centimetre on a figure in metres; the app passes a share of the model's size instead — AppState.bind_eps.`
+ @param grow : `One per joint, in model units: how far its boundary is pushed out (negative pulls it in) — see grown_d2. Shorter than the joint count is allowed; the rest are not grown.`
+ @param distances : `Filled, vertices x joints, with the distance each weight was scored at, grown — or NO_DISTANCE where a bone holds nothing of the vertex. Rigidly bound shells read 0 for their rider and NO_DISTANCE for the rest. Caller-sized; empty to not ask. What window_bind reads.`
 *>
 fn float[] bind_geodesic(
     alloc::Allocator allocator,
@@ -311,11 +348,25 @@ fn float[] bind_geodesic(
     int[] riders = {},
     float[] reaches = {},
     float[] nearest = {},
-    float eps = 1.0e-4f)
+    float eps = 1.0e-4f,
+    float[] grow = {},
+    float[] distances = {})
 {
     usz bones = joints.len;
     float[] dense = alloc::new_array(allocator, float, (sz)(positions.len * bones));
     if (bones == 0) return dense;
+    if (distances.len != positions.len * bones) distances = {};
+    distances[..] = NO_DISTANCE;
+
+    // The rigid rows' distances are rewritten from the riders, so a caller that
+    // asks for distances gets riders whether or not it asked for those.
+    int[] own_riders = {};
+    defer if (own_riders.len > 0) alloc::free(allocator, own_riders);
+    if (distances.len > 0 && shells != null && riders.len != shells.count && shells.count > 0)
+    {
+        own_riders = alloc::new_array(allocator, int, (sz)shells.count);
+        riders = own_riders;
+    }
 
     // One `bone_tails` for the whole pass: the straight-line fill, the grid's
     // segments, the repair below and the carrier rule all have to agree about
@@ -323,7 +374,7 @@ fn float[] bind_geodesic(
     Vec3[] tails = bone_tails(allocator, joints, parents);
     defer { if (tails.len > 0) alloc::free(allocator, tails); }
 
-    fill_geometric(dense, positions, joints, tails, reaches, nearest, eps);
+    fill_geometric(dense, positions, joints, tails, reaches, nearest, eps, grow, distances);
 
     bool wants_nearest = nearest.len == positions.len;
     bool measured = voxels != null && voxels.usable() && voxels.anchors.len == positions.len;
@@ -375,7 +426,9 @@ fn float[] bind_geodesic(
             usz base = v * bones;
             for (usz b = 0; b < bones; b++)
             {
-                if (flooded[b]) dense[base + b] = 0.0f;
+                if (!flooded[b]) continue;
+                dense[base + b] = 0.0f;
+                if (distances.len > 0) distances[base + b] = NO_DISTANCE;
             }
 
             usz found = grid.sample_sources(field, GEODESIC_SLOTS, position, anchor, near[..]);
@@ -402,12 +455,25 @@ fn float[] bind_geodesic(
                 if (wants_nearest) nearest[v] = reached[v] ? math::min(nearest[v], d2) : d2;
                 reached[v] = true;
 
-                dense[base + b] = reach_bias(d2, reach_of(reaches, b)) / (d2 + eps);
+                score_at(dense, distances, base + b, d2, b, reaches, grow, eps);
             }
         }
     }
 
     rigid_shells(dense, shells, attachments, riders, reached, measured, positions, joints, parents, tails, eps);
+
+    // A piece bound rigidly is its rider's at no distance at all, and nobody
+    // else's, whatever the flood measured — so `window_bind` leaves it whole.
+    if (distances.len > 0 && shells != null && shells.of.len == positions.len)
+    {
+        foreach (usz v, shell : shells.of)
+        {
+            if (shell < 0 || (usz)shell >= riders.len || riders[shell] < 0) continue;
+            usz base = v * bones;
+            distances[base:bones] = NO_DISTANCE;
+            distances[base + (usz)riders[shell]] = 0.0f;
+        }
+    }
 
     // Both repairs below run for a vertex no bone holds at all, and their job is
     // that `sparsify_weights` always has something to normalise.
@@ -476,7 +542,7 @@ fn float[] bind_geodesic(
 
                 usz b = (usz)cell[s].source;
                 float d2 = cell[s].distance * cell[s].distance;
-                dense[v * bones + b] = reach_bias(d2, reach_of(reaches, b)) / (d2 + eps);
+                score_at(dense, distances, v * bones + b, d2, b, reaches, grow, eps);
             }
         }
     }
@@ -494,7 +560,7 @@ fn float[] bind_geodesic(
         foreach (usz b, joint : joints)
         {
             float d2 = segment_distance_sq(positions[v], joint, tails[b]);
-            dense[base + b] = reach_bias(d2, reach_of(reaches, b)) / (d2 + eps);
+            score_at(dense, distances, base + b, d2, b, reaches, grow, eps);
         }
     }
 
@@ -503,6 +569,103 @@ fn float[] bind_geodesic(
     isolate_chains(allocator, dense, parents);
 
     return dense;
+}
+
+<*
+ The weight a bone scores at distance `d` — the binder's own falloff, for a
+ caller re-deriving a row from the distances `bind_geodesic` handed out.
+
+ `d` is a distance as written to `distances`, grown already; `reach` and `eps`
+ are the ones the bind was made with.
+*>
+fn float field_score(float d, float reach, float eps)
+{
+    float d2 = d * d;
+    return reach_bias(d2, reach) / (d2 + eps);
+}
+
+<*
+ What `bind_geodesic` writes to `distances` for a bone that holds nothing of a
+ vertex — one the flood did not bring there, or any bone but the rider on a
+ piece bound rigidly. Larger than any real distance, so a window over it closes.
+*>
+const float NO_DISTANCE = 1.0e30f;
+
+<*
+ End every bone's weight at a band past the vertex's owner.
+
+ 	`rig::window_bind(dense, distances, bones, bands);`
+
+ **Why the automatic weights need an end.** `1 / (d² + eps)` falls off but
+ never reaches zero, so before this every bone held some of every vertex the
+ flood reached: a hip kept two percent of a boot, a shoulder a sliver of the
+ opposite hand. Too little to see in a view, but not too little to matter — the
+ four-influence cut keeps it wherever the vertex has fewer than four real
+ neighbours, a hand edit that takes the owner off hands the whole vertex to the
+ sliver, and a part grown or a brush pressed near it gives back weight nobody
+ placed. A window is the honest statement of what the falloff meant: a bone
+ blends with the vertex's owner only while it is nearly as near.
+
+ Per vertex, the owner is the bone holding the most of it, and its distance the
+ reference. Every other bone keeps its weight scaled by how far behind the owner
+ it sits, over that pair's band:
+
+ 	t = (d_b - d_owner) / max(band_b, band_owner)
+ 	w_b *= (1 - t²)²    for t < 1, and 0 beyond
+
+ so two bones equally near blend as before, and one a whole band further away
+ holds nothing. The wider of the two bands governs, so a short bone beside a long
+ one blends across the long one's width rather than snapping at its own.
+
+ The owner by weight rather than by distance, because the weight already carries
+ the rules the distance does not: a sibling chain sits close to a finger and has
+ been ranked out by `isolate_chains`, and windowing the finger against its
+ sibling's distance would hand the vertex to the sibling.
+
+ A bone with no distance — `NO_DISTANCE` — holds nothing after this. A row with
+ no measured owner is left as it is. Rows stay unnormalised.
+
+ @param distances : `From the bind_geodesic call that made dense, same shape.`
+ @param bands : `One per joint, in model units: how far behind the owner it may sit and still blend. Shorter than the joint count leaves the rest unwindowed, and an empty array leaves the bind untouched.`
+*>
+fn void window_bind(float[] dense, float[] distances, usz bones, float[] bands)
+{
+    if (bones == 0 || bands.len == 0 || distances.len != dense.len) return;
+    usz vertices = dense.len / bones;
+    for (usz v = 0; v < vertices; v++)
+    {
+        usz base = v * bones;
+        usz owner = 0;
+        for (usz b = 1; b < bones; b++)
+        {
+            if (dense[base + b] > dense[base + owner]) owner = b;
+        }
+        float reference = distances[base + owner];
+        if (dense[base + owner] <= 0.0f || reference >= NO_DISTANCE) continue;
+        float own_band = owner < bands.len ? bands[owner] : 0.0f;
+
+        for (usz b = 0; b < bones; b++)
+        {
+            if (b == owner || b >= bands.len || dense[base + b] <= 0.0f) continue;
+            float band = math::max(bands[b], own_band);
+            if (band <= 0.0f) continue;
+            float d = distances[base + b];
+            if (d >= NO_DISTANCE)
+            {
+                dense[base + b] = 0.0f;
+                continue;
+            }
+            float t = (d - reference) / band;
+            if (t <= 0.0f) continue;
+            if (t >= 1.0f)
+            {
+                dense[base + b] = 0.0f;
+                continue;
+            }
+            float fade = 1.0f - t * t;
+            dense[base + b] *= fade * fade;
+        }
+    }
 }
 
 <*
@@ -543,7 +706,7 @@ const float SIBLING_LEAK = 1.0e-5f;
 
  Cost: one pass, plus a bones-by-bones ancestor table. Applied by `bind_geodesic`
  (not by `bind_geometric`, which stays the unmodified straight-line baseline)
- and by `AppState.bind_dense` for a file's own weights, so the
+ and by `AppState.bind_base` for a file's own weights, so the
  preview, the views and the file all see one answer.
 
  @param dense : `[vertices, bones], rewritten in place.`
@@ -814,6 +977,10 @@ fn int solid_bone(
     return (float)votes[top] >= SHELL_RIGID_SHARE * (float)members ? (int)top : -1;
 }
 
+// How much further than its nearest bone another may sit and still count toward
+// where a loose piece hangs — see `shell_carrier`.
+const float CARRIER_NEAR @private = 2.0f;
+
 <*
  The bone a loose piece hangs off: the deepest one whose subtree still holds
  most of the piece's straight-line influence.
@@ -861,10 +1028,21 @@ fn int shell_carrier(
 
         float total = 0;
         float[LIMIT] row;
+        float nearest = FURTHER_THAN_ANY_MESH;
         foreach (usz b, joint : joints)
         {
-            row[b] = 1.0f / (segment_distance_sq(positions[v], joint, tails[b]) + eps);
-            total += row[b];
+            row[b] = segment_distance_sq(positions[v], joint, tails[b]);
+            nearest = math::min(nearest, row[b]);
+        }
+        // Only the bones the piece is near get a say — up to twice the nearest
+        // one's distance. Summed over every bone, the far ones' tails outvote the
+        // limb: a buckle on one ankle drew a share from the other leg, both hands
+        // and the spine, its own leg's subtree fell under the bar, and the piece
+        // was strapped to the hips.
+        foreach (usz b, &d2 : row[:bones])
+        {
+            *d2 = *d2 <= CARRIER_NEAR * CARRIER_NEAR * nearest ? 1.0f / (*d2 + eps) : 0.0f;
+            total += *d2;
         }
         if (total <= 0.0f) continue;
 

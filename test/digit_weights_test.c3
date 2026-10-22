@@ -95,7 +95,7 @@ fn void a_finger_joint_holds_the_middle_of_its_segment() @test
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
-	float[] bound = app.bind_dense(mem, &view, painted: false);
+	float[] bound = app.weights(mem, &view, AUTOMATIC);
 	defer alloc::free(mem, bound);
 	Vec3[] tails = view.skeleton.tails(mem);
 	defer alloc::free(mem, tails);
@@ -268,7 +268,7 @@ fn void the_palm_behind_the_knuckles_belongs_to_the_wrist() @test
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
-	float[] bound = app.bind_dense(mem, &view, painted: false);
+	float[] bound = app.weights(mem, &view, AUTOMATIC);
 	defer alloc::free(mem, bound);
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);
@@ -315,7 +315,7 @@ fn void a_knuckle_blends_only_its_two_joints() @test
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
-	float[] bound = app.bind_dense(mem, &view, painted: false);
+	float[] bound = app.weights(mem, &view, AUTOMATIC);
 	defer alloc::free(mem, bound);
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);
@@ -367,14 +367,14 @@ fn void knuckle_blend_zero_is_a_hard_switch_and_rebinds() @test
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
-	float[] soft = app.bind_dense(mem, &view, painted: false);
+	float[] soft = app.weights(mem, &view, AUTOMATIC);
 	defer alloc::free(mem, soft);
 
 	test::@check(app.set_knuckle_blend_recorded(crig::knuckle_blend_stored(0.0f)), "the blend did not change");
 	app.undo_stack.commit();
 	app.mark_rig_stale();
 	test::@check(app.doc.knuckle_blend_fraction() == 0.0f, "a blend of nothing reads back as %f", app.doc.knuckle_blend_fraction());
-	float[] hard = app.bind_dense(mem, &view, painted: false);
+	float[] hard = app.weights(mem, &view, AUTOMATIC);
 	defer alloc::free(mem, hard);
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);

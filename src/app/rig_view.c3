@@ -50,20 +50,12 @@ struct RigView
 	// One per joint, in model units; 0 is unlimited.
 	float[] reaches;
 
-	<*
-	 The hand corrections, with their dot ids already turned into joint indices
-	 for this build. Empty when nothing is painted.
+	// One per joint: how far its region is pushed past its automatic edge, in
+	// model units (`Dot.grow`), and how far it blends, as a share of its bone
+	// (`Dot.band`, 0 the default). Empty when no dot has one.
+	float[] grows;
+	float[] bands;
 
-	 Resolved here rather than at the multiply because that is this type's whole
-	 job — the document keys paint by dot id, a bind is indexed by joint, and
-	 doing the lookup once per bind instead of once per dab is also the only
-	 version that does not go quadratic on a big stroke.
-
-	 A dab whose dot is no longer in the rig is dropped rather than carried: the
-	 document keeps it so undo can bring it back with the dot, but there is no
-	 column to multiply while the dot is gone.
-	*>
-	PaintColumn[] paint;
 
 	<*
 	 The stated shares, with their dot ids already turned into joint indices for
@@ -107,7 +99,8 @@ fn RigView? AppState.open_rig(&self, Allocator allocator)
 		.names = self.joint_names(allocator, dot_ids),
 		.attachments = self.attachment_joints(allocator, dot_ids),
 		.reaches = self.reach_joints(allocator, dot_ids),
-		.paint = self.paint_columns(allocator, dot_ids),
+		.grows = self.grow_joints(allocator, dot_ids),
+		.bands = self.band_joints(allocator, dot_ids),
 		.pins = self.pin_columns(allocator, dot_ids),
 	};
 }
@@ -154,14 +147,10 @@ fn void AppState.drop_playback_rig(&self)
 }
 
 <*
- The document's paint with its dot ids resolved against this build's joint order.
-
- One pass over the dabs and one over the joints per dab — but the dabs are sparse
- and the joints are a handful, so this is nothing beside the bind that follows.
- What it buys is that the multiply itself is a straight walk with no lookups.
-
- Empty when nothing is painted, which is the ordinary case and costs no
- allocation.
+ The multipliers an older session carried, with their dot ids resolved against
+ this build's joint order — read once, by `bake_legacy_paint`, which turns them
+ into stated rows. Empty when there are none, which is every session written
+ since version 31.
 *>
 fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_ids)
 {
@@ -254,7 +243,8 @@ fn void RigView.free(&self, Allocator allocator)
 	if (self.names.len > 0) alloc::free(allocator, self.names.ptr);
 	if (self.attachments.len > 0) alloc::free(allocator, self.attachments);
 	if (self.reaches.len > 0) alloc::free(allocator, self.reaches);
-	if (self.paint.len > 0) alloc::free(allocator, self.paint.ptr);
+	if (self.grows.len > 0) alloc::free(allocator, self.grows);
+	if (self.bands.len > 0) alloc::free(allocator, self.bands);
 	if (self.pins.len > 0) alloc::free(allocator, self.pins.ptr);
 	*self = {};
 }
@@ -317,6 +307,42 @@ fn String[] AppState.joint_names(&self, Allocator allocator, uint[] dot_ids)
 		names[j] = dot ? dot.name : "";
 	}
 	return names;
+}
+
+<*
+ The document's grows as the binder takes them: one distance per joint, empty
+ when no dot is grown — see `Dot.grow`.
+*>
+fn float[] AppState.grow_joints(&self, Allocator allocator, uint[] dot_ids)
+{
+	bool grown = false;
+	foreach (dot : self.doc.dots.array_view()) if (dot.grow != 0.0f) grown = true;
+	if (!grown) return {};
+	float[] grows = alloc::new_array(allocator, float, (sz)dot_ids.len);
+	foreach (usz j, id : dot_ids)
+	{
+		Dot* dot = self.doc.find(id);
+		grows[j] = dot ? dot.grow : 0.0f;
+	}
+	return grows;
+}
+
+<*
+ The document's soft edges: one share of its bone per joint, 0 for the model's
+ default, empty when no dot has one — see `Dot.band`.
+*>
+fn float[] AppState.band_joints(&self, Allocator allocator, uint[] dot_ids)
+{
+	bool softened = false;
+	foreach (dot : self.doc.dots.array_view()) if (dot.band > 0.0f) softened = true;
+	if (!softened) return {};
+	float[] bands = alloc::new_array(allocator, float, (sz)dot_ids.len);
+	foreach (usz j, id : dot_ids)
+	{
+		Dot* dot = self.doc.find(id);
+		bands[j] = dot ? dot.band : 0.0f;
+	}
+	return bands;
 }
 
 <*

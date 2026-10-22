@@ -91,7 +91,17 @@ struct DigitBands
 	float[] spans;
 	Vec3[] points;
 	bool[] digit;
+
+	// Borrowed, one per skeleton joint, model units: how far each joint's region
+	// is grown (`Dot.grow`) — a knuckle's plane moves toward the joint above by
+	// the grow of the joint below it and away by the grow of the one above, so a
+	// grown finger joint takes more of its finger the way a grown limb does.
+	// Empty for none.
+	float[] grow;
 }
+
+// A skeleton joint's grow, or none past the end of a short array.
+fn float DigitBands.grow_of(&self, usz joint) => joint < self.grow.len ? self.grow[joint] : 0.0f;
 
 <*
  The bands for a skeleton's digits, or empty ones when it has none.
@@ -286,6 +296,8 @@ fn void DigitBands.weights(&self, usz chain_index, Vec3 p, float blend, float[] 
 	{
 		usz slot = chain.first + k;
 		float side = (p - line[k + 1]).dot(self.normals[slot]);
+		usz above = k == 0 ? chain.fork : self.joints[slot - 1];
+		side += self.grow_of(self.joints[slot]) - self.grow_of(above);
 		float half = blend * self.spans[slot];
 		float step;
 		if (half > 0.0f)
@@ -407,6 +419,7 @@ fn bool DigitBands.band_row(&self, float[] row, Vec3 p, float blend)
  @param blend : `The knuckle blend, 0 to 1 — see DigitBands.weights.`
  @param shell_of : `The shell of each vertex, or empty when the mesh has none to tell apart.`
  @param riders : `The joint each shell rides rigidly, or -1; empty when none do.`
+ @param grow : `One per joint, model units: how far each joint's region is grown — see DigitBands.grow. Empty for none.`
 *>
 fn void band_digits(
 	Allocator allocator,
@@ -415,13 +428,15 @@ fn void band_digits(
 	Skeleton* skeleton,
 	float blend,
 	int[] shell_of = {},
-	int[] riders = {})
+	int[] riders = {},
+	float[] grow = {})
 {
 	usz bones = skeleton.joints.len;
 	if (bones == 0 || dense.len != positions.len * bones) return;
 	DigitBands bands = digit_bands(allocator, skeleton);
 	defer bands.free(allocator);
 	if (bands.forks.len == 0) return;
+	bands.grow = grow;
 
 	foreach (usz v, p : positions)
 	{

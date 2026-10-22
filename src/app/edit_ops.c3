@@ -663,6 +663,8 @@ fn bool AppState.remove_recorded(&self, uint id)
 	if (!dot) return false;
 	Vec3 position     = dot.position;
 	float reach       = dot.reach;
+	float grow        = dot.grow;
+	float band        = dot.band;
 	float pose_weight = dot.pose_weight;
 	String dot_name   = (String)@clone_slice((char[])dot.name);
 
@@ -684,6 +686,8 @@ fn bool AppState.remove_recorded(&self, uint id)
 			.other = previous_root,
 			.name = dot_name,
 			.reach_before = reach,
+			.grow_before = grow,
+			.band_before = band,
 			.pose_weight_before = pose_weight,
 		}
 	);
@@ -961,7 +965,7 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
 	}
 
 	bool paint_touched = false;
-	if (self.doc.paint.len() > 0 || self.doc.pins.len() > 0)
+	if (self.doc.pins.len() > 0)
 	{
 		rig::MirrorLookup across = rig::build_mirror_lookup(
 			mem,
@@ -1452,25 +1456,25 @@ fn bool AppState.symmetry_plane(&self, float* out)
 }
 
 <*
- Cross one dot's paint and pins onto its twin, as the mirror's own strokes.
+ Cross one dot's hand edits onto its twin, as the mirror's own stroke.
 
  `if (app.mirror_paint_recorded(&across, thigh_L, thigh_R)) …`
 
- Two batches, one per layer, each recorded through the layer's own stroke
- record and left chained — the caller commits, so the paint undoes with the
- twin it was painted onto rather than as a step of its own. What the twin ends
- up carrying is exactly the source's layer reflected: a dab the source has
- lands on the twin at the mirror-image vertex, and a dab the twin had on a
- vertex whose partner the source leaves clean is cleared. Vertices with no
- partner are not touched either way.
+ One batch, recorded through the pin layer's stroke record and left chained —
+ the caller commits, so the edits undo with the twin they were crossed onto
+ rather than as a step of their own. What the twin ends up carrying is exactly
+ the source's layer reflected: a pin the source has lands on the twin at the
+ mirror-image vertex, and a pin the twin had on a vertex whose partner the
+ source leaves clean is cleared. Vertices with no partner are not touched
+ either way.
 
  The clears are found by walking the twin's entries against the wanted set
  rather than by clearing everything and writing it back, so a twin already
- carrying the right paint records nothing — which is what lets the caller
- count it as already in place.
+ carrying the right pins records nothing — which is what lets the caller count
+ it as already in place.
 
  @param across : `The mesh's mirror lookup, built for the document's plane.`
- @return `True when anything on either layer moved.`
+ @return `True when anything moved.`
 *>
 fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint source, uint twin)
 {
@@ -1485,44 +1489,6 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 
 	bool moved = false;
 
-	// --- dabs ----------------------------------------------------------------
-
-	{
-		sz held          = self.doc.paint.len();
-		PaintDab[] batch = alloc::new_array(mem, PaintDab, held);
-		defer alloc::free(mem, batch);
-		usz asked = 0;
-
-		foreach (dab : self.doc.paint.array_view())
-		{
-			if (dab.dot_id != source || (usz)dab.vertex >= count) continue;
-			sz partner = across.twin_of(self.geometry.positions[dab.vertex]);
-			if (partner < 0) continue;
-			wanted[partner] = true;
-			batch[asked++] = { .vertex = (uint)partner, .dot_id = twin, .factor = dab.factor };
-		}
-		foreach (dab : self.doc.paint.array_view())
-		{
-			if (dab.dot_id != twin || (usz)dab.vertex >= count || wanted[dab.vertex]) continue;
-			if (across.twin_of(self.geometry.positions[dab.vertex]) < 0) continue;
-			batch[asked++] = { .vertex = dab.vertex, .dot_id = twin, .factor = 1.0f };
-		}
-
-		if (asked > 0)
-		{
-			PaintChange[] changes = alloc::new_array(mem, PaintChange, (sz)asked);
-			defer alloc::free(mem, changes);
-			usz changed = self.write_paint(batch[:asked], changes);
-			if (changed > 0)
-			{
-				self.undo_stack.record_stroke(changes[:changed]);
-				moved = true;
-			}
-		}
-	}
-
-	// --- pins ----------------------------------------------------------------
-	wanted[..] = false;
 
 	{
 		sz held           = self.doc.pins.len();

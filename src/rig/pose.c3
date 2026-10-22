@@ -396,7 +396,7 @@ fn void? skin_positions(Vec3[] out, Vec3[] rest, gltf::SkinBinding binding, Matr
  Not what the editor binds through. It keeps the dense matrix a moment longer
  than this does, to prune the joints no vertex ended up riding and to substitute
  a binding read out of the file, so its two callers meet in
- `AppState.bind_dense` instead. This is for a caller that wants the binder's
+ `AppState.weights` instead. This is for a caller that wants the binder's
  answer and nothing else — a check, or a tool with no document behind it.
 
  **Every input the binder reads has to arrive here**, `reaches` included. A caller

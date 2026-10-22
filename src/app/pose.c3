@@ -123,17 +123,17 @@ fn bool AppState.rebind_skin(&self, RigView* view)
 	// longer there — and `engine/scene.c3` would size three's skin from it.
 	self.skin_joints = 0;
 
-	// Through `painted_bind` rather than the binder directly, because that is
-	// where the file's own weights are chosen over crig's — and because
+	// Through `AppState.weights` rather than the binder directly, because that
+	// is where the file's own weights are chosen over crig's — and because
 	// everything the binder reads has to arrive the same way here as it does in
-	// `write_rigged`: the cached base is `bind_dense` unpainted, with the same
-	// corrections and pins laid over it in the same order. A preview bound on
+	// `write_rigged`: the cached base from `bind_base`, with the same corrections
+	// and pins laid over it in the same order. A preview bound on
 	// different terms from the export deforms the mesh one way on screen and
 	// another way in the file it writes. The cache is what lets a brush stroke
 	// over a posed mesh reskin on every move: the geodesic pass underneath
 	// costs tens of milliseconds, the multiply over it a fraction of one, and
 	// `mark_rig_stale` drops the cache whenever the base is worth redoing.
-	float[] dense = self.painted_bind(mem, view);
+	float[] dense = self.weights(mem, view);
 	defer if (dense.len > 0) alloc::free(mem, dense);
 
 	gltf::SkinBinding? bound = gltf::sparsify_weights(

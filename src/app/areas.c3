@@ -54,16 +54,7 @@ fn String AreaPart.label(self)
 	}
 }
 
-// Below this share a joint's hold on a vertex outside its part is left alone.
-// Geodesic weights are non-zero almost everywhere, and restating every row of
-// the mesh to take a hundredth off it would pin the whole body.
-const float AREA_LEAK_FLOOR = 0.01;
 
-// The soft edge a fresh session starts at, and the widest the card offers, as a
-// fraction of the joint's own bone: an edge a quarter of the forearm deep reads
-// the same on a 3k-vertex creature and a 300k-vertex scan.
-const float AREA_SOFT_DEFAULT = 0.25;
-const float AREA_SOFT_MAX = 1.0;
 
 // One Grow or Shrink, and one step of a grow or shrink drag, as a fraction of the
 // joint's own bone.
@@ -104,7 +95,7 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 	usz bones = view.len();
 	if (found < 0 || bones == 0) return {};
 
-	float[] painted = self.painted_bind(mem, &view);
+	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (painted.len < count * bones) return {};
 
@@ -128,6 +119,7 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 	// on it. A piece riding one joint rigidly keeps its rider, as it does in the bind.
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);
+	bands.grow = view.grows;
 	bool banded = (usz)found < bands.digit.len && bands.digit[(usz)found];
 	float[] base = banded ? self.base_bind_for(&view) : {};
 	if (base.len < count * bones) banded = false;
@@ -329,176 +321,6 @@ fn usz AppState.area_island_count(&self)
 		total++;
 	}
 	return total;
-}
-
-<*
- How many seams apart each UV island is from the `sources`: 0 for a source, 1 for
- an island sharing a seam with one, and so on; `int::max` for an island nothing
- joins to them, a separate piece. The caller frees the result.
-*>
-fn int[] island_hops(rig::MeshShells* split, rig::MeshAdjacency* around, bool[] sources) @private
-{
-	// Each weld class's islands, lined up by one sort: islands meeting at a
-	// class share a seam there.
-	ulong span = (ulong)split.count;
-	ulong[] keys = alloc::new_array(mem, ulong, (sz)split.of.len);
-	defer alloc::free(mem, keys);
-	foreach (v, island : split.of) keys[v] = (ulong)around.class_of[v] * span + (ulong)island;
-	sort::quicksort(keys);
-
-	List{ulong} seams;
-	seams.init(mem);
-	defer seams.free();
-	usz run = 0;
-	for (usz i = 1; i <= keys.len; i++)
-	{
-		if (i < keys.len && keys[i] / span == keys[run] / span) continue;
-		// A seam joins a handful of copies at most; every distinct pair is a link.
-		for (usz a = run; a < i; a++)
-		{
-			for (usz b = run; b < a; b++)
-			{
-				ulong ia = keys[a] % span;
-				ulong ib = keys[b] % span;
-				if (ia != ib) seams.push(ia * span + ib);
-			}
-		}
-		run = i;
-	}
-
-	int[] hops = alloc::new_array(mem, int, (sz)split.count);
-	foreach (i, on : sources) hops[i] = on ? 0 : int::max;
-	// Relaxed until nothing moves: as many passes as the layout is seams deep.
-	for (bool moved = true; moved;)
-	{
-		moved = false;
-		foreach (link : seams)
-		{
-			usz a = (usz)(link / span);
-			usz b = (usz)(link % span);
-			if (hops[a] != int::max && hops[a] + 1 < hops[b]) { hops[b] = hops[a] + 1; moved = true; }
-			if (hops[b] != int::max && hops[b] + 1 < hops[a]) { hops[a] = hops[b] + 1; moved = true; }
-		}
-	}
-	return hops;
-}
-
-<*
- Grow or shrink a part made of whole UV islands by whole islands. A grow adds
- every island sharing a seam with the part. A shrink takes off the islands
- furthest, in seams, from the joint's own islands (the UV islands part), so it
- walks a grow back step for step; down to those, from the part's largest
- island, which always stays.
-
- @return `True when the part changed.`
-*>
-fn bool AppState.step_area_islands(&self, bool[] mask, int steps)
-{
-	rig::MeshShells* split = self.islands_for();
-	rig::MeshAdjacency* around = self.adjacency_for();
-	usz count = mask.len;
-	if (steps == 0 || split.of.len != count || around.vertices() != count) return false;
-
-	bool grow = steps > 0;
-	bool[] inside = alloc::new_array(mem, bool, (sz)around.classes());
-	bool[] flip = alloc::new_array(mem, bool, (sz)split.count);
-	usz[] size = alloc::new_array(mem, usz, (sz)split.count);
-	defer
-	{
-		alloc::free(mem, inside);
-		alloc::free(mem, flip);
-		alloc::free(mem, size);
-	}
-
-	// Shrinks measure from the joint's own islands, and from the largest island
-	// alone once only those are left.
-	int[] from_own;
-	int[] from_largest;
-	defer
-	{
-		if (from_own.len > 0) alloc::free(mem, from_own);
-		if (from_largest.len > 0) alloc::free(mem, from_largest);
-	}
-	if (!grow)
-	{
-		foreach (v, on : mask)
-		{
-			if (on) size[(usz)split.of[v]]++;
-		}
-		usz anchor = 0;
-		foreach (usz i, n : size)
-		{
-			if (n > size[anchor]) anchor = i;
-		}
-		if (size[anchor] == 0) return false;
-
-		bool[] sources = alloc::new_array(mem, bool, (sz)split.count);
-		defer alloc::free(mem, sources);
-		sources[anchor] = true;
-		from_largest = island_hops(split, around, sources);
-
-		bool[] own = self.area_part_mask(mem, self.area_dot, ISLANDS);
-		defer if (own.len > 0) alloc::free(mem, own);
-		sources[..] = false;
-		bool held = false;
-		foreach (v, on : own)
-		{
-			if (!on || !mask[v]) continue;
-			sources[(usz)split.of[v]] = true;
-			held = true;
-		}
-		if (held) from_own = island_hops(split, around, sources);
-	}
-
-	bool changed = false;
-	for (int step = 0; step < math::abs(steps); step++)
-	{
-		flip[..] = false;
-		bool some = false;
-		if (grow)
-		{
-			inside[..] = false;
-			foreach (v, on : mask)
-			{
-				if (on) inside[(usz)around.class_of[v]] = true;
-			}
-			foreach (v, on : mask)
-			{
-				if (on || !inside[(usz)around.class_of[v]]) continue;
-				flip[(usz)split.of[v]] = true;
-				some = true;
-			}
-		}
-		else
-		{
-			// The furthest islands still in the part, never a source (hop 0).
-			int furthest = 0;
-			int[] hops = from_own;
-			for (int pass = 0; pass < 2 && furthest == 0; pass++)
-			{
-				if (pass == 1) hops = from_largest;
-				if (hops.len == 0) continue;
-				foreach (v, on : mask)
-				{
-					if (on) furthest = math::max(furthest, hops[(usz)split.of[v]]);
-				}
-			}
-			if (furthest == 0) break;
-			foreach (v, on : mask)
-			{
-				if (!on || hops[(usz)split.of[v]] != furthest) continue;
-				flip[(usz)split.of[v]] = true;
-				some = true;
-			}
-		}
-		if (!some) break;
-		foreach (v, &on : mask)
-		{
-			if (flip[(usz)split.of[v]]) *on = grow;
-		}
-		changed = true;
-	}
-	return changed;
 }
 
 enum IslandPick : char
@@ -736,72 +558,6 @@ fn float[] surface_distances(rig::MeshAdjacency* around, Vec3[] points, bool[] s
 }
 
 <*
- Grow a part by a distance over the surface, or shrink it by one.
-
- Over weld classes, so a UV seam is crossed rather than stopped at. A step
- shorter than the mesh's edges still moves the boundary by one ring, so a press
- always shows.
-
- @param distance : `Positive grows, negative shrinks, in model units.`
- @return `True when the part changed.`
-*>
-fn bool AppState.grow_area_mask(&self, bool[] mask, float distance)
-{
-	if (distance == 0.0f || mask.len != self.geometry.positions.len) return false;
-	rig::MeshAdjacency* around = self.adjacency_for();
-	if (!around.usable() || around.vertices() != mask.len) return false;
-
-	bool[] cls = classes_of(around, mask);
-	defer alloc::free(mem, cls);
-	Vec3[] points = class_points(around, self.geometry.positions);
-	defer alloc::free(mem, points);
-
-	bool grow = distance > 0.0f;
-	float reach = grow ? distance : -distance;
-
-	// Grow: classes within reach of the part join it. Shrink: classes of the part
-	// within reach of the outside leave it.
-	bool[] sources = alloc::new_array(mem, bool, (sz)cls.len);
-	defer alloc::free(mem, sources);
-	foreach (g, on : cls) sources[g] = grow ? on : !on;
-	float[] apart = surface_distances(around, points, sources, reach);
-	defer alloc::free(mem, apart);
-
-	bool moved = false;
-	foreach (g, &on : cls)
-	{
-		if (*on == grow || apart[g] > reach) continue;
-		*on = grow;
-		moved = true;
-	}
-	if (!moved)
-	{
-		// Shorter than an edge: take the one ring the step crossed into.
-		bool[] next = alloc::new_array(mem, bool, (sz)cls.len);
-		defer alloc::free(mem, next);
-		for (usz g = 0; g < cls.len; g++)
-		{
-			next[g] = cls[g];
-			foreach (n : around.around(g))
-			{
-				if (grow && cls[n]) { next[g] = true; break; }
-				if (!grow && !cls[n]) { next[g] = false; break; }
-			}
-		}
-		cls[..] = next[..];
-	}
-
-	bool changed = false;
-	foreach (v, &on : mask)
-	{
-		bool want = cls[(usz)around.class_of[v]];
-		if (*on != want) changed = true;
-		*on = want;
-	}
-	return changed;
-}
-
-<*
  How far in from the part's edge each weld class sits, over the surface: the
  walk to the nearest class outside the part, or `float::max` beyond `limit` or
  with no outside to walk to — a separate piece taken whole is interior
@@ -836,7 +592,18 @@ fn float AppState.area_scale(&self, uint dot_id)
 }
 
 // The soft edge the card asks for, in model units.
-fn float AppState.area_soft_distance(&self) => math::max(self.area_soft, 0.0f) * self.area_scale(self.area_dot);
+fn float AppState.area_soft_distance(&self) => self.band_share(self.area_dot) * self.area_scale(self.area_dot);
+
+<*
+ A joint's soft edge as a share of its bone: what it was given (`Dot.band`), or
+ the model's default. The one number the automatic weights' band, the card's
+ slider and an Apply's soft edge all read.
+*>
+fn float AppState.band_share(&self, uint dot_id)
+{
+	Dot* dot = self.doc.find(dot_id);
+	return dot && dot.band > 0.0f ? dot.band : BAND_SHARE_DEFAULT;
+}
 
 <*
  The same part on the twin joint across the symmetry plane.
@@ -940,7 +707,7 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 	RigView view = opened;
 	defer view.free(mem);
 
-	float[] painted = self.painted_bind(mem, &view);
+	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 
 	PinDraft draft;
@@ -957,7 +724,7 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
  the picture is the weights Apply leaves.
 
  @param draft : `Filled; the caller frees it, whatever this returns.`
- @param painted : `The bind as shown — painted_bind of the same view.`
+ @param painted : `The bind as shown — AppState.weights of the same view.`
  @param pieces : `The parts are whole pieces, not limited to the limb — see apply_area.`
  @param refused : `Filled with how many part vertices were off their joint's limb and left out. Null to not ask.`
  @return `How many vertices the joint and its twin would hold; 0 when there is nothing to state.`
@@ -981,13 +748,11 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 
 	if (painted.len < count * bones) return 0;
 
-	// The automatic row: the base with the multiplier paint, and no pins.
-	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
-	defer alloc::free(mem, automatic);
-	float[] base = self.base_bind_for(view);
-	if (base.len < count * bones) return 0;
-	automatic[..] = base[:count * bones];
-	paint_over(automatic, bones, view.paint);
+	float[] automatic = self.weights(mem, view, AUTOMATIC);
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
+	if (automatic.len < count * bones) return 0;
+	Handoff handoff = self.handoff_for(view);
+	defer handoff.free();
 
 	draft.init(count);
 
@@ -1024,7 +789,7 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 		{
 			if (!on) continue;
 			usz at = (usz)v * bones;
-			part[v] = pieces || on_limb(base[at:bones], family) || joint_share(painted[at:bones], side) >= AREA_LEAK_FLOOR;
+			part[v] = pieces || on_limb(automatic[at:bones], family) || joint_share(painted[at:bones], side) >= AREA_LEAK_FLOOR;
 			if (!part[v] && refused) (*refused)++;
 		}
 		bool[] cls = classes_of(around, part);
@@ -1046,7 +811,7 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 			}
 			// The soft edge: the rest of the vertex goes to the other joints as they
 			// hold it now, so a joint an earlier Apply took off it stays off.
-			self.others_of(painted, automatic, (uint)v, bones, joint, twin_joint, row);
+			self.others_of(painted, view, &handoff, (uint)v, joint, twin_joint, row);
 			usz kept = band_row(row, view.dot_ids, owners[p], share, keep_dots[..], keep_shares[..]);
 			self.keep_stated(&stated, (uint)v, keep_dots[:kept], keep_shares[:kept]);
 			draft.state((uint)v, keep_dots[:kept], keep_shares[:kept], owners[p]);
@@ -1066,7 +831,7 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 		if (twin_joint >= 0 && painted[at + (usz)twin_joint] / sum >= AREA_LEAK_FLOOR) leaks = true;
 		if (!leaks) continue;
 
-		float left = self.others_of(painted, automatic, (uint)v, bones, joint, twin_joint, row);
+		float left = self.others_of(painted, view, &handoff, (uint)v, joint, twin_joint, row);
 		usz kept = left > 0.0f ? top_row(row, view.dot_ids, -1, keep_dots[..], keep_shares[..]) : 0;
 		// The row is the work of whichever of the two it was taken off more of.
 		uint by = twin_joint >= 0 && painted[at + (usz)twin_joint] > painted[at + (usz)joint] ? twin : dot_id;
@@ -1076,40 +841,108 @@ fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted
 }
 
 <*
- The rest of a row once a joint (and its twin) are taken off it, normalised:
- the other joints as shown — earlier Applies and brush strokes included.
-
- **What the others hold together below `AREA_LEAK_FLOOR` says nothing about
- where the rest belongs.** It is the binder's falloff leaving a hundredth of a
- knee on the tail, and scaled up it hands the tail to the knee. Then the rest
- goes to the surface around the vertex (`others_around`), or where that holds
- nothing else either, to the automatic row without the two; a sliver as shown is
- the last resort.
-
- @param row : `Filled, one weight per joint.`
- @return `What the rest adds up to; 0 when nothing else holds the vertex.`
+ What the field needs to re-derive a row: the bands the automatic weights end
+ at, and the bind's softness. Built once per operation — see
+ `AppState.handoff_for` — because both cost a pass over the rig or the mesh and
+ a stroke asks for a row per vertex under the circle.
 *>
-fn float AppState.others_of(&self, float[] painted, float[] automatic, uint vertex, usz bones, sz joint, sz twin_joint,
-	float[] row)
+struct Handoff
 {
-	float shown = shown_others(painted, (usz)vertex * bones, bones, joint, twin_joint, row);
-	if (shown >= AREA_LEAK_FLOOR) return shown;
+	float[] bands;
+	float eps;
+}
 
-	float left = self.others_around(painted, bones, vertex, joint, twin_joint, row);
-	if (left > 0.0f) return left;
+fn Handoff AppState.handoff_for(&self, RigView* view)
+{
+	return { .bands = self.bind_bands(mem, view), .eps = self.bind_eps() };
+}
 
+fn void Handoff.free(&self)
+{
+	if (self.bands.len > 0) alloc::free(mem, self.bands);
+	*self = {};
+}
+
+<*
+ Where a vertex goes when a joint (and its twin) are taken off it: the
+ automatic row the distance field gives it with those joints left out.
+
+ The binder's own rules re-run over the one row — the falloff from each joint's
+ distance, the chain isolation, the model's sharpness and the window — so the
+ joints that come back are the ones that would own the vertex had the removed
+ joint never been placed: the next joint down a leg, never a hip that held two
+ percent of a boot. That is the answer the user means by "take this joint off",
+ and the same one whichever tool asked.
+
+ A rig wearing its file's weights has no field of crig's; there the automatic
+ row without the two is the answer.
+
+ @param row : `Filled, one weight per joint, unnormalised.`
+ @return `What the row adds up to; 0 when the field gives the vertex to nobody else.`
+*>
+fn float AppState.field_row(&self, RigView* view, Handoff* handoff, uint vertex, sz joint, sz twin_joint, float[] row)
+{
+	usz bones = view.len();
+	usz count = self.geometry.positions.len;
 	usz at = (usz)vertex * bones;
-	left = 0.0f;
-	if (automatic.len >= at + bones)
+	row[:bones] = 0.0f;
+	if ((usz)vertex >= count) return 0.0f;
+
+	if (self.field_distances.len != count * bones)
 	{
+		float[] base = self.base_bind_for(view);
+		if (base.len < count * bones) return 0.0f;
+		float left = 0.0f;
 		for (usz b = 0; b < bones; b++)
 		{
-			row[b] = ((sz)b == joint || (sz)b == twin_joint) ? 0.0f : automatic[at + b];
+			if ((sz)b == joint || (sz)b == twin_joint) continue;
+			row[b] = base[at + b];
 			left += row[b];
 		}
+		return left;
 	}
-	if (left > 0.0f) return left;
-	return shown_others(painted, at, bones, joint, twin_joint, row);
+
+	float[] near = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, near);
+	near[..] = self.field_distances[at:bones];
+	if (joint >= 0) near[(usz)joint] = rig::NO_DISTANCE;
+	if (twin_joint >= 0) near[(usz)twin_joint] = rig::NO_DISTANCE;
+	for (usz b = 0; b < bones; b++)
+	{
+		if (near[b] >= rig::NO_DISTANCE) continue;
+		float reach = b < view.reaches.len ? view.reaches[b] : 0.0f;
+		row[b] = rig::field_score(near[b], reach, handoff.eps);
+	}
+	rig::isolate_chains(mem, row[:bones], view.skeleton.parents);
+	sharpen_weights(row[:bones], self.doc.sharpness);
+	rig::window_bind(row[:bones], near, bones, handoff.bands);
+
+	float left = 0.0f;
+	foreach (weight : row[:bones]) left += weight;
+	return left;
+}
+
+<*
+ The rest of a row once a joint (and its twin) are taken off it: who the freed
+ share goes to.
+
+ The other joints as shown — earlier Applies and brush strokes included, so a
+ joint an earlier edit took off stays off — when together they hold a real
+ share of the vertex (`SHOWN_FLOOR`). **Below that they say nothing** about
+ where the vertex belongs: a few percent is the falloff's tail, and scaled up it
+ would hand the vertex to it — a knee taken off a shin went wholly to the two
+ percent of hip on it. Then the field decides (`field_row`).
+
+ @param row : `Filled, one weight per joint.`
+ @return `What the rest adds up to; 0 when nothing else can hold the vertex.`
+*>
+fn float AppState.others_of(&self, float[] painted, RigView* view, Handoff* handoff, uint vertex, sz joint,
+	sz twin_joint, float[] row)
+{
+	usz bones = view.len();
+	float shown = shown_others(painted, (usz)vertex * bones, bones, joint, twin_joint, row);
+	if (shown >= SHOWN_FLOOR) return shown;
+	return self.field_row(view, handoff, vertex, joint, twin_joint, row);
 }
 
 // A row as shown without the joint and its twin, as shares of the vertex.
@@ -1124,69 +957,6 @@ fn float shown_others(float[] painted, usz at, usz bones, sz joint, sz twin_join
 		left += row[b];
 	}
 	return left;
-}
-
-// How many rings of neighbours `others_around` reads out to before it gives up.
-const usz HANDOFF_RINGS = 3;
-
-<*
- What the surface around a vertex holds besides a joint and its twin: its
- neighbours' rows as shown, each as shares and averaged, a ring at a time out to
- `HANDOFF_RINGS` until they hold at least `AREA_LEAK_FLOOR`. The body the vertex
- sits in, for where the rest of it goes when its own row cannot say.
-
- @param row : `Filled, one weight per joint.`
- @return `What the rest adds up to; 0 when the rings hold nothing else.`
-*>
-fn float AppState.others_around(&self, float[] painted, usz bones, uint vertex, sz joint, sz twin_joint, float[] row)
-{
-	row[..] = 0.0f;
-	usz count = self.geometry.positions.len;
-	rig::MeshAdjacency* around = self.adjacency_for();
-	if ((usz)vertex >= count || around.vertices() != count || !around.usable() || painted.len < count * bones)
-	{
-		return 0.0f;
-	}
-
-	List{uint} seen;
-	seen.init(mem);
-	defer seen.free();
-	seen.push(around.class_of[vertex]);
-
-	float[] theirs = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, theirs);
-	usz rows = 0;
-	float left = 0.0f;
-	sz from = 0;
-	for (usz ring = 0; ring < HANDOFF_RINGS; ring++)
-	{
-		sz to = seen.len();
-		for (sz i = from; i < to; i++)
-		{
-			foreach (cls : around.around(seen[i]))
-			{
-				bool met = false;
-				foreach (had : seen) if (had == cls) met = true;
-				if (met) continue;
-				seen.push(cls);
-				if (shown_others(painted, (usz)around.first[cls] * bones, bones, joint, twin_joint, theirs) <= 0.0f) continue;
-				foreach (b, share : theirs) row[b] += share;
-				rows++;
-			}
-		}
-		if (seen.len() == to) break;
-		from = to;
-		left = 0.0f;
-		foreach (share : row) left += share;
-		if (rows > 0 && left >= AREA_LEAK_FLOOR * (float)rows) break;
-	}
-	if (rows == 0 || left < AREA_LEAK_FLOOR * (float)rows)
-	{
-		row[..] = 0.0f;
-		return 0.0f;
-	}
-	foreach (&share : row) *share /= (float)rows;
-	return left / (float)rows;
 }
 
 <*
@@ -1293,12 +1063,9 @@ fn usz AppState.reset_area(&self, uint dot_id, uint twin = 0)
 	sz twin_joint = twin != 0 && twin != dot_id ? view.joint_of(twin) : -1;
 	if (twin_joint < 0) twin = 0;
 
-	float[] base = self.base_bind_for(&view);
-	if (base.len < count * bones) return 0;
-	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
-	defer alloc::free(mem, automatic);
-	automatic[..] = base[:count * bones];
-	paint_over(automatic, bones, view.paint);
+	float[] automatic = self.weights(mem, &view, AUTOMATIC);
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
+	if (automatic.len < count * bones) return 0;
 
 	// Each vertex's row, gathered.
 	int[] start = alloc::new_array(mem, int, (sz)count + 1);
@@ -1691,8 +1458,8 @@ fn void AppState.end_area(&self)
 	if (!self.areaing) return;
 	self.areaing = false;
 	self.area_by_card = false;
+	self.end_grow_drag();
 	self.drop_area_part();
-	self.drop_area_base();
 	if (self.tint_mode == FALLOFF) self.show_tint(self.area_tint);
 }
 
@@ -1712,15 +1479,8 @@ fn void AppState.drop_area_part(&self)
 	self.area_changed();
 }
 
-fn void AppState.drop_area_base(&self)
-{
-	if (self.area_base.len > 0) alloc::free(mem, self.area_base);
-	self.area_base = {};
-}
-
 // The picture has to catch up with the part; the bind underneath did not move.
-// A part changed is a part asked to be seen, so the mesh shows what Apply would
-// leave from here on — `pick_own_quietly` is the one door that says otherwise.
+// A part pending is a part on show: the mesh shows what Apply would leave.
 fn void AppState.area_changed(&self)
 {
 	self.area_generation++;
@@ -1731,27 +1491,12 @@ fn void AppState.area_changed(&self)
 }
 
 // Follow the selection: a part picked for one joint means nothing for another.
-// With the Weights card open the new joint's own part is picked straight away,
-// so the card's buttons have something to act on.
 fn void AppState.area_follow_selection(&self)
 {
 	if (!self.areaing || self.selected == self.area_dot) return;
+	self.end_grow_drag();
 	self.drop_area_part();
 	self.area_dot = self.selected;
-	if (self.weights_card_open() && self.doc.find(self.selected)) self.pick_own_quietly();
-}
-
-<*
- Pick the joint's own part for the card's buttons to act on, and leave the
- weights on show as they are rather than the part: nobody has asked to see one
- yet. The card drawing a part the moment it opened, while the brush drew the
- weights, is how the two looked like two different calculations of one joint.
- Shaping the part — a click, Grow, Shrink, the soft edge — shows it.
-*>
-fn void AppState.pick_own_quietly(&self)
-{
-	self.set_area_part(OWN);
-	self.area_preview = false;
 }
 
 // Whether the sidebar is showing the Weights card.
@@ -1759,13 +1504,12 @@ fn bool AppState.weights_card_open(&self) => self.show_joint_panel && self.joint
 
 <*
  Keep the Area tool in step with the Weights card: showing the card on a joint
- opens the tool with the joint's own part picked, so Grow, Shrink and the soft
- edge act at once; hiding it closes the tool again if the card was what opened
- it. Called wherever the card is shown or hidden.
-
- @param pick : `False to open the tool with no part picked — see leave_brush.`
+ opens the tool on the joint's own bone — live, so Grow, Shrink and the soft edge
+ change the joint as they are pressed and there is nothing waiting for Apply;
+ hiding it closes the tool again if the card was what opened it. Called
+ wherever the card is shown or hidden.
 *>
-fn void AppState.sync_weights_card(&self, bool pick = true)
+fn void AppState.sync_weights_card(&self)
 {
 	if (self.weights_card_open())
 	{
@@ -1778,22 +1522,17 @@ fn void AppState.sync_weights_card(&self, bool pick = true)
 			self.area_by_card = true;
 		}
 		self.area_follow_selection();
-		if (pick && !self.area_pending()) self.pick_own_quietly();
 		return;
 	}
 	if (self.areaing && self.area_by_card) self.end_area();
 }
 
-<*
- Close the brush and give the Weights card its Area tool back with no part
- picked. The strokes are already on the mesh, and Apply would write a part over
- them — the own part is only where the joint is now strongest, so every partial
- share the brush gave around it would be taken off.
-*>
+// Close the brush and give the Weights card its Area tool back. The strokes are
+// already on the mesh; nothing is pending.
 fn void AppState.leave_brush(&self)
 {
 	self.end_brush();
-	self.sync_weights_card(pick: false);
+	self.sync_weights_card();
 }
 
 // Whether the mesh has more than one piece for Whole piece to pick between.
@@ -1845,16 +1584,17 @@ fn bool AppState.set_area_part(&self, AreaPart part, sz seed = -1)
 	self.area_follow_selection();
 	if (seed >= 0) self.area_seed = seed;
 
-	if (part == CUSTOM)
+	// The joint's own bone is live — Grow, Shrink and the soft edge change it
+	// directly — so choosing it puts away whatever part was waiting for Apply.
+	if (part == OWN || part == CUSTOM)
 	{
-		// Custom is whatever is there now, marked as hand-made.
-		if (self.area_mask.len > 0) self.area_part = CUSTOM;
-		return self.area_mask.len > 0;
+		self.drop_area_part();
+		return true;
 	}
 	if (part == PIECE && !self.area_has_pieces())
 	{
 		// One piece is the whole model: picking it would hand the joint everything.
-		self.@notice("the mesh is one piece, so Whole piece would be all of it — grow or shrink the part instead");
+		self.@notice("the mesh is one piece, so Whole piece would be all of it — grow or shrink the joint instead");
 		return false;
 	}
 	if (part == ISLANDS && !self.area_has_islands())
@@ -1881,13 +1621,10 @@ fn bool AppState.set_area_part(&self, AreaPart part, sz seed = -1)
 }
 
 <*
- Whether a part is on show for the mesh to shape: one chosen in the Part menu,
- or grown, shrunk or softened by the card. Nothing else gives the mesh's own
- gestures anything to act on — not the part the card picks for itself
- (`pick_own_quietly`), and not the moment after Apply, Reset or the brush, when
- the weights are done and a click on the mesh is only a click.
+ Whether a part is waiting for Apply — With children or UV islands, chosen in
+ the Part menu. The joint's own bone never waits: it is changed live.
 *>
-fn bool AppState.area_shaping(&self) => self.areaing && self.area_preview && self.area_pending();
+fn bool AppState.area_shaping(&self) => self.areaing && self.area_pending();
 
 <*
  A click on the mesh in the Area tool. Only UV islands on show take one: it adds
@@ -1907,106 +1644,104 @@ fn bool AppState.area_click(&self, sz vertex, IslandPick how = TOGGLE)
 }
 
 <*
- Start a grow or shrink drag at a vertex: grows from the part on show, or from
- the vertex alone when it is outside it. With no part on show — after an Apply,
- say — there is nothing to shape and the press is the camera's.
+ Whether the joint's edge cannot be moved, said out loud when so: a rig wearing
+ its file's own weights has no automatic edge of crig's for a grow or a soft
+ edge to move, and a button that did nothing would be the one thing worse than
+ a refusal.
 *>
-fn bool AppState.begin_area_resize(&self, sz vertex, bool grow)
+fn bool AppState.refuses_edge(&self)
 {
-	if (!self.areaing) return false;
+	if (!self.doc.skin_from_file) return false;
+	self.@notice("this rig wears the model's own weights · Grow, Shrink and Soft edge shape crig's automatic ones — untick Rig › Use the model's own weights first");
+	return true;
+}
+
+// One Grow or Shrink step for a joint, in model units: a tenth of its bone.
+fn float AppState.grow_step(&self, uint dot_id) => self.area_scale(dot_id) * AREA_STEP;
+
+<*
+ Push the selected joint's region out by whole steps, or pull it in — the card's
+ Grow and Shrink, and the twin with it while Mirror is on.
+
+ **Live, not a part.** The joint's edge moves through the same distances the
+ automatic weights are made from (`Dot.grow`), so the mesh shows the result as
+ the button is pressed, there is nothing to Apply, a dot moved afterwards
+ carries the grown edge with it, and Reset is the same edge put back. One undo
+ step per press.
+
+ @return `Whether anything changed.`
+*>
+fn bool AppState.grow_joint(&self, int steps)
+{
+	Dot* dot = self.doc.find(self.selected);
+	if (!dot || steps == 0 || self.refuses_edge()) return false;
+	bool wrote = self.set_grow_recorded(dot.id, dot.grow + (float)steps * self.grow_step(dot.id));
+	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
+	Dot* other = twin != 0 ? self.doc.find(twin) : null;
+	if (other && self.set_grow_recorded(twin, other.grow + (float)steps * self.grow_step(twin))) wrote = true;
+	if (!wrote) return false;
+	self.undo_stack.commit();
+	self.mark_rig_stale();
+	return true;
+}
+
+<*
+ Start a grow or shrink drag on the mesh (shift-drag grows, ctrl-drag shrinks):
+ the same live edge as the card's buttons, a step per stretch of the drag, and
+ one undo step for the whole drag. Remembers where the joint and its twin
+ started so dragging back takes steps off again.
+*>
+fn bool AppState.begin_grow_drag(&self)
+{
+	if (!self.areaing || self.area_shaping()) return false;
 	self.area_follow_selection();
-	if (!self.area_shaping()) return false;
-	usz count = self.geometry.positions.len;
-	if (vertex < 0 || (usz)vertex >= count) return false;
-
-	bool inside = self.area_mask.len == count && self.area_mask[(usz)vertex];
-	if (grow && !inside)
-	{
-		if (self.area_mask.len > 0) alloc::free(mem, self.area_mask);
-		self.area_mask = alloc::new_array(mem, bool, (sz)count);
-		rig::MeshAdjacency* around = self.adjacency_for();
-		rig::MeshShells* split = self.islands_for();
-		if (self.area_islands && split.of.len == count)
-		{
-			// Grown by islands, so it starts from the island pressed.
-			int island = split.of[(usz)vertex];
-			foreach (v, &on : self.area_mask) *on = split.of[v] == island;
-		}
-		else if (around.vertices() == count)
-		{
-			uint weld = around.class_of[(usz)vertex];
-			foreach (v, &on : self.area_mask) *on = around.class_of[v] == weld;
-		}
-		else
-		{
-			self.area_mask[(usz)vertex] = true;
-		}
-	}
-	if (self.area_mask.len == 0) return false;
-
-	self.area_part = CUSTOM;
-	self.area_seed = vertex;
-	self.drop_area_base();
-	self.area_base = alloc::new_array(mem, bool, (sz)count);
-	self.area_base[..] = self.area_mask[..];
-	self.refresh_area_twin();
-	self.area_changed();
+	Dot* dot = self.doc.find(self.area_dot);
+	if (!dot || self.refuses_edge()) return false;
+	self.grow_drag = true;
+	self.grow_drag_from = dot.grow;
+	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
+	Dot* other = twin != 0 ? self.doc.find(twin) : null;
+	self.grow_drag_twin = other ? twin : 0;
+	self.grow_drag_twin_from = other ? other.grow : 0.0f;
 	return true;
 }
 
-// One Grow or Shrink step for the part's joint, in model units.
-fn float AppState.area_step(&self) => self.area_scale(self.area_dot) * AREA_STEP;
-
-// The drag's travel as steps from where it started, re-derived from the start.
-fn bool AppState.area_resize_to(&self, int steps)
+// The drag's travel as steps from where it started.
+fn bool AppState.grow_drag_to(&self, int steps)
 {
-	if (self.area_base.len == 0 || self.area_base.len != self.area_mask.len) return false;
-	self.area_mask[..] = self.area_base[..];
-	if (self.area_islands)
-	{
-		// Island steps never empty the part, so there is no step to take back.
-		self.step_area_islands(self.area_mask, steps);
-		self.refresh_area_twin();
-		self.area_changed();
-		return true;
-	}
-	float step = self.area_step();
-	self.grow_area_mask(self.area_mask, (float)steps * step);
-	bool filled = false;
-	foreach (on : self.area_mask) if (on) { filled = true; break; }
-	if (!filled)
-	{
-		// Shrunk to nothing: keep the last step rather than an empty part.
-		self.area_mask[..] = self.area_base[..];
-		self.grow_area_mask(self.area_mask, (float)(steps + 1) * step);
-	}
-	self.refresh_area_twin();
-	self.area_changed();
-	return true;
+	if (!self.grow_drag) return false;
+	bool wrote = self.set_grow_recorded(self.area_dot, self.grow_drag_from + (float)steps * self.grow_step(self.area_dot));
+	if (self.grow_drag_twin != 0
+		&& self.set_grow_recorded(self.grow_drag_twin,
+			self.grow_drag_twin_from + (float)steps * self.grow_step(self.grow_drag_twin))) wrote = true;
+	if (wrote) self.mark_rig_stale();
+	return wrote;
 }
 
-// Grow or shrink the pending part by whole steps (the card's buttons).
-fn bool AppState.resize_area(&self, int steps)
+// The button came up: the drag is one undo step. Safe with no drag open.
+fn void AppState.end_grow_drag(&self)
 {
-	if (!self.areaing || self.area_mask.len == 0) return false;
-	bool[] was = alloc::new_array(mem, bool, (sz)self.area_mask.len);
-	defer alloc::free(mem, was);
-	was[..] = self.area_mask[..];
-	bool moved = self.area_islands
-		? self.step_area_islands(self.area_mask, steps)
-		: self.grow_area_mask(self.area_mask, (float)steps * self.area_step());
-	if (!moved) return false;
-	bool filled = false;
-	foreach (on : self.area_mask) if (on) { filled = true; break; }
-	if (!filled)
-	{
-		self.area_mask[..] = was[..];
-		return false;
-	}
-	self.area_part = CUSTOM;
-	self.refresh_area_twin();
-	self.area_changed();
-	return true;
+	if (!self.grow_drag) return;
+	self.grow_drag = false;
+	self.undo_stack.commit();
+}
+
+<*
+ Set how far the selected joint blends with its neighbours — the card's Soft
+ edge — and the twin's with it while Mirror is on. Leaves the group open so a
+ slider drag is one undo step; the slider's release commits.
+
+ @param share : `A share of the joint's bone.`
+*>
+fn bool AppState.soften_joint(&self, float share)
+{
+	Dot* dot = self.doc.find(self.selected);
+	if (!dot || self.refuses_edge()) return false;
+	bool wrote = self.set_band_recorded(dot.id, share);
+	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
+	if (twin != 0 && self.doc.find(twin) && self.set_band_recorded(twin, share)) wrote = true;
+	if (wrote) self.mark_rig_stale();
+	return wrote;
 }
 
 fn String AppState.area_joint_name(&self)
@@ -2031,7 +1766,8 @@ fn usz AppState.commit_area(&self)
 	}
 	if (!self.areaing || self.area_mask.len == 0)
 	{
-		self.@notice("choose a part above first");
+		self.@notice("%s's own bone is live — Grow, Shrink and Soft edge change it as you press them; With children and UV islands are what Apply writes",
+			self.area_joint_name());
 		return 0;
 	}
 	if (self.area_empty())
@@ -2071,8 +1807,9 @@ fn usz AppState.commit_area(&self)
 
 <*
  Reset to automatic for the selected joint (and its twin when mirroring): its
- own Applies and strokes are taken back, and nothing a neighbour wrote is
- touched — see `reset_area`.
+ edge goes back where the automatic weights put it — no grow, the model's soft
+ edge — and its own Applies and strokes are taken back, while nothing a
+ neighbour wrote is touched (`reset_area`). One undo step.
 *>
 fn usz AppState.reset_joint_area(&self)
 {
@@ -2083,24 +1820,28 @@ fn usz AppState.reset_joint_area(&self)
 		return 0;
 	}
 	uint twin = self.area_mirrors() ? self.mirror_twin(id) : 0;
-	usz cleared = self.reset_area(id, twin);
-	// A grown or shrunk part still waiting for Apply goes too, and the part is
-	// picked again, quietly, from the weights as they now stand, so the mesh
-	// shows the reset straight away.
-	bool[] was = self.areaing ? alloc::clone_slice(mem, self.area_mask) : {};
-	defer if (was.len > 0) alloc::free(mem, was);
-	bool reshaped = false;
 	if (self.areaing)
 	{
+		self.end_grow_drag();
 		self.drop_area_part();
-		self.drop_area_base();
-		if (self.weights_card_open()) self.pick_own_quietly();
-		reshaped = was.len > 0 && was.len != self.area_mask.len;
-		for (usz v = 0; !reshaped && v < was.len && was.len == self.area_mask.len; v++) reshaped = was[v] != self.area_mask[v];
 	}
+
+	// The edge first, inside the same group the pins close.
+	bool edged = false;
+	if (self.set_grow_recorded(id, 0.0f)) edged = true;
+	if (self.set_band_recorded(id, 0.0f)) edged = true;
+	if (twin != 0 && self.doc.find(twin))
+	{
+		if (self.set_grow_recorded(twin, 0.0f)) edged = true;
+		if (self.set_band_recorded(twin, 0.0f)) edged = true;
+	}
+	if (edged) self.mark_rig_stale();
+	usz cleared = self.reset_area(id, twin);
+	self.undo_stack.commit();
+
 	Dot* dot = self.doc.find(id);
 	String name = dot.name.len > 0 ? dot.name : "this joint";
-	if (cleared == 0 && !reshaped)
+	if (cleared == 0 && !edged)
 	{
 		self.@notice("%s already uses automatic weights", name);
 	}
@@ -2108,7 +1849,7 @@ fn usz AppState.reset_joint_area(&self)
 	{
 		self.@notice("%s back to automatic weights", name);
 	}
-	return cleared;
+	return cleared + (edged ? (usz)1 : (usz)0);
 }
 
 <*
@@ -2185,7 +1926,7 @@ fn float island_shade(int island) @private
  Picking UV islands, the islands outside the part keep a grey of their own so
  the seams show, and the one under the pointer is lit.
 
- @param painted : `The bind the view was drawn from — painted_bind of the same view.`
+ @param painted : `The bind the view was drawn from — AppState.weights of the same view.`
 *>
 fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 {
@@ -2203,12 +1944,9 @@ fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 		self.area_twin, self.area_twin_mask, self.area_names_pieces());
 	if (held == 0) return;
 
-	float[] base = self.base_bind_for(view);
-	if (base.len < count * bones) return;
-	float[] automatic = alloc::new_array(mem, float, (sz)(count * bones));
-	defer alloc::free(mem, automatic);
-	automatic[..] = base[:count * bones];
-	paint_over(automatic, bones, view.paint);
+	float[] automatic = self.weights(mem, view, AUTOMATIC);
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
+	if (automatic.len < count * bones) return;
 
 	bool falloff = self.tint_mode == FALLOFF;
 	PinColumn[SKIN_INFLUENCES] stated;
@@ -2225,7 +1963,9 @@ fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 			if (column >= 0) stated[kept++] = { .vertex = 0, .joint = (usz)column, .share = pin.share };
 		}
 		pin_over(row, bones, stated[:kept]);
-		self.tints[v] = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
+		uint tint = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
+		// A row Apply will state takes the hand-edit cast it will have once written.
+		self.tints[v] = draft.held[v] > 0 ? edited_cast(tint) : tint;
 	}
 
 	rig::MeshShells* split = self.islands_for();

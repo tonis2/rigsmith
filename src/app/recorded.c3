@@ -292,6 +292,41 @@ fn bool AppState.set_reach_recorded(&self, uint id, float reach)
 }
 
 <*
+ Sets how far a joint's region is pushed past its automatic edge, leaving the
+ group open — see `Dot.grow`. The caller commits, so a Grow and its mirror, or a
+ drag of many steps, are one undo step.
+
+ @return `True when it changed.`
+*>
+fn bool AppState.set_grow_recorded(&self, uint id, float grow)
+{
+	Dot* dot = self.doc.find(id);
+	if (!dot) return false;
+	float had = dot.grow;
+	if (had == grow) return false;
+	self.doc.set_grow(id, grow);
+	self.undo_stack.record({ .kind = SET_GROW, .id = id, .grow_before = had, .grow_after = grow });
+	return true;
+}
+
+<*
+ Sets how far a joint blends with its neighbours, leaving the group open — see
+ `Dot.band`.
+
+ @return `True when the stored value changed.`
+*>
+fn bool AppState.set_band_recorded(&self, uint id, float band)
+{
+	Dot* dot = self.doc.find(id);
+	if (!dot) return false;
+	float had = dot.band;
+	self.doc.set_band(id, band);
+	if (dot.band == had) return false;
+	self.undo_stack.record({ .kind = SET_BAND, .id = id, .band_before = had, .band_after = dot.band });
+	return true;
+}
+
+<*
  Sets how much a joint holds its ground when a pose is pulled, leaving the group
  open; see `Dot.pose_weight`. A weight that is already held is no edit.
 

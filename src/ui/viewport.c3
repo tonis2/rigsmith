@@ -1503,7 +1503,13 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						return true;
 					}
 
-					if (app.transform_tool != SELECT_TOOL)
+					// A transform tool turns a press off the dots into the camera —
+					// unless a weight mode is open, which owns a press on the mesh
+					// whatever tool the column was left on. Opening the Weights card
+					// or the lasso does not reset the tool, so without this every
+					// grow, island click and lasso drag quietly orbited instead.
+					bool weight_mode = app.areaing || app.brushing || app.lassoing;
+					if (app.transform_tool != SELECT_TOOL && !weight_mode)
 					{
 						self.press_at = event.pos;
 						self.maybe_place = false;
@@ -1524,7 +1530,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						bool grow = input.shift_down();
 						sz vertex = self.vertex_at(elem, event.pos);
 						bool painting = app.area_islands && app.area_pending();
-						if (vertex >= 0 && (painting ? app.begin_island_paint(vertex, grow) : app.begin_area_resize(vertex, grow)))
+						if (vertex >= 0 && (painting ? app.begin_island_paint(vertex, grow) : app.begin_grow_drag()))
 						{
 							self.area_now = true;
 							self.area_painting = painting;
@@ -1728,14 +1734,14 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				}
 				else
 				{
-					// Rings from the distance travelled, re-derived from the part the
-					// drag began with, so dragging back undoes rings as it goes.
+					// Steps from the distance travelled, re-derived from where the joint
+					// started, so dragging back takes steps off as it goes.
 					int rings = (int)((event.pos - self.area_from).length() / AREA_RING_PIXELS);
 					if (!self.area_grows) rings = -rings;
 					if (rings != self.area_rings)
 					{
 						self.area_rings = rings;
-						app.area_resize_to(rings);
+						app.grow_drag_to(rings);
 						app.refresh_ui();
 					}
 					elem.request_paint();
@@ -1858,9 +1864,9 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 					if (self.brushing_now)
 					{
-						// The stroke committed itself as it went — `paint_dabs`
-						// closes each group — so there is nothing to record here.
-						// What ends is the gesture, and with it the one thing a
+						// The stroke's rows went on the ledger as it went, with the
+						// group left open — `end_stroke` closes it. What ends is the
+						// gesture, and with it the one thing a
 						// stroke over a posed body defers: the surface rebuild.
 						self.brushing_now = false;
 						app.end_stroke();
@@ -1906,10 +1912,10 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 					else if (self.area_now)
 					{
-						// Nothing is written until Apply; the grown part stays pending.
+						// A grow drag is one undo step; an island paint stays pending.
 						self.area_now = false;
 						self.area_painting = false;
-						app.drop_area_base();
+						app.end_grow_drag();
 						app.refresh_ui();
 					}
 					else if (self.maybe_drag_aim != 0)
@@ -2033,9 +2039,9 @@ fn Vec3 camera_right(AppState* app, OrbitCamera* camera)
 
  Called on the press and on every mouse move until the button goes, so a stroke
  is many of these. Each one is cheap to *ask* for and does nothing when the
- circle covers nothing already at a different share — `paint_dabs` drops dabs
- that change nothing, which is what keeps a slow drag over painted mesh from
- filling the ledger with steps that undo to themselves.
+ circle covers nothing already at a different share — `restate_share` drops
+ rows that change nothing, which is what keeps a slow drag over painted mesh
+ from filling the ledger with entries that undo to themselves.
 
  The target is 0 or 1 rather than a settable value: the brush takes a joint off
  the mesh or puts it on, as stated shares — see `AppState.brush_share` — and
