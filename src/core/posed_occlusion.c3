@@ -1150,8 +1150,8 @@ fn bool DeformedCollisionSurface.hidden_surface(
 
 <*
  Whether the posed skin crosses the sight line from `eye` before `point`.
- Leaves the ray, the first crossing and the distance to `point` for occluded's
- second look.
+ Leaves the ray, the first crossing and the distance to `point` for
+ first_surface.
 *>
 fn bool surface_before(
 	DeformedCollisionSurface* self,
@@ -1176,13 +1176,12 @@ fn bool surface_before(
 }
 
 <*
- Whether the posed body sits wholly between `eye` and an interior rig point.
+ `Picker.first_surface` against the posed skin: how far along the sight line
+ the first surface of the body as drawn stands, when one stands before `point`.
 
- The two-surface rule is the same one `Picker.occluded` documents: the first
- surface puts the ray inside the body; a second before the joint proves it came
- back out, so some other part of the body is in front of the control.
+ @return? NO_SURFACE : `Nothing in between, or the surface was built for another binding or pose.`
 *>
-fn bool DeformedCollisionSurface.occluded(
+fn float? DeformedCollisionSurface.first_surface(
 	&self,
 	Vec3 eye,
 	Vec3 point,
@@ -1193,15 +1192,29 @@ fn bool DeformedCollisionSurface.occluded(
 	collision::Ray ray;
 	collision::HitInfo entry;
 	float distance;
-	if (!surface_before(self, eye, point, binding, palette, generation, &ray, &entry, &distance)) return false;
+	if (!surface_before(self, eye, point, binding, palette, generation, &ray, &entry, &distance)) return NO_SURFACE~;
+	return entry.depth;
+}
 
-	float step = self.scale * SURFACE_EPSILON;
-	collision::Ray onward = {
-		.origin = eye + ray.direction * (entry.depth + step),
-		.direction = ray.direction,
-	};
-	collision::HitInfo exit = self.ray_intersects(onward, binding, palette, generation);
-	return exit.collided && entry.depth + step + exit.depth < distance - step;
+<*
+ Whether the posed body hides an interior rig point from `eye`.
+
+ `Picker.occluded`'s depth rule against the posed skin. The radius is the
+ caller's, measured at rest — a limb is as thick bent as straight, so the rest
+ picker's answer stands under any pose.
+*>
+fn bool DeformedCollisionSurface.occluded(
+	&self,
+	Vec3 eye,
+	Vec3 point,
+	gltf::SkinBinding binding,
+	Matrix4f[] palette,
+	uint generation,
+	float radius)
+{
+	float? entry = self.first_surface(eye, point, binding, palette, generation);
+	if (catch entry) return false;
+	return buried((point - eye).length(), entry, radius, self.scale);
 }
 
 // ---------------------------------------------------------------------------

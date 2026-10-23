@@ -63,6 +63,7 @@ import image;
 import image::png;
 import rig;
 import three;
+import std::collections::list;
 import std::collections::object;
 import std::io::file;
 import std::io::path;
@@ -888,16 +889,18 @@ fn void? save_matted(float[] sum, uint size, usz frames, String path) @local
  from the top left, its depth along the view, and 1 when it is inside the
  picture with no part of the body in front of it. `on_surface` for a point on
  the skin (a landmark), which faces the camera or not, rather than one inside
- the body (a joint), which another part may hide.
+ the body (a joint), which another part may hide — by the overlay's own rule,
+ `rig_point_hidden`, given the joint's thickness and the posed bones.
 *>
-fn void append_seen_point(DString* out, AppState* app, Matrix4f projection, Vec3 eye, Vec3 p, uint size, bool on_surface) @local
+fn void append_seen_point(DString* out, AppState* app, Matrix4f projection, Vec3 eye, Vec3 p, uint size, bool on_surface,
+	float radius = -1.0f, RigBone[] bones = {}, uint dot = 0) @local
 {
 	Vec4 clip = projection.apply({ p.x, p.y, p.z, 1.0f });
 	float w = math::abs(clip.w) < 1.0e-9f ? 1.0e-9f : clip.w;
 	float x = (clip.x / w * 0.5f + 0.5f) * (float)size;
 	float y = (clip.y / w * 0.5f + 0.5f) * (float)size;
 	bool inside = clip.w > 0.0f && x >= 0.0f && y >= 0.0f && x < (float)size && y < (float)size;
-	bool seen = inside && !(on_surface ? app.mesh_hidden_surface(eye, p) : app.mesh_occluded(eye, p));
+	bool seen = inside && !(on_surface ? app.mesh_hidden_surface(eye, p) : app.rig_point_hidden(eye, p, radius, bones, dot));
 	out.appendf("[%s,%s,%s,%d]", (JsonFloat)x, (JsonFloat)y, (JsonFloat)clip.w, seen ? 1 : 0);
 }
 
@@ -1369,10 +1372,21 @@ fn String? tool_render_poses(Object* args, void* user_data, DString* detail) @pr
 			if (labels.len() > 0) labels.append_char(',');
 			labels.appendf(`{"file":"%s","camera":%d,"pose":%d,"blur":%s,"yaw":%s,"pitch":%s,"fov":%s,"points":[`,
 				name, c, index, blurred ? "true" : "false", (JsonFloat)camera.yaw, (JsonFloat)camera.pitch, (JsonFloat)camera.fov);
+			// The posed bones, for the overlay's question of whose skin is in front.
+			List{RigBone} bones;
+			bones.init(tmem);
+			foreach (usz j, parent : view.skeleton.parents)
+			{
+				if (parent < 0) continue;
+				bones.push({ .a = view.dot_ids[(usz)parent], .b = view.dot_ids[j], .from = at[(usz)parent], .to = at[j] });
+			}
 			for (usz j = 0; j < joints; j++)
 			{
 				if (j > 0) labels.append_char(',');
-				append_seen_point(&labels, app, projection, eye, at[j], shoot.size, false);
+				// Held against the joint's rest radius, as the overlay holds its dot.
+				Dot* dot = app.doc.find(view.dot_ids[j]);
+				append_seen_point(&labels, app, projection, eye, at[j], shoot.size, false,
+					dot ? app.dot_body_radius(*dot) : -1.0f, bones.array_view(), view.dot_ids[j]);
 			}
 			labels.append_string("]");
 			if (landmark_count > 0)

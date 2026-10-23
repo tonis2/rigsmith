@@ -329,40 +329,142 @@ fn bool Picker.hidden_surface(&self, Vec3 eye, Vec3 point)
 }
 
 <*
- Whether the whole body sits between `eye` and `point` (B7).
-
- Two casts, the `snap_inside` pattern — dots live *inside* the mesh by design,
- so the first cast always hits something and one cast proves nothing. What
- says "hidden" is the ray having crossed back out of solid material before it
- reaches the point: an entry and a second surface between the eye and the dot
- means the body is in the way. A dot just under the visible skin, or deep in
- the middle of the body, has only the entry in front of it and counts as seen.
-
- The overlay dims occluded dots with this. **A point on the surface wants
- `hidden_surface` instead** — the second cast is what makes this one wrong for
- one, since the surface a vertex sits on is the very thing this looks for.
+ How deep behind the skin in front of it a rig point may sit and still be in
+ sight, in multiples of the body's own radius there. Two is a joint seen
+ through its own limb at up to sixty degrees off square, with the limb's
+ armour or clothing on top; a second limb or half a torso in front is more.
 *>
-fn bool Picker.occluded(&self, Vec3 eye, Vec3 point)
+const float BURIED_K = 2.0;
+
+<*
+ The same allowance's floor, as a fraction of the diagonal: the skin's own
+ thickness and a plate or a sleeve standing off it, which a finger joint's
+ radius is too small to cover.
+*>
+const float BURIED_SLACK = 0.01;
+
+<*
+ The least body a joint is given, as a share of its longest bone. A joint on a
+ model built of shells — a shoulder inside a pauldron, a spine between plates —
+ can sit a hair from some inner layer in most directions, and the probes then
+ say it has no body round it at all. A limb is rarely thinner than this much of
+ its own bone.
+*>
+const float RADIUS_BONE_SHARE = 0.4;
+
+<*
+ That floor's ceiling, as a fraction of the diagonal, so a long thigh bone does
+ not buy its joint a whole leg's depth of allowance — that is the depth of the
+ near leg the far knee is seen through.
+*>
+const float RADIUS_FLOOR_CAP = 0.03;
+
+<*
+ The body a joint is allowed whatever the probes measured: its longest bone's
+ share, capped by the model's size. See `RADIUS_BONE_SHARE`.
+*>
+fn float joint_radius_floor(float longest_bone, float scale)
+	=> math::min(RADIUS_BONE_SHARE * longest_bone, RADIUS_FLOOR_CAP * scale);
+
+// The directions `body_radius` casts along: the six axes and the eight
+// diagonals between them, so a limb at any angle is crossed by several.
+const Vec3[14] RADIUS_PROBES @local = {
+	{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 },
+	{ 0.57735, 0.57735, 0.57735 }, { -0.57735, 0.57735, 0.57735 },
+	{ 0.57735, -0.57735, 0.57735 }, { 0.57735, 0.57735, -0.57735 },
+	{ -0.57735, -0.57735, 0.57735 }, { -0.57735, 0.57735, -0.57735 },
+	{ 0.57735, -0.57735, -0.57735 }, { -0.57735, -0.57735, -0.57735 },
+};
+
+<*
+ How thick the body is around `point`: the median distance to the nearest
+ surface over fourteen directions, with a direction that meets nothing
+ counting as none.
+
+ The median rather than the nearest, because a joint is rarely central — the
+ spine sits a hand from the back and a torso's width from either side, and it
+ is the torso it is buried in, not the back. A point outside the mesh misses in
+ most directions and comes out near zero. Any facing counts, so a model wound
+ inside out measures the same.
+*>
+fn float Picker.body_radius(&self, Vec3 point)
 {
-	// Nothing to hide behind: with no mesh every dot is in plain sight.
-	if (!self.bvh) return false;
+	if (!self.bvh) return 0.0f;
+	float[RADIUS_PROBES.len] reach;
+	foreach (i, direction : RADIUS_PROBES)
+	{
+		collision::HitInfo hit = self.bvh.ray_intersects({ .origin = point, .direction = direction });
+		reach[i] = hit.collided ? hit.depth : 0.0f;
+	}
+	// Insertion sort: fourteen floats.
+	for (usz i = 1; i < reach.len; i++)
+	{
+		float held = reach[i];
+		usz j = i;
+		for (; j > 0 && reach[j - 1] > held; j--) reach[j] = reach[j - 1];
+		reach[j] = held;
+	}
+	return (reach[reach.len / 2 - 1] + reach[reach.len / 2]) * 0.5f;
+}
+
+<*
+ The one rule for whether a rig point is behind the body: it lies deeper
+ behind the first surface in front of it than its own body is thick.
+
+ A depth map's question, asked of one point: `entry` is what the depth buffer
+ would hold at its pixel, `distance` is the point's own depth, and the gap
+ between them is how much body stands in front. A joint always has some —
+ it lives inside — so the gap is held against the body's radius there: a knee
+ seen through its own leg has about that much in front of it, the far knee seen
+ through the near leg has a whole leg more.
+
+ @param distance : `From the eye to the point.`
+ @param entry : `From the eye to the first surface along the same ray.`
+ @param radius : `The body's thickness around the point; see body_radius.`
+ @param scale : `The model's diagonal, for the slack.`
+*>
+fn bool buried(float distance, float entry, float radius, float scale)
+{
+	return distance - entry > BURIED_K * radius + BURIED_SLACK * scale;
+}
+
+<*
+ How far along the sight line from `eye` the first surface stands, when one
+ stands before `point` — what a depth buffer would hold at the point's pixel.
+
+ @return? NO_SURFACE : `Nothing between the eye and the point, or no mesh at all.`
+*>
+fn float? Picker.first_surface(&self, Vec3 eye, Vec3 point)
+{
+	if (!self.bvh) return NO_SURFACE~;
 
 	Vec3 delta = point - eye;
 	float distance = delta.length();
-	if (distance <= self.scale * SURFACE_EPSILON) return false;
+	if (distance <= self.scale * SURFACE_EPSILON) return NO_SURFACE~;
 
-	collision::Ray ray = { .origin = eye, .direction = delta / distance };
-	collision::HitInfo entry = self.bvh.ray_intersects(ray);
-	if (!entry.collided || entry.depth >= distance - self.scale * SURFACE_EPSILON) return false;
+	collision::HitInfo entry = self.bvh.ray_intersects({ .origin = eye, .direction = delta / distance });
+	if (!entry.collided || entry.depth >= distance) return NO_SURFACE~;
+	return entry.depth;
+}
 
-	collision::Ray onward = {
-		.origin = eye + ray.direction * (entry.depth + self.scale * SURFACE_EPSILON),
-		.direction = ray.direction,
-	};
-	collision::HitInfo exit = self.bvh.ray_intersects(onward);
-	if (!exit.collided) return false;
+<*
+ Whether the body hides the rig point `point` from `eye` (B7), on depth alone.
 
-	// A second surface before the point — an exit, or another shell's entry —
-	// means the ray was outside the body somewhere along the way.
-	return entry.depth + self.scale * SURFACE_EPSILON + exit.depth < distance - self.scale * SURFACE_EPSILON;
+ The first surface, then `buried`. A count of the surfaces crossed, which this
+ replaced, got both halves of a real model wrong: armour over a shoulder is a
+ surface out and another in, so the near shoulder read as hidden, while the far
+ shoulder sits inside the same solid as the near chest and crossed only the
+ one, so it read as seen. The overlay adds the question of whose surface that
+ is — see `AppState.rig_point_hidden`.
+
+ **A point on the surface wants `hidden_surface` instead**: a vertex has no
+ body around it to be buried in.
+
+ @param radius : `The body's thickness at the point, when the caller keeps it; negative measures it here.`
+*>
+fn bool Picker.occluded(&self, Vec3 eye, Vec3 point, float radius = -1.0f)
+{
+	float? entry = self.first_surface(eye, point);
+	if (catch entry) return false;
+	return buried((point - eye).length(), entry, radius < 0.0f ? self.body_radius(point) : radius, self.scale);
 }

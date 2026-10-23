@@ -70,8 +70,8 @@ fn void every_character_is_born_with_its_own_counters() @test
 {
 	crig::Character a = crig::new_character({}, "", {}, {}, {}, false);
 	crig::Character b = crig::new_character({}, "", {}, {}, {}, false);
-	defer { a.also_selected.free(); a.outliner_collapsed_joints.free(); a.drag_mates.free(); a.occlusion_memo.free(); }
-	defer { b.also_selected.free(); b.outliner_collapsed_joints.free(); b.drag_mates.free(); b.occlusion_memo.free(); }
+	defer { a.also_selected.free(); a.outliner_collapsed_joints.free(); a.drag_mates.free(); a.occlusion_memo.free(); a.body_radius_memo.free(); }
+	defer { b.also_selected.free(); b.outliner_collapsed_joints.free(); b.drag_mates.free(); b.occlusion_memo.free(); b.body_radius_memo.free(); }
 	test::@check(a.id != 0 && b.id != 0 && a.id != b.id, "ids %d and %d must be distinct and set", a.id, b.id);
 	test::@check(crig::next_generation() != crig::next_generation(), "the counter must not repeat");
 }

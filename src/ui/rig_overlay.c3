@@ -12,13 +12,15 @@ fn Color rig_overlay_ink(Color ink, float opacity)
 
 // Depth is normalized against the rig, not camera distance, so zooming does not
 // change which controls are legible. A flat rig has no artificial far side.
+// Only a hint: the far end of a rig in plain sight keeps three quarters of the
+// near end's ink, so in sight and behind the body stay the two states that read.
 fn float rig_overlay_opacity(float depth, float near_depth, float far_depth,
 	bool occluded, bool selected, float strength)
 {
 	if (selected) return 1.0f;
 	float span = far_depth - near_depth;
 	float phase = span > 0.00001f ? math::clamp((depth - near_depth) / span, 0.0f, 1.0f) : 0.0f;
-	return (0.8f - phase * 0.58f) * (occluded ? 0.45f : 1.0f)
+	return (0.8f - phase * 0.2f) * (occluded ? OCCLUDED_DIM : 1.0f)
 		* math::clamp(strength, MIN_RIG_OVERLAY_STRENGTH, MAX_RIG_OVERLAY_STRENGTH);
 }
 
@@ -35,13 +37,15 @@ fn float effective_rig_overlay_strength(AppState* app)
  Whether this view should fade an overlay point behind the displayed surface.
 
  Hidden mesh has no surface to hide behind. Wireframe is explicitly the view
- through the surface. Every other view asks `mesh_occluded`, which chooses the
- posed accelerator while a palette is live and the rest picker otherwise.
- Keeping that choice here means dots, bones and labels cannot quietly disagree.
+ through the surface. Every other view asks `rig_point_hidden`, which holds the
+ point's depth behind the body on screen against its own thickness and asks
+ whose surface is in front. Keeping that choice here means dots, bones and
+ labels cannot quietly disagree.
 *>
-fn bool AppState.rig_overlay_occluded(&self, Vec3 eye, Vec3 point)
+fn bool AppState.rig_overlay_occluded(&self, Vec3 eye, Vec3 point, float radius = -1.0f,
+	RigBone[] bones = {}, uint a = 0, uint b = 0)
 {
-	return self.show_mesh && !self.wireframe() && self.mesh_occluded(eye, point);
+	return self.show_mesh && !self.wireframe() && self.rig_point_hidden(eye, point, radius, bones, a, b);
 }
 
 // A running clip refreshes one in this many of the overlay's occlusion tests per
@@ -73,7 +77,8 @@ const uint OCCLUSION_REFRESH_STRIDE = 6;
  `key` must separate the two namespaces: dots pass their id, bones pass
  `overlay_bone_key`.
 *>
-fn bool AppState.overlay_occluded(&self, uint key, Vec3 eye, Vec3 point)
+fn bool AppState.overlay_occluded(&self, uint key, Vec3 eye, Vec3 point, float radius = -1.0f,
+	RigBone[] bones = {}, uint a = 0, uint b = 0)
 {
 	// No memo (a zero-initialised headless state) or a still view: the exact test,
 	// every frame. A pose drag moves the body every frame just as playback does,
@@ -83,7 +88,7 @@ fn bool AppState.overlay_occluded(&self, uint key, Vec3 eye, Vec3 point)
 		|| (self.drag.dot != 0 && self.drag.verb != DragVerb.PLACE);
 	if (!self.occlusion_memo_ready || !moving)
 	{
-		bool hidden = self.rig_overlay_occluded(eye, point);
+		bool hidden = self.rig_overlay_occluded(eye, point, radius, bones, a, b);
 		if (self.occlusion_memo_ready) self.occlusion_memo.set(key, hidden);
 		return hidden;
 	}
@@ -94,14 +99,22 @@ fn bool AppState.overlay_occluded(&self, uint key, Vec3 eye, Vec3 point)
 	{
 		if (try hidden = self.occlusion_memo.get(key)) return hidden;
 	}
-	bool hidden = self.rig_overlay_occluded(eye, point);
+	bool hidden = self.rig_overlay_occluded(eye, point, radius, bones, a, b);
 	self.occlusion_memo.set(key, hidden);
 	return hidden;
 }
 
-// A bone's occlusion-memo key, in a namespace disjoint from the dot ids: the top
-// bit is set, which no dot id reaches, so a bone and a dot never share a slot.
-fn uint overlay_bone_key(uint a, uint b) => 0x80000000u | ((a * 2654435761u + b) & 0x7fffffffu);
+// A bone piece's occlusion-memo key, in a namespace disjoint from the dot ids:
+// the top bit is set, which no dot id reaches, so a bone and a dot never share a
+// slot. `piece` keeps the segments of one bone apart.
+fn uint overlay_bone_key(uint a, uint b, uint piece = 0)
+	=> 0x80000000u | ((a * 2654435761u + b + piece * 40503u) & 0x7fffffffu);
+
+// The pieces a bone is drawn and occlusion-tested in. One test at the midpoint
+// gave a whole bone one answer, so a finger half behind the near hand was
+// either all faint or all bright; four lets the line fade where it passes
+// behind the skin.
+const uint BONE_PIECES = 4;
 
 // One step of the occlusion refresh cycle, called once per frame by the tick.
 // Advancing it here rather than in `Viewport.paint` keeps a split view — which

@@ -16,6 +16,7 @@ import rig;
 import gltf;
 import std::math;
 import std::math::matrix;
+import std::collections::list;
 
 
 
@@ -173,27 +174,139 @@ fn bool AppState.rebind_skin(&self, RigView* view)
 }
 
 <*
- Occlusion against whichever surface is actually on screen.
+ How far along the sight line the first surface of the body on screen stands,
+ when one stands before `point`.
 
  A live palette uses the lazy exact posed query; at rest — or if a malformed
  binding prevented that accelerator from being built — the ordinary picker is
  still the correct surface and remains the safe fallback.
+
+ @return? NO_SURFACE : `Nothing between the eye and the point.`
 *>
-fn bool AppState.mesh_occluded(&self, Vec3 eye, Vec3 point)
+fn float? AppState.mesh_first_surface(&self, Vec3 eye, Vec3 point)
 {
-	if (self.pose_palette.len > 0
-		&& self.deformed_surface.matches(self.skin, self.pose_palette, self.pose_generation))
+	if (self.posed_surface_shown())
 	{
-		return self.deformed_surface.occluded(
+		return self.deformed_surface.first_surface(
 			eye, point, self.skin, self.pose_palette, self.pose_generation);
 	}
-	return self.picker.occluded(eye, point);
+	return self.picker.first_surface(eye, point);
+}
+
+<*
+ A bone as the overlay draws it: the two dots it joins and where they stand.
+*>
+struct RigBone
+{
+	uint a, b;
+	Vec3 from, to;
+}
+
+<*
+ Every bone of the rig where it is drawn now, for `rig_point_hidden`'s
+ question of whose surface is in front. Built once per frame by the caller, not
+ per point: a point asks it of every bone.
+*>
+fn RigBone[] AppState.rig_bones(&self, Allocator allocator)
+{
+	List{RigBone} bones;
+	bones.init(allocator);
+	foreach (edge : self.doc.edges.array_view())
+	{
+		Dot* a = self.doc.find(edge.a);
+		Dot* b = self.doc.find(edge.b);
+		if (!a || !b) continue;
+		bones.push({ .a = edge.a, .b = edge.b, .from = self.dot_position(*a), .to = self.dot_position(*b) });
+	}
+	return bones.to_array(allocator);
+}
+
+<*
+ Whether the bone nearest `at` meets `a` or `b`: the surface there is the body
+ around that joint, or around either end of that bone.
+*>
+fn bool owns_surface(RigBone[] bones, Vec3 at, uint a, uint b) @local
+{
+	float best = float::max;
+	RigBone* nearest = null;
+	foreach (&bone : bones)
+	{
+		Vec3 along = bone.to - bone.from;
+		float length2 = along.dot(along);
+		float t = length2 > 0.0f ? math::clamp((at - bone.from).dot(along) / length2, 0.0f, 1.0f) : 0.0f;
+		float gap = (at - (bone.from + along * t)).length();
+		if (gap < best)
+		{
+			best = gap;
+			nearest = bone;
+		}
+	}
+	if (!nearest) return false;
+	return nearest.a == a || nearest.b == a || (b != 0 && (nearest.a == b || nearest.b == b));
+}
+
+<*
+ Whether the body on screen hides an interior rig point: a dot, `a`, or a point
+ along the bone from `a` to `b`.
+
+ Two questions, and the point is hidden only when both say so. **How deep** —
+ the gap between the first surface on the sight line and the point, against the
+ body's thickness there (`buried`). **Whose surface** — the bone nearest the
+ spot where the sight line meets the skin. A surface belonging to the point's
+ own joint is its own body in front of it, however deep: a shoulder under a
+ pauldron, a knee under a tasset, where shells inside shells make the thickness
+ hard to measure. A surface belonging to another limb is that limb in front.
+
+ With no bones the second question has no answer and depth alone decides.
+
+ @param radius : `The body's thickness at the point (dot_body_radius); negative measures it here.`
+ @param bones : `rig_bones, for the question of whose surface is in front.`
+*>
+fn bool AppState.rig_point_hidden(&self, Vec3 eye, Vec3 point, float radius = -1.0f,
+	RigBone[] bones = {}, uint a = 0, uint b = 0)
+{
+	float? entry = self.mesh_first_surface(eye, point);
+	if (catch entry) return false;
+	Vec3 delta = point - eye;
+	float distance = delta.length();
+	if (radius < 0.0f) radius = self.picker.body_radius(point);
+	if (!buried(distance, entry, radius, self.picker.scale)) return false;
+	if (bones.len == 0 || a == 0) return true;
+	return !owns_surface(bones, eye + delta / distance * entry, a, b);
+}
+
+<*
+ How thick the body is around a dot: measured at its rest position against the
+ rest mesh and remembered until the dot or the mesh moves, and never less than
+ its bones allow (`joint_radius_floor`). The overlay holds every dot and bone
+ against this, every frame, and fourteen casts a dot a frame is more than a
+ still rig needs.
+*>
+fn float AppState.dot_body_radius(&self, Dot dot)
+{
+	float longest = 0.0f;
+	foreach (edge : self.doc.edges.array_view())
+	{
+		if (edge.a != dot.id && edge.b != dot.id) continue;
+		Dot* other = self.doc.find(edge.a == dot.id ? edge.b : edge.a);
+		if (other) longest = math::max(longest, (other.position - dot.position).length());
+	}
+	float floor = joint_radius_floor(longest, self.picker.scale);
+
+	if (!self.occlusion_memo_ready) return math::max(floor, self.picker.body_radius(dot.position));
+	if (try known = self.body_radius_memo.get(dot.id))
+	{
+		if (known.at == dot.position && known.geometry == self.geometry_generation) return math::max(floor, known.radius);
+	}
+	float radius = self.picker.body_radius(dot.position);
+	self.body_radius_memo.set(dot.id, { .at = dot.position, .geometry = self.geometry_generation, .radius = radius });
+	return math::max(floor, radius);
 }
 
 <*
  Whether the surface on screen is the posed one, and can answer for itself.
 
- The condition `mesh_occluded` tests, named once: a palette is up and the
+ The condition `mesh_first_surface` tests, named once: a palette is up and the
  accelerator was built for a binding shaped like the current one. Everything
  that asks "where is this vertex right now" or "is this vertex in sight" reads
  the same answer, so the brush, the overlay and the pick test cannot disagree

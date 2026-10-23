@@ -132,12 +132,12 @@ const Color CONTACT_RING = { 0.95, 0.35, 0.30, 0.90 };
 // A contact window on the sheet: when a foot or hand is planted.
 const Color CONTACT_BAR = { 0.30, 0.72, 0.55, 0.80 };
 
-// How much colour a dot keeps when the body is between it and the eye. The
-// overlay has no depth test on purpose — a dot you cannot see is a dot you
-// cannot click — so occlusion dims rather than hides, and this is deliberately
-// well above zero: it has to read as "behind" without becoming invisible.
-// Kept in the same range as the gizmo's FAR_DIM so the two cues match.
-const float OCCLUDED_DIM = 0.45;
+// How much colour a dot, bone or name keeps when the body is between it and
+// the eye. The overlay has no depth test on purpose — a dot you cannot see is a
+// dot you cannot click — so occlusion dims rather than hides, but only just: the
+// far hand's fingers seen through the near one are noise over the joints being
+// aimed at, so what is behind the skin is a faint trace, not a second rig.
+const float OCCLUDED_DIM = 0.12;
 
 // ---- view gizmo ----
 // Red/green/blue for X/Y/Z, because every other 3D tool the user has open uses

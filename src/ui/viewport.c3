@@ -507,6 +507,10 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	// Under the live rig: the ghosts are context, not something to aim at.
 	self.paint_ghosts(elem, painter, view_projection, app);
 
+	// Where every bone is drawn, for the question of whose skin stands in front
+	// of a point — see `rig_point_hidden`.
+	RigBone[] bones = app.rig_bones(tmem);
+
 	// Bones first, so a dot always sits on top of the lines meeting at it.
 	foreach (edge : doc.edges.array_view())
 	{
@@ -514,22 +518,42 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 		Dot* b = doc.find(edge.b);
 		if (!a || !b) continue;
 
-		Vec2? from = project(view_projection, app.dot_position(*a), elem.size);
-		Vec2? to = project(view_projection, app.dot_position(*b), elem.size);
-		if (catch from) continue;
-		if (catch to) continue;
+		Vec3 start = app.dot_position(*a);
+		Vec3 end = app.dot_position(*b);
+		float start_radius = app.dot_body_radius(*a);
+		float end_radius = app.dot_body_radius(*b);
+		if (catch project(view_projection, start, elem.size)) continue;
+		if (catch project(view_projection, end, elem.size)) continue;
 
 		// Both ends, not either: the bone *into* a chain's first joint is the
 		// animation's — what the solver owns is the segment leaving it — so a
 		// tinted edge means "the physics moves this line", which is exactly the
 		// run between consecutive dynamic joints.
 		bool simulated = app.show_physics && app.is_dynamic(edge.a) && app.is_dynamic(edge.b);
-		Vec3 midpoint = (app.dot_position(*a) + app.dot_position(*b)) * 0.5f;
-		bool hidden = app.overlay_occluded(overlay_bone_key(edge.a, edge.b), model_eye, midpoint);
 		bool selected = app.is_selected(a.id) && app.is_selected(b.id);
-		float opacity = rig_overlay_opacity(midpoint.dot(forward), near_depth, far_depth, hidden, selected, overlay_strength);
-		painter.line(from, to, selected ? BONE_WIDTH : BONE_WIDTH * 0.65f,
-			rig_overlay_ink(simulated ? PHYSICS_BONE : BONE, opacity));
+		Color ink = simulated ? PHYSICS_BONE : BONE;
+		float width = selected ? BONE_WIDTH : BONE_WIDTH * 0.65f;
+
+		// In pieces, each faded by what stands in front of its own middle, so a
+		// bone that runs behind the skin fades there and not along its length.
+		// Split in 3D and then projected, so the joins stay on the bone under
+		// perspective.
+		for (uint piece = 0; piece < BONE_PIECES; piece++)
+		{
+			Vec3 near = start + (end - start) * ((float)piece / BONE_PIECES);
+			Vec3 far = start + (end - start) * ((float)(piece + 1) / BONE_PIECES);
+			Vec2? from = project(view_projection, near, elem.size);
+			Vec2? to = project(view_projection, far, elem.size);
+			if (catch from) continue;
+			if (catch to) continue;
+			Vec3 middle = (near + far) * 0.5f;
+			float along = ((float)piece + 0.5f) / BONE_PIECES;
+			float radius = start_radius + (end_radius - start_radius) * along;
+			bool hidden = app.overlay_occluded(overlay_bone_key(edge.a, edge.b, piece), model_eye, middle, radius,
+				bones, edge.a, edge.b);
+			float opacity = rig_overlay_opacity(middle.dot(forward), near_depth, far_depth, hidden, selected, overlay_strength);
+			painter.line(from, to, width, rig_overlay_ink(ink, opacity));
+		}
 	}
 
 	// Between the bones and the dots, like the guides: a capsule is drawn around
@@ -564,7 +588,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 		bool anchor = dot.id == app.selected;
 		bool root = dot.id == doc.root_id;
 
-		bool occluded = app.overlay_occluded(dot.id, model_eye, position);
+		bool occluded = app.overlay_occluded(dot.id, model_eye, position, app.dot_body_radius(dot), bones, dot.id);
 		float opacity = rig_overlay_opacity(position.dot(forward), near_depth, far_depth, occluded, selected, overlay_strength);
 		float radius = selected ? DOT_RADIUS : DOT_RADIUS * 0.65f;
 
@@ -1013,6 +1037,7 @@ fn void Viewport.paint_joint_names(&self, Element* elem, Painter* painter,
 	Matrix4f view_projection, OrbitCamera* camera)
 {
 	AppState* app = elem.inherit(AppState)!!;
+	RigBone[] bones = app.rig_bones(tmem);
 
 	foreach (dot : app.doc.dots.array_view())
 	{
@@ -1025,12 +1050,12 @@ fn void Viewport.paint_joint_names(&self, Element* elem, Painter* painter,
 		Vec2? at = project(view_projection, position, elem.size);
 		if (catch at) continue;
 
-		bool occluded = app.overlay_occluded(dot.id, app.model_eye(camera), position);
+		bool occluded = app.overlay_occluded(dot.id, app.model_eye(camera), position, app.dot_body_radius(dot), bones, dot.id);
 
 		Color ink = selected ? LABEL : LABEL_DIM;
 		if (!selected)
 		{
-			float opacity = effective_rig_overlay_strength(app) * (occluded ? 0.35f : 1.0f);
+			float opacity = effective_rig_overlay_strength(app) * (occluded ? OCCLUDED_DIM : 1.0f);
 			ink = rig_overlay_ink(ink, opacity);
 		}
 

@@ -594,12 +594,17 @@ fn void posed_occlusion_follows_the_palette_and_invalidates_its_lazy_cache() @te
 	Vec3 behind = { 5, 0, -2 };
 	test::@check(!rest_picker.occluded(eye, behind),
 		"the rest picker unexpectedly reaches the translated cube fixture");
-	test::eq(posed.occluded(eye, behind, binding, palette[..], 1),
-		reference.occluded(eye, behind));
-	test::eq(posed.occluded(eye, { 5, 0, 0 }, binding, palette[..], 1),
-		reference.occluded(eye, { 5, 0, 0 }));
-	test::eq(posed.occluded(eye, { 5, 0, 2 }, binding, palette[..], 1),
-		reference.occluded(eye, { 5, 0, 2 }));
+	// The same radius to both: the posed query takes its caller's, so the
+	// comparison is of the surfaces alone.
+	Vec3[3] asked = { behind, { 5, 0, 0 }, { 5, 0, 2 } };
+	foreach (point : asked)
+	{
+		float radius = reference.body_radius(point);
+		test::eq(posed.occluded(eye, point, binding, palette[..], 1, radius),
+			reference.occluded(eye, point, radius));
+	}
+	test::@check(reference.occluded(eye, behind) && !reference.occluded(eye, { 5, 0, 0 }),
+		"the translated cube hides the point behind it but not its own centre");
 
 	// The UI-facing door chooses that posed surface while retaining the simple
 	// clean-mesh and wireframe rules. This is what all three viewport callers —
@@ -625,9 +630,9 @@ fn void posed_occlusion_follows_the_palette_and_invalidates_its_lazy_cache() @te
 	// Reuse the exact same occluder with a new evaluated pose. If either cache
 	// ignores the generation, one of these two answers remains at +5.
 	palette[0].m[12] = -5.0f;
-	test::@check(!posed.occluded(eye, behind, binding, palette[..], 2),
+	test::@check(!posed.occluded(eye, behind, binding, palette[..], 2, 0.0f),
 		"generation two retained generation one's posed surface");
-	test::@check(posed.occluded({ -5, 0, 6 }, { -5, 0, -2 }, binding, palette[..], 2),
+	test::@check(posed.occluded({ -5, 0, 6 }, { -5, 0, -2 }, binding, palette[..], 2, 0.0f),
 		"generation two did not move the surface with its palette");
 }
 
@@ -791,4 +796,119 @@ fn void the_lasso_gathers_the_posed_body() @test
 	usz seen = app.lasso_vertices(caught[..], view_projection, viewport, eye, around_posed[..], false);
 	test::@check(seen > 0, "a loop around the posed cube caught nothing that could be seen");
 	test::eq(app.lasso_vertices(caught[..], view_projection, viewport, eye, around_rest[..], false), (usz)0);
+}
+
+// ---------------------------------------------------------------------------
+// Behind the body: depth against the body's own thickness
+
+<*
+ A joint deep inside one long solid is behind it. Looked at end-on, the far end
+ of a limb — or the far shoulder through the chest — has only the one surface
+ in front of it, and a count of surfaces crossed called it seen; the depth rule
+ holds the gap behind that surface against how thick the body is there.
+
+ *Re-introduce:* go back to hiding a point only when the ray leaves the body
+ before it, and the deep point reads as seen.
+*>
+fn void a_point_deep_along_one_solid_is_behind_it() @test
+{
+	Vec3[8] at;
+	corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
+	uint[36] indices = BOX_FACES;
+	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
+	defer picker.free();
+
+	Vec3 eye = { 0, 0, 5 };
+	test::@check(!picker.occluded(eye, { 0, 0, -0.4 }), "a point just inside the face in front was hidden");
+	test::@check(picker.occluded(eye, { 0, 0, -6 }), "a point six units down the solid was seen");
+}
+
+<*
+ A plate standing just off the body — a pauldron, a breastplate — is armour
+ over the joint, not a second body in front of it. The ray goes in and out of
+ the plate before it reaches the skin, which a count of surfaces read as the
+ joint being behind something.
+
+ *Re-introduce:* the same count, and the joint under the plate reads as hidden.
+*>
+fn void a_plate_over_the_body_does_not_hide_the_joint_under_it() @test
+{
+	TwoBoxes storage;
+	crig::Picker picker = crig::build_picker(storage.mesh({ -1, -1, -1 }, { 1, 1, 1 }, { -1, -1, 1.05 }, { 1, 1, 1.1 }));
+	defer picker.free();
+
+	test::@check(!picker.occluded({ 0, 0, 5 }, { 0, 0, 0.5 }), "the plate hid the joint behind it");
+}
+
+// A second solid in front, with air between, hides what is inside the rear one.
+fn void a_solid_in_front_hides_a_joint_in_the_one_behind() @test
+{
+	TwoBoxes storage;
+	crig::Picker picker = crig::build_picker(storage.mesh({ -1, -1, 1 }, { 1, 1, 4 }, { -1, -1, -3 }, { 1, 1, -1 }));
+	defer picker.free();
+
+	Vec3 eye = { 0, 0, 10 };
+	test::@check(picker.occluded(eye, { 0, 0, -2 }), "the rear solid's joint was seen through the front one");
+	test::@check(!picker.occluded(eye, { 0, 0, 3 }), "the front solid's own joint was hidden");
+}
+
+// The body radius is the thickness around a point: about the cube's half-width
+// at its centre, and nothing outside the mesh, where a point has no body round it.
+fn void the_body_radius_is_the_thickness_round_the_point() @test
+{
+	Vec3[8] at;
+	corners(at[..], { -1, -1, -1 }, { 1, 1, 1 });
+	uint[36] indices = BOX_FACES;
+	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
+	defer picker.free();
+
+	float centre = picker.body_radius({ 0, 0, 0 });
+	test::@check(centre >= 1.0f && centre <= 1.7321f, "the cube's centre measured %f", centre);
+	test::eq(picker.body_radius({ 0, 0, -6 }), 0.0f);
+
+	Vec3 eye = { 0, 0, 5 };
+	test::@check(picker.occluded(eye, { 0, 0, -6 }), "a point behind the whole cube was seen");
+	test::@check(!picker.occluded(eye, { 0, 0, 2 }), "a point in front of the cube was hidden");
+}
+
+<*
+ Depth is one half of the overlay's rule; whose skin is in front is the other.
+ A joint at the far end of its own long limb, seen down its length, has only
+ its own body in front of it, so it stays in sight however deep it is. The
+ same depth behind *another* limb's skin hides it.
+
+ *Re-introduce:* drop the ownership half from `rig_point_hidden`, and the end of
+ the limb reads as hidden.
+*>
+fn void a_joint_behind_its_own_skin_is_seen_and_behind_another_limb_hidden() @test
+{
+	Vec3[8] at;
+	corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
+	uint[36] indices = BOX_FACES;
+	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
+	defer picker.free();
+	crig::AppState app = { .picker = picker, .show_mesh = true };
+
+	Vec3 eye = { 0, 0, 5 };
+	Vec3 deep = { 0, 0, -6 };
+	crig::RigBone[1] own = { { .a = 1, .b = 2, .from = { 0, 0, -0.3 }, .to = deep } };
+	test::@check(!app.rig_point_hidden(eye, deep, -1.0f, own[..], 2),
+		"the end of a limb seen down its own length was hidden");
+
+	// Another limb, just under the face the sight line enters by, owns that skin.
+	crig::RigBone[2] crossed = { own[0], { .a = 3, .b = 4, .from = { -0.4, 0, -0.1 }, .to = { 0.4, 0, -0.1 } } };
+	test::@check(app.rig_point_hidden(eye, deep, -1.0f, crossed[..], 2),
+		"the same joint behind another limb's skin was seen");
+	test::@check(app.rig_point_hidden(eye, deep), "with no bones, depth alone did not decide");
+}
+
+// A joint is never given less body than its bones allow, and a long bone does
+// not buy it more than a few hundredths of the model.
+fn void a_joints_radius_floor_follows_its_bone_and_stops() @test
+{
+	test::@check(math::abs(crig::joint_radius_floor(0.1f, 2.0f) - 0.1f * crig::RADIUS_BONE_SHARE) < 1e-6f,
+		"a short bone's joint was not given its bone's share");
+	test::@check(math::abs(crig::joint_radius_floor(1.0f, 2.0f) - 2.0f * crig::RADIUS_FLOOR_CAP) < 1e-6f,
+		"a long bone bought its joint more than the cap");
+	test::eq(crig::joint_radius_floor(0.0f, 2.0f), 0.0f);
 }

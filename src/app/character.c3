@@ -30,6 +30,15 @@ import std::math::quaternion;
 import std::collections::list;
 import std::collections::map;
 
+// One dot's body radius and what it was measured against: its rest position
+// and the mesh, by generation. See `AppState.dot_body_radius`.
+struct BodyRadius
+{
+	Vec3 at;
+	uint geometry;
+	float radius;
+}
+
 struct Character
 {
 	// Stable for the session and never reused, so a renderer keying its draw
@@ -477,6 +486,9 @@ struct Character
 	// `_ready` guards a zero-initialised state (a headless check) that never
 	// called `init`.
 	HashMap{uint, bool} occlusion_memo;
+	// The body's thickness around each dot, which the dimming holds its depth
+	// behind the skin against — see `dot_body_radius`. Under the same `_ready`.
+	HashMap{uint, BodyRadius} body_radius_memo;
 	bool occlusion_memo_ready;
 	uint occlusion_phase;
 
@@ -978,6 +990,7 @@ fn Character new_character(rig::TriMesh geometry, String source_path,
 	character.outliner_collapsed_joints.init(mem);
 	character.drag_mates.init(mem);
 	character.occlusion_memo.init(mem);
+	character.body_radius_memo.init(mem);
 	character.occlusion_memo_ready = true;
 	return character;
 }

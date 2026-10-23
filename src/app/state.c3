@@ -1585,7 +1585,11 @@ fn void AppState.free_character_state(&self)
 	self.also_selected.free();
 	self.outliner_collapsed_joints.free();
 	self.drag_mates.free();
-	if (self.occlusion_memo_ready) self.occlusion_memo.free();
+	if (self.occlusion_memo_ready)
+	{
+		self.occlusion_memo.free();
+		self.body_radius_memo.free();
+	}
 	self.player_pose.free(mem);
 	self.drop_playback_rig();
 	self.drop_onion();
