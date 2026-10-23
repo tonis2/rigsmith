@@ -36,3 +36,5 @@ After a fresh clone:
 
     git submodule update --init --recursive
     libs/three/setup.sh          # fetches the macOS Vulkan driver
+
+If you open a new rigsmith instance, close the old ones before, and run rigsmith instance on port 8088 (the default one)    
