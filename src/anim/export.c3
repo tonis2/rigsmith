@@ -541,7 +541,7 @@ fn float[] bake_times(
 	// A target moves the head between the body's keys, so its key times are
 	// samples too.
 	if (bake) times = aim_sample_times(allocator, &template, times);
-	if (bake) times = pin_sample_times(allocator, &template, times);
+	if (bake) times = path_sample_times(allocator, &template, pin_sample_times(allocator, &template, times));
 	// A layer adds motion between the base keys — a wave has none of its own —
 	// so a baked clip also samples where the layers need it.
 	if (bake) times = layer_sample_times(allocator, &template, times);
@@ -680,7 +680,7 @@ fn void aim_export_pose(
 	ConstraintRig held = constraints;
 	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
 	// Pins before aims, the viewport's order.
-	pin_pose(allocator, skeleton, names, template.pins, time, template.duration, template.loop,
+	pin_pose(allocator, skeleton, names, clip_live_pins(tmem, &template, time), time, template.duration, template.loop,
 		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 	if (!template.plays_aims()) return;
 	aim_pose(allocator, skeleton, names, template.aims, template.aim_targets, time, template.duration, template.loop,

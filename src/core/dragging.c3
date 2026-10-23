@@ -123,6 +123,7 @@ enum DragVerb
 	POSE,
 	TURN,
 	AIM,
+	PATH, // a motion path's point or slice; see app/path_edit.c3
 }
 
 <*
@@ -135,8 +136,13 @@ enum DragVerb
 *>
 struct DragState
 {
-	uint dot;      // the dot being moved, 0 when none is; AIM_DRAG_DOT while a look-at target is dragged
+	uint dot;      // the dot being moved, 0 when none is; AIM_DRAG_DOT while a look-at target or a path is dragged
 	usz aim;       // AIM: the target's handle, an index into `posed_aims`
+	// PATH: which of the edited clip's paths, and which of its points — or, with
+	// `path_slice`, which of its slices.
+	usz path;
+	usz path_handle;
+	bool path_slice;
 	<*
 	 Where the gesture began.
 

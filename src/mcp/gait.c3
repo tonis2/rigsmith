@@ -35,7 +35,7 @@ const String AUTHOR_GAIT_SCHEMA = `{"type":"object","properties":{
 		"offset":{"type":"number","description":"Phase of the cycle the foot lands at, 0 to 1."}
 	},"required":["joint"]}},
 	"samples":{"type":"number","description":"Keys per cycle. Default 40, between 8 and 240."},
-	"pin_feet":{"description":"Pin each foot to its stance path after the cycle is written: \"auto\" (the default) pins only when the cycle measures as sliding — the rig's joint limits refusing part of a solved stance, an ankle that will not flex as far as the stride asks — true always, false never. The answer's pinned says which happened.","anyOf":[{"type":"boolean"},{"type":"string","enum":["auto"]}]},
+	"pin_feet":{"description":"Pin each foot to its stance path after the cycle is written. Each foot already follows a motion path (get_paths; generated until edited), which holds it, so \"auto\" (the default) pins only a cycle with no paths that measures as sliding — the rig's joint limits refusing part of a solved stance, an ankle that will not flex as far as the stride asks — true always, false never. The answer's pinned says which happened.","anyOf":[{"type":"boolean"},{"type":"string","enum":["auto"]}]},
 	"pelvis_drop":{"type":"number","description":"How far the hips sit below standing height, in model units, in place of the smallest drop that keeps every leg short of straight (the answer's pelvis_drop). Smaller for straighter legs, larger for a crouch; at most 0.6 of the leg's height. While a foot is down the floor solve still plants it, so this is a statement about how the legs bend."},
 	"arms":{"type":"object","description":"For an upright two-legged figure with upper_body on: multipliers on the arms' default motion, each 1 when left out, 0 to 4.","properties":{
 		"swing":{"type":"number","description":"How far the arms swing forward and back."},
@@ -250,6 +250,8 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a pin_feet argument."`);
 	out.appendf(`,"pinned":%s,"slide_before_pins":%s`, authored_pinned ? "true" : "false", (JsonFloat)slide_before);
 	if (result.kept_layers > 0) out.appendf(`,"kept_layers":%d`, result.kept_layers);
+	// The feet follow paths the viewport (and set_path) can reshape; get_paths lists them.
+	out.appendf(`,"paths":%d`, result.paths);
 	out.append_string(`,"landed":`);
 	out.append_string(applied);
 	out.append_string(`,"metrics":`);

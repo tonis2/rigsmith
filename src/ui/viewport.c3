@@ -135,6 +135,7 @@ struct Viewport (Widget)
 	// selects the model, so the tool's gizmo moves onto it; a drag still orbits.
 	bool maybe_pick_model;
 	usz maybe_drag_aim; // 1 + the handle index of the target ring pressed; a drag past CLICK_SLOP moves the target
+	PathPress maybe_path; // a motion path's point or slice pressed; a drag past CLICK_SLOP moves it
 	uint maybe_drag_dot; // selected on press; becomes a pose (or, on Joints, a rest) drag past CLICK_SLOP
 	Vec2 press_at;
 
@@ -564,6 +565,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	self.paint_facing(elem, painter, view_projection, app);
 	self.paint_chain_preview(elem, painter, view_projection, app);
 	self.paint_motion_path(elem, painter, view_projection, app);
+	self.paint_paths(elem, painter, view_projection, app);
 
 	// Between the bones and the dots: a guide is worth more than a bone it
 	// crosses and less than the dot it is about.
@@ -1231,8 +1233,10 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 	DragState drag = app.drag;
 	if (drag.dot == 0) return;
 
-	Dot* dot = drag.verb == DragVerb.AIM ? null : app.doc.find(drag.dot);
-	if (!dot && drag.verb != DragVerb.AIM) return;
+	bool free_point = drag.verb == DragVerb.AIM || drag.verb == DragVerb.PATH;
+	Dot* dot = free_point ? null : app.doc.find(drag.dot);
+	if (!dot && !free_point) return;
+	if (drag.verb == DragVerb.PATH && drag.path_slice) return;
 
 	// Where the thing being dragged is *now*. For a rest move that is the dot's
 	// own position; for a pose it is wherever the solve has carried the joint,
@@ -1245,6 +1249,7 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 	{
 		at = drag.aim < app.posed_aims.len ? app.posed_aims[drag.aim].at : drag.from;
 	}
+	if (drag.verb == DragVerb.PATH) at = app.path_drag_at();
 
 	// A turn reads the three keys as the axis it spins about rather than a line
 	// to travel along, so there is no constraint line to draw — the guide for it
@@ -1415,6 +1420,14 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						app.end_drag();
 						app.refresh_ui();
 						elem.request_paint();
+						return true;
+					}
+
+					// A motion path's handles are over the joints too, and drawing a path
+					// takes every click.
+					if (!(app.sketching || app.brushing || app.lassoing || app.areaing) && app.paths_shown()
+						&& self.press_paths(elem, app, event.pos))
+					{
 						return true;
 					}
 
@@ -1774,6 +1787,8 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				}
 			}
 
+			if (self.move_paths(elem, app, event.pos)) return true;
+
 			if (self.maybe_drag_aim != 0)
 			{
 				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
@@ -1942,6 +1957,13 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						self.area_painting = false;
 						app.end_grow_drag();
 						app.refresh_ui();
+					}
+					else if (self.maybe_path.pending)
+					{
+						// A click on a path's handle picked it on the press.
+						self.maybe_path = {};
+						app.refresh_ui();
+						elem.request_paint();
 					}
 					else if (self.maybe_drag_aim != 0)
 					{
@@ -2377,8 +2399,9 @@ fn void Viewport.drag_dot(&self, Element* elem, Vec2 pixel)
 	AppState* app = elem.inherit(AppState)!!;
 
 	// A target drag has no dot; everything else needs the one it moves.
-	Dot* dot = app.drag.verb == DragVerb.AIM ? null : app.doc.find(app.drag.dot);
-	if (!dot && app.drag.verb != DragVerb.AIM)
+	bool free_point = app.drag.verb == DragVerb.AIM || app.drag.verb == DragVerb.PATH;
+	Dot* dot = free_point ? null : app.doc.find(app.drag.dot);
+	if (!dot && !free_point)
 	{
 		app.drag = {};
 		app.drag_mates.clear();
@@ -2508,6 +2531,21 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 	if (app.drag.verb == DragVerb.AIM)
 	{
 		app.aim_target_toward(target - app.drag.grab);
+		elem.request_paint();
+		return;
+	}
+	if (app.drag.verb == DragVerb.PATH)
+	{
+		if (app.drag.path_slice)
+		{
+			sz u_at = -1;
+			float u = self.path_fraction_at(elem, app, app.drag.path, pixel, &u_at);
+			if (u_at >= 0) app.path_slice_to(u);
+		}
+		else
+		{
+			app.path_point_toward(target - app.drag.grab);
+		}
 		elem.request_paint();
 		return;
 	}

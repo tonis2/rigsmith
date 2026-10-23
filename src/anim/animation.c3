@@ -460,6 +460,12 @@ struct AnimTemplate
 	// Joints held in place for a window of the clip, solved live like the aims; see
 	// anim/pin.c3. Owned with an owned template and persisted in the project sidecar only.
 	AnimPin[] pins;
+	// Curves joints follow, solved live with the pins; see anim/path.c3. Owned with
+	// an owned template and persisted in the project sidecar only.
+	AnimPath[] paths;
+	// The gait the clip was written from, when it was; see anim/gait.c3. Kept so
+	// the viewport can write it again with a longer stride or another gait.
+	AnimGaitPreset gait;
 	AnimTrack[] tracks; // compiled sparse lookup, owned with an owned template
 	bool tracks_compiled;
 	bool owned; // heap-allocated; false for a template written out as a constant
@@ -604,6 +610,8 @@ fn void AnimTemplate.free(&self, Allocator allocator)
 	free_aims(allocator, self.aims);
 	free_aim_targets(allocator, self.aim_targets);
 	free_pins(allocator, self.pins);
+	free_anim_paths(allocator, self.paths);
+	self.gait.free(allocator);
 	*self = {};
 }
 

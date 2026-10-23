@@ -433,6 +433,8 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 		clip.aim_targets = aim_targets_copy(mem, held.aim_targets);
 		free_pins(mem, clip.pins);
 		clip.pins = pins_copy(mem, held.pins);
+		free_anim_paths(mem, clip.paths);
+		clip.paths = anim_paths_copy(mem, held.paths);
 		break;
 	}
 
@@ -981,6 +983,23 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 				(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute ? "true" : "false")!!;
 		}
 		out.append_char(']');
+	}
+	if (clip.paths.len > 0)
+	{
+		out.append_string(`,"paths":[`);
+		foreach (usz i, &path : clip.paths)
+		{
+			if (i > 0) out.append_char(',');
+			out.append_char('{');
+			append_path_fields(&out, path);
+			out.append_char('}');
+		}
+		out.append_char(']');
+	}
+	if (clip.gait.set)
+	{
+		out.append_string(`,"gait":`);
+		append_gait_preset(&out, &clip.gait);
 	}
 	out.append_char('}');
 

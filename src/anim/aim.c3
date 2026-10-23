@@ -863,12 +863,15 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 		AnimTemplate plain = clip_copy_without_aims(allocator, source);
 		free_pins(allocator, plain.pins);
 		plain.pins = {};
+		free_anim_paths(allocator, plain.paths);
+		plain.paths = {};
 		return plain;
 	}
 
 	float[] seed = alloc::new_array(allocator, float, (sz)source.keyframes.len);
 	foreach (usz i, frame : source.keyframes) seed[i] = frame.time;
-	float[] keyed = pin_sample_times(allocator, &source, aim_sample_times(allocator, &source, seed));
+	float[] keyed = path_sample_times(allocator, &source,
+		pin_sample_times(allocator, &source, aim_sample_times(allocator, &source, seed)));
 	defer alloc::free(allocator, keyed);
 
 	// The spans between those, cut finer.
@@ -914,7 +917,7 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 		rig::Pose pose = source.pose(allocator, skeleton, names, time, false, honor_solo: false);
 		defer pose.free(allocator);
 		if (source.ground.solves()) ground_pose(allocator, skeleton, names, source.ground, &pose, source.phase_at(time));
-		pin_pose(allocator, skeleton, names, source.pins, time, source.duration, source.loop, &pose,
+		pin_pose(allocator, skeleton, names, clip_live_pins(tmem, &source, time), time, source.duration, source.loop, &pose,
 			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 		aim_pose(allocator, skeleton, names, source.aims, source.aim_targets, time, source.duration, source.loop, &pose,
 			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
@@ -964,6 +967,8 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 	out.aim_targets = {};
 	free_pins(allocator, out.pins);
 	out.pins = {};
+	free_anim_paths(allocator, out.paths);
+	out.paths = {};
 	out.compile_tracks(allocator);
 	return out;
 }

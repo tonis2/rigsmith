@@ -146,6 +146,9 @@ fn AnimTemplate? clip_cycle(Allocator allocator, AnimTemplate source, float peri
 	out.ground = {};
 	free_pins(allocator, out.pins);
 	out.pins = {};
+	free_anim_paths(allocator, out.paths);
+	out.paths = {};
+	out.gait.free(allocator);
 	return out;
 }
 

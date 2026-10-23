@@ -558,6 +558,22 @@ fn ToolTable new_tool_table(AppState* app)
 		.hidden = true,
 	});
 	server.add_tool({
+		.name = "get_paths",
+		.description = "A clip's motion paths: curves a joint follows (a hand along an arc, a foot through its step, a tail's tip through a swish). Each has the joint, the points the curve runs through (model space, fractions of rig height; sharp points join with straight lines), whether it closes, and its slices — at each slice's time the joint is u (0..1, by length) along the curve, moving at a steady speed between them, tagged down/up where a foot lands or lifts. A gait's feet are paths too (generated until edited). Paths solve live with the clip's pins and bake into keys on export. See the paths topic of get_crig_docs.",
+		.input_schema = GET_PATHS_SCHEMA,
+		.handler = &tool_get_paths,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "set_path",
+		.description = "Add, change or remove a clip's motion path, make one from a joint's present motion (from_motion — then reshape it by moving its points), or bake every path into keys. One undo step. Answers with get_paths' list.",
+		.input_schema = SET_PATH_SCHEMA,
+		.handler = &tool_set_path,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
 		.name = "merge_layers",
 		.description = "Bake a clip's unmuted layers into its own keys and clear the stack, for a clip that should stop being layered. The result is dense-enough linear keys sampled from the layered clip (the ground spec is kept); muted layers are dropped. With into, the baked keys land as a new clip of that name and the source keeps its layers. One undo step.",
 		.input_schema = MERGE_LAYERS_SCHEMA,
@@ -728,6 +744,12 @@ fn String? tool_patch_clip(Object* args, void* user_data, DString* detail) @priv
 
 fn String? tool_set_layer(Object* args, void* user_data, DString* detail) @private
 	=> set_layer_json((AppState*)user_data, args, detail);
+
+fn String? tool_get_paths(Object* args, void* user_data, DString* detail) @private
+	=> get_paths_json((AppState*)user_data, args, detail);
+
+fn String? tool_set_path(Object* args, void* user_data, DString* detail) @private
+	=> set_path_json((AppState*)user_data, args, detail);
 
 fn String? tool_get_aims(Object* args, void* user_data, DString* detail) @private
 	=> get_aims_json((AppState*)user_data, args, detail);

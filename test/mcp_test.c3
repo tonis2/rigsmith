@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[69] tool_names @local = {
+String[71] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights", "fix_strays",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -448,7 +448,7 @@ String[69] tool_names @local = {
 	"solve_targets", "patch_clip", "trim_clip", "retime_clip", "optimize_clip", "remove_movement",
 	"close_loop", "smooth_clip", "make_loop", "remove_keys", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
-	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "merge_layers",
+	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "get_paths", "set_path", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
 	"import_clip", "render_poses", "duplicate_clip", "blend_in",
@@ -1114,7 +1114,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION @local = 49;
+const int DOCS_VERSION @local = 51;
 
 fn bool? resources_read_body(Object* root)
 {
@@ -1167,9 +1167,9 @@ fn void the_api_docs_resource() @test
 
 // Every section, in the order the index reports them. By hand, like `tool_names`:
 // a section added without a line here fails rather than passing unnoticed.
-String[19] doc_topics @local = {
+String[20] doc_topics @local = {
 	"quality", "clips", "authoring", "turning", "targets", "editing", "playback", "cycles",
-	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "pins", "repair",
+	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "paths", "pins", "repair",
 };
 
 <*

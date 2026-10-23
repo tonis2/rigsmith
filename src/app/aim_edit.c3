@@ -154,20 +154,23 @@ fn void AppState.apply_clip_pins(
 	rig::Pose* pose,
 	float gain = 1.0f)
 {
-	if (!clip.plays_pins()) return;
+	if (!clip.plays_holds()) return;
 	String[] names = self.names_for(view, ref);
 	AimClampContext ctx = { .app = self, .view = view };
 
 	// The joint being grabbed is moving on purpose: its own pin stands aside for the
 	// drag (as its gesture pin does in `pose_body`) and follows it when
 	// it lets go (`refresh_clip_pin_target`), or the pin would hold the grab in place.
-	AnimPin[] pins = clip.pins;
+	// A path being dragged plays as it is drawn (path_edit.c3).
+	if (self.path_draft_active && ref.same(self.editing)) clip.paths = self.path_draft;
+	AnimPin[] live = clip_live_pins(tmem, &clip, time);
+	AnimPin[] pins = live;
 	sz grabbed = self.drag.dot != 0 && ref.same(self.editing) ? view.joint_of(self.drag.dot) : -1;
 	if (grabbed >= 0 && (usz)grabbed < names.len)
 	{
-		pins = alloc::new_array(tmem, AnimPin, (sz)clip.pins.len);
+		pins = alloc::new_array(tmem, AnimPin, (sz)live.len);
 		usz kept;
-		foreach (pin : clip.pins) if (pin.joint != names[(usz)grabbed]) pins[kept++] = pin;
+		foreach (pin : live) if (pin.joint != names[(usz)grabbed]) pins[kept++] = pin;
 		pins = pins[:kept];
 	}
 	pin_pose(mem, &view.skeleton, names, pins, time, clip.duration, clip.loop, pose,

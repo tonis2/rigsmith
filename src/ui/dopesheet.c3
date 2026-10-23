@@ -59,6 +59,8 @@ struct TimelineLane
 	// A pin lane: a contact-shaped lane (`contact` is set too) whose one bar is the
 	// clip pin's window on `joint`. Drags edit the pin, not a ground contact.
 	bool pin;
+	// A motion path's lane: its marks are the path's slices.
+	bool path;
 }
 
 <*
@@ -86,6 +88,10 @@ struct TimelineMark
 	// A look-at target key on `joint`'s aim; not a pose key, so pressing,
 	// selecting and deleting it go to the aim and dragging it does nothing.
 	bool aim;
+	// A motion path's slice: `path` and `slice` say which. Dragging it retimes it.
+	bool path_slice;
+	usz path;
+	usz slice;
 }
 
 <*

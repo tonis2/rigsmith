@@ -1689,6 +1689,13 @@ fn Element* build_3d_view(Ui* ui)
 					@tree(widgets::tip_probe(&sketch_tip)) { @node((SketchToolbar) { }).with_id("sketch-toolbar"); };
 				};
 
+				// The Path tool's strip: draw, from motion, slice, close, mute, bake.
+				// Empty unless the tool is on, so it shares the slot too.
+				@tree((Anchored) { .h = CENTER, .v = START, .margin = { 0, 10.0 } })
+				{
+					@node((PathToolbar) { }).with_id(PATH_TOOLBAR_ID);
+				};
+
 				// The keys the running tool answers to, opposite the block that
 				// says what is true. Along the bottom because that is where a
 				// keymap goes and because the top-left corner is already spoken
@@ -1995,6 +2002,28 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 	// back" rather than "deselect". Both readings are the one the user wants
 	// while dragging and the wrong one every other time, so the drag claims
 	// them only for as long as it lasts.
+	// Drawing a path takes Enter to finish it and Esc to give it up; a picked
+	// point or slice of a path is what Delete takes.
+	if (app.path_drawing && !ctrl)
+	{
+		switch (event.key)
+		{
+			case Key.RETURN:
+			case Key.KP_RETURN: (void)app.finish_path_drawing();
+			case Key.ESCAPE: app.cancel_path_drawing();
+			default: return false;
+		}
+		app.refresh_ui();
+		return true;
+	}
+	if (app.drag.dot == 0 && !ctrl && (event.key == Key.DELETE || event.key == Key.BACKSPACE)
+		&& app.paths_shown() && (app.path_point_selected >= 0 || app.path_slice_selected >= 0))
+	{
+		(void)app.delete_path_selection();
+		app.refresh_ui();
+		return true;
+	}
+
 	if (app.drag.dot != 0)
 	{
 		switch (event.key)
@@ -2493,7 +2522,6 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 
 			@node((Dialog) { .title = "Create animation", .body = &build_anim_new_body,
 				.style = DIALOG_STYLE, .modal = true }).with_id("anim-new-dialog");
-			@node((Dialog) { .title = "Gait", .body = &build_gait_body, .style = DIALOG_STYLE, .modal = true }).with_id(GAIT_DIALOG_ID);
 			@node((Dialog) { .body = &build_anim_clip_menu,
 				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CLIP_MENU_ID);
@@ -2512,6 +2540,9 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 			@node((Dialog) { .body = &build_anim_layer_row_menu,
 				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_LAYER_ROW_MENU_ID);
+			@node((Dialog) { .body = &build_anim_strip_menu,
+				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_STRIP_MENU_ID);
 			@node((Dialog) { .body = &build_anim_new_menu,
 				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_NEW_MENU_ID);

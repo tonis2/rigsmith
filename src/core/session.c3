@@ -254,7 +254,17 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // arrays in base64, nonzero weights only. `pins`, whose rows were laid over one
 // automatic bind for every joint, is read from older files and turned into held
 // columns as they load (`AppState.migrate_held_weights`); it is never written.
-const uint SESSION_VERSION = 32;
+//
+// 33 adds what the animation tools build by hand: a layer is a strip with a
+// `track`, an `offset` and a `speed` (where a piece on its own clock plays, and
+// how fast), and may be a linked piece with a `source` — the animation whose
+// flattened keys it holds; a clip may carry `paths` (curves a joint follows,
+// with `points` and timed `slices`) and the `gait` preset it was written from.
+// Absent in an older file: every layer on a track of its own at the clip's
+// start, no paths, no preset. The bump is the usual direction — a version 32
+// binary would play every strip from zero and drop the paths a walk's feet
+// follow.
+const uint SESSION_VERSION = 33;
 
 // The first version whose weights end at a band — see 31 above.
 const uint WINDOWED_SESSION = 31;
@@ -724,11 +734,15 @@ fn String session_text(
 			if (clip.layers.len > 0)
 			{
 				text.append_string(`,"layers":[`);
+				uint[] rows = alloc::new_array(tmem, uint, (sz)clip.layers.len);
+				layers_settled_tracks(clip.layers, clip.duration, rows);
 				foreach (usz l, &layer : clip.layers)
 				{
 					if (l > 0) text.append_char(',');
 					text.append_char('{');
-					append_layer_fields(&text, layer);
+					AnimLayer stated = *layer;
+					stated.track = rows[l];
+					append_layer_fields(&text, &stated);
 					if (!layer.procedural())
 					{
 						text.append_string(`,"keys":[`);
@@ -791,6 +805,23 @@ fn String session_text(
 						pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
 						(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
 					if (pin.travel.length_sq() > 0.0f) text.appendf(`,"travel":%s`, (JsonVec3)pin.travel)!!;
+					text.append_char('}');
+				}
+				text.append_char(']');
+			}
+			if (clip.gait.set)
+			{
+				text.append_string(`,"gait":`);
+				append_gait_preset(&text, &clip.gait);
+			}
+			if (clip.paths.len > 0)
+			{
+				text.append_string(`,"paths":[`);
+				foreach (usz p, &path : clip.paths)
+				{
+					if (p > 0) text.append_char(',');
+					text.append_char('{');
+					append_path_fields(&text, path);
 					text.append_char('}');
 				}
 				text.append_char(']');
@@ -1069,7 +1100,10 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 			for (sz l = 0; l < layers.get_len(); l++)
 			{
 				clip.layers[(usz)l] = session_layer(allocator, layers.get_at(l))!;
+				// Before tracks, every layer covered its own row.
+				if (member(layers.get_at(l), "track") == null) clip.layers[(usz)l].track = (uint)l;
 			}
+			layers_settle_tracks(clip.layers, clip.duration);
 		}
 	}
 	Object* target_list;
@@ -1165,6 +1199,22 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 			}
 			adopted = true;
 			clip.pins = pins;
+		}
+	}
+	if (try Object* found = entry.get("gait"))
+	{
+		if (!found.is_null() && !read_gait_preset(found, allocator, &clip.gait)) return SESSION_SHAPE~;
+	}
+	if (try Object* found = entry.get("paths"))
+	{
+		if (!found.is_null())
+		{
+			if (!is_list(found)) return SESSION_SHAPE~;
+			clip.paths = alloc::new_array(allocator, AnimPath, found.get_len());
+			for (usz n = 0; n < (usz)found.get_len(); n++)
+			{
+				if (!read_path_fields(found.get_at((sz)n), allocator, &clip.paths[n], null)) return SESSION_SHAPE~;
+			}
 		}
 	}
 	clip.compile_tracks(allocator);

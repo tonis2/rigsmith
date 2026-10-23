@@ -406,15 +406,19 @@ fn void a_biped_walk_moves_the_whole_body() @test
 	crig::RigView view = f.app.open_rig(mem)!!;
 	defer view.free(mem);
 
-	// Keyed above the legs.
+	// Keyed above the legs, in the body's own layer, and the feet on paths.
 	bool arms = false;
 	bool spine = false;
-	foreach (dot : clip.keyframes[0].dots)
+	crig::AnimLayer* body = null;
+	foreach (&layer : clip.layers) if (layer.name == crig::GAIT_BODY_LAYER) body = layer;
+	test::@check(body != null, "the walk has no body layer");
+	foreach (dot : body.keyframes[0].dots)
 	{
 		if (dot.joint_name.starts_with("elbow")) arms = true;
 		if (dot.joint_name.starts_with("spine") || dot.joint_name == "chest") spine = true;
 	}
 	test::@check(arms && spine, "the walk keys no arms or no spine");
+	test::@check(clip.paths.len == 2 && clip.paths[0].generated && clip.gait.set, "the walk's feet are not on generated paths");
 
 	// Half a cycle apart, the feet and the hands trade places, a hand going back
 	// with its own side's foot going forward.

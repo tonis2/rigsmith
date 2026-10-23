@@ -152,12 +152,6 @@ fn void anim_new_menu_empty(Ui* ui)
 	anim_new_clip_clicked(ui);
 }
 
-fn void anim_new_menu_gait(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
-	anim_gait_clicked(ui);
-}
-
 fn void anim_new_menu_generate(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
@@ -176,7 +170,7 @@ fn Element* build_anim_new_menu(Ui* ui)
 	String generate = app.motion_job.running ? "Generating…" : "Generate…";
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Empty animation…", "Gait…", generate, "From library…" })
+	foreach (label : (String[]) { "Empty animation…", "Walk cycle", generate, "From library…" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -186,8 +180,8 @@ fn Element* build_anim_new_menu(Ui* ui)
 		{
 			@node((PopupMenuItem) { .item = { .label = "Empty animation…", .on_select = &anim_new_menu_empty },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_EMPTY_ID);
-			@node((PopupMenuItem) { .item = { .label = "Gait…", .on_select = &anim_new_menu_gait },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(GAIT_BUTTON_ID);
+			@node((PopupMenuItem) { .item = { .label = "Walk cycle", .on_select = &anim_new_walk_cycle },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_WALK_ID);
 			@node((PopupMenuItem) { .item = { .label = generate, .on_select = &anim_new_menu_generate },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_GENERATE_ID);
 			@node((PopupMenuItem) { .item = { .label = "From library…", .on_select = &anim_new_menu_library },
@@ -277,7 +271,7 @@ fn Element* build_anim_tools_menu(Ui* ui)
 
 fn void anim_key_context(Ui* ui, TimelineMark mark, Vec2 at)
 {
-	if (!anim_can_rewrite(ui)) return;
+	if (!anim_can_rewrite(ui) || mark.path_slice) return;
 	// Reuse marker selection: an existing group stays selected, while an
 	// unselected key becomes the sole target. No modifier toggling on right click.
 	anim_mark_pressed(ui, mark, false);

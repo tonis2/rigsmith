@@ -726,6 +726,7 @@ fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced =
 	}
 
 	AnimRef landed = NO_ANIM;
+	layers_settle_tracks(clip.layers, clip.duration);
 	clip.compile_tracks(mem);
 	AnimTemplate had = self.swap_authored_clip(name, clip, &landed, slot);
 	// Taken before the record, which may run past the pack: the slot the clip is in.
@@ -739,6 +740,8 @@ fn AnimRef AppState.put_authored_clip(&self, AnimTemplate clip, bool* replaced =
 	// A shared layer edited here is edited in every clip that shares it, in the
 	// same undo step (layer_edit.c3).
 	self.sync_linked_layers(landed);
+	// So is an animation laid into others as a linked piece (strips.c3).
+	self.sync_clip_pieces(landed);
 	return landed;
 }
 
@@ -831,10 +834,14 @@ fn bool AppState.delete_authored_clip(&self, String name)
 		self.undo_stack.record_binding_swap((uint)row, removed, {}, browse: !edited);
 	}
 
+	String gone = name.copy(mem);
+	defer gone.free(mem);
 	AnimTemplate had = self.swap_authored_clip(name, {});
 	// Removal shifts numeric clip references, including selections in other clips.
 	self.clear_animation_key_selection();
-	self.undo_stack.record_clip_swap(name.copy(mem), had, slot);
+	self.undo_stack.record_clip_swap(gone.copy(mem), had, slot);
+	// Strips that played it keep what it last was, in the same undo step.
+	self.unlink_clip_pieces(gone);
 
 	// A card open on the authored pack is showing a row that has gone, and the
 	// selection below it has shifted; both are the library card's to redraw.

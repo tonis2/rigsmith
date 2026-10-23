@@ -837,6 +837,7 @@ fn AnimTemplate clip_in_words(Allocator allocator, AnimTemplate source, String[]
 	foreach (&foot : out.ground.feet) name_in_words(allocator, &foot.joint, from, to, &words);
 	foreach (&aim : out.aims) name_in_words(allocator, &aim.joint, from, to, &words);
 	foreach (&pin : out.pins) name_in_words(allocator, &pin.joint, from, to, &words);
+	foreach (&path : out.paths) name_in_words(allocator, &path.joint, from, to, &words);
 	foreach (usz i, &layer : out.layers)
 	{
 		name_in_words(allocator, &layer.joint, from, to, &words);
@@ -862,6 +863,7 @@ fn AnimTemplate clip_in_words(Allocator allocator, AnimTemplate source, String[]
 	out.ground.feet = feet_named(allocator, out.ground.feet);
 	out.aims = aims_named(allocator, out.aims);
 	out.pins = pins_named(allocator, out.pins);
+	out.paths = anim_paths_named(allocator, out.paths);
 	if (dropped) *dropped = lost;
 	return out;
 }

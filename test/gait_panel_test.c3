@@ -1,12 +1,14 @@
 <*
- The Gait panel: "+ Gait" in the Animations pane, through the real tree.
+ Gaits as paths in the UI: "+ New › Walk cycle" in the Animations pane and the
+ Path strip's gait row, through the real tree.
 
- `c3c test --trust=full --test-filter crig_tests::ui`
+ `c3c test --trust=full --test-filter crig_tests::ui::gait_strip`
 
  The dog is the model: four legs, each ending in a foot and a toe, which is the
- rig `author_gait` finds feet on. The panel and the MCP tool share
- `AppState.author_gait`; these pin what is the panel's own — the footfall rows,
- the custom offsets, the names.
+ rig `author_gait` finds feet on. A walk cycle lays one path per foot, and the
+ gait is written again — one undo step — from the strip, from a foot path's
+ stance end dragged in the viewport, or from a foot's landing slice moved on the
+ sheet.
 *>
 module crig_tests::ui;
 
@@ -31,38 +33,22 @@ fn void gait_dog(Fixture* f, rig::TriMesh mesh)
 	f.ui.flush();
 }
 
-fn void gait_open(Fixture* f)
+// The 3D view in the pane, where the Path strip is.
+fn void gait_show_view(Fixture* f)
 {
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::GAIT_BUTTON_ID);
-}
-
-fn void gait_create(Fixture* f)
-{
-	f.click(f.center_of(crig::GAIT_CREATE_ID)!!);
+	f.click(tab_center(f, f.ui.find(AreaTabStrip)!!, TAB_3D));
+	f.feed({ 0, 0 });
 	f.ui.flush();
 }
 
-fn void the_gait_button_opens_a_dialog_with_a_row_per_foot() @test
+fn void gait_new_walk(Fixture* f)
 {
-	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
-	defer mesh.free(mem);
-	Fixture f;
-	gait_dog(&f, mesh);
-	defer f.close();
-
-	Dialog* dialog = f.ui.get_widget_id(crig::GAIT_DIALOG_ID, Dialog)!!;
-	test::@check(!dialog.open, "the gait dialog should start closed");
-	gait_open(&f);
-	dialog = f.ui.get_widget_id(crig::GAIT_DIALOG_ID, Dialog)!!;
-	test::@check(dialog.open, "+ Gait did not open the dialog");
-	test::@check(@ok(f.ui.find_id(crig::GAIT_DIAGRAM_ID)), "the footfall diagram is missing");
-	test::eq(crig::gait_draft.count, (usz)4);
-	test::@check(crig::gait_draft.kind == WALK, "a walk is the default gait");
-	Element* name = f.ui.find_id(crig::GAIT_NAME_ID)!!;
-	test::@check(name.widget_as(TextField).text.str_view() == "Walk", "the name should start as the gait's");
+	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_WALK_ID);
+	f.feed({ 0, 0 });
+	f.ui.flush();
 }
 
-fn void creating_a_gait_binds_a_clip_with_a_ground_spec() @test
+fn void gait_strip_a_walk_cycle_lays_a_path_per_foot() @test
 {
 	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
 	defer mesh.free(mem);
@@ -70,75 +56,103 @@ fn void creating_a_gait_binds_a_clip_with_a_ground_spec() @test
 	gait_dog(&f, mesh);
 	defer f.close();
 
-	gait_open(&f);
-	gait_create(&f);
-	Dialog* dialog = f.ui.get_widget_id(crig::GAIT_DIALOG_ID, Dialog)!!;
-	test::@check(!dialog.open, "Create should close the dialog");
+	gait_new_walk(&f);
 	AnimTemplate* clip = f.app.clip(f.app.editing);
 	test::@check(clip != null && clip.name == "Walk", "the new clip should be open and called Walk");
-	test::@check(clip.ground.solves(), "a gait clip carries a ground spec");
-	test::eq(clip.ground.feet.len, (sz)4);
-	test::@check(clip.loop, "a gait loops by default");
-	test::@check(f.app.clip_named_in_authored("Walk").valid(), "the clip was not written to the authored pack");
-}
-
-fn void a_second_gait_with_the_same_name_does_not_replace_the_first() @test
-{
-	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
-	defer mesh.free(mem);
-	Fixture f;
-	gait_dog(&f, mesh);
-	defer f.close();
-
-	gait_open(&f);
-	gait_create(&f);
-	gait_open(&f);
-	gait_create(&f);
-	test::@check(f.app.clip_named_in_authored("Walk").valid(), "the first Walk was lost");
-	test::@check(f.app.clip_named_in_authored("Walk_2").valid(), "the second should be Walk_2");
-	AnimTemplate* clip = f.app.clip(f.app.editing);
-	test::@check(clip != null && clip.name == "Walk_2", "the newest gait should be the open clip");
-
-	// A trot's name follows the gait while the field is untouched.
-	gait_open(&f);
-	crig::gait_kind_chosen(f.ui, 1);
-	Element* name = f.ui.find_id(crig::GAIT_NAME_ID)!!;
-	test::@check(name.widget_as(TextField).text.str_view() == "Trot", "the name should follow the gait");
-}
-
-fn void custom_offsets_move_the_ground_windows() @test
-{
-	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
-	defer mesh.free(mem);
-	Fixture f;
-	gait_dog(&f, mesh);
-	defer f.close();
-
-	gait_open(&f);
-	gait_create(&f);
-	AnimTemplate* walk = f.app.clip(f.app.editing);
-	float[4] walked;
-	foreach (i, foot : walk.ground.feet) walked[i] = foot.down;
-
-	gait_open(&f);
-	crig::gait_kind_chosen(f.ui, 4);
-	test::@check(crig::gait_draft.kind == CUSTOM, "Custom was not chosen");
-	// Every foot lands together: the windows must all open at the same phase.
-	for (usz i = 0; i < 4; i++) crig::gait_set_offset(i, 0.25f);
-	gait_create(&f);
-	AnimTemplate* custom = f.app.clip(f.app.editing);
-	test::@check(custom != null && custom.name == "Custom", "the custom clip should be open");
-	test::eq(custom.ground.feet.len, (sz)4);
-	bool moved;
-	foreach (i, foot : custom.ground.feet)
+	test::@check(clip.ground.solves() && clip.ground.feet.len == 4, "a walk cycle carries the feet's ground windows");
+	test::@check(clip.loop && clip.gait.set && clip.gait.kind == WALK, "a walk cycle loops and keeps its gait");
+	test::eq(clip.paths.len, (sz)4);
+	foreach (&path : clip.paths)
 	{
-		test::@check(math::abs(foot.down - 0.25f) < 0.001f, "a custom foot should land where it was put, got %f", foot.down);
-		if (math::abs(foot.down - walked[i]) > 0.001f) moved = true;
+		usz down;
+		usz up;
+		foreach (slice : path.slices)
+		{
+			if (slice.tag == DOWN) down++;
+			if (slice.tag == UP) up++;
+		}
+		test::@check(path.generated && path.closed && down == 1 && up == 1, "%s's path is not a closed step with one landing and one lift", path.joint);
 	}
-	test::@check(moved, "custom offsets did not change the ground windows");
+	test::@check(f.app.path_tool, "the Path tool did not come on: %s", f.app.notice());
+	gait_show_view(&f);
+	test::@check(f.in_tree(crig::PATH_DRAW_ID) && f.in_tree(crig::PATH_GAIT_KIND_ID), "the Path strip did not come up with the gait row");
+	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
+	f.ui.flush();
+
+	// A second is a second clip, under the next free name.
+	gait_new_walk(&f);
+	test::@check(f.app.clip_named_in_authored("Walk").valid(), "the first Walk was lost");
+	test::@check(f.app.clip(f.app.editing).name == "Walk_2", "the second should be Walk_2");
 }
 
-fn void a_rig_with_no_feet_says_so() @test
+fn void gait_strip_another_gait_writes_the_clip_again_in_one_step() @test
+{
+	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
+	defer mesh.free(mem);
+	Fixture f;
+	gait_dog(&f, mesh);
+	defer f.close();
+	gait_new_walk(&f);
+	float[4] walked;
+	foreach (i, foot : f.app.clip(f.app.editing).ground.feet) walked[i] = foot.down;
+	sz history = f.app.undo_stack.cursor;
+
+	gait_show_view(&f);
+	click_segment(&f, crig::PATH_GAIT_KIND_ID, 1);
+	AnimTemplate* trot = f.app.clip(f.app.editing);
+	test::@check(trot.name == "Walk" && trot.gait.kind == TROT, "the strip did not write the clip again as a trot");
+	bool moved;
+	foreach (i, foot : trot.ground.feet) if (math::abs(foot.down - walked[i]) > 0.001f) moved = true;
+	test::@check(moved, "the trot lands its feet where the walk did");
+	test::eq(f.app.undo_stack.cursor, history + 1);
+	test::@check(f.app.undo() && f.app.clip(f.app.editing).gait.kind == WALK, "one undo did not bring the walk back");
+}
+
+fn void gait_strip_a_landing_moved_on_the_sheet_moves_that_foot() @test
+{
+	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
+	defer mesh.free(mem);
+	Fixture f;
+	gait_dog(&f, mesh);
+	defer f.close();
+	gait_new_walk(&f);
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	usz down_slice;
+	foreach (usz s, slice : clip.paths[0].slices) if (slice.tag == DOWN) down_slice = s;
+	String joint = clip.paths[0].joint.copy(mem);
+	defer joint.free(mem);
+
+	test::@check(f.app.retime_path_slice(0, down_slice, 0.3f), "the landing would not move");
+	clip = f.app.clip(f.app.editing);
+	bool landed;
+	foreach (foot : clip.ground.feet) if (foot.joint == joint && math::abs(foot.down - 0.3f) < 0.001f) landed = true;
+	test::@check(landed, "the foot's ground window did not follow its landing");
+	bool still_generated;
+	foreach (&path : clip.paths) if (path.joint == joint) still_generated = path.generated;
+	test::@check(still_generated, "moving a gait foot's landing made its path the person's");
+}
+
+fn void gait_strip_a_stride_dragged_wider_writes_every_foot_again() @test
+{
+	rig::TriMesh mesh = rig::load_gltf(mem, GAIT_DOG)!!;
+	defer mesh.free(mem);
+	Fixture f;
+	gait_dog(&f, mesh);
+	defer f.close();
+	gait_new_walk(&f);
+	float stride = f.app.clip(f.app.editing).gait.stride;
+	// The stance's front end of the first foot's path, dragged further forward.
+	f.app.path_selected = 0;
+	test::@check(f.app.begin_path_drag(0, 0, false), "the stance end would not take a drag");
+	Vec3 front = f.app.path_drag_at();
+	f.app.path_point_toward(front + (Vec3){ 0, 0, stride * f.app.path_height * 0.5f });
+	f.app.end_drag();
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	test::@check(clip.gait.stride > stride * 1.2f, "the stride did not grow: %s, was %s", clip.gait.stride, stride);
+	foreach (&path : clip.paths) test::@check(path.generated, "a foot's path stopped being the gait's");
+}
+
+fn void gait_strip_a_rig_with_no_feet_says_so() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -148,13 +162,16 @@ fn void a_rig_with_no_feet_says_so() @test
 	f.ui.flush();
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
-	gait_open(&f);
-	// A fitted plan on a cube has joints but no feet near a floor the gait can walk on;
-	// whichever way it lands, the panel must not author a clip it cannot.
-	if (crig::gait_draft.count == 0)
+	sz clips = f.app.doc.animations.len();
+	gait_new_walk(&f);
+	// A fitted plan on a cube may have no feet near a floor; whichever way it
+	// lands, a walk is written only on feet.
+	if (f.app.doc.animations.len() == clips)
 	{
-		test::@check(!@ok(f.ui.find_id(crig::GAIT_DIAGRAM_ID)), "no feet, so no diagram");
-		gait_create(&f);
-		test::@check(!f.app.clip_named_in_authored("Walk").valid(), "no feet must author nothing");
+		test::@check(f.app.notice().len > 0, "no feet, and nothing said");
+	}
+	else
+	{
+		test::@check(f.app.clip(f.app.editing).paths.len > 0, "a walk with feet laid no paths");
 	}
 }

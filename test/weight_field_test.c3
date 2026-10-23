@@ -188,9 +188,9 @@ fn void an_older_session_says_its_weights_were_re_derived() @test
 	char[] saved = file::load(mem, path)!!;
 	defer alloc::free(mem, saved);
 	String text = (String)saved;
-	test::@check(text.contains(`"version": 32`), "the session is not version 32");
+	test::@check(text.contains(`"version": 33`), "the session is not version 33");
 
-	String older = text.replace(mem, `"version": 32`, `"version": 30`);
+	String older = text.replace(mem, `"version": 33`, `"version": 30`);
 	defer older.free(mem);
 	file::save(path, older)!!;
 	app.load_session();
@@ -394,7 +394,7 @@ fn void an_older_sessions_multipliers_load_as_stated_rows() @test
 	defer path.free(mem);
 	char[] saved = file::load(mem, path)!!;
 	defer alloc::free(mem, saved);
-	String older = ((String)saved).replace(mem, `"version": 32`, `"version": 30`);
+	String older = ((String)saved).replace(mem, `"version": 33`, `"version": 30`);
 	defer older.free(mem);
 	String painted = older.replace(mem, `"attachments": [`,
 		string::tformat(`"paint": [[%d,%d,0.25]],

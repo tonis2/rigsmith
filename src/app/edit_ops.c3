@@ -1848,8 +1848,10 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 
 	// A target drag has no joint: it takes the world axes and planes, but has no
 	// bone frame to offer.
-	bool aiming = self.drag.verb == DragVerb.AIM;
+	bool aiming = self.drag.verb == DragVerb.AIM || self.drag.verb == DragVerb.PATH;
 	if (aiming && axis == DragAxis.BONE) return true;
+	// A slice slides along its curve; it has no axis to lock.
+	if (self.drag.verb == DragVerb.PATH && self.drag.path_slice) return true;
 	Dot* dot = aiming ? null : self.doc.find(self.drag.dot);
 	if (!dot && !aiming) return false;
 
@@ -1891,7 +1893,7 @@ fn bool AppState.lock_drag(&self, DragAxis axis)
 	// The retroactive part still holds: the joint is left where it is until then,
 	// and the solve that follows aims at a point on the constraint line through
 	// the grab, so the two free coordinates come back on their own.
-	if (self.drag.verb == DragVerb.POSE || self.drag.verb == DragVerb.AIM) return true;
+	if (self.drag.verb == DragVerb.POSE || aiming) return true;
 
 	if (next.is_direction())
 	{
@@ -1933,6 +1935,11 @@ fn bool AppState.cancel_drag(&self)
 	if (self.drag.verb == DragVerb.AIM)
 	{
 		self.cancel_aim_drag();
+		return true;
+	}
+	if (self.drag.verb == DragVerb.PATH)
+	{
+		self.cancel_path_drag();
 		return true;
 	}
 
@@ -1997,6 +2004,11 @@ fn void AppState.end_drag(&self)
 	if (self.drag.verb == DragVerb.AIM)
 	{
 		self.end_aim_drag();
+		return;
+	}
+	if (self.drag.verb == DragVerb.PATH)
+	{
+		self.end_path_drag();
 		return;
 	}
 
@@ -2077,6 +2089,7 @@ fn Vec3 AppState.drag_delta(&self)
 	{
 		return self.drag.aim < self.posed_aims.len ? self.posed_aims[self.drag.aim].at - self.drag.from : (Vec3) { };
 	}
+	if (self.drag.verb == DragVerb.PATH) return self.path_drag_at() - self.drag.from;
 	Dot* dot = self.doc.find(self.drag.dot);
 	if (!dot) return { };
 	return dot.position - self.drag.from;

@@ -48,6 +48,14 @@ enum CardGlyph
 	FIND_STRAYS_GLYPH,
 	FIX_STRAYS_GLYPH,
 	LASSO_GLYPH,
+	// The Path toolbar's.
+	PEN_GLYPH,
+	FROM_MOTION_GLYPH,
+	SLICE_GLYPH,
+	CLOSE_PATH_GLYPH,
+	BAKE_GLYPH,
+	MUTE_GLYPH,
+	FOLLOW_GLYPH,
 }
 
 <*
@@ -193,5 +201,53 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			painter.arc(loop, r * 0.75f, (float)math::PI * 0.65f, (float)math::PI * 1.75f, w, ink);
 			Vec2 knot = loop + (Vec2){ -r * 0.6f, r * 0.45f };
 			painter.line(knot, c + (Vec2){ -r * 0.2f, r }, w, ink);
+		case PEN_GLYPH:
+			// A curve with a point on it, the pen that lays it.
+			Vec2 last = c + (Vec2){ -r, r * 0.6f };
+			for (int i = 1; i <= 8; i++)
+			{
+				float u = (float)i / 8.0f;
+				Vec2 next = c + (Vec2){ -r + 2.0f * r * u, r * 0.6f - r * 1.2f * math::sin(u * (float)math::PI) };
+				painter.line(last, next, w, ink);
+				last = next;
+			}
+			painter.rect(c + (Vec2){ -2.5f, -r * 0.6f - 2.5f }, { 5.0f, 5.0f }, { .color = ink });
+		case FROM_MOTION_GLYPH:
+			// A joint's dot leaving a trail behind it.
+			painter.circle(c + (Vec2){ r * 0.55f, -r * 0.4f }, 2.6f, { .color = ink });
+			for (int i = 0; i < 3; i++)
+			{
+				float x = c.x - r + (float)i * r * 0.5f;
+				float y = c.y + r * 0.6f - (float)i * r * 0.3f;
+				painter.circle({ x, y }, 1.2f, { .color = ink });
+			}
+		case SLICE_GLYPH:
+			// A curve cut across by one slice.
+			painter.arc(c + (Vec2){ 0, r * 0.9f }, r * 1.1f, (float)math::PI * 1.2f, (float)math::PI * 0.6f, w, ink);
+			painter.line(c + (Vec2){ 0, -r * 0.9f }, c + (Vec2){ 0, r * 0.4f }, w, ink);
+			painter.circle(c + (Vec2){ 0, -r * 0.2f }, 2.4f, { .border_width = w, .border_color = ink });
+		case CLOSE_PATH_GLYPH:
+			// A loop with its ends joined by an arrow.
+			painter.arc(c, r * 0.8f, (float)math::PI * 0.1f, (float)math::PI * 1.7f, w, ink);
+			card_arrow_head(painter, c + (Vec2){ r * 0.78f, -r * 0.25f }, { 0.2f, 0.98f }, ink);
+		case BAKE_GLYPH:
+			// Down into keys: an arrow onto a row of diamonds.
+			painter.line(c + (Vec2){ 0, -r }, c + (Vec2){ 0, r * 0.2f }, w, ink);
+			card_arrow_head(painter, c + (Vec2){ 0, r * 0.2f }, { 0, 1.0f }, ink);
+			for (int i = -1; i <= 1; i++) paint_diamond(painter, c + (Vec2){ (float)i * r * 0.7f, r * 0.8f }, 2.2f, ink);
+		case FOLLOW_GLYPH:
+			// An arc with an arrow riding it, turned the way it goes.
+			painter.arc(c + (Vec2){ 0, r * 0.7f }, r * 1.1f, (float)math::PI * 1.15f, (float)math::PI * 0.7f, w, ink);
+			Vec2 tip = c + (Vec2){ r * 0.75f, -r * 0.05f };
+			painter.line(tip - (Vec2){ r * 0.55f, r * 0.45f }, tip, w, ink);
+			card_arrow_head(painter, tip, { 0.77f, 0.64f }, ink);
+		case MUTE_GLYPH:
+			// An eye shut: the path is still there and does nothing.
+			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);
+			for (int i = -1; i <= 1; i++)
+			{
+				Vec2 root = c + (Vec2){ (float)i * r * 0.45f, r * 0.35f };
+				painter.line(root, root + (Vec2){ (float)i * 2.0f, 3.0f }, 1.0f, ink);
+			}
 	}
 }

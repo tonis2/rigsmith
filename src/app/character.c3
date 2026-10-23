@@ -599,6 +599,22 @@ struct Character
 	// Look-at targets being moved, applied to the clip being edited like the pose
 	// draft; see `aim_edit.c3`. Owned, cleared with the pose draft.
 	AimDraft[] aim_draft;
+	// The edited clip's paths as a drag in the viewport has them (app/path_edit.c3),
+	// played in place of the clip's own until the drag lands or is let go.
+	AnimPath[] path_draft;
+	bool path_draft_active;
+	// The path the Path tool works on, an index into the edited clip's paths; -1
+	// for none.
+	sz path_selected;
+	// The point or slice of the selected path last picked, for Delete; -1 for none.
+	sz path_point_selected;
+	sz path_slice_selected;
+	// Drawing a new path: each click adds a point to the draft's last path.
+	bool path_drawing;
+	// The Path tool: its toolbar is up and the paths' handles are offered.
+	bool path_tool;
+	// The rig's height when the pose on show was built: paths are in fractions of it.
+	float path_height;
 
 	// What a target drag began from, for Esc: whether the joint had a draft at the
 	// grab, and where the target was then (a fraction of rig height).
@@ -641,10 +657,13 @@ struct Character
 	AnimKeyframe[] layer_keys_scaled;
 	void* layer_keys_scaled_from;
 	float layer_keys_scaled_by;
+	float layer_keys_scaled_shift;
 	uint layer_keys_scaled_revision;
 	// Raised while one clip's shared layers are being copied into the others,
 	// so the copies landing do not start the same copy again.
 	bool syncing_links;
+	// How deep linked pieces are being rebuilt (app/strips.c3 `sync_clip_pieces`).
+	usz syncing_pieces;
 	// The last shared-layer id handed out this session; see `new_link_id`.
 	uint link_counter;
 	// The Add to animations dialog (ui/layer_share.c3): the clips it offers and
@@ -971,6 +990,9 @@ fn Character new_character(rig::TriMesh geometry, String source_path,
 		.current_ref = NO_ANIM,
 		.editing = NO_ANIM,
 		.active_layer = -1,
+		.path_selected = -1,
+		.path_point_selected = -1,
+		.path_slice_selected = -1,
 		.active_layer_ref = NO_ANIM,
 
 		// And again: nothing has been authored, and pack 0 is a real pack whose

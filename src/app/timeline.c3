@@ -324,6 +324,8 @@ fn AnimRef AppState.land_clip_recorded(&self, AnimRef ref, AnimTemplate built, b
 		// name back before its row returns to it. Left in, it stayed in the browser
 		// under the old name beside the renamed one.
 		landed = self.drop_renamed_authored(was_named, landed);
+		// Strips that played it under its old name follow it.
+		self.sync_clip_pieces(landed, was_named);
 	}
 	else if (renamed && source_file.len > 0 && source_file == self.source_path)
 	{

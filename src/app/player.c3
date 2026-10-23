@@ -591,6 +591,7 @@ fn void AppState.refresh_animation(&self, float dt = 0.0f)
 	// once per pane and would otherwise rebuild the skeleton for each of them.
 	self.posed_dots = posed_overlay(mem, &view.skeleton, view.dot_ids, palette);
 	self.posed_aims = self.aim_handles(&view, self.current_anim, self.current_ref, self.anim_time, palette, &self.posed_aim_links);
+	self.path_height = view.skeleton.height();
 }
 
 <*

@@ -17,11 +17,12 @@
  opened from the keyboard reaches the screen by `update` noticing and asking for
  another build.
 
- **Six cells.** Tweak, Move, Rotate, Scale, Lasso and Sketch. The Area tool and
+ **Seven cells.** Tweak, Move, Rotate, Scale, Lasso, Sketch and Path. The Area tool and
  the weight brush open from the Weights card. Scale always resizes the whole model, whatever is selected. While the brush is open its options strip (`BrushOptions`) shows beside
  the column, so painting needs no modifier; while sketching, the Sketch strip
  (`SketchToolbar`) offers the colours and the eraser. Sketch has no key at all —
- this cell is its one door.
+ this cell is its one door. Path opens the Path strip (`PathToolbar`): curves a
+ joint follows, drawn and dragged over the posed rig.
 *>
 module crig;
 
@@ -84,6 +85,7 @@ enum ToolGlyph
 	SCALE_GLYPH,
 	LASSO,
 	SKETCH_GLYPH,
+	PATH_GLYPH,
 }
 
 <*
@@ -104,7 +106,7 @@ struct ToolCell
 
 // A global rather than a const for the same reason the menus are: these
 // initialisers take function addresses.
-ToolCell[6] tool_cells = {
+ToolCell[7] tool_cells = {
 	{ .glyph = TWEAK, .state = &query_tweak, .on_select = &menu_tweak,
 		.tip = "Tweak (Esc) — put the running tool away: click to select, drag to move or pose a joint",
 		.hint = "Tweak · click a joint · select     drag a joint · move or pose it     drag off the model · orbit     esc · put a tool away" },
@@ -125,6 +127,9 @@ ToolCell[6] tool_cells = {
 	{ .glyph = SKETCH_GLYPH, .state = &query_sketching, .on_select = &menu_sketch,
 		.tip = "Sketch — draw on the viewport to show the agent what is wrong; colours and the eraser appear at the top",
 		.hint = "Sketch · drag to draw     red wrong · green keep · blue note · eraser — in the strip at the top     esc · leave" },
+	{ .glyph = PATH_GLYPH, .state = &query_path_tool, .on_select = &menu_path_tool,
+		.tip = "Path — curves a joint follows: draw one for a hand or a foot, drag its points and slices; gaits lay one per foot",
+		.hint = "Path · drag a point · reshape     drag a slice · move it along     shift-click curve · add a point     ctrl-click curve · slice at playhead     del · delete" },
 };
 
 <*
@@ -188,7 +193,7 @@ struct ToolColumn (Widget)
 	// keyboard opens and closes these tools as much as a click does and neither
 	// path knows this widget exists — the bargain `TintToggles` and the HUD both
 	// make.
-	MenuItemFlags[7] shown;
+	MenuItemFlags[8] shown;
 	bool had_mesh;
 }
 
@@ -423,5 +428,18 @@ fn void ToolIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			Vec2 squiggle = centre + (Vec2){ -TOOL_ICON_R, TOOL_ICON_R * 0.95f };
 			painter.arc(squiggle + (Vec2){ TOOL_ICON_R * 0.3f, 0 }, TOOL_ICON_R * 0.3f,
 				(float)math::PI, (float)math::PI, TOOL_STROKE, self.ink);
+		case PATH_GLYPH:
+			// A curve through three points, the last a ring: where a joint goes.
+			Vec2 last = centre + (Vec2){ -TOOL_ICON_R, TOOL_ICON_R * 0.7f };
+			for (int i = 1; i <= 10; i++)
+			{
+				float u = (float)i / 10.0f;
+				Vec2 next = centre + (Vec2){ -TOOL_ICON_R + 2.0f * TOOL_ICON_R * u,
+					TOOL_ICON_R * 0.7f - TOOL_ICON_R * 1.3f * math::sin(u * (float)math::PI * 0.9f) };
+				painter.line(last, next, TOOL_STROKE, self.ink);
+				last = next;
+			}
+			painter.rect(centre + (Vec2){ -TOOL_ICON_R - 2.0f, TOOL_ICON_R * 0.7f - 2.0f }, { 4.0f, 4.0f }, { .color = self.ink });
+			painter.circle(last, 2.5f, { .border_width = TOOL_STROKE, .border_color = self.ink });
 	}
 }

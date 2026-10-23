@@ -166,7 +166,8 @@ fn AnimTemplate* AppState.key_clip(&self, AnimRef ref)
 
 <*
  The layer's keys at the times the timeline shows them. Its own, except for a
- stretched shared layer, whose keys are spread over the clip: a copy of the times
+ stretched shared layer, whose keys are spread over the clip, and a placed piece,
+ whose keys start at its offset and run at its speed: a copy of the times
  over the layer's own entries, kept until the layer, the stretch or the history
  moves, so a view handed out stays good while a caller walks it. `land_key_edit`
  takes the times back.
@@ -174,17 +175,20 @@ fn AnimTemplate* AppState.key_clip(&self, AnimRef ref)
 fn AnimKeyframe[] AppState.layer_keys_on_timeline(&self, AnimLayer* layer, AnimTemplate* clip)
 {
 	float scale = layer.display_scale(clip);
-	if (scale == 1.0f) return layer.keyframes;
+	float shift = layer.display_shift();
+	if (scale == 1.0f && shift == 0.0f) return layer.keyframes;
 	if (self.layer_keys_scaled_from == layer.keyframes.ptr && self.layer_keys_scaled.len == layer.keyframes.len
-		&& self.layer_keys_scaled_by == scale && self.layer_keys_scaled_revision == self.undo_stack.revision)
+		&& self.layer_keys_scaled_by == scale && self.layer_keys_scaled_shift == shift
+		&& self.layer_keys_scaled_revision == self.undo_stack.revision)
 	{
 		return self.layer_keys_scaled;
 	}
 	self.drop_layer_keys_scaled();
 	self.layer_keys_scaled = alloc::new_array(mem, AnimKeyframe, (sz)layer.keyframes.len);
-	foreach (usz i, frame : layer.keyframes) self.layer_keys_scaled[i] = { .time = frame.time * scale, .dots = frame.dots };
+	foreach (usz i, frame : layer.keyframes) self.layer_keys_scaled[i] = { .time = frame.time * scale + shift, .dots = frame.dots };
 	self.layer_keys_scaled_from = layer.keyframes.ptr;
 	self.layer_keys_scaled_by = scale;
+	self.layer_keys_scaled_shift = shift;
 	self.layer_keys_scaled_revision = self.undo_stack.revision;
 	return self.layer_keys_scaled;
 }
@@ -208,6 +212,8 @@ fn void AppState.drop_layer_keys_scaled(&self)
 fn bool AppState.keys_onto_own_clock(&self, AnimLayer* layer, AnimTemplate* clip, AnimKeyframe[] keys)
 {
 	float scale = layer.display_scale(clip);
+	float shift = layer.display_shift();
+	foreach (&frame : keys) frame.time = math::max(0.0f, frame.time - shift);
 	float last = 0.0f;
 	foreach (frame : keys) last = math::max(last, frame.time / scale);
 	if (layer.fit != KEEP && last > layer.length + ANIM_SAME_TIME)
@@ -237,6 +243,13 @@ fn AnimRef AppState.land_key_edit(&self, AnimRef ref, AnimTemplate built)
 	sz at = self.active_layer_of(ref);
 	if (!clip || at < 0 || clip.layers[(usz)at].kind != KEYED) return self.land_clip(ref, built);
 
+	if (clip.layers[(usz)at].source.len > 0)
+	{
+		self.@notice("%s plays the animation %s: edit %s, or make the strip local to change its keys here",
+			clip.layers[(usz)at].name, clip.layers[(usz)at].source, clip.layers[(usz)at].source);
+		built.free(mem);
+		return NO_ANIM;
+	}
 	AnimTemplate full = clip_copy(mem, *clip);
 	AnimLayer* layer = &full.layers[(usz)at];
 	if (layer.own_clock())
@@ -743,6 +756,12 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	if (!clip || at < 0) return NO_ANIM;
 	AnimLayer* layer = &clip.layers[(usz)at];
 	if (layer.kind != KEYED) return NO_ANIM;
+	if (layer.source.len > 0)
+	{
+		self.@notice("%s plays the animation %s: key %s, or make the strip local to key it here", layer.name,
+			layer.source, layer.source);
+		return NO_ANIM;
+	}
 
 	float gain = layer.gain_at(clip.layer_clock(time), clip.duration);
 	if (gain < 1.0e-3f)

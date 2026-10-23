@@ -20,15 +20,17 @@ const String ANIM_GRAPH_CHANNEL_ID = "anim-graph-channel";
 const String ANIM_CURVES_ID = "anim-curves";
 const float ANIM_CURVES_H = 240.0;
 
-String[2] anim_sheet_mode_options = { "Keys", "Curves" };
+String[3] anim_sheet_mode_options = { "Keys", "Curves", "Layers" };
 String[2] anim_graph_channel_options = { "Rotation", "Position" };
 
 fn void anim_sheet_mode_chosen(Ui* ui, usz index)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	bool curves = index == 1;
-	if (app.anim_show_curves == curves) return;
+	bool layers = index == 2;
+	if (app.anim_show_curves == curves && app.anim_show_layers == layers) return;
 	app.anim_show_curves = curves;
+	app.anim_show_layers = layers;
 	// The two views select different things; a hidden selection must not be
 	// what the next delete acts on.
 	app.clear_animation_key_selection();

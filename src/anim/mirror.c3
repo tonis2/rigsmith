@@ -78,6 +78,8 @@ fn AnimTemplate mirror_template(
 		.aims = aims_mirrored(allocator, template.aims),
 		.aim_targets = aim_targets_mirrored(allocator, template.aim_targets),
 		.pins = pins_mirrored(allocator, template.pins),
+		.paths = anim_paths_mirrored(allocator, template.paths),
+		.gait = template.gait.mirrored(allocator),
 		.owned = true,
 	};
 

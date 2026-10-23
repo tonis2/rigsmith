@@ -104,6 +104,20 @@ struct AnimLayer
 	String link;
 	float length;
 	AnimLayerFit fit;
+
+	// Strips. On the Layers sheet a layer is a strip on a track: strips higher up
+	// play over lower ones, and strips on one track never overlap (see
+	// `layers_settle_tracks`). A layer on its own clock is placed in time by
+	// `offset` — the clip second its own zero lands on — and played `speed` of its
+	// seconds per clip second (zero reads as one); a stretched one fills the clip
+	// and ignores both.
+	uint track;
+	float offset;
+	float speed;
+	// A linked piece: the authored clip of the character this layer plays, its
+	// keys a flattened copy of that clip kept up to date whenever it changes
+	// (`AppState.sync_clip_pieces`). Empty for a layer of the clip's own.
+	String source;
 }
 
 <*
@@ -175,9 +189,23 @@ fn float AnimLayer.local_time(&self, AnimTemplate* clip, float time)
 {
 	if (!self.own_clock()) return time;
 	float clock = clip.layer_clock(time);
-	if (self.fit != STRETCH || !(clip.duration > 0.0f) || self.length == clip.duration) return clock;
+	if (self.fit != STRETCH) return (clock - self.offset) * self.pace();
+	if (!(clip.duration > 0.0f) || self.length == clip.duration) return clock;
 	return clock * self.length / clip.duration;
 }
+
+<*
+ How many of its own seconds the layer plays per clip second: its `speed`, or
+ one when it states none. Only a layer on its own clock that is not stretched
+ has a pace of its own.
+*>
+fn float AnimLayer.pace(&self) => self.speed > 0.0f ? self.speed : 1.0f;
+
+<*
+ Whether `offset` and `speed` place the layer: a layer on its own clock that
+ keeps or repeats its seconds. A stretched one is spread over the whole clip.
+*>
+fn bool AnimLayer.placed(&self) => self.own_clock() && self.fit != STRETCH;
 
 <*
  Where among its keys one made at the clip's `time` goes: `local_time`, with a
@@ -218,12 +246,14 @@ fn bool keyframes_same(AnimKeyframe[] a, AnimKeyframe[] b) @local
 
 <*
  Whether two copies of a shared layer carry the same motion: everything but how
- each clip plays it (weight, mute, solo, range, fades, fit) and the link itself.
+ each clip plays it (weight, mute, solo, range, fades, fit, track, offset, speed)
+ and the link itself.
 *>
 fn bool AnimLayer.same_shared(&self, AnimLayer* other)
 {
 	if (self.name != other.name || self.kind != other.kind || self.mode != other.mode) return false;
 	if (self.length != other.length || self.joint != other.joint || self.tip != other.tip) return false;
+	if (self.source != other.source) return false;
 	if (self.axis != other.axis || self.amplitude != other.amplitude || self.cycles != other.cycles
 		|| self.lag != other.lag || self.falloff != other.falloff || self.phase != other.phase
 		|| self.seed != other.seed || self.at != other.at || self.width != other.width) return false;
@@ -248,6 +278,9 @@ fn AnimLayer AnimLayer.shared_onto(&self, Allocator allocator, AnimLayer* local)
 	out.fade_in = local.fade_in;
 	out.fade_out = local.fade_out;
 	out.fit = local.fit;
+	out.track = local.track;
+	out.offset = local.offset;
+	out.speed = local.speed;
 	return out;
 }
 
@@ -267,9 +300,17 @@ fn sz AnimTemplate.layer_linked(&self, String link)
 *>
 fn float AnimLayer.display_scale(&self, AnimTemplate* clip)
 {
-	if (!self.own_clock() || self.fit != STRETCH || !(clip.duration > 0.0f)) return 1.0f;
+	if (self.placed()) return 1.0f / self.pace();
+	if (!self.own_clock() || !(clip.duration > 0.0f)) return 1.0f;
 	return clip.duration / self.length;
 }
+
+<*
+ Where the layer's own zero falls on the clip's timeline: its `offset` when it
+ is placed, the clip's start otherwise. A key at `t` of its own shows at
+ `t * display_scale + display_shift`.
+*>
+fn float AnimLayer.display_shift(&self) => self.placed() ? self.offset : 0.0f;
 
 // Most repeats a repeated layer is laid out over, whatever its length.
 const usz LAYER_REPEAT_LIMIT @local = 1024;
@@ -285,15 +326,18 @@ fn usz AnimLayer.clip_key_times(&self, AnimTemplate* clip, float[] out)
 	usz count;
 	float duration = clip.duration;
 	float scale = self.display_scale(clip);
-	float period = self.own_clock() && self.fit == REPEAT ? self.length : 0.0f;
+	float shift = self.display_shift();
+	float period = self.own_clock() && self.fit == REPEAT ? self.length * scale : 0.0f;
+	// A repeat placed late still plays its earlier passes before its offset.
+	float first = period > 0.0f && shift > 0.0f ? -math::ceil(shift / period) : 0.0f;
 	for (usz k = 0; k < LAYER_REPEAT_LIMIT; k++)
 	{
-		float offset = (float)k * period;
-		if (offset > duration) break;
+		float pass = shift + (first + (float)k) * period;
+		if (pass > duration) break;
 		foreach (frame : self.keyframes)
 		{
-			float at = frame.time * scale + offset;
-			if (at > duration) continue;
+			float at = frame.time * scale + pass;
+			if (at > duration || at < 0.0f) continue;
 			if (count < out.len) out[count] = at;
 			count++;
 		}
@@ -313,16 +357,31 @@ fn AnimLayer AnimLayer.plain(&self, Allocator allocator, AnimTemplate* clip)
 {
 	AnimLayer out = self.copy(allocator);
 	if (out.link.len > 0) alloc::free(allocator, out.link.ptr);
+	if (out.source.len > 0) alloc::free(allocator, out.source.ptr);
 	out.link = "";
+	out.source = "";
 	out.length = 0.0f;
 	out.fit = STRETCH;
+	out.offset = 0.0f;
+	out.speed = 0.0f;
 	if (!self.own_clock() || self.keyframes.len == 0) return out;
 
 	float duration = clip.duration;
 	float scale = self.display_scale(clip);
+	float shift = self.display_shift();
+	float period = self.fit == REPEAT ? self.length * scale : 0.0f;
+	// The passes that reach the clip: from the one playing at its start (an
+	// earlier one when the layer is placed late) to the one under its end.
+	float first = 0.0f;
 	usz repeats = 1;
-	if (self.fit == REPEAT) repeats = math::clamp((usz)math::ceil(duration / self.length), (usz)1, LAYER_REPEAT_LIMIT);
-	float period = self.fit == REPEAT ? self.length : 0.0f;
+	if (self.fit == REPEAT)
+	{
+		first = math::floor(-shift / period);
+		repeats = math::clamp((usz)math::ceil((duration - shift) / period - first), (usz)1, LAYER_REPEAT_LIMIT);
+	}
+	// Laid out from `pad` on, so a pass before the clip's start has room, and
+	// cropped back to the clip's seconds below.
+	float pad = math::max(0.0f, -(shift + first * period));
 	// One more for the held pose a kept layer ends on.
 	AnimKeyframe[] laid = alloc::new_array(allocator, AnimKeyframe, (sz)(self.keyframes.len * repeats + 1));
 	usz count;
@@ -331,7 +390,7 @@ fn AnimLayer AnimLayer.plain(&self, Allocator allocator, AnimTemplate* clip)
 	{
 		foreach (frame : self.keyframes)
 		{
-			float at = frame.time * scale + (float)k * period;
+			float at = frame.time * scale + shift + (first + (float)k) * period + pad;
 			if (count > 0 && at <= last + ANIM_SAME_TIME)
 			{
 				// A repeat's opening key meets the last pass's closing key. Saying the
@@ -361,21 +420,21 @@ fn AnimLayer AnimLayer.plain(&self, Allocator allocator, AnimTemplate* clip)
 	}
 	// Kept seconds hold their last pose to the clip's end, where a looping clip
 	// would otherwise wander back to the first.
-	if (self.fit == KEEP && last < duration - ANIM_SAME_TIME)
+	if (self.fit == KEEP && last < pad + duration - ANIM_SAME_TIME)
 	{
 		laid[count] = keyframe_copy(allocator, self.keyframes[^1]);
-		laid[count].time = duration;
-		last = duration;
+		laid[count].time = pad + duration;
+		last = pad + duration;
 		count++;
 	}
 	AnimTemplate keys = {
 		.name = "keys",
-		.duration = math::max(last, duration),
+		.duration = math::max(last, pad + duration),
 		.blend = clip.blend,
 		.keyframes = laid[:count],
 	};
-	AnimTemplate cut = last > duration + ANIM_SAME_TIME
-		? clip_cropped(allocator, keys, 0.0f, duration)
+	AnimTemplate cut = last > pad + duration + ANIM_SAME_TIME || pad > 0.0f
+		? clip_cropped(allocator, keys, pad, pad + duration)
 		: clip_copy(allocator, keys);
 	foreach (&frame : laid[:count]) frame.free(allocator);
 	alloc::free(allocator, laid);
@@ -418,6 +477,7 @@ fn void AnimLayer.free(&self, Allocator allocator)
 	if (self.joint.len > 0) alloc::free(allocator, self.joint.ptr);
 	if (self.tip.len > 0) alloc::free(allocator, self.tip.ptr);
 	if (self.link.len > 0) alloc::free(allocator, self.link.ptr);
+	if (self.source.len > 0) alloc::free(allocator, self.source.ptr);
 	foreach (entry : self.mask) if (entry.len > 0) alloc::free(allocator, entry.ptr);
 	if (self.mask.len > 0) alloc::free(allocator, self.mask);
 	foreach (&frame : self.keyframes) frame.free(allocator);
@@ -446,6 +506,7 @@ fn AnimLayer AnimLayer.copy(&self, Allocator allocator, float scale = 1.0f, floa
 	out.joint = self.joint.len > 0 ? self.joint.copy(allocator) : "";
 	out.tip = self.tip.len > 0 ? self.tip.copy(allocator) : "";
 	out.link = self.link.len > 0 ? self.link.copy(allocator) : "";
+	out.source = self.source.len > 0 ? self.source.copy(allocator) : "";
 	out.mask = alloc::new_array(allocator, String, (sz)self.mask.len);
 	foreach (usz i, entry : self.mask) out.mask[i] = entry.copy(allocator);
 	out.keyframes = alloc::new_array(allocator, AnimKeyframe, (sz)self.keyframes.len);
@@ -463,6 +524,13 @@ fn AnimLayer AnimLayer.copy(&self, Allocator allocator, float scale = 1.0f, floa
 		out.fade_out = self.fade_out * scale;
 		out.at = self.at * scale + shift;
 		out.width = self.width * scale;
+		// A placed layer plays the same stretch of the clip: its zero moves with
+		// the clip's seconds, and a retime plays its own seconds as much slower.
+		if (self.placed())
+		{
+			out.offset = self.offset * scale + shift;
+			if (scale > 0.0f && scale != 1.0f) out.speed = self.pace() / scale;
+		}
 	}
 	return out;
 }
@@ -527,6 +595,105 @@ fn void layers_moved(AnimLayer[] layers, usz at, usz dest)
 		for (usz i = at; i > dest; i--) layers[i] = layers[i - 1];
 	}
 	layers[dest] = moving;
+}
+
+<*
+ The seconds of the clip a layer covers as a strip: its range, or the whole clip
+ when it has none.
+*>
+fn void AnimLayer.span(&self, float duration, float* from, float* to)
+{
+	if (self.end > self.start)
+	{
+		*from = self.start;
+		*to = self.end;
+		return;
+	}
+	*from = 0.0f;
+	*to = duration;
+}
+
+// Whether two strips share any stretch of time; touching ends do not count.
+fn bool AnimLayer.overlaps(&self, AnimLayer* other, float duration)
+{
+	float a0, a1, b0, b1;
+	self.span(duration, &a0, &a1);
+	other.span(duration, &b0, &b1);
+	return a0 < b1 - ANIM_SAME_TIME && b0 < a1 - ANIM_SAME_TIME;
+}
+
+<*
+ Give every layer a track the Layers sheet can draw, in place. Tracks rise with
+ the stack: a layer stays on the track of the one beneath it only when it asks
+ for the same track and overlaps no strip already there; anything else — a
+ higher track, a lower one, an overlap — goes on the next track up. So the
+ tracks come out numbered from zero without gaps, strips on one track never
+ overlap, and a stack that names no tracks (an older file, a fresh layer put on
+ top) comes out one layer per track.
+*>
+fn void layers_settle_tracks(AnimLayer[] layers, float duration)
+{
+	uint[] rows = alloc::new_array(tmem, uint, (sz)layers.len);
+	layers_settled_tracks(layers, duration, rows);
+	foreach (usz i, &layer : layers) layer.track = rows[i];
+}
+
+<*
+ The tracks `layers_settle_tracks` would give, into `rows` (one per layer),
+ leaving the layers as they are: what a writer states for a stack built in
+ memory that never went through the authored pack.
+*>
+fn void layers_settled_tracks(AnimLayer[] layers, float duration, uint[] rows)
+{
+	uint row;
+	usz row_from;
+	foreach (usz i, &layer : layers)
+	{
+		if (i > 0)
+		{
+			bool stays = layer.track == layers[i - 1].track;
+			if (stays)
+			{
+				foreach (&other : layers[row_from:i - row_from]) if (layer.overlaps(other, duration)) { stays = false; break; }
+			}
+			if (!stays)
+			{
+				row++;
+				row_from = i;
+			}
+		}
+		rows[i] = row;
+	}
+}
+
+<*
+ Put the stack in track order, lower tracks first and each track's strips by
+ their start, keeping the order of equals. `moved[i]` receives where the layer
+ now at `i` was, when given (one slot per layer).
+*>
+fn void layers_sort_by_track(AnimLayer[] layers, float duration, usz[] moved = {})
+{
+	foreach (usz i, &slot : moved) *slot = i;
+	for (usz i = 1; i < layers.len; i++)
+	{
+		AnimLayer held = layers[i];
+		usz was = moved.len > i ? moved[i] : i;
+		float held_from, held_to;
+		held.span(duration, &held_from, &held_to);
+		usz j = i;
+		while (j > 0)
+		{
+			float from, to;
+			layers[j - 1].span(duration, &from, &to);
+			bool after = layers[j - 1].track > held.track || (layers[j - 1].track == held.track && from > held_from);
+			if (!after) break;
+			layers[j] = layers[j - 1];
+			if (moved.len > j) moved[j] = moved[j - 1];
+			j--;
+		}
+		layers[j] = held;
+		if (moved.len > j) moved[j] = was;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -965,7 +1132,7 @@ fn float[] layer_sample_times(Allocator allocator, AnimTemplate* clip, float[] t
 	// Sorted already; each candidate is checked against the list by bisection.
 	sort::quicksort(merged[:used]);
 	usz keyed;
-	foreach (&layer : clip.layers) if (!layer.mute) keyed += layer.clip_key_times(clip, {});
+	foreach (&layer : clip.layers) if (!layer.mute) keyed += layer.clip_key_times(clip, {}) + 4;
 	float[] extra = alloc::new_array(allocator, float, (sz)(steps + 1 + keyed));
 	defer alloc::free(allocator, extra);
 	usz extras = 0;
@@ -974,6 +1141,14 @@ fn float[] layer_sample_times(Allocator allocator, AnimTemplate* clip, float[] t
 	{
 		if (layer.mute) continue;
 		extras += layer.clip_key_times(clip, extra[extras..]);
+		// A strip's edges and the corners of its fades, where its gain turns.
+		float from, to;
+		layer.span(clip.duration, &from, &to);
+		float[4] corners = { from, to, from + layer.fade_in, to - layer.fade_out };
+		foreach (corner : corners)
+		{
+			if (corner >= 0.0f && corner <= clip.duration) extra[extras++] = corner;
+		}
 	}
 	for (usz i = 0; i < extras; i++)
 	{
@@ -1178,6 +1353,14 @@ fn void append_layer_fields(DString* out, AnimLayer* layer)
 	}
 	if (layer.length > 0.0f) out.appendf(`,"length":%s`, (JsonFloat)layer.length)!!;
 	if (layer.fit != STRETCH) out.appendf(`,"fit":"%s"`, layer.fit.wire())!!;
+	out.appendf(`,"track":%d`, layer.track)!!;
+	if (layer.offset != 0.0f) out.appendf(`,"offset":%s`, (JsonFloat)layer.offset)!!;
+	if (layer.speed > 0.0f) out.appendf(`,"speed":%s`, (JsonFloat)layer.speed)!!;
+	if (layer.source.len > 0)
+	{
+		out.append_string(`,"source":`);
+		append_json_string(out, layer.source);
+	}
 	if (!layer.procedural()) return;
 	out.append_string(`,"joint":`);
 	append_json_string(out, layer.joint);
@@ -1256,7 +1439,10 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 	if (!layer_text(obj, "joint", allocator, &layer.joint, detail)) return false;
 	if (!layer_text(obj, "tip", allocator, &layer.tip, detail)) return false;
 	if (!layer_text(obj, "link", allocator, &layer.link, detail)) return false;
+	if (!layer_text(obj, "source", allocator, &layer.source, detail)) return false;
 	if (!layer_number(obj, "length", &layer.length, detail)) return false;
+	if (!layer_number(obj, "offset", &layer.offset, detail)) return false;
+	if (!layer_number(obj, "speed", &layer.speed, detail)) return false;
 	if (!layer_number(obj, "weight", &layer.weight, detail)) return false;
 	if (!layer_number(obj, "start", &layer.start, detail)) return false;
 	if (!layer_number(obj, "end", &layer.end, detail)) return false;
@@ -1284,6 +1470,21 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 			return false;
 		}
 		layer.seed = (uint)seed;
+	}
+	if (member(obj, "track") != null)
+	{
+		double? track = obj.get_float("track");
+		if (catch track)
+		{
+			if (detail) detail.append_string(`layer "track" must be a whole number, zero or more`);
+			return false;
+		}
+		if (track < 0 || track > 1.0e6)
+		{
+			if (detail) detail.append_string(`layer "track" must be a whole number, zero or more`);
+			return false;
+		}
+		layer.track = (uint)track;
 	}
 	if (member(obj, "mute") != null) layer.mute = obj.get_bool("mute") ?? false;
 	if (member(obj, "solo") != null) layer.solo = obj.get_bool("solo") ?? false;
@@ -1380,9 +1581,15 @@ fn bool read_layer_fields(Object* obj, Allocator allocator, AnimLayer* layer, DS
 		if (detail) detail.appendf(`layer "weight" is %.9g; it is 0 to 1`, layer.weight);
 		return false;
 	}
-	if (layer.start < 0.0f || layer.fade_in < 0.0f || layer.fade_out < 0.0f || layer.cycles < 0.0f || layer.length < 0.0f)
+	if (layer.start < 0.0f || layer.fade_in < 0.0f || layer.fade_out < 0.0f || layer.cycles < 0.0f || layer.length < 0.0f
+		|| layer.speed < 0.0f)
 	{
-		if (detail) detail.append_string(`layer "start", "fade_in", "fade_out", "cycles" and "length" cannot be negative`);
+		if (detail) detail.append_string(`layer "start", "fade_in", "fade_out", "cycles", "length" and "speed" cannot be negative`);
+		return false;
+	}
+	if (layer.source.len > 0 && (layer.kind != KEYED || !(layer.length > 0.0f)))
+	{
+		if (detail) detail.append_string(`a layer with a "source" is a keyed piece on its own clock: it needs "kind":"keyed" and a "length"`);
 		return false;
 	}
 	if (layer.procedural())

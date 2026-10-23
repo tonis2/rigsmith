@@ -442,6 +442,10 @@ struct AppState
 	// The sheet shows the selected joints' curves instead of key lanes, their
 	// position or rotation channel, and the curve view's vertical zoom and pan.
 	bool anim_show_curves;
+	// The sheet shows the clip's layers as strips on tracks (ui/layer_sheet.c3),
+	// and what the Pieces bin is dragging onto them.
+	bool anim_show_layers;
+	PieceDrag piece_drag;
 	bool anim_graph_position;
 	float anim_graph_y_zoom;
 	float anim_graph_y_shift;
@@ -1550,6 +1554,7 @@ fn void AppState.free(&self)
 
 	self.anim_key_clipboard.free(mem);
 	self.anim_pose_clipboard.free(mem);
+	self.piece_drag.clear();
 	self.pose_library_name.free(mem);
 	if (self.pending_open.len > 0) alloc::free(mem, self.pending_open.ptr);
 	if (self.pending_add.len > 0) alloc::free(mem, self.pending_add.ptr);
@@ -1627,6 +1632,7 @@ fn void AppState.free_character_state(&self)
 	self.imported_skin.free(mem);
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
 	self.drop_aim_draft();
+	self.drop_path_draft();
 	self.drop_layer_keys_scaled();
 	self.drop_layer_share_rows();
 	self.clear_aim_target();

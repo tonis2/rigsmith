@@ -30,7 +30,10 @@ faultdef LAYER_REFUSED;
 
 const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip whose stack to change. A clip from a library file is forked into the authored pack first, as apply_clip does."},
-	"op":{"type":"string","description":"\"add\" (the default) puts a layer in the stack, \"replace\" changes one, \"remove\" takes one out, \"move\" reorders. The stack applies bottom to top: index 0 first. \"extract\" lifts the keys of \"joints\" (each with every joint below it) out of the base into a new full-weight override layer at the bottom, the pose unchanged — a tail made a layer of its own. \"share\" gives the layer (index or name) to the clips in \"clips\", linked: an edit of any copy is an edit of all, each clip keeping its own weight, range and fit. \"unlink\" makes this clip's copy its own again."},
+	"op":{"type":"string","description":"\"add\" (the default) puts a layer in the stack, \"replace\" changes one, \"remove\" takes one out, \"move\" reorders. The stack applies bottom to top: index 0 first. \"extract\" lifts the keys of \"joints\" (each with every joint below it) out of the base into a new full-weight override layer at the bottom, the pose unchanged — a tail made a layer of its own. \"share\" gives the layer (index or name) to the clips in \"clips\", linked: an edit of any copy is an edit of all, each clip keeping its own weight, range and fit. \"unlink\" makes this clip's copy its own again. \"piece\" lays \"piece\" on the clip at \"at\" seconds on \"track\", a strip of the Layers sheet. \"move_strip\" moves the layer (index or name) so it starts at \"at\", onto \"track\" if given; refused when it would overlap a strip on that track. \"make_local\" makes a linked piece the clip's own copy."},
+	"piece":{"type":"object","description":"For op piece, one of: {\"clip\": name} another animation — the character's own is linked (the strip plays it and follows every edit to it; a strip refuses a clip that would end up playing itself), a library clip is copied in; {\"kind\": \"keyed\"|\"wave\"|\"noise\"|\"pulse\"} a fresh layer; {\"link\": id} a shared layer another clip holds."},
+	"at":{"type":"number","description":"For piece and move_strip: the second the strip starts at."},
+	"track":{"type":"integer","description":"For piece and move_strip: the track, 0 the lowest (it plays first; higher tracks play over it). One past the top makes a new track; piece defaults to a new track."},
 	"index":{"type":"integer","description":"Which layer to replace, remove or move; for add, where to insert (default: on top). Instead of an index, name the layer with \"name\"."},
 	"name":{"type":"string","description":"Names the layer to replace, remove or move, when no index is given."},
 	"to":{"type":"integer","description":"For move: the index the layer ends up at."},
@@ -63,7 +66,11 @@ const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 		"width":{"type":"number","description":"Pulse: its width in seconds."},
 		"fit":{"type":"string","description":"A shared layer's fit in this clip: \"stretch\", \"keep\" or \"repeat\". Each clip has its own."},
 		"link":{"type":"string","description":"Read only in practice: the id every clip sharing this layer holds. Set by op share."},
-		"length":{"type":"number","description":"A shared layer's own length in seconds, which its keys' times are on. Set by op share."}
+		"length":{"type":"number","description":"A shared layer's own length in seconds, which its keys' times are on. Set by op share."},
+		"track":{"type":"integer","description":"Read only: the track the strip is on (op move_strip moves it)."},
+		"offset":{"type":"number","description":"A placed piece's (one on its own clock that keeps or repeats its seconds) zero, in clip seconds: where its first frame plays."},
+		"speed":{"type":"number","description":"A placed piece's playback speed, its seconds per clip second; 0 or omitted is 1."},
+		"source":{"type":"string","description":"Read only: the animation a linked piece plays. Set by op piece."}
 	}}
 },"required":["clip"]}`;
 
@@ -258,9 +265,10 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 	String clip_name;
 	if (!required_string(args, "clip", &clip_name, detail, `set_layer needs "clip": the clip whose stack to change. get_scene lists every pack and clip.`)) return LAYER_REFUSED~;
 	String op = args.get_string("op") ?? "add";
-	if (op != "add" && op != "replace" && op != "remove" && op != "move" && op != "extract" && op != "share" && op != "unlink")
+	if (op != "add" && op != "replace" && op != "remove" && op != "move" && op != "extract" && op != "share" && op != "unlink"
+		&& op != "piece" && op != "move_strip" && op != "make_local")
 	{
-		detail.appendf(`"op" is "%s". It is "add", "replace", "remove", "move", "extract", "share" or "unlink".`, op);
+		detail.appendf(`"op" is "%s". It is "add", "replace", "remove", "move", "extract", "share", "unlink", "piece", "move_strip" or "make_local".`, op);
 		return LAYER_REFUSED~;
 	}
 
@@ -278,6 +286,7 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 
 	if (op == "extract") return extract_layer_json(app, ref, args, detail);
 	if (op == "share" || op == "unlink") return share_layer_json(app, ref, op, args, detail);
+	if (op == "piece" || op == "move_strip" || op == "make_local") return strip_layer_json(app, ref, op, args, detail);
 
 	// The layer names the rig's joints, and the clip lands in the authored pack,
 	// which speaks the rig's words: a library clip spelt another way is respelt.
@@ -289,6 +298,11 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 	if ((op == "add" || op == "replace") && (spec == null || !spec.is_keyable()))
 	{
 		detail.appendf(`"%s" needs "layer": an object describing the layer`, op);
+		return LAYER_REFUSED~;
+	}
+	if (spec != null && spec.is_keyable() && (member(spec, "source") != null || member(spec, "track") != null))
+	{
+		detail.append_string(`"source" and "track" are set by op piece and op move_strip, not by add or replace`);
 		return LAYER_REFUSED~;
 	}
 
@@ -482,6 +496,90 @@ fn String? share_layer_json(AppState* app, AnimRef ref, String op, Object* args,
 	append_layers_json(&out, clip.layers);
 	out.append_char('}');
 	return out.copy_str(mem);
+}
+
+// set_layer ops piece, move_strip and make_local: the Layers sheet's strips.
+fn String? strip_layer_json(AppState* app, AnimRef ref, String op, Object* args, DString* detail) @local
+{
+	AnimTemplate* src = app.clip(ref);
+	sz done = -1;
+	if (op == "piece")
+	{
+		Object* spec = member(args, "piece");
+		if (spec == null || !spec.is_keyable())
+		{
+			detail.append_string(`piece needs "piece": {"clip": name}, {"kind": "keyed"|"wave"|"noise"|"pulse"} or {"link": id}`);
+			return LAYER_REFUSED~;
+		}
+		Piece piece;
+		if (member(spec, "clip") != null)
+		{
+			piece.kind = CLIP;
+			piece.clip = resolve_named(app, spec.get_string("clip") ?? "", detail)!;
+		}
+		else if (member(spec, "link") != null)
+		{
+			piece.kind = SHARED;
+			piece.link = spec.get_string("link") ?? "";
+		}
+		else
+		{
+			switch (spec.get_string("kind") ?? "")
+			{
+				case "keyed": piece.kind = KEYED;
+				case "wave": piece.kind = WAVE;
+				case "noise": piece.kind = NOISE;
+				case "pulse": piece.kind = PULSE;
+				default:
+					detail.append_string(`"piece" needs "clip", "link", or "kind": "keyed", "wave", "noise" or "pulse"`);
+					return LAYER_REFUSED~;
+			}
+		}
+		float at = (float)(args.get_float("at") ?? 0.0);
+		double track = args.get_float("track") ?? (double)src.track_count();
+		if (!math::is_finite(at) || track < 0)
+		{
+			detail.append_string(`"at" must be a number of seconds and "track" zero or more`);
+			return LAYER_REFUSED~;
+		}
+		done = app.place_piece(ref, piece, at, (uint)track);
+	}
+	else
+	{
+		sz target = which_layer(src, args, detail);
+		if (target < 0) return LAYER_REFUSED~;
+		if (op == "make_local")
+		{
+			if (src.layers[(usz)target].source.len == 0)
+			{
+				detail.appendf(`layer "%s" is not a linked piece.`, src.layers[(usz)target].name);
+				return LAYER_REFUSED~;
+			}
+			done = app.make_piece_local(ref, (usz)target) ? target : -1;
+		}
+		else
+		{
+			AnimLayer* layer = &src.layers[(usz)target];
+			float from, to;
+			layer.span(src.duration, &from, &to);
+			float at = (float)(args.get_float("at") ?? (double)from);
+			double track = args.get_float("track") ?? (double)layer.track;
+			if (!math::is_finite(at) || track < 0)
+			{
+				detail.append_string(`"at" must be a number of seconds and "track" zero or more`);
+				return LAYER_REFUSED~;
+			}
+			done = app.move_strip(ref, (usz)target, at - from, (uint)track);
+		}
+	}
+	if (done < 0)
+	{
+		String why = app.notice();
+		detail.append_string(why.len > 0 ? why : "the strip would not land");
+		return LAYER_REFUSED~;
+	}
+	app.refresh_ui();
+	return layers_answer(app, app.editing, op);
 }
 
 <*

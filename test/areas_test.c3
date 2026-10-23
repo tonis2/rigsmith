@@ -447,7 +447,7 @@ fn void an_older_session_opens_with_the_weights_it_showed() @test
 	defer closing.free(mem);
 	String older = text.replace(mem, `"attachments": []`, closing);
 	defer older.free(mem);
-	String versioned = older.replace(mem, `"version": 32`, `"version": 31`);
+	String versioned = older.replace(mem, `"version": 33`, `"version": 31`);
 	defer versioned.free(mem);
 	test::@check(versioned.contains(`"pins"`) && versioned.contains(`"version": 31`), "the older session was not written: %s", versioned);
 	String sidecar = crig::session_path(mem, AREA_COPY);
@@ -497,7 +497,7 @@ fn void an_older_session_on_the_files_weights_keeps_them() @test
 	String flagged = text.replace(mem, `  "dots": [`, `  "skin_from_file": true,
   "dots": [`);
 	defer flagged.free(mem);
-	String versioned = flagged.replace(mem, `"version": 32`, `"version": 31`);
+	String versioned = flagged.replace(mem, `"version": 33`, `"version": 31`);
 	defer versioned.free(mem);
 	test::@check(versioned.contains(`"skin_from_file"`), "the older session was not written");
 	String sidecar = crig::session_path(mem, AREA_COPY);

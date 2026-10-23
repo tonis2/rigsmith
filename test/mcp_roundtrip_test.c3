@@ -102,18 +102,22 @@ fn void a_second_author_gait_keeps_the_layers() @test
 	defer f.close();
 
 	if (!tool_ok(&f, "author_gait", `{"name":"Again","duration":1.0,"pin_feet":false}`)) return;
+	// The gait's own body layer is there from the start.
+	test::@check(authored(&f, "Again").layers.len == 1 && authored(&f, "Again").layers[0].name == crig::GAIT_BODY_LAYER,
+		"the gait has no body layer");
 	if (!tool_ok(&f, "set_layer", `{"clip":"Again","layer":{"name":"Lean","kind":"keyed","keyframes":[{"time":0,"joints":[{"name":"chest","rotation":{"axis":[1,0,0],"angle":0.1}}]}]}}`)) return;
-	test::@check(authored(&f, "Again").layers.len == 1, "the layer did not land");
+	test::@check(authored(&f, "Again").layers.len == 2, "the layer did not land");
 
 	Object*? answer = f.call_tool("author_gait", `{"name":"Again","duration":1.2,"stride":0.4,"pin_feet":false}`);
 	if (catch answer) { test::@check(false, "the second author_gait refused"); return; }
 	defer answer.free();
-	test::@check(authored(&f, "Again").layers.len == 1 && authored(&f, "Again").layers[0].name == "Lean",
-		"the second gait dropped the layer");
+	// The body layer written again, the person's layer kept over it.
+	test::@check(authored(&f, "Again").layers.len == 2 && authored(&f, "Again").layers[0].name == crig::GAIT_BODY_LAYER
+		&& authored(&f, "Again").layers[1].name == "Lean", "the second gait dropped the layer");
 	test::@check((answer.get_float("kept_layers") ?? 0.0) == 1.0, "the answer does not say the layer was kept");
 
 	if (!tool_ok(&f, "author_gait", `{"name":"Again","duration":1.0,"pin_feet":false,"keep_layers":false}`)) return;
-	test::@check(authored(&f, "Again").layers.len == 0, "keep_layers false kept the layer");
+	test::@check(authored(&f, "Again").layers.len == 1, "keep_layers false kept the layer");
 }
 
 <*
@@ -131,7 +135,7 @@ fn void a_layer_replace_with_only_keys_keeps_its_name() @test
 	if (!f.open_model(HUMANOID)) return;
 	defer f.close();
 
-	if (!tool_ok(&f, "author_gait", `{"name":"Keys","duration":1.0,"pin_feet":false}`)) return;
+	if (!tool_ok(&f, "author_gait", `{"name":"Keys","duration":1.0,"pin_feet":false,"upper_body":false}`)) return;
 	if (!tool_ok(&f, "set_layer", `{"clip":"Keys","layer":{"name":"Bend","kind":"keyed","keyframes":[{"time":0,"joints":[{"name":"chest","rotation":{"axis":[1,0,0],"angle":0.1}}]}]}}`)) return;
 	if (!tool_ok(&f, "set_layer", `{"clip":"Keys","op":"replace","name":"Bend","layer":{"keyframes":[{"time":0,"joints":[{"name":"chest","rotation":{"axis":[1,0,0],"angle":0.2}}]}]}}`)) return;
 
@@ -253,7 +257,8 @@ fn void a_clip_is_duplicated_and_merged_into_a_copy() @test
 	if (!f.open_model(HUMANOID)) return;
 	defer f.close();
 
-	if (!tool_ok(&f, "author_gait", `{"name":"Orig","duration":1.0,"pin_feet":false}`)) return;
+	// Legs only, so the gait's own body layer does not join the count.
+	if (!tool_ok(&f, "author_gait", `{"name":"Orig","duration":1.0,"pin_feet":false,"upper_body":false}`)) return;
 	if (!tool_ok(&f, "set_layer", `{"clip":"Orig","layer":{"name":"Lean","kind":"keyed","keyframes":[{"time":0,"joints":[{"name":"chest","rotation":{"axis":[1,0,0],"angle":0.1}}]}]}}`)) return;
 
 	if (!tool_ok(&f, "duplicate_clip", `{"clip":"Orig"}`)) return;

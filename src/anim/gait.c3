@@ -41,6 +41,7 @@
 module crig;
 
 import rig;
+import std::collections::object;
 import std::math;
 import std::math::quaternion;
 
@@ -1036,4 +1037,202 @@ fn AnimTemplate? gait_clip(
 		.ground = { .feet = windows, .floor = floor, .floor_set = true },
 		.owned = true,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// The gait a clip was written from, kept so it can be written again
+
+<*
+ What a gait clip was written from: enough to write it again with one thing
+ changed — a longer stride dragged out in the viewport, a trot instead of a walk —
+ without asking for the rest. Lengths are fractions of the rig's height, as a
+ path's points are, so the same preset fits the rig in any unit. Owned by the
+ clip's allocator; see `AnimGaitPreset.free`.
+*>
+struct AnimGaitPreset
+{
+	bool set;
+	GaitKind kind;
+	float duty;
+	float stride;
+	float lift;
+	bool drop_set;
+	float drop;
+	bool legs_only;
+	bool arms_set;
+	float arm_swing;
+	float arm_elbow;
+	float arm_elbow_swing;
+	float arm_spread;
+	usz samples;
+	String[] feet;   // the feet's joints, in the clip's words
+	float[] offsets; // where in the cycle each lands
+}
+
+fn void AnimGaitPreset.free(&self, Allocator allocator)
+{
+	foreach (name : self.feet) if (name.len > 0) alloc::free(allocator, name.ptr);
+	if (self.feet.len > 0) alloc::free(allocator, self.feet);
+	if (self.offsets.len > 0) alloc::free(allocator, self.offsets);
+	*self = {};
+}
+
+fn AnimGaitPreset AnimGaitPreset.copy(&self, Allocator allocator)
+{
+	AnimGaitPreset out = *self;
+	if (!self.set) return {};
+	out.feet = alloc::new_array(allocator, String, (sz)self.feet.len);
+	foreach (usz i, name : self.feet) out.feet[i] = name.copy(allocator);
+	out.offsets = alloc::new_array(allocator, float, (sz)self.offsets.len);
+	foreach (usz i, offset : self.offsets) out.offsets[i] = offset;
+	return out;
+}
+
+// The preset with each foot named by its twin: what a mirrored gait was written from.
+fn AnimGaitPreset AnimGaitPreset.mirrored(&self, Allocator allocator)
+{
+	AnimGaitPreset out = self.copy(allocator);
+	foreach (&name : out.feet) *name = twin_or_same(allocator, *name);
+	return out;
+}
+
+fn void append_gait_preset(DString* out, AnimGaitPreset* preset)
+{
+	out.appendf(`{"gait":"%s","duty":%s,"stride":%s,"lift":%s,"samples":%d`, preset.kind.label(), (JsonFloat)preset.duty,
+		(JsonFloat)preset.stride, (JsonFloat)preset.lift, preset.samples)!!;
+	if (preset.drop_set) out.appendf(`,"drop":%s`, (JsonFloat)preset.drop)!!;
+	if (preset.legs_only) out.append_string(`,"legs_only":true`);
+	if (preset.arms_set)
+	{
+		out.appendf(`,"arms":[%s,%s,%s,%s]`, (JsonFloat)preset.arm_swing, (JsonFloat)preset.arm_elbow,
+			(JsonFloat)preset.arm_elbow_swing, (JsonFloat)preset.arm_spread)!!;
+	}
+	out.append_string(`,"feet":[`);
+	foreach (usz i, name : preset.feet)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_string(`{"joint":`);
+		append_json_string(out, name);
+		out.appendf(`,"offset":%s}`, (JsonFloat)(i < preset.offsets.len ? preset.offsets[i] : 0.0f))!!;
+	}
+	out.append_string("]}");
+}
+
+<*
+ Read a preset `append_gait_preset` wrote. False on a malformed one, which then
+ holds nothing.
+*>
+fn bool read_gait_preset(Object* obj, Allocator allocator, AnimGaitPreset* preset)
+{
+	*preset = {};
+	if (obj == null || !obj.is_keyable()) return false;
+	if (!parse_gait_kind(obj.get_string("gait") ?? "", &preset.kind)) return false;
+	preset.duty = (float)(obj.get_float("duty") ?? 0.0);
+	preset.stride = (float)(obj.get_float("stride") ?? 0.0);
+	preset.lift = (float)(obj.get_float("lift") ?? 0.0);
+	preset.samples = (usz)math::clamp(obj.get_float("samples") ?? (double)8, 8.0, 240.0);
+	preset.legs_only = obj.get_bool("legs_only") ?? false;
+	if (try double drop = obj.get_float("drop"))
+	{
+		preset.drop_set = true;
+		preset.drop = (float)drop;
+	}
+	Object* arms = member(obj, "arms");
+	if (arms != null && arms.is_array() && arms.get_len() == 4)
+	{
+		preset.arms_set = true;
+		preset.arm_swing = (float)(arms.get_float_at(0) ?? 1.0);
+		preset.arm_elbow = (float)(arms.get_float_at(1) ?? 1.0);
+		preset.arm_elbow_swing = (float)(arms.get_float_at(2) ?? 1.0);
+		preset.arm_spread = (float)(arms.get_float_at(3) ?? 1.0);
+	}
+	Object* feet = member(obj, "feet");
+	if (feet == null || !feet.is_array() || feet.get_len() == 0 || (usz)feet.get_len() > GAIT_FEET_MAX) return false;
+	preset.feet = alloc::new_array(allocator, String, feet.get_len());
+	preset.offsets = alloc::new_array(allocator, float, feet.get_len());
+	for (sz i = 0; i < feet.get_len(); i++)
+	{
+		Object* foot = feet.get_at((usz)i);
+		String joint = foot ? foot.get_string("joint") ?? "" : "";
+		if (joint.len == 0)
+		{
+			preset.free(allocator);
+			return false;
+		}
+		preset.feet[(usz)i] = joint.copy(allocator);
+		preset.offsets[(usz)i] = (float)(foot.get_float("offset") ?? 0.0);
+	}
+	preset.set = true;
+	return true;
+}
+
+// Points through a foot's swing, besides where it lifts and where it lands.
+const usz GAIT_SWING_POINTS = 7;
+
+<*
+ One closed path per foot: where the gait carries it, in the model's space as a
+ fraction of `height`. The stance is a straight line on the floor between two
+ sharp points — where the foot comes down (a DOWN slice) and where it lifts (an
+ UP slice) — and the swing runs back through `GAIT_SWING_POINTS` points sampled
+ off the gait's own swing, each with a slice at the instant the gait has it there,
+ so the timing through the air is the gait's too. Followed live, the paths put
+ every foot where the keys already do; dragged, they move it.
+
+ `report` is what `gait_clip` answered for the same spec and feet: the duty,
+ stride and lift it settled on and the floor. The caller owns the paths.
+*>
+fn AnimPath[] gait_foot_paths(Allocator allocator, rig::Skeleton* skeleton, String[] names, GaitSpec spec,
+	GaitFoot[] feet, GaitReport report)
+{
+	float height = skeleton.height();
+	if (!(height > 0.0f) || feet.len == 0) return {};
+	spec.duty = report.duty;
+	spec.stride = report.stride;
+	spec.lift = report.lift;
+	float duration = spec.duration > 0.0f ? spec.duration : 1.0f;
+	AnimPath[] paths = alloc::new_array(allocator, AnimPath, (sz)feet.len);
+	foreach (usz f, foot : feet)
+	{
+		LegPlan plan = { .rest = skeleton.joints[foot.joint], .offset = foot.offset };
+		usz count = 2 + GAIT_SWING_POINTS;
+		AnimPath* path = &paths[f];
+		*path = {
+			.joint = foot.joint < names.len ? names[foot.joint].copy(allocator) : "",
+			.name = string::format(allocator, "%s step", foot.joint < names.len ? names[foot.joint] : "foot"),
+			.closed = true,
+			.generated = true,
+			.points = alloc::new_array(allocator, AnimPathPoint, (sz)count),
+			.slices = alloc::new_array(allocator, AnimPathSlice, (sz)count),
+		};
+		float[GAIT_SWING_POINTS + 2] phases;
+		phases[0] = foot.offset;
+		phases[1] = foot.offset + spec.duty;
+		for (usz k = 0; k < GAIT_SWING_POINTS; k++)
+		{
+			float s = (float)(k + 1) / (float)(GAIT_SWING_POINTS + 1);
+			phases[2 + k] = foot.offset + spec.duty + s * (1.0f - spec.duty);
+		}
+		for (usz i = 0; i < count; i++)
+		{
+			float tilt;
+			float toes;
+			// With no drop: the root's drop keys the hips down by as much as the
+			// targets are raised, so where the foot is in the world is this.
+			Vec3 at = gait_foot_at(&plan, &spec, report.floor, 0.0f, phases[i], &tilt, &toes);
+			path.points[i] = { .at = at / height, .sharp = i < 2 };
+		}
+		float[] lengths = path.length_table(tmem);
+		float total = lengths[^1];
+		for (usz i = 0; i < count; i++)
+		{
+			float phase = phases[i] - math::floor(phases[i]);
+			path.slices[i] = {
+				.time = phase * duration,
+				.u = total > 1.0e-9f ? lengths[i * PATH_STEPS] / total : 0.0f,
+				.tag = i == 0 ? DOWN : i == 1 ? UP : NONE,
+			};
+		}
+		path.sort_slices();
+	}
+	return paths;
 }

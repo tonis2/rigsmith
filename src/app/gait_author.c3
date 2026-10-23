@@ -52,7 +52,13 @@ struct GaitAuthored
 	float slide_before;
 	// Layers carried over from the clip of this name the cycle replaced.
 	usz kept_layers;
+	// The paths the feet follow, a foot's own kept where it was edited by hand.
+	usz paths;
 }
+
+// The layer a gait puts its body's motion in: the pelvis turning, the spine, the
+// arms swinging — everything but the legs and the hips' drop.
+const String GAIT_BODY_LAYER = "Body motion";
 
 fn void GaitAuthored.free(&self, Allocator allocator)
 {
@@ -214,21 +220,118 @@ fn GaitAuthored? AppState.author_gait(
 	AnimTemplate clip = made;
 	self.hold_keys_inside_limits(&view, &clip);
 
+	// The cycle this one replaces, when there is one.
+	AnimTemplate* before = null;
+	AnimPack* authored = self.authored();
+	if (authored) foreach (&held : authored.clips) if (held.name == name) { before = held; break; }
+
+	// The body above the legs as a layer of its own, which mutes, fades and
+	// weighs apart from the walk: every keyed joint but the legs and the root.
+	float height = view.skeleton.height();
+	usz root = 0;
+	while (view.skeleton.parents[root] >= 0) root = (usz)view.skeleton.parents[root];
+	bool body_layered = false;
+	if (!spec.legs_only && count == 2)
+	{
+		bool[] leg = alloc::new_array(mem, bool, (sz)view.len());
+		defer alloc::free(mem, leg);
+		leg[root] = true;
+		for (usz i = 0; i < count; i++)
+		{
+			GaitLeg each;
+			if (gait_leg_of(&view.skeleton, joints[i], &each)) for (usz j = 0; j <= each.bones; j++) leg[each.joints[j]] = true;
+		}
+		StringList body;
+		body.init(mem);
+		defer body.free();
+		foreach (usz j, joint_name : view.names)
+		{
+			if (leg[j] || joint_name.len == 0 || clip.channel_count(joint_name, true) + clip.channel_count(joint_name, false) == 0) continue;
+			body.push(joint_name);
+		}
+		if (body.len() > 0)
+		{
+			if (try layered = clip_with_joints_layered(mem, clip, body.array_view(), {}, GAIT_BODY_LAYER))
+			{
+				clip.free(mem);
+				clip = layered;
+				body_layered = true;
+			}
+		}
+	}
+
 	// Rewriting a cycle keeps what was laid over it, as apply_clip does: a layer
 	// or a look-at is an edit of its own, and re-running the gait to change the
-	// stride should not quietly take it away. The pins are the cycle's and are
-	// written again below, since the old ones were for the old footfalls.
-	if (!spec.drop_layers)
+	// stride should not quietly take it away. The body layer and the feet's paths
+	// are the cycle's and are written again; a foot's path edited by hand is the
+	// person's and stays.
+	if (before && !spec.drop_layers)
 	{
-		AnimPack* authored = self.authored();
-		if (authored) foreach (held : authored.clips)
+		usz kept;
+		foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) kept++;
+		AnimLayer[] next = alloc::new_array(mem, AnimLayer, (sz)(clip.layers.len + kept));
+		foreach (usz i, layer : clip.layers) next[i] = layer;
+		usz write = clip.layers.len;
+		foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) next[write++] = layer.copy(mem);
+		if (clip.layers.len > 0) alloc::free(mem, clip.layers);
+		clip.layers = next;
+		clip.aims = aims_copy(mem, before.aims);
+		clip.aim_targets = aim_targets_copy(mem, before.aim_targets);
+		out.kept_layers = kept;
+	}
+	AnimPath[] stepped = gait_foot_paths(mem, &view.skeleton, view.names, spec, driven[:count], out.report);
+	{
+		usz hand;
+		if (before) foreach (&path : before.paths) if (!path.generated) hand++;
+		AnimPath[] next = alloc::new_array(mem, AnimPath, (sz)(hand + stepped.len));
+		usz write;
+		if (before) foreach (&path : before.paths) if (!path.generated) next[write++] = path.copy(mem);
+		foreach (&path : stepped)
 		{
-			if (held.name != name) continue;
-			clip.layers = layers_copy(mem, held.layers);
-			clip.aims = aims_copy(mem, held.aims);
-			clip.aim_targets = aim_targets_copy(mem, held.aim_targets);
-			out.kept_layers = held.layers.len;
-			break;
+			bool edited;
+			for (usz k = 0; k < write; k++) if (next[k].joint == path.joint) edited = true;
+			if (edited) { path.free(mem); continue; }
+			// A generated path keeps its switches through a re-run.
+			if (before)
+			{
+				foreach (&old : before.paths)
+				{
+					if (!old.generated || old.joint != path.joint) continue;
+					path.follow = old.follow;
+					path.mute = old.mute;
+				}
+			}
+			next[write++] = *path;
+		}
+		if (stepped.len > 0) alloc::free(mem, stepped);
+		clip.paths = next[:write];
+		out.paths = write;
+	}
+	// What it was written from, for the viewport to write it again.
+	if (height > 0.0f)
+	{
+		clip.gait = {
+			.set = true,
+			.kind = spec.kind,
+			.duty = out.report.duty,
+			.stride = out.report.stride / height,
+			.lift = out.report.lift / height,
+			.drop_set = spec.drop_set,
+			.drop = spec.drop / height,
+			.legs_only = spec.legs_only,
+			.arms_set = spec.arms_set,
+			.arm_swing = spec.arm_swing,
+			.arm_elbow = spec.arm_elbow,
+			.arm_elbow_swing = spec.arm_elbow_swing,
+			.arm_spread = spec.arm_spread,
+			.samples = spec.samples,
+			.feet = alloc::new_array(mem, String, (sz)count),
+			.offsets = alloc::new_array(mem, float, (sz)count),
+		};
+		for (usz i = 0; i < count; i++)
+		{
+			clip.gait.feet[i] = view.names[joints[i]].copy(mem);
+			clip.gait.offsets[i] = driven[i].offset;
 		}
 	}
 
@@ -248,7 +351,8 @@ fn GaitAuthored? AppState.author_gait(
 	// skate. Pins hold each foot on its stance path with a solve that knows the
 	// limits, so a cycle that measures as sliding is pinned before it is handed back.
 	out.slide_before = self.clip_foot_slide(out.landed);
-	if (!spec.no_pins && (spec.always_pin || out.slide_before > ISSUE_SLIDE_TOLERANCE))
+	// The feet's paths hold them already; pins would hold the same feet twice.
+	if (!spec.no_pins && (spec.always_pin || (out.paths == 0 && out.slide_before > ISSUE_SLIDE_TOLERANCE)))
 	{
 		String[GAIT_FEET_MAX] feet_named;
 		for (usz i = 0; i < count; i++) feet_named[i] = out.names[i];
@@ -354,4 +458,128 @@ fn Quaternionf gait_limit_clamp(void* context, usz joint, Quaternionf local) @lo
 	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, table);
 	if (!frame.usable()) return local;
 	return constrain_joint_rotation(frame, table, local);
+}
+
+// ---------------------------------------------------------------------------
+// Writing a gait again
+
+<*
+ Write the gait clip `ref` again from its preset, `changed` in place of it: a
+ longer stride dragged in the viewport, another gait picked on the Path strip, a
+ foot's landing moved on the sheet. Its name, length and loop stay; layers laid
+ over it and paths edited by hand stay; the body layer and the generated paths
+ are written again. One undo step.
+
+ @return `Where the clip is now, or NO_ANIM when it could not be written (the reason in a notice).`
+*>
+fn AnimRef AppState.rerun_gait(&self, AnimRef ref, AnimGaitPreset* changed)
+{
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip || !changed.set || changed.feet.len == 0) return NO_ANIM;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return NO_ANIM;
+	float height = opened.skeleton.height();
+	opened.free(mem);
+	if (!(height > 0.0f)) return NO_ANIM;
+
+	GaitSpec spec = {
+		.kind = changed.kind,
+		.duty = changed.duty,
+		.stride = changed.stride * height,
+		.lift = changed.lift * height,
+		.duration = clip.duration,
+		.loop = clip.loop,
+		.samples = changed.samples >= 8 ? changed.samples : GAIT_SAMPLES_DEFAULT,
+		.legs_only = changed.legs_only,
+		.drop_set = changed.drop_set,
+		.drop = changed.drop * height,
+		.arms_set = changed.arms_set,
+		.arm_swing = changed.arm_swing,
+		.arm_elbow = changed.arm_elbow,
+		.arm_elbow_swing = changed.arm_elbow_swing,
+		.arm_spread = changed.arm_spread,
+		.no_pins = true,
+	};
+	GaitFootRequest[GAIT_FEET_MAX] feet;
+	usz count = math::min((usz)changed.feet.len, GAIT_FEET_MAX);
+	for (usz i = 0; i < count; i++)
+	{
+		feet[i] = { .joint = changed.feet[i], .has_offset = i < changed.offsets.len,
+			.offset = i < changed.offsets.len ? changed.offsets[i] - math::floor(changed.offsets[i]) : 0.0f };
+	}
+	String name = clip.name.copy(mem);
+	defer name.free(mem);
+	DString why = dstring::new(mem);
+	defer why.free();
+	GaitAuthored? written = self.author_gait(name, spec, 0.0, feet[:count], &why);
+	if (catch written)
+	{
+		self.@notice("the gait could not be written again: %s", why.str_view());
+		return NO_ANIM;
+	}
+	written.free(mem);
+	return written.landed;
+}
+
+<*
+ The preset of the gait clip `ref`, a copy to change and hand to `rerun_gait`;
+ one that is not set when the clip was not written by a gait.
+*>
+fn AnimGaitPreset AppState.gait_preset_of(&self, AnimRef ref)
+{
+	AnimTemplate* clip = self.clip(ref);
+	return clip ? clip.gait.copy(mem) : (AnimGaitPreset){};
+}
+
+<*
+ The edited gait clip written again as another gait, each foot landing where
+ that gait puts it.
+*>
+fn bool AppState.regait(&self, GaitKind kind)
+{
+	AnimGaitPreset preset = self.gait_preset_of(self.editing);
+	defer preset.free(mem);
+	if (!preset.set) return false;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	usz[GAIT_FEET_MAX] joints;
+	usz count;
+	foreach (name : preset.feet)
+	{
+		sz at = array::index_of(view.names, name) ?? -1;
+		if (at < 0 || count >= GAIT_FEET_MAX) return false;
+		joints[count++] = (usz)at;
+	}
+	float[GAIT_FEET_MAX] offsets;
+	gait_offsets(&view.skeleton, kind, joints[:count], offsets[:count]);
+	for (usz i = 0; i < count && i < preset.offsets.len; i++) preset.offsets[i] = offsets[i];
+	preset.kind = kind;
+	// A new gait takes its own duty and lift; a stride the person set is kept.
+	preset.duty = 0.0f;
+	preset.lift = 0.0f;
+	return self.rerun_gait(self.editing, &preset).valid();
+}
+
+<*
+ A walk cycle, made new: the feet found on the rig, a second's cycle, under the
+ first name "Walk" not already taken. It opens for editing with the Path tool,
+ where its feet's paths are dragged.
+*>
+fn AnimRef AppState.new_walk_cycle(&self)
+{
+	String name = self.unused_clip_name(mem, "Walk");
+	defer name.free(mem);
+	DString why = dstring::new(mem);
+	defer why.free();
+	GaitSpec spec = { .kind = WALK, .duration = 1.0f, .loop = true, .samples = GAIT_SAMPLES_DEFAULT };
+	GaitAuthored? written = self.author_gait(name, spec, 0.0, {}, &why);
+	if (catch written)
+	{
+		self.@notice("%s", why.str_view());
+		return NO_ANIM;
+	}
+	written.free(mem);
+	return written.landed;
 }

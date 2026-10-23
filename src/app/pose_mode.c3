@@ -422,6 +422,7 @@ fn void AppState.refresh_posed(&self)
 	{
 		self.posed_aims = self.aim_handles(&view, *shown, self.editing, self.edit_time, palette, &self.posed_aim_links);
 	}
+	self.path_height = view.skeleton.height();
 
 	// A failed bind is not fatal here. The overlay still makes the draft legible
 	// and the draft remains available to save or discard.

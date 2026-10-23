@@ -63,6 +63,10 @@ struct AnimPin
 	float to;
 	float blend;       // seconds of ease in and out inside the window; 0 is hard
 	bool mute;
+	// Live only, from a path that follows its curve (never saved): the joint keeps
+	// the world orientation it had before the pin, turned by `turn`.
+	bool follow;
+	Quaternionf turn;
 }
 
 <*
@@ -353,7 +357,10 @@ fn bool AnimTemplate.plays_pins(&self)
 
 // Whether anything is laid over the keys at evaluation time without being a key:
 // pins and aims, the two live layers.
-fn bool AnimTemplate.plays_live_layers(&self) => self.plays_pins() || self.plays_aims();
+fn bool AnimTemplate.plays_live_layers(&self) => self.plays_pins() || self.plays_paths() || self.plays_aims();
+
+// Whether a pin or a path would hold a joint: what `pin_pose` has to run for.
+fn bool AnimTemplate.plays_holds(&self) => self.plays_pins() || self.plays_paths();
 
 <*
  `times` with the unmuted pins' window edges and the ends of their blends added,
@@ -698,6 +705,22 @@ fn void pin_pose(
 		Quaternionf[IK_RUN_MAX + 1] before;
 		for (usz k = 0; k < count; k++) before[k] = pose.rotations[run[k]];
 		before[count] = pose.rotations[joint];
+		// Where a following joint faces before its limb moves: what its turn turns.
+		Quaternionf facing = quaternion::IDENTITY;
+		bool follows = pin.follow && math::is_finite(pin.turn.v.x) && pin.turn.v.length_sq() > 1.0e-12f;
+		if (follows)
+		{
+			Quaternionf[]? spun = pose.world_rotations(allocator, skeleton);
+			if (try spun)
+			{
+				facing = spun[joint];
+				alloc::free(allocator, spun);
+			}
+			else
+			{
+				follows = false;
+			}
+		}
 
 		Vec3 held = pin.held_at(time, duration, loop);
 		if (count > 0 && pin_finite(held))
@@ -708,6 +731,10 @@ fn void pin_pose(
 		if (pin.rotation && math::is_finite(pin.orient.v.x) && pin.orient.v.length_sq() > 1.0e-12f)
 		{
 			pin_hold_rotation(allocator, skeleton, pose, joint, pin.orient.normalize(), clamp, ctx);
+		}
+		else if (follows)
+		{
+			pin_hold_rotation(allocator, skeleton, pose, joint, pin.turn.normalize().mul(facing).normalize(), clamp, ctx);
 		}
 		if (weight < 1.0f)
 		{
@@ -800,6 +827,7 @@ fn bool pin_finite(Vec3 v) @local => math::is_finite(v.x) && math::is_finite(v.y
 *>
 fn void pin_mark_turned(rig::Skeleton* skeleton, String[] names, AnimTemplate* clip, bool[] turned)
 {
+	path_mark_turned(skeleton, names, clip, turned);
 	foreach (&pin : clip.pins)
 	{
 		if (!pin_plays(pin)) continue;

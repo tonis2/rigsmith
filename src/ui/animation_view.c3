@@ -186,6 +186,7 @@ struct AnimSnapshot
 	CollisionMode collision_mode;
 	bool show_tracks;
 	bool show_curves;
+	bool show_layers;
 	bool graph_position;
 	bool selected_tracks_only;
 	uint selected_joint;
@@ -271,6 +272,7 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.collision_mode = app.collision_mode,
 		.show_tracks = app.anim_show_tracks,
 		.show_curves = app.anim_show_curves,
+		.show_layers = app.anim_show_layers,
 		.graph_position = app.anim_graph_position,
 		.selected_tracks_only = app.anim_tracks_selected_only,
 		.selected_joint = app.selected,
@@ -321,6 +323,7 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.collision_mode != other.collision_mode
 		|| self.show_tracks != other.show_tracks
 		|| self.show_curves != other.show_curves
+		|| self.show_layers != other.show_layers
 		|| self.graph_position != other.graph_position
 		|| self.selected_tracks_only != other.selected_tracks_only
 		|| self.selected_joint != other.selected_joint
@@ -616,6 +619,8 @@ fn void AnimPanel.update(&self, Element* elem, float dt) @dynamic
 		// that owns the pointer.
 		if (plot.held != 0 || plot.held_handle != 0 || plot.scrubbing || plot.panning) return;
 	}
+	// The Layers sheet and its bin hold the pointer through a drag the same way.
+	if (layer_sheet_busy(elem.ui)) return;
 	if (elem.ui.focused && elem.ui.focused.is_widget(Timeline))
 	{
 		for (Element* at = elem.ui.focused; at; at = at.parent)
@@ -746,7 +751,7 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 									};
 									@node((AnimInterpPicker) { }).with_id(ANIM_INTERP_ID);
 									// The sheet as key lanes or as the selected joints' curves.
-									@node((Segmented) { .options = anim_sheet_mode_options[..], .selected = app.anim_show_curves ? 1 : 0,
+									@node((Segmented) { .options = anim_sheet_mode_options[..], .selected = app.anim_show_layers ? 2 : app.anim_show_curves ? 1 : 0,
 										.on_change = &anim_sheet_mode_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_SHEET_MODE_ID);
 								};
 								if (locked) @node((StageShade) { .hint = ANIM_STAGE_HINT }).with_id(ANIM_STAGE_SHADE_ID);
@@ -760,7 +765,7 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 									@node((Segmented) { .options = anim_graph_channel_options[..], .selected = app.anim_graph_position ? 1 : 0,
 										.on_change = &anim_graph_channel_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_GRAPH_CHANNEL_ID);
 								}
-								else
+								else if (!app.anim_show_layers)
 								{
 									@node((ToggleButton) { .label = "Show tracks", .on = app.anim_show_tracks,
 										.on_change = &anim_tracks_toggled, .style = SEGMENTED_STYLE }).with_id("anim-show-tracks");
@@ -774,7 +779,16 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 								@node(panel_button("Optimize…", &anim_cleanup_clicked)).with_id(ANIM_CLEANUP_ID);
 								@node(panel_button("Clip tools ▾", &anim_tools_menu_clicked)).with_id(ANIM_TOOLS_BUTTON_ID);
 							};
-							if (app.anim_show_curves)
+							if (app.anim_show_layers)
+							{
+								Element* deck = @tree((AnimLayerDeck) { })
+								{
+									@node((PieceBin) { }).with_id(ANIM_PIECE_BIN_ID);
+									@node((LayerSheet) { }).with_id(ANIM_LAYER_SHEET_ID);
+								};
+								deck.with_id(ANIM_SHEET_SLOT_ID);
+							}
+							else if (app.anim_show_curves)
 							{
 								@node((AnimCurves) { }).with_id(ANIM_SHEET_SLOT_ID);
 							}
@@ -1021,20 +1035,25 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 	usz aim_keys = anim_aim_key_total(clip);
 	// And one per clip pin after those: the window it holds, as a bar.
 	usz pins = clip ? clip.pins.len : 0;
+	// And one per motion path, its slices as marks.
+	usz paths = clip ? clip.paths.len : 0;
+	usz slices;
+	if (clip) foreach (&path : clip.paths) slices += path.slices.len;
 	if (!app.anim_show_tracks && clip)
 	{
-		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts + aims + pins));
+		self.lanes = alloc::new_array(mem, TimelineLane, (sz)(1 + contacts + aims + pins + paths));
 		self.lanes[0] = { .label = layer ? layer.name : "Poses" };
 		self.contact_rows(clip, 1);
-		self.marks = alloc::new_array(mem, TimelineMark, (sz)(shown.keyframes.len + aim_keys));
+		self.marks = alloc::new_array(mem, TimelineMark, (sz)(shown.keyframes.len + aim_keys + slices));
 		foreach (usz i, key : shown.keyframes)
 			self.marks[i] = { .lane = 0, .at = key.time, .curve = anim_frame_curve(shown, key),
 				.selected = app.animation_key_selected(app.editing, key.time) };
 		self.aim_rows(app, clip, 1 + contacts, shown.keyframes.len);
 		self.pin_rows(clip, 1 + contacts + aims);
+		self.path_rows(app, clip, 1 + contacts + aims + pins, shown.keyframes.len + aim_keys);
 		return;
 	}
-	if (tracks.len == 0 && aims == 0 && pins == 0) return;
+	if (tracks.len == 0 && aims == 0 && pins == 0 && paths == 0) return;
 	bool filtering = app.anim_tracks_selected_only;
 	StringList selected_names;
 	selected_names.init(mem);
@@ -1051,8 +1070,8 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 		if (track.translation_times.len > 0) { lanes++; total += track.translation_times.len; }
 	}
 
-	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts + aims + pins));
-	self.marks = alloc::new_array(mem, TimelineMark, (sz)(total + aim_keys));
+	self.lanes = alloc::new_array(mem, TimelineLane, (sz)(lanes + contacts + aims + pins + paths));
+	self.marks = alloc::new_array(mem, TimelineMark, (sz)(total + aim_keys + slices));
 	if (clip) self.contact_rows(clip, 0);
 
 	usz lane = contacts;
@@ -1093,6 +1112,33 @@ fn void AnimSheet.rebuild(&self, AppState* app)
 	}
 	self.aim_rows(app, clip, lane, write);
 	self.pin_rows(clip, lane + aims);
+	self.path_rows(app, clip, lane + aims + pins, write + aim_keys);
+}
+
+<*
+ One lane per motion path from lane `first` on, its slices as marks from mark
+ `first_mark` on: drag one to change the frame the joint is at that place on its
+ curve. A foot's DOWN and UP slices are its footfall, so this lane is where a
+ gait's timing is changed.
+*>
+fn void AnimSheet.path_rows(&self, AppState* app, AnimTemplate* clip, usz first, usz first_mark)
+{
+	if (!clip) return;
+	usz write = first_mark;
+	foreach (usz p, &path : clip.paths)
+	{
+		usz lane = first + p;
+		if (lane >= self.lanes.len) break;
+		self.lanes[lane] = { .label = path.joint, .trailing = path.mute ? "Path (muted)" : "Path", .dimmed = path.mute,
+			.joint = path.joint, .path = true };
+		foreach (usz s, slice : path.slices)
+		{
+			if (write >= self.marks.len) break;
+			self.marks[write++] = { .lane = lane, .at = slice.time, .joint = path.joint, .path_slice = true,
+				.path = p, .slice = s, .curve = slice.tag == NONE ? LINEAR : HOLD,
+				.selected = app.path_selected == (sz)p && app.path_slice_selected == (sz)s };
+		}
+	}
 }
 
 <*
@@ -1727,6 +1773,16 @@ fn void anim_mark_pressed(Ui* ui, TimelineMark mark, bool toggle) @private
 	float at = mark.at;
 	if (at < 0.0f) return;
 
+	// A path's slice: pick it, its path with it, and show its frame.
+	if (mark.path_slice)
+	{
+		app.path_selected = (sz)mark.path;
+		app.path_slice_selected = (sz)mark.slice;
+		app.path_point_selected = -1;
+		anim_seek(ui, at);
+		return;
+	}
+
 	// A look-at key is the aim's, not a pose key: select it and show where it is.
 	if (mark.aim)
 	{
@@ -1768,7 +1824,7 @@ fn void anim_mark_range(Ui* ui, TimelineMark mark) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
 	float at = mark.at;
-	if (at < 0.0f) return;
+	if (at < 0.0f || mark.path_slice) return;
 	if (mark.aim)
 	{
 		if (app.animation_aim_key_selection_count(app.editing) > 0 && app.anim_key_anchor >= 0.0f)
@@ -1849,6 +1905,16 @@ fn void anim_mark_dragged(Ui* ui, TimelineMark mark, float to, bool done) @priva
 	AppState* app = ui.inherit(AppState)!!;
 	// Retiming a look-at key by dragging is not built; leave it where it is.
 	if (mark.aim) return;
+	if (mark.path_slice)
+	{
+		if (!done)
+		{
+			anim_seek(ui, to);
+			return;
+		}
+		if (anim_can_rewrite(ui) && app.retime_path_slice(mark.path, mark.slice, to)) app.show_edited();
+		return;
+	}
 	if (!anim_allow_navigation(ui, 1, to)) return;
 	app.prepare_timeline_navigation();
 

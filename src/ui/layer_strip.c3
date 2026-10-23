@@ -65,6 +65,7 @@ const String ANIM_LAYER_START_ID = "anim-layer-start";
 const String ANIM_LAYER_END_ID = "anim-layer-end";
 const String ANIM_LAYER_FADE_IN_ID = "anim-layer-fade-in";
 const String ANIM_LAYER_FADE_OUT_ID = "anim-layer-fade-out";
+const String ANIM_LAYER_SPEED_ID = "anim-layer-speed";
 
 const ushort LAYER_ICON_KEYED = 21;
 const ushort LAYER_ICON_WAVE = 22;
@@ -354,18 +355,29 @@ fn Element* AnimLayerStrip.build(&self, Element* elem) @dynamic
 			};
 			// The stack, top first, the base last. Right-click a layer for what can be
 			// done to it.
-			@tree((Scroll) { .size = { 0, list_h } })
+			// On the Layers sheet the strips are the list, so the column is only the
+			// properties of the one picked.
+			if (!app.anim_show_layers)
 			{
-				@node((Tree) {
-					.rows = self.rows,
-					.selected = selected,
-					.on_select = &anim_layer_row_chosen,
-					.on_context = &anim_layer_row_context,
-					.on_row_toggle = &anim_layer_row_toggled,
-					.paint_icon = &paint_layer_icon,
-					.style = OUTLINER_STYLE,
-				}).with_id(ANIM_LAYER_TREE_ID);
-			};
+				@tree((Scroll) { .size = { 0, list_h } })
+				{
+					@node((Tree) {
+						.rows = self.rows,
+						.selected = selected,
+						.on_select = &anim_layer_row_chosen,
+						.on_context = &anim_layer_row_context,
+						.on_row_toggle = &anim_layer_row_toggled,
+						.paint_icon = &paint_layer_icon,
+						.style = OUTLINER_STYLE,
+					}).with_id(ANIM_LAYER_TREE_ID);
+				};
+			}
+			else if (!layer)
+			{
+				@node((Label) { .text = count > 0 ? "Click a strip to edit it · Base is the animation's own keys"
+					: "Drag a piece onto a track, or click one to lay it at the playhead",
+					.size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
+			}
 			if (layer)
 			{
 				// What the active layer blends with: its name, mode, weight, range, fades.
@@ -394,15 +406,35 @@ fn Element* AnimLayerStrip.build(&self, Element* elem) @dynamic
 								@node((Label) { .text = layer_fit_note(layer.fit), .size = 12, .color = TEXT_DIM });
 							}
 						}
+						if (layer.source.len > 0)
+						{
+							// A linked piece: what it plays, and the two ways out of the link.
+							@node((Label) { .text = string::tformat("Plays %s · follows its edits", layer.source),
+								.size = 12, .color = TEXT_DIM });
+							@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = ANIM_GAP, .cross_align = CENTER })
+							{
+								@node(panel_button("Edit source", &anim_strip_edit_source));
+								@node(panel_button("Make local", &anim_strip_make_local));
+							};
+						}
 						@node(layer_slider("Weight", layer.weight, 0.0f, 1.0f, 0.01f, 2, &anim_layer_weight_committed)).with_id(ANIM_LAYER_WEIGHT_ID);
-						@node(layer_slider("Start", layer.start, 0.0f, duration, 0.05f, 2,
-							&anim_layer_start_committed, " s")).with_id(ANIM_LAYER_START_ID);
-						@node(layer_slider("End", layer.end, 0.0f, duration, 0.05f, 2,
-							&anim_layer_end_committed, " s")).with_id(ANIM_LAYER_END_ID);
-						@node(layer_slider("Fade in", layer.fade_in, 0.0f, duration, 0.05f, 2,
-							&anim_layer_fade_in_committed, " s")).with_id(ANIM_LAYER_FADE_IN_ID);
-						@node(layer_slider("Fade out", layer.fade_out, 0.0f, duration, 0.05f, 2,
-							&anim_layer_fade_out_committed, " s")).with_id(ANIM_LAYER_FADE_OUT_ID);
+						// The strip on the Layers sheet is its range and fades, dragged.
+						if (!app.anim_show_layers)
+						{
+							@node(layer_slider("Start", layer.start, 0.0f, duration, 0.05f, 2,
+								&anim_layer_start_committed, " s")).with_id(ANIM_LAYER_START_ID);
+							@node(layer_slider("End", layer.end, 0.0f, duration, 0.05f, 2,
+								&anim_layer_end_committed, " s")).with_id(ANIM_LAYER_END_ID);
+							@node(layer_slider("Fade in", layer.fade_in, 0.0f, duration, 0.05f, 2,
+								&anim_layer_fade_in_committed, " s")).with_id(ANIM_LAYER_FADE_IN_ID);
+							@node(layer_slider("Fade out", layer.fade_out, 0.0f, duration, 0.05f, 2,
+								&anim_layer_fade_out_committed, " s")).with_id(ANIM_LAYER_FADE_OUT_ID);
+						}
+						else if (layer.placed())
+						{
+							@node(layer_slider("Speed", layer.pace(), 0.05f, 4.0f, 0.05f, 2,
+								&anim_layer_speed_committed, "×")).with_id(ANIM_LAYER_SPEED_ID);
+						}
 					};
 				};
 				blend.with_id(ANIM_LAYER_BLEND_ID);
@@ -957,3 +989,11 @@ fn void anim_layer_start_committed(Ui* ui, float value) => layer_set_number(ui, 
 fn void anim_layer_end_committed(Ui* ui, float value) => layer_set_number(ui, END, value);
 fn void anim_layer_fade_in_committed(Ui* ui, float value) => layer_set_number(ui, FADE_IN, value);
 fn void anim_layer_fade_out_committed(Ui* ui, float value) => layer_set_number(ui, FADE_OUT, value);
+
+fn void anim_layer_speed_committed(Ui* ui, float value)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	sz at = app.active_layer_of(app.editing);
+	if (at >= 0 && anim_can_rewrite(ui)) (void)app.set_strip_speed(app.editing, (usz)at, value);
+	refresh_animations_view(ui);
+}
