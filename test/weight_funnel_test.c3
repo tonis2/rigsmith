@@ -30,7 +30,7 @@ fn void FunnelFixture.open(&self)
 	self.app = crig::new_app(self.mesh, FUNNEL_COPY);
 	test::@check(self.app.import_rig_from_source(), "the humanoid rig must import");
 	// The rig wears crig's own bind, so there is a binder answer to edit.
-	self.app.doc.skin_from_file = false;
+	(void)self.app.release_all_recorded();
 }
 
 fn void FunnelFixture.close(&self)

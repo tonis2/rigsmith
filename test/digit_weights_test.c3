@@ -29,7 +29,7 @@ fn void open_binder(crig::AppState* app, rig::TriMesh* mesh, String path, float 
 		dot.position *= scale;
 		dot.reach *= scale;
 	}
-	app.doc.skin_from_file = false;
+	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 }
 

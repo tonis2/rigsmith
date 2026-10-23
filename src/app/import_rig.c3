@@ -16,22 +16,16 @@
 
  **The weights are keyed by joint name, not by index.** Joint indices are the
  output of `build_skeleton`'s walk and shift whenever a dot is added or the root
- moves; names survive all of it. That is also what lets an imported binding come
- back after a reopen: the session stores a flag, not seven megabytes of weights,
- and the columns are matched to the rig again from the file next to it.
+ moves; names survive all of it, which is how a file's columns are matched to
+ the dots its joints became.
 
- **It is all or nothing.** The imported columns are used only when they cover the
- rig exactly — same count, every joint named by exactly one column. Anything else
- falls back to `bind_geodesic` for the whole mesh. A rig bound partly from the
- file and partly from the binder would have a seam nobody could see and nobody
- could explain, which is worse than either half.
-
- That rule is also the way back, and the only one — nothing in the interface says
- "stop using these weights". Adding or deleting a dot means the painted columns
- no longer describe this rig, the cover fails, and crig binds the whole mesh
- itself from that edit onward — said once in a notice, and Ctrl+Z brings them
- back. Moving or renaming a dot does not: the columns follow the dot, not its
- name, and nobody repainted anything by dragging or renaming a joint.
+ **They become every joint's own.** Each joint the file's columns cover takes
+ its column as its held weights (`adopt_model_weights`, `Dot.held`), so they
+ stay as painted whatever the rig does: a dot added beside them follows the
+ automatic weights and moves none of them, a dot moved or renamed keeps its
+ column. Reset lets one joint go back to crig's automatic weights, Rig › Reset
+ all weights to automatic the whole rig, and Rig › Use the model's own weights
+ takes the file's columns again. The session stores them like any other edit.
 *>
 module crig;
 
@@ -167,12 +161,10 @@ fn void AppState.adopt_source_rig(&self)
 
 	if (io::file::is_file(session))
 	{
+		// The file's own weights, when the session says it wore them, are read
+		// back inside — see `load_session`. The joints' limits live in the model
+		// too, since session 18: what it carries replaces whatever the session had.
 		self.load_session();
-		// The session stores that the weights came from the file, never the
-		// weights themselves — see `reload_imported_skin`. The joints' limits
-		// live in the model too, since session 18: what it carries replaces
-		// whatever the session had.
-		if (self.doc.skin_from_file) self.reload_imported_skin();
 		(void)self.adopt_model_limits(recorded: false);
 		self.adopt_source_plan();
 
@@ -353,8 +345,6 @@ fn bool AppState.import_rig_from_source(&self)
 		if (self.bind_clip_recorded(self.source_path, label)) bound_clips++;
 	}
 
-	self.undo_stack.commit();
-
 	self.imported_skin.free(mem);
 	self.imported_skin = taken;
 	if (taken.columns == joints)
@@ -362,21 +352,21 @@ fn bool AppState.import_rig_from_source(&self)
 		self.imported_skin.dot_ids = alloc::new_array(mem, uint, (sz)joints);
 		self.imported_skin.dot_ids[..] = ids[..];
 	}
-	self.fresh_imported_skin();
 
 	// Whatever the file painted, because this path is only reached for a file that
 	// carries no crig document — see `adopt_source_rig`. Its weights are the only
-	// account of this mesh anyone has given, so they are the one to use — unless
-	// crig wrote them itself (`PACK_KEY_WEIGHTS`), when they are only its binder's
-	// answer for the joints as they stood. Adopted as authored, those would stay
-	// put while the joints moved on, and the next joint dragged would leave its
-	// vertices behind on a neighbour. They are rebuilt from the rig instead, which
-	// for an unmoved rig is the same answer.
+	// account of this mesh anyone has given, so every joint takes its column as
+	// its own (`adopt_model_weights`) — unless crig wrote them itself
+	// (`PACK_KEY_WEIGHTS`), when they are only its binder's answer for the joints
+	// as they stood. Held, those would stay put while the joints moved on; the
+	// joints follow the automatic weights instead, which for an unmoved rig is
+	// the same answer. Inside the import's undo group, so one Ctrl+Z still takes
+	// the whole import back.
 	bool automatic = false;
 	if (try String said = stream.gltf.extras.get(PACK_KEY_WEIGHTS)) automatic = said == PACK_WEIGHTS_AUTOMATIC;
-	self.doc.skin_from_file = taken.present() && !automatic;
-
 	self.mark_rig_stale();
+	if (taken.present() && !automatic) self.adopt_model_weights();
+	self.undo_stack.commit();
 	self.select(ids[0]);
 
 	String limits = limited > 0 ? string::tformat(" · %d joint limits", limited) : "";
@@ -599,38 +589,27 @@ fn usz AppState.adopt_physics_recorded(&self, RigPhysics physics, uint[] joint_d
 }
 
 <*
- Re-read the weights for a rig that is already in the document, without touching
- the rig.
+ Re-read the weights the mesh's file carries for a rig that is already in the
+ document, without touching the rig or the weights it wears.
 
- What a reopened session needs: the dots came back out of `<stem>.rigsmith.json`,
- which stores the flag and not the seven megabytes, so the columns have to be
- found again in the file beside it. The names are the join, and if they no longer
- line up the flag is cleared rather than left claiming a binding that is not
- there.
+ What Rig › Use the model's own weights needs on a reopened session, and what an
+ older session's migration rebuilds its picture from: the dots came back out of
+ `<stem>.rigsmith.json`, so the columns have to be found again in the file
+ beside it. The names are the join.
+
+ @return `Whether the file's skin was read.`
 *>
-fn void AppState.reload_imported_skin(&self)
+fn bool AppState.reload_imported_skin(&self)
 {
 	self.imported_skin.free(mem);
-	if (self.source_path.len == 0 || !self.has_mesh())
-	{
-		self.doc.skin_from_file = false;
-		return;
-	}
+	if (self.source_path.len == 0 || !self.has_mesh()) return false;
 
 	gltf::GltfStream? opened = gltf::open(self.source_path, mem);
-	if (catch opened)
-	{
-		self.doc.skin_from_file = false;
-		return;
-	}
+	if (catch opened) return false;
 	gltf::GltfStream stream = opened;
 	defer stream.close();
 
-	if (catch stream.load_all_buffers())
-	{
-		self.doc.skin_from_file = false;
-		return;
-	}
+	if (catch stream.load_all_buffers()) return false;
 
 	// The same naming `import_rig_from_source` used, because the names are the join
 	// this re-read depends on: read the file's own spelling here and the dots that
@@ -642,11 +621,7 @@ fn void AppState.reload_imported_skin(&self)
 		mem, &stream, &names,
 		options: { .plans = self.reference_plans, .keep_unmatched = true },
 		joint_nodes: &joint_nodes);
-	if (catch read)
-	{
-		self.doc.skin_from_file = false;
-		return;
-	}
+	if (catch read) return false;
 
 	rig::Skeleton rest = read;
 	defer
@@ -662,9 +637,7 @@ fn void AppState.reload_imported_skin(&self)
 
 	self.imported_skin = self.read_imported_skin(&stream, names, joint_nodes);
 	self.imported_skin.bind_to_dots(&self.doc);
-	self.fresh_imported_skin();
-	self.doc.skin_from_file = self.imported_skin.present();
-	self.mark_rig_stale();
+	return self.imported_skin.present();
 }
 
 <*
@@ -775,20 +748,20 @@ fn ImportedSkin AppState.read_imported_skin(
 const uint SKIN_INFLUENCES = 4;
 
 <*
- The base bind for this rig, with no hand edit on it: the file's weights when
- they cover the rig, and the binder's otherwise.
+ The automatic weights for this rig: the binder's answer for every joint, with
+ no grow, soft edge or hand edit on it — what an unheld joint follows.
 
- The one place either answer is chosen, and only `base_bind_for` calls it — it
- is the half of every bind that does not change while the user paints, so it is
- cached there and everything that reads weights takes them from
- `AppState.weights`, which lays the hand edits over this copy. A preview bound
- one way and a file written the other is the defect that funnel exists to
- prevent, and it is invisible until the file is opened somewhere else.
+ Only `base_bind_for` calls it — it is the half of every bind that does not
+ change while the user paints, so it is cached there and everything that reads
+ weights takes them from `AppState.weights`, which writes the held columns over
+ this copy. A preview bound one way and a file written the other is the defect
+ that funnel exists to prevent, and it is invisible until the file is opened
+ somewhere else.
 
  The binder's answer is bound with a softness sized to the model (`bind_eps`)
  and its fingers re-blended along their knuckles (`shape_bind`), so a finger
  joint holds its own segment rather than a share of the whole hand. The same
- bind fills the distances `bind_field` hands out.
+ bind fills the distances `bind_field` hands out. Rows sum to one.
 
  The caller owns the returned array.
 
@@ -796,29 +769,6 @@ const uint SKIN_INFLUENCES = 4;
 *>
 fn float[] AppState.bind_base(&self, Allocator allocator, RigView* view)
 {
-	if (self.doc.skin_from_file)
-	{
-		float[] taken = self.imported_dense(allocator, view);
-		if (taken.len == 0) self.warn_imported_skin_replaced();
-		if (taken.len > 0)
-		{
-			self.imported_skin_covered = true;
-			// Nothing was decided: these weights were painted somewhere else, so
-			// no piece of this mesh rides a bone by crig's choosing. Blank rather
-			// than left alone, or the pane would go on showing the reasons the
-			// binder gave before the file was adopted.
-			self.blank_shell_riders();
-			self.riders_stale = false;
-			// A file's weights are the file's, with one exception: a vertex may not
-			// hold a share of a sibling chain (a finger of the next finger). Files
-			// from other tools often blend them, and the mesh then shows a wedge
-			// between two fingers whenever one bends. The binder's own rule, so
-			// both branches answer alike; under the hand edits, like the binder's.
-			rig::isolate_chains(allocator, taken, view.skeleton.parents);
-			return taken;
-		}
-	}
-
 	// App-owned, and refilled here rather than by the caller: this is called with
 	// whatever allocator the caller is building into, while the answer outlives
 	// it. See `blank_shell_riders`.
@@ -833,26 +783,46 @@ fn float[] AppState.bind_base(&self, Allocator allocator, RigView* view)
 		self.field_distances = alloc::new_array(mem, float, (sz)(vertices * bones));
 	}
 
-	float[] bound = rig::bind_geodesic(allocator, &self.voxels, self.geometry.positions,
-		view.skeleton.joints, view.skeleton.parents, &self.shells,
-		view.attachments, riders, reaches: view.reaches, nearest: self.field_nearest, eps: self.bind_eps(),
-		grow: view.grows, distances: self.field_distances);
+	// No grows and no soft edges: those shape one held joint's column in a bind
+	// of its own (`tool_bind_for`), and read here they would move every
+	// neighbour's automatic weights with it.
+	float[] bound = self.bind_binder(allocator, view, {}, {}, riders, self.field_nearest, self.field_distances);
 	self.riders_stale = false;
 	if (riders.len > 0)
 	{
 		self.field_riders = alloc::new_array(mem, int, (sz)riders.len);
 		self.field_riders[..] = riders[..];
 	}
+	normalise_rows(bound, bones);
+	return bound;
+}
 
+<*
+ The binder's answer for a rig, shaped and windowed: the steps every bind of
+ crig's own goes through, whoever keeps the result.
+
+ Touches nothing on the app, so the live bind (`bind_base`) and a joint's tool
+ bind (`tool_bind_for`) can share it — the live one passes the app's distance
+ arrays to keep, a tool bind its own.
+
+ @param grows : `One per joint or empty — see Dot.grow.`
+ @param bands : `One per joint or empty — see Dot.band.`
+ @param riders : `Filled with the joint each shell rides; one per shell, or empty.`
+ @param nearest : `Filled, one per vertex, or empty.`
+ @param distances : `Filled, vertices x joints; the window reads it.`
+*>
+fn float[] AppState.bind_binder(&self, Allocator allocator, RigView* view, float[] grows, float[] bands,
+	int[] riders, float[] nearest, float[] distances)
+{
+	float[] bound = rig::bind_geodesic(allocator, &self.voxels, self.geometry.positions,
+		view.skeleton.joints, view.skeleton.parents, &self.shells,
+		view.attachments, riders, reaches: view.reaches, nearest: nearest, eps: self.bind_eps(),
+		grow: grows, distances: distances);
 
 	// The binder's own branch only. Imported columns are what an artist painted
 	// somewhere else, and sharpening or re-blending those would be crig overruling
 	// a bind it did not make — the one thing the import exists to preserve.
-	//
-	// Inside the base, so the cache carries it: a correction is a correction to
-	// what the user can see, and `paint_share` solves against this base. Changing
-	// it is therefore a `mark_rig_stale`, never a `mark_paint_stale`.
-	self.shape_bind(bound, view, riders);
+	self.shape_bind(bound, view, riders, grows);
 
 	// Last, every joint's weight ends a band behind the vertex's owner — see
 	// `rig::window_bind` — so the automatic weights stop where the joint stops
@@ -860,9 +830,9 @@ fn float[] AppState.bind_base(&self, Allocator allocator, RigView* view)
 	// knuckle bands split a hand the binder measured whole: cut first, a palm
 	// vertex's thin finger shares fall under the bands' trust gate and come out
 	// half banded.
-	float[] bands = self.bind_bands(mem, view);
-	defer alloc::free(mem, bands);
-	rig::window_bind(bound, self.field_distances, bones, bands);
+	float[] widths = self.bind_bands(mem, view, bands);
+	defer alloc::free(mem, widths);
+	rig::window_bind(bound, distances, view.len(), widths);
 	return bound;
 }
 
@@ -911,7 +881,7 @@ fn float AppState.bind_eps(&self)
 
  The caller owns the result.
 *>
-fn float[] AppState.bind_bands(&self, Allocator allocator, RigView* view)
+fn float[] AppState.bind_bands(&self, Allocator allocator, RigView* view, float[] shares = {})
 {
 	usz bones = view.len();
 	float[] bands = alloc::new_array(allocator, float, (sz)bones);
@@ -922,7 +892,7 @@ fn float[] AppState.bind_bands(&self, Allocator allocator, RigView* view)
 	foreach (b, joint : view.skeleton.joints)
 	{
 		float bone = (tails[b] - joint).length();
-		float share = b < view.bands.len && view.bands[b] > 0.0f ? view.bands[b] : BAND_SHARE_DEFAULT;
+		float share = b < shares.len && shares[b] > 0.0f ? shares[b] : BAND_SHARE_DEFAULT;
 		bands[b] = math::max(share * bone, floor);
 	}
 	return bands;
@@ -947,13 +917,14 @@ const float BIND_SOFTNESS_DEFAULT = 1.0e-4;
  the model's still governs the wrist, the forearm and everything else.
 
  @param riders : `The joint each shell rides rigidly, from this same bind — a piece bound rigidly is left whole.`
+ @param grows : `One per joint or empty: how far a grown finger's knuckle planes move.`
 *>
-fn void AppState.shape_bind(&self, float[] dense, RigView* view, int[] riders)
+fn void AppState.shape_bind(&self, float[] dense, RigView* view, int[] riders, float[] grows = {})
 {
 	normalise_loud_rows(dense, view.len());
 	sharpen_weights(dense, self.doc.sharpness);
 	rig::band_digits(mem, dense, self.geometry.positions, &view.skeleton,
-		self.doc.knuckle_blend_fraction(), self.shells.of, riders, view.grows);
+		self.doc.knuckle_blend_fraction(), self.shells.of, riders, grows);
 }
 
 <*
@@ -973,24 +944,51 @@ fn bool AppState.knuckle_blend_applies(&self, uint dot_id)
 	return bands.shapes((usz)joint);
 }
 
-// A freshly read imported skin has not covered anything or been warned about.
-fn void AppState.fresh_imported_skin(&self)
-{
-	self.imported_skin_covered = false;
-	self.imported_skin_warned = false;
-}
-
 <*
- Say once that the file's own weights have stopped covering the rig.
+ Give every joint the column the mesh's file painted for it, as its own: what an
+ import does with a skin crig did not write, and what Rig › Use the model's own
+ weights does later. Each joint is held from here on (`replace_column`), so the
+ file's weights stay as painted whatever the rig does. Leaves the group open
+ for the caller.
 
- Only after they have covered it: a session that reopens already past that
- point has nothing new to be told.
+ The file's columns with one exception: a vertex may not hold a share of a
+ sibling chain (a finger of the next finger). Files from other tools often blend
+ them, and the mesh then shows a wedge between two fingers whenever one bends —
+ the binder's own rule, so the file's weights and crig's answer alike.
+
+ Reads the file again when its skin is not in hand — a reopened session.
+
+ @return `How many joints took the file's column; 0 when the file has none that covers this rig.`
 *>
-fn void AppState.warn_imported_skin_replaced(&self)
+fn usz AppState.adopt_model_weights(&self)
 {
-	if (!self.imported_skin_covered || self.imported_skin_warned) return;
-	self.imported_skin_warned = true;
-	self.@notice("This replaces the model's own skin weights with crig's automatic weights · Ctrl+Z brings them back");
+	if (!self.imported_skin.present() && !self.reload_imported_skin()) return 0;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+
+	float[] taken = self.imported_dense(mem, &view);
+	defer if (taken.len > 0) alloc::free(mem, taken);
+	if (taken.len == 0) return 0;
+	usz bones = view.len();
+	rig::isolate_chains(mem, taken, view.skeleton.parents);
+	normalise_rows(taken, bones);
+
+	usz count = self.geometry.positions.len;
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	usz adopted = 0;
+	foreach (usz j, id : view.dot_ids)
+	{
+		// Stored outright, not diffed against the screen: a column the binder
+		// happens to agree with is still the file's, and must not follow the rig.
+		for (usz v = 0; v < count; v++) column[v] = math::clamp(taken[v * bones + j], 0.0f, 1.0f);
+		self.store_column(id, column, commit: false);
+		adopted++;
+	}
+	self.mark_paint_stale();
+	return adopted;
 }
 
 <*
@@ -1125,12 +1123,14 @@ fn bool AppState.stamp_asset_metadata(&self, String path, AnimTemplate[] clips =
 	gltf_edit::JsonStep[2] weights_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_WEIGHTS } };
 
 	// Whose weights went in, said only when crig just wrote them: the binder's own
-	// answer is "automatic", a file's adopted weights clear the member. A save that
+	// answer is "automatic"; once any joint keeps edited weights — the file's
+	// adopted ones included — the member is cleared, so reopening the file
+	// without its session adopts what it holds rather than rebinding it. A save that
 	// left the model's skin alone says nothing, since the skin is not crig's.
 	gltf_edit::JsonEdit[3] edits = {
 		{ .path = clip_path[..], .value = clip_settings },
 		{ .path = plan_path[..], .value = self.doc.plan },
-		{ .path = weights_path[..], .value = self.doc.skin_from_file ? "" : PACK_WEIGHTS_AUTOMATIC },
+		{ .path = weights_path[..], .value = self.weights_edited() ? "" : PACK_WEIGHTS_AUTOMATIC },
 	};
 
 	// No clips handed over is "nothing to say about them", not "they have no

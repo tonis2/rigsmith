@@ -2729,6 +2729,38 @@ fn void show_weights_puts_a_named_view_on_the_screen() @test
 	test::@check((off.get_string("showing") ?? "") == "off", "and off takes the view away again");
 }
 
+<*
+ show_weights flips the Unused overlay on its own, leaving the view as it is,
+ and says so; get_weights counts the vertices it would mark.
+*>
+fn void show_weights_marks_unused_vertices_beside_the_view() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+	Object*? shown = f.call_tool("show_weights", `{"unused":true}`);
+	if (catch shown)
+	{
+		test::@check(false, "show_weights answers unused alone");
+		return;
+	}
+	defer shown.free();
+	test::@check(f.app.show_unused, "show_weights {unused:true} did not turn the overlay on");
+	test::@check(f.app.tint_mode == OFF, "and switched a view on with it");
+	test::@check((shown.get_bool("unused") ?? false) && (shown.get_string("unused_marks") ?? "").len > 0,
+		"and did not say what the magenta means");
+
+	Object*? weighed = f.call_tool("get_weights", `{}`);
+	if (catch weighed)
+	{
+		test::@check(false, "get_weights answers");
+		return;
+	}
+	defer weighed.free();
+	test::@check((weighed.get_int("unused") ?? -1) == 0, "get_weights does not count the unused vertices");
+}
+
 fn void show_weights_refuses_a_view_it_does_not_have() @test
 {
 	Fixture fixture;
@@ -5867,8 +5899,8 @@ fn void a_batch_of_moves_undoes_in_one_step() @test
 
 <*
  edit_rig's grow sets the Weights card's Grow and Soft edge by number: the joint
- holds more without moving, get_skeleton reports both, and one undo takes the
- batch back.
+ holds more without moving and keeps it as its own weights, get_skeleton
+ reports both, and one undo takes the batch back.
 *>
 fn void a_grow_crosses_the_wire_and_undoes() @test
 {
@@ -5876,7 +5908,6 @@ fn void a_grow_crosses_the_wire_and_undoes() @test
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
-	f.app.doc.skin_from_file = false;
 
 	uint knee = f.app.doc.dots[1].id;
 	Vec3 was = f.app.doc.find(knee).position;
@@ -5899,14 +5930,14 @@ fn void a_grow_crosses_the_wire_and_undoes() @test
 	}
 	test::@check(reported, "get_skeleton does not report the grow and soft edge");
 
+	test::@check(f.app.weights_held(knee), "the grow did not write the knee's own weights");
+
 	f.call_tool("undo", "{}")!!.free();
 	test::@check(f.app.doc.find(knee).grow == 0.0f && f.app.doc.find(knee).band == 0.0f, "one undo did not take the grow back");
+	test::@check(!f.app.weights_held(knee), "one undo left the knee's weights held");
 
 	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"grow","joint":"knee","soft":5}]}`, "share of the bone"),
 		"a soft edge past the range was not named back");
-	f.app.doc.skin_from_file = true;
-	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"grow","joint":"knee","grow":0.1}]}`, "own weights"),
-		"a grow on the file's weights was not refused");
 }
 
 <*
@@ -7065,7 +7096,7 @@ fn void a_shared_row_can_be_painted_away() @test
 	// The row's own fields, handed straight back. 0.05 is the floor get_weights
 	// reports at, so this selects exactly what it just listed.
 	String arguments = string::format(mem,
-		`{"dot":"knee","share":0,"owned_by":"%s","at_least":0.05}`, owner);
+		`{"dot":"knee","weight":0,"owned_by":"%s","at_least":0.05}`, owner);
 	defer alloc::free(mem, arguments);
 
 	Object*? painted = f.call_tool("paint_weights", arguments);
@@ -7101,7 +7132,8 @@ fn void a_shared_row_can_be_painted_away() @test
 }
 
 <*
- A correction is one undo step, and reset takes the layer off.
+ A correction is one undo step, and reset puts the dot back on the automatic
+ weights.
 *>
 fn void painting_is_undoable_and_resettable() @test
 {
@@ -7110,7 +7142,7 @@ fn void painting_is_undoable_and_resettable() @test
 	defer fixture.close();
 	Fixture* f = &fixture;
 
-	Object*? painted = f.call_tool("paint_weights", `{"dot":"knee","share":0.1,"vertices":[0,1,2,3]}`);
+	Object*? painted = f.call_tool("paint_weights", `{"dot":"knee","weight":0.1,"vertices":[0,1,2,3]}`);
 	if (catch painted)
 	{
 		test::@check(false, "paint_weights takes an explicit vertex list");
@@ -7141,14 +7173,16 @@ fn void painting_is_undoable_and_resettable() @test
 	defer cleared.free();
 	test::@check((cleared.get_bool("reset") ?? false) && f.app.doc.pins.len() == 0,
 		"reset took every correction off");
+	test::@check(!f.app.weights_held(f.app.doc.dots[1].id), "reset left the knee's weights held");
 }
 
 <*
  A refusal says which value was wrong and what would have been right.
 
  The J6 rule, and it matters more here than for a read tool: an agent that
- cannot tell "the share was out of range" from "that dot is not on this rig"
- retries the same call.
+ cannot tell "the weight was out of range" from "that dot is not on this rig"
+ retries the same call. A `share`, which meant a whole row before weights were
+ per joint, is refused with what to pass instead.
 *>
 fn void paint_weights_refuses_with_a_sentence() @test
 {
@@ -7157,12 +7191,14 @@ fn void paint_weights_refuses_with_a_sentence() @test
 	defer fixture.close();
 	Fixture* f = &fixture;
 
-	test::@check(f.refuses_tool("paint_weights", `{"dot":"nosuchdot","share":0}`, "nosuchdot"),
+	test::@check(f.refuses_tool("paint_weights", `{"dot":"nosuchdot","weight":0}`, "nosuchdot"),
 		"an unknown dot is named back");
-	test::@check(f.refuses_tool("paint_weights", `{"dot":"knee","share":4}`, "between 0 and 1"),
-		"a share out of range says what the range is");
+	test::@check(f.refuses_tool("paint_weights", `{"dot":"knee","weight":4}`, "between 0 and 1"),
+		"a weight out of range says what the range is");
 	test::@check(f.refuses_tool("paint_weights", `{"dot":"knee"}`, "reset"),
-		"a missing share points at the other thing the tool can do");
+		"a missing weight points at the other thing the tool can do");
+	test::@check(f.refuses_tool("paint_weights", `{"dot":"knee","share":0.5}`, "weight"),
+		"a share is not refused in favour of a weight");
 }
 
 <*
@@ -7179,7 +7215,7 @@ fn void a_selection_matching_nothing_is_reported() @test
 	Fixture* f = &fixture;
 
 	// Nothing holds a share above 1, so this matches no vertex anywhere.
-	Object*? nothing = f.call_tool("paint_weights", `{"dot":"knee","share":0,"at_least":1.5}`);
+	Object*? nothing = f.call_tool("paint_weights", `{"dot":"knee","weight":0,"at_least":1.5}`);
 	if (catch nothing)
 	{
 		test::@check(false, "an empty selection is answered rather than refused");
@@ -7193,16 +7229,15 @@ fn void a_selection_matching_nothing_is_reported() @test
 }
 
 // ---------------------------------------------------------------------------
-// pin_weights — the other weight tool that writes, and the one that states a
-// value rather than correcting one.
+// pin_weights — the other weight tool that writes: the lasso over the wire.
 //
 // It borrows `paint_weights`' selection outright, so what these cover is what
-// the two do *not* share: the default share, the exclusivity, and a reset that
-// takes one layer off and leaves the other.
+// the two do *not* share: the default weight, and that a second dot over the
+// same vertices takes nothing from the first.
 
 <*
- A pin can be made by predicate and by explicit vertices, and one call is one
- undo step.
+ A weight can be set by predicate and by explicit vertices, one call is one
+ undo step, and another dot over the same vertices leaves the first one's alone.
 *>
 fn void pinning_is_selectable_and_undoable() @test
 {
@@ -7210,6 +7245,7 @@ fn void pinning_is_selectable_and_undoable() @test
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
+	uint knee = f.app.doc.dots[1].id;
 
 	Object*? pinned = f.call_tool("pin_weights", `{"dot":"knee","vertices":[0,1,2,3]}`);
 	if (catch pinned)
@@ -7219,10 +7255,10 @@ fn void pinning_is_selectable_and_undoable() @test
 	}
 	defer pinned.free();
 
-	// No share given, so the rigid one — what "these belong to that dot" means.
-	test::@check((pinned.get_float("share") ?? 0.0) == 1.0, "an unstated share is not the rigid one");
-	test::@check((pinned.get_int("pinned") ?? 0) == 4, "the explicit list was pinned");
-	test::eq(f.app.doc.pins.len(), (sz)4);
+	// No weight given, so the full one — what "these belong to that dot" means.
+	test::@check((pinned.get_float("weight") ?? 0.0) == 1.0, "an unstated weight is not the full one");
+	for (uint v = 0; v < 4; v++) test::@check(f.app.doc.pin_of(v, knee) == 1.0f, "vertex %d is not the knee's fully", v);
+	sz stored = f.app.doc.pins.len();
 
 	Object*? stepped = f.call_tool("undo", "{}");
 	if (catch stepped)
@@ -7234,11 +7270,11 @@ fn void pinning_is_selectable_and_undoable() @test
 	test::eq(f.app.doc.pins.len(), (sz)0);
 
 	f.call_tool("redo", "{}")!!.free();
-	test::eq(f.app.doc.pins.len(), (sz)4);
+	test::eq(f.app.doc.pins.len(), stored);
 
 	// By predicate, in `get_weights`' own vocabulary — the same words the paint
 	// tool takes, which is the point of sharing the selection.
-	Object*? swept = f.call_tool("pin_weights", `{"dot":"knee","share":0.5,"at_least":0.05}`);
+	Object*? swept = f.call_tool("pin_weights", `{"dot":"knee","weight":0.5,"at_least":0.05}`);
 	if (catch swept)
 	{
 		test::@check(false, "pin_weights takes a predicate selection");
@@ -7247,12 +7283,12 @@ fn void pinning_is_selectable_and_undoable() @test
 	defer swept.free();
 	test::@check((swept.get_int("selected") ?? 0) > 0, "the predicate selected nothing to pin");
 
-	// Exclusive by default, so a second dot over the same vertices takes them.
+	// A second dot over the same vertex takes nothing from the first: the two blend.
+	float had = f.app.doc.pin_of(0, knee);
 	f.call_tool("pin_weights", `{"dot":"hips","vertices":[0]}`)!!.free();
-	uint knee = f.app.doc.dots[1].id;
-	test::@check(f.app.doc.pin_of(0, knee) == 0.0f, "the rival dot kept its pin on a re-pinned vertex");
+	test::@check(f.app.doc.pin_of(0, knee) == had, "the hips took the knee's weight on a vertex they were given");
 
-	Object*? cleared = f.call_tool("pin_weights", `{"dot":"knee","reset":true}`);
+	Object*? cleared = f.call_tool("pin_weights", `{"dot":"knee","reset":true,"all":true}`);
 	if (catch cleared)
 	{
 		test::@check(false, "reset answers");
@@ -7260,13 +7296,12 @@ fn void pinning_is_selectable_and_undoable() @test
 	}
 	defer cleared.free();
 	test::@check((cleared.get_bool("reset") ?? false) && f.app.doc.pins.len() == 0,
-		"reset took every pin off");
+		"reset with all did not put every dot back on the automatic weights");
 }
 
 <*
- paint_weights and pin_weights write the same layer: a share asked for is a
- stated row, like a pin, so the two are one kind of edit and a reset of every
- hand edit takes both — while pin_weights' own reset still clears the rows.
+ paint_weights and pin_weights write the same thing — the dot's own weights —
+ and either's reset lets the dot go.
 *>
 fn void paint_and_pin_weights_write_one_layer() @test
 {
@@ -7274,17 +7309,20 @@ fn void paint_and_pin_weights_write_one_layer() @test
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
+	uint knee = f.app.doc.dots[1].id;
 
-	f.call_tool("paint_weights", `{"dot":"knee","share":0.1,"vertices":[0,1]}`)!!.free();
+	f.call_tool("paint_weights", `{"dot":"knee","weight":0.1,"vertices":[0,1]}`)!!.free();
 	f.call_tool("pin_weights", `{"dot":"knee","vertices":[2,3]}`)!!.free();
-	test::@check(f.app.doc.pins.len() > 0 && f.app.doc.paint.len() == 0, "a share was not written as a stated row");
+	test::@check(f.app.weights_held(knee) && f.app.doc.paint.len() == 0, "the knee's weights were not held as its own");
+	test::@check(f.app.doc.pin_of(0, knee) == 0.1f && f.app.doc.pin_of(2, knee) == 1.0f, "the two calls did not write the knee's own weights");
 
 	f.call_tool("paint_weights", `{"dot":"knee","reset":true}`)!!.free();
 	test::eq(f.app.doc.pins.len(), (sz)0);
 
-	f.call_tool("paint_weights", `{"dot":"knee","share":0.1,"vertices":[0,1]}`)!!.free();
+	f.call_tool("paint_weights", `{"dot":"knee","weight":0.1,"vertices":[0,1]}`)!!.free();
 	f.call_tool("pin_weights", `{"dot":"knee","reset":true}`)!!.free();
 	test::eq(f.app.doc.pins.len(), (sz)0);
+	test::@check(!f.app.weights_held(knee), "pin_weights' reset left the knee held");
 }
 
 <*
@@ -7299,12 +7337,14 @@ fn void pin_weights_refuses_with_a_sentence() @test
 
 	test::@check(f.refuses_tool("pin_weights", `{"dot":"nosuchdot"}`, "nosuchdot"),
 		"an unknown dot is named back");
-	test::@check(f.refuses_tool("pin_weights", `{"dot":"knee","share":4}`, "between 0 and 1"),
-		"a share out of range says what the range is");
+	test::@check(f.refuses_tool("pin_weights", `{"dot":"knee","weight":4}`, "between 0 and 1"),
+		"a weight out of range says what the range is");
+	test::@check(f.refuses_tool("pin_weights", `{"dot":"knee","exclusive":true}`, "weight"),
+		"exclusive is not refused now that no dot takes another's vertices");
 }
 
 <*
- build_body refuses a rig whose vertices are pinned.
+ build_body refuses a rig whose joints keep edited weights.
 
  The attachment refusal one level finer, and for the same reason: a generated
  body's vertices are built from its bones, so an index that named a point on the
@@ -7320,9 +7360,9 @@ fn void build_body_refuses_a_rig_whose_vertices_are_pinned() @test
 
 	f.call_tool("pin_weights", `{"dot":"knee","vertices":[0,1]}`)!!.free();
 
-	test::@check(f.refuses_tool("build_body", `{}`, "pinned to dots"),
-		"a pinned rig was built over without a word");
-	test::@check(f.refuses_tool("build_body", `{}`, "pin_weights"),
+	test::@check(f.refuses_tool("build_body", `{}`, "edited weights"),
+		"a rig with edited weights was built over without a word");
+	test::@check(f.refuses_tool("build_body", `{}`, "paint_weights reset"),
 		"and the refusal does not name the way out");
 }
 
@@ -7900,7 +7940,8 @@ fn void set_layer_extracts_shares_and_unlinks() @test
 
 <*
  get_weights with vertices reads each one's row as the views show it — the dots
- holding it, strongest first, and whose edit wrote its pins — and with strays
+ holding it, strongest first, with their own weights and whether those are
+ edited — and with strays
  says what is cut off from its dot, an empty list on a cube with none. A vertex
  the mesh does not have is refused with a sentence.
 *>
@@ -7911,7 +7952,11 @@ fn void get_weights_reads_vertex_rows() @test
 	defer fixture.close();
 	Fixture* f = &fixture;
 
+	// The knee on vertex 0, and every other dot taken off it, so the row is the
+	// knee's alone.
 	f.call_tool("pin_weights", `{"dot":"knee","vertices":[0]}`)!!.free();
+	uint[1] zero = { 0 };
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name != "knee") f.app.set_weight_vertices(zero[..], dot.id, 0.0f);
 	Object*? weights = f.call_tool("get_weights", `{"vertices":[0],"strays":true}`);
 	if (catch weights)
 	{
@@ -7928,7 +7973,8 @@ fn void get_weights_reads_vertex_rows() @test
 	test::@check(joints.get_len() == 1 && joints.get_at(0).get_string("name")!! == "knee",
 		"the pinned vertex is not read as the knee's alone");
 	test::@check(math::abs(joints.get_at(0).get_float("share")!! - 1.0) < 1.0e-3, "the knee's share is not the whole vertex");
-	test::@check((row.get_string("by") ?? "") == "knee", "the row does not say the knee's pin wrote it");
+	test::@check(joints.get_at(0).get_float("weight")!! == 1.0 && (joints.get_at(0).get_bool("edited") ?? false),
+		"the row does not say the knee's own weight is full and edited");
 	test::@check(weights.get("strays")!!.get_len() == 0, "the cube has strays");
 
 	test::@check(f.refuses_tool("get_weights", `{"vertices":[99]}`, "not a vertex of this mesh"),

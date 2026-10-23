@@ -58,7 +58,9 @@ fn void every_part_the_card_offers_is_on_its_joints_limb() @test
 
 	foreach (from_file : (bool[]){ true, false })
 	{
-		app.doc.skin_from_file = from_file;
+		(void)app.release_all_recorded();
+		if (from_file) app.adopt_model_weights();
+		app.undo_stack.commit();
 		app.mark_rig_stale();
 		crig::RigView view = app.open_rig(mem)!!;
 		defer view.free(mem);
@@ -99,7 +101,7 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
 	crig::AppState app = crig::new_app(mesh, LIMIT_COPY);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	app.doc.skin_from_file = false;
+	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
 	uint ring = areas::named(&app, "ring_1_L");
@@ -136,14 +138,14 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
 
 	// A foot vertex handed over on purpose (Lasso pin) is not limited, and the
 	// brush can always take the finger off it again.
-	app.pin_vertices(foot[:1], ring, 1.0f);
-	float[] pinned = areas::shares_of(&app, ring);
+	app.set_weight_vertices(foot[:1], ring, 1.0f);
+	float[] pinned = areas::weights_of(&app, ring);
 	defer alloc::free(mem, pinned);
-	test::@check(pinned[foot[0]] > 0.99f, "the lasso pin did not hand the vertex over: %f", pinned[foot[0]]);
+	test::@check(pinned[foot[0]] == 1.0f, "the lasso pin did not give the finger the vertex: %f", pinned[foot[0]]);
 	app.begin_stroke();
 	test::@check(app.brush_share(ring, foot[:1], 0.0f, pulls[:1]) > 0, "the finger could not be taken off the foot");
 	app.end_stroke();
-	float[] taken = areas::shares_of(&app, ring);
+	float[] taken = areas::weights_of(&app, ring);
 	defer alloc::free(mem, taken);
 	test::@check(taken[foot[0]] < 1.0e-4f, "taking off left %f", taken[foot[0]]);
 }
@@ -154,7 +156,7 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
  writes nothing. What the joint already holds there stays its own on the next
  Apply, and a Whole piece or UV islands part is applied whole.
 
- Re-introduce: drop the `on_limb` check in `area_rows`, and the foot takes the
+ Re-introduce: drop the `on_limb` check in `area_column`, and the foot takes the
  ring finger on Apply; drop the held share from it, and a second Apply strips
  what the first one gave.
 *>
@@ -169,7 +171,7 @@ fn void an_apply_stops_at_the_joints_limb() @test
 	crig::AppState app = crig::new_app(mesh, LIMIT_COPY);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	app.doc.skin_from_file = false;
+	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
 	uint ring = areas::named(&app, "ring_1_L");
@@ -202,19 +204,19 @@ fn void an_apply_stops_at_the_joints_limb() @test
 
 	// Two foot vertices handed over on purpose (Lasso pin): the next Apply of a
 	// part holding them keeps them the finger's rather than leaving them out.
-	app.pin_vertices(foot[:2], ring, 1.0f);
+	app.set_weight_vertices(foot[:2], ring, 1.0f);
 	test::eq(app.apply_area(ring, part, 0.0f, refused: &refused), own + 2);
 	test::eq(refused, (usz)foot.len - 2);
-	float[] kept = areas::shares_of(&app, ring);
+	float[] kept = areas::weights_of(&app, ring);
 	defer alloc::free(mem, kept);
-	foreach (v : foot[:2]) test::@check(kept[v] > 0.99f, "foot vertex %d the finger held went to %f", v, kept[v]);
+	foreach (v : foot[:2]) test::@check(kept[v] == 1.0f, "foot vertex %d the finger held went to %f", v, kept[v]);
 
 	// A whole piece is the menu's choice, not the pointer's: applied whole.
 	test::eq(app.apply_area(ring, off, 0.0f, pieces: true, refused: &refused), (usz)foot.len);
 	test::eq(refused, (usz)0);
-	float[] pieced = areas::shares_of(&app, ring);
+	float[] pieced = areas::weights_of(&app, ring);
 	defer alloc::free(mem, pieced);
-	foreach (v : foot) test::@check(pieced[v] > 0.99f, "foot vertex %d of a whole piece holds %f", v, pieced[v]);
+	foreach (v : foot) test::@check(pieced[v] == 1.0f, "foot vertex %d of a whole piece holds %f", v, pieced[v]);
 }
 
 <*
@@ -236,7 +238,7 @@ fn void the_weight_view_greys_out_what_the_joint_cannot_take() @test
 	crig::AppState app = crig::new_app(mesh, LIMIT_COPY);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	app.doc.skin_from_file = false;
+	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
 	uint ring = areas::named(&app, "ring_1_L");
@@ -246,7 +248,7 @@ fn void the_weight_view_greys_out_what_the_joint_cannot_take() @test
 	defer alloc::free(mem, foot);
 	uint[] finger = owned_by(&app, hand_joint, 10);
 	defer alloc::free(mem, finger);
-	app.pin_vertices(foot[:1], ring, 1.0f);
+	app.set_weight_vertices(foot[:1], ring, 1.0f);
 
 	app.select(ring);
 	test::@check(app.begin_brush(), "the brush would not open");

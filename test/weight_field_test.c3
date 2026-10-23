@@ -19,7 +19,7 @@ fn void open_field(crig::AppState* app, rig::TriMesh* mesh)
 	*mesh = rig::load_gltf(mem, FIELD_COPY)!!;
 	*app = crig::new_app(*mesh, FIELD_COPY);
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	app.doc.skin_from_file = false;
+	(void)app.release_all_recorded();
 }
 
 fn void close_field(crig::AppState* app, rig::TriMesh* mesh)
@@ -106,10 +106,14 @@ fn void the_hips_hold_nothing_below_the_knees() @test
 }
 
 <*
- Taking a leg joint off a shin hands the shin down the leg, never to the hips —
- the brush's handoff reads the field, not the slivers on the row.
+ Taking a leg joint off a shin changes that joint's weights and nobody else's:
+ the hips are not handed the shin, and nor is anyone — what only the knee held
+ is left unused, and said so.
+
+ *Re-introduce:* hand the freed share to the field, as the brush did, and the
+ ankle's column moves.
 *>
-fn void taking_the_knee_off_a_shin_hands_it_down_the_leg() @test
+fn void taking_the_knee_off_a_shin_moves_no_other_joint() @test
 {
 	crig::AppState app;
 	rig::TriMesh mesh;
@@ -140,23 +144,30 @@ fn void taking_the_knee_off_a_shin_hands_it_down_the_leg() @test
 	}
 	test::@check(held > 20, "only %d vertices are the knee's outright", held);
 
-	crig::PaintResult did = app.paint_share(knee_dot, shin[:held], 0.0f);
-	test::@check(did.changed > 0 && did.alone == 0, "taking the knee off its shin changed nothing");
+	usz alone = 0;
+	foreach (v : shin[:held])
+	{
+		float others = 0.0f;
+		for (usz b = 0; b < bones; b++) if ((sz)b != knee) others += automatic[(usz)v * bones + b];
+		if (others <= crig::UNUSED_TOTAL) alone++;
+	}
 
-	// A fresh view: one resolves the pins when it is opened.
+	crig::PaintResult did = app.paint_share(knee_dot, shin[:held], 0.0f);
+	test::@check(did.changed > 0, "taking the knee off its shin changed nothing");
+	test::eq(did.emptied, alone);
+
+	// A fresh view: one resolves the held columns when it is opened.
 	crig::RigView after = app.open_rig(mem)!!;
 	defer after.free(mem);
 	float[] shown = app.weights(mem, &after);
 	defer alloc::free(mem, shown);
-	usz to_hips = 0;
 	usz left = 0;
-	foreach (v : shin[:held])
-	{
-		if (crig::joint_share(shown[(usz)v * bones:bones], (usz)hips) > 0.0f) to_hips++;
-		if (crig::joint_share(shown[(usz)v * bones:bones], (usz)knee) > 0.0f) left++;
-	}
+	foreach (v : shin[:held]) if (shown[(usz)v * bones + (usz)knee] > 0.0f) left++;
 	test::@check(left == 0, "the knee kept %d of the shin", left);
-	test::@check(to_hips == 0, "%d shin vertices went to the hips", to_hips);
+	usz moved = 0;
+	foreach (usz i, w : automatic) if ((sz)(i % bones) != knee && shown[i] != w) moved++;
+	test::@check(moved == 0, "taking the knee off moved %d weights of other joints", moved);
+	test::@check(hips >= 0, "the humanoid has no hips");
 }
 
 <*
@@ -177,9 +188,9 @@ fn void an_older_session_says_its_weights_were_re_derived() @test
 	char[] saved = file::load(mem, path)!!;
 	defer alloc::free(mem, saved);
 	String text = (String)saved;
-	test::@check(text.contains(`"version": 31`), "the session is not version 31");
+	test::@check(text.contains(`"version": 32`), "the session is not version 32");
 
-	String older = text.replace(mem, `"version": 31`, `"version": 30`);
+	String older = text.replace(mem, `"version": 32`, `"version": 30`);
 	defer older.free(mem);
 	file::save(path, older)!!;
 	app.load_session();
@@ -203,6 +214,20 @@ fn float[] automatic_now(crig::AppState* app)
 	return app.weights(mem, &view, AUTOMATIC);
 }
 
+fn float[] shown_now(crig::AppState* app)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	return app.weights(mem, &view);
+}
+
+fn usz joint_of(crig::AppState* app, uint dot)
+{
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	return (usz)view.joint_of(dot);
+}
+
 fn usz rows_apart(float[] a, float[] b)
 {
 	if (a.len != b.len) return a.len + b.len + 1;
@@ -212,9 +237,12 @@ fn usz rows_apart(float[] a, float[] b)
 }
 
 <*
- Grow and Shrink are one live edge run two ways: two steps out and two back is
- the bind it started from, and Reset after a Grow is the automatic bind — not a
- part the steps left behind.
+ Grow and Shrink rewrite one joint's column from its own edge and nothing
+ else: the neighbours' weights do not move, two steps out and two back is the
+ column it started from, and Reset after a Grow is the automatic weights.
+
+ *Re-introduce:* read the grow in the bind every joint follows, and growing the
+ ankle moves the shin's column with it.
 *>
 fn void grow_and_shrink_undo_each_other_and_reset_is_automatic() @test
 {
@@ -224,32 +252,43 @@ fn void grow_and_shrink_undo_each_other_and_reset_is_automatic() @test
 	defer close_field(&app, &mesh);
 
 	uint ankle = field_dot(&app, "ankle_R");
+	usz joint = joint_of(&app, ankle);
+	app.area_solo = true;
 	app.select(ankle);
-	float[] start = automatic_now(&app);
+	float[] start = shown_now(&app);
 	defer alloc::free(mem, start);
+	usz bones = start.len / app.geometry.positions.len;
 
 	test::@check(app.grow_joint(2), "the ankle would not grow");
-	float[] grown = automatic_now(&app);
+	test::@check(app.weights_held(ankle), "a Grow did not hold the ankle");
+	float[] grown = shown_now(&app);
 	defer alloc::free(mem, grown);
 	test::@check(rows_apart(start, grown) > 0, "growing the ankle changed no weight");
-	test::@check(app.doc.pins.len() == 0, "Grow wrote pins");
+	usz moved = 0;
+	foreach (usz i, w : start) if (i % bones != joint && grown[i] != w) moved++;
+	test::@check(moved == 0, "growing the ankle moved %d weights of other joints", moved);
+	float[] automatic = automatic_now(&app);
+	defer alloc::free(mem, automatic);
+	test::@check(rows_apart(start, automatic) == 0, "growing the ankle moved the automatic weights");
 
 	test::@check(app.grow_joint(-2), "the ankle would not shrink back");
-	float[] back = automatic_now(&app);
+	float[] back = shown_now(&app);
 	defer alloc::free(mem, back);
 	usz apart = rows_apart(start, back);
 	test::@check(apart == 0, "two steps out and two back left %d weights changed", apart);
 
 	app.grow_joint(3);
 	app.soften_joint(1.0f);
-	app.undo_stack.commit(); // the slider's release
+	app.commit_soft_edge(); // the slider's release
 	app.reset_joint_area();
-	float[] reset = automatic_now(&app);
+	test::@check(!app.weights_held(ankle), "Reset left the ankle held");
+	float[] reset = shown_now(&app);
 	defer alloc::free(mem, reset);
 	apart = rows_apart(start, reset);
 	test::@check(apart == 0, "Reset after a grow left %d weights off the automatic bind", apart);
 	test::@check(app.undo(), "the reset left nothing to undo");
 	test::@check(app.doc.find(ankle).grow > 0.0f && app.doc.find(ankle).band > 0.0f, "one undo did not bring the edge back");
+	test::@check(app.weights_held(ankle), "one undo did not hold the ankle again");
 }
 
 <*
@@ -277,10 +316,14 @@ fn void a_grow_mirrors_to_the_twin() @test
 }
 
 <*
- A grow is an offset to the joint's distance, so it travels with the dot: moved,
- the grown joint still holds more than the same joint moved ungrown.
+ A grown joint's weights are its own, so they stay where they were written when
+ its dot moves — the edge does not travel with it, and the automatic weights
+ the other joints follow do.
+
+ *Re-introduce:* keep the grow live in the bind, and moving the knee moves its
+ column.
 *>
-fn void a_grow_moves_with_its_dot() @test
+fn void a_grown_joint_keeps_its_weights_when_its_dot_moves() @test
 {
 	crig::AppState app;
 	rig::TriMesh mesh;
@@ -288,36 +331,35 @@ fn void a_grow_moves_with_its_dot() @test
 	defer close_field(&app, &mesh);
 
 	uint knee = field_dot(&app, "knee_L");
-	crig::Dot* dot = app.doc.find(knee);
-	Vec3 moved = dot.position + (Vec3){ 0.0f, 0.02f, 0.0f };
-	app.doc.move_dot(knee, moved);
-
-	crig::RigView view = app.open_rig(mem)!!;
-	usz joint = (usz)view.joint_of(knee);
-	usz bones = view.len();
-	view.free(mem);
-	float[] plain = automatic_now(&app);
-	defer alloc::free(mem, plain);
-
+	app.area_solo = true;
 	app.select(knee);
 	test::@check(app.grow_joint(2), "the knee would not grow");
-	float[] grown = automatic_now(&app);
+	usz joint = joint_of(&app, knee);
+	float[] grown = shown_now(&app);
 	defer alloc::free(mem, grown);
+	float[] automatic = automatic_now(&app);
+	defer alloc::free(mem, automatic);
+	usz bones = grown.len / app.geometry.positions.len;
 
-	usz owns_plain = 0;
-	usz owns_grown = 0;
-	for (usz v = 0; v < app.geometry.positions.len; v++)
-	{
-		if (crig::strongest_joint(plain[v * bones:bones]) == joint) owns_plain++;
-		if (crig::strongest_joint(grown[v * bones:bones]) == joint) owns_grown++;
-	}
-	test::@check(owns_grown > owns_plain, "the moved, grown knee owns %d vertices against %d ungrown", owns_grown, owns_plain);
+	crig::Dot* dot = app.doc.find(knee);
+	test::@check(app.move_recorded(knee, dot.position, dot.position + (Vec3){ 0.0f, 0.02f, 0.0f }), "the knee would not move");
+	app.undo_stack.commit();
+	app.mark_rig_stale();
+	float[] moved = shown_now(&app);
+	defer alloc::free(mem, moved);
+	float[] moved_automatic = automatic_now(&app);
+	defer alloc::free(mem, moved_automatic);
+
+	usz drifted = 0;
+	for (usz v = 0; v < app.geometry.positions.len; v++) if (moved[v * bones + joint] != grown[v * bones + joint]) drifted++;
+	test::@check(drifted == 0, "moving the knee moved %d of its held weights", drifted);
+	test::@check(rows_apart(automatic, moved_automatic) > 0, "the automatic weights did not follow the moved knee");
 }
 
 <*
- The multipliers a session before version 31 carried come back as stated rows:
- the one hand-edit layer every tool now writes. The vertex shows what the
- multiplier made of it, and nothing writes multipliers again.
+ The multipliers a session before version 31 carried come back as held
+ columns: the vertex shows what the multiplier made of it, and nothing writes
+ multipliers again.
 *>
 fn void an_older_sessions_multipliers_load_as_stated_rows() @test
 {
@@ -352,7 +394,7 @@ fn void an_older_sessions_multipliers_load_as_stated_rows() @test
 	defer path.free(mem);
 	char[] saved = file::load(mem, path)!!;
 	defer alloc::free(mem, saved);
-	String older = ((String)saved).replace(mem, `"version": 31`, `"version": 30`);
+	String older = ((String)saved).replace(mem, `"version": 32`, `"version": 30`);
 	defer older.free(mem);
 	String painted = older.replace(mem, `"attachments": [`,
 		string::tformat(`"paint": [[%d,%d,0.25]],
@@ -362,7 +404,7 @@ fn void an_older_sessions_multipliers_load_as_stated_rows() @test
 
 	app.load_session();
 	test::@check(app.doc.paint.len() == 0, "the multipliers were kept as multipliers");
-	test::@check(app.doc.pins.len() > 0, "the multiplier did not become a stated row");
+	test::@check(app.doc.pins.len() > 0 && app.weights_held(knee), "the multiplier did not become the knee's held column");
 	crig::RigView after = app.open_rig(mem)!!;
 	defer after.free(mem);
 	float[] shown = app.weights(mem, &after);
@@ -373,11 +415,11 @@ fn void an_older_sessions_multipliers_load_as_stated_rows() @test
 }
 
 <*
- The case that started the redesign: a boot vertex stated wholly to the hips —
- a leg joint taken off it once handed it there — can have the hips taken off
- again, and goes back to the leg rather than staying put.
+ The case that started the redesign: the hips put on a boot vertex by hand can
+ be taken off again, and the vertex is the leg's as it was — the ankle's weight
+ never moved while the hips came and went.
 *>
-fn void taking_the_hips_off_a_vertex_they_hold_whole_hands_it_to_the_leg() @test
+fn void taking_the_hips_off_a_vertex_gives_it_back_to_the_leg() @test
 {
 	crig::AppState app;
 	rig::TriMesh mesh;
@@ -401,9 +443,9 @@ fn void taking_the_hips_off_a_vertex_they_hold_whole_hands_it_to_the_leg() @test
 	test::@check(boot != 0, "the ankle holds no vertex outright");
 
 	uint[1] one = { boot };
-	app.pin_vertices(one[..], hips, 1.0f);
+	app.set_weight_vertices(one[..], hips, 1.0f);
 	crig::PaintResult did = app.paint_share(hips, one[..], 0.0f);
-	test::@check(did.changed > 0 && did.alone == 0, "taking the hips off their whole vertex was refused");
+	test::@check(did.changed > 0 && did.emptied == 0, "taking the hips off the vertex was refused");
 
 	crig::RigView after = app.open_rig(mem)!!;
 	defer after.free(mem);
@@ -487,14 +529,14 @@ fn void the_brush_and_the_lasso_mirror_to_the_twin() @test
 	app.brush_share(left, some[..], 0.0f, pulls[..]);
 	app.end_stroke();
 	usz twin_rows = 0;
-	foreach (pin : app.doc.pins.array_view()) if (pin.by == right) twin_rows++;
+	foreach (pin : app.doc.pins.array_view()) if (pin.dot_id == right) twin_rows++;
 	test::@check(twin_rows > 0, "the stroke did not reach the right knee with Mirror on");
 	test::@check(app.undo(), "the mirrored stroke left nothing to undo");
 	test::eq(app.doc.pins.len(), (sz)0);
 	app.end_brush();
 
 	// The lasso, through its commit's own mirror.
-	app.pin_vertices(some[..], left, 1.0f, commit: false);
+	app.set_weight_vertices(some[..], left, 1.0f, commit: false);
 	app.lasso_mirror(some[..], 1.0f);
 	app.undo_stack.commit();
 	bool mirrored = false;
@@ -509,7 +551,7 @@ fn void the_brush_and_the_lasso_mirror_to_the_twin() @test
 	app.end_stroke();
 	foreach (pin : app.doc.pins.array_view())
 	{
-		test::@check(pin.by != right, "a stroke with Mirror off reached the right knee");
+		test::@check(pin.dot_id != right, "a stroke with Mirror off reached the right knee");
 	}
 }
 

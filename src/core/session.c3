@@ -5,14 +5,13 @@
  because crig is started with a path and everything it produces belongs where
  the question came from. One object:
 
-     { "version": 19, "mesh": "goat.glb", "root": 3, "next_id": 17,
+     { "version": 32, "mesh": "goat.glb", "root": 3, "next_id": 17,
        "auto_connect": true, "sym_x": 0.42, "plan": "biped",
-       "sharpness": 2.5, "knuckle_blend": 0.3, "skin_from_file": true,
-       "dots": [{"id": 1, "position": [x, y, z], "reach": 0.4}, ...],
+       "sharpness": 2.5, "knuckle_blend": 0.3,
+       "dots": [{"id": 1, "position": [x, y, z], "reach": 0.4, "held": true}, ...],
        "edges": [[a, b], ...],
        "attachments": [[shell, dot_id], ...],
-       "paint": [[vertex, dot_id, factor], ...],
-       "pins": [[vertex, dot_id, share, by], ...],
+       "weights": [{"dot": 1, "vertices": "<base64 u32>", "values": "<base64 f32>"}, ...],
        "secondary": [{"root": 3, "tip": 5, "preset": "tail",
                       "flexibility": 0.4, "damping": 0.7, "gravity": 1,
                       "collide": true}, ...],
@@ -55,6 +54,7 @@ import std::collections::object;
 import std::collections::list;
 
 import std::encoding::json;
+import std::encoding::base64;
 import std::io;
 import libc;
 import std::math;
@@ -247,10 +247,83 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // opening, that its weights were re-derived (`WINDOWED_SESSION`). A dot may
 // carry `grow` (model units) and `band` (a share of its bone) — the Weights
 // card's Grow and Soft edge — written only when set.
-const uint SESSION_VERSION = 31;
+//
+// 32 makes a joint's weights its own once edited: a dot may carry `"held":
+// true`, and each held dot's whole column is written under `"weights"` — one
+// entry per dot, its vertex indices and weights as little-endian u32 and f32
+// arrays in base64, nonzero weights only. `pins`, whose rows were laid over one
+// automatic bind for every joint, is read from older files and turned into held
+// columns as they load (`AppState.migrate_held_weights`); it is never written.
+const uint SESSION_VERSION = 32;
 
 // The first version whose weights end at a band — see 31 above.
 const uint WINDOWED_SESSION = 31;
+
+<*
+ One held dot's column as a session entry: `{"dot":id,"vertices":"…","values":"…"}`,
+ its vertex indices and weights as little-endian u32 and f32 arrays in base64,
+ in the order the document holds them, zero weights left out.
+*>
+fn void append_held_column(DString* text, RigDocument* doc, uint dot_id) @private
+{
+	usz entries = 0;
+	foreach (pin : doc.pins.array_view()) if (pin.dot_id == dot_id && pin.share > 0.0f) entries++;
+	char[] vertices = alloc::new_array(mem, char, (sz)entries * 4);
+	defer alloc::free(mem, vertices);
+	char[] values = alloc::new_array(mem, char, (sz)entries * 4);
+	defer alloc::free(mem, values);
+	usz at = 0;
+	foreach (pin : doc.pins.array_view())
+	{
+		if (pin.dot_id != dot_id || pin.share <= 0.0f) continue;
+		put_le32(vertices[at * 4:4], pin.vertex);
+		put_le32(values[at * 4:4], bitcast(pin.share, uint));
+		at++;
+	}
+	String vertex_text = base64::encode(mem, vertices);
+	defer vertex_text.free(mem);
+	String value_text = base64::encode(mem, values);
+	defer value_text.free(mem);
+	// No escaping: base64's alphabet is letters, digits, + / and =.
+	text.appendf(`{"dot":%d,"vertices":"%s","values":"%s"}`, dot_id, vertex_text, value_text)!!;
+}
+
+<*
+ Read one entry `append_held_column` wrote into the document's pins, in one
+ pass — a column is the whole mesh, and `set_pin` is a scan of the list per
+ call.
+
+ @return? SESSION_SHAPE : `Not an entry crig wrote: no such dot, or arrays that do not pair up.`
+*>
+fn void? read_held_column(RigDocument* doc, Object* entry) @private
+{
+	if (!entry.is_keyable()) return SESSION_SHAPE~;
+	uint dot_id = entry.get_uint("dot")!;
+	if (!doc.find(dot_id)) return SESSION_SHAPE~;
+	char[] vertices = base64::decode(mem, entry.get_string("vertices")!) ?? SESSION_SHAPE~!;
+	defer alloc::free(mem, vertices);
+	char[] values = base64::decode(mem, entry.get_string("values")!) ?? SESSION_SHAPE~!;
+	defer alloc::free(mem, values);
+	if (vertices.len != values.len || vertices.len % 4 != 0) return SESSION_SHAPE~;
+	for (usz at = 0; at < vertices.len; at += 4)
+	{
+		float share = bitcast(get_le32(values[at:4]), float);
+		if (!(share > 0.0f)) continue;
+		doc.pins.push({ .vertex = get_le32(vertices[at:4]), .dot_id = dot_id, .share = math::min(share, 1.0f) });
+	}
+}
+
+fn void put_le32(char[] out, uint value) @private
+{
+	for (usz i = 0; i < 4; i++) out[i] = (char)(value >> (i * 8));
+}
+
+fn uint get_le32(char[] bytes) @private
+{
+	uint value = 0;
+	for (usz i = 0; i < 4; i++) value |= (uint)bytes[i] << (i * 8);
+	return value;
+}
 
 <*
  Where a mesh's session lives: beside it, with `.rigsmith.json` for the extension.
@@ -404,15 +477,6 @@ fn String session_text(
 		text.appendf("  \"knuckle_blend\": %s,\n", (JsonFloat)doc.knuckle_blend_fraction())!!;
 	}
 
-	// Only when set, for the plain reason: false is what every rig crig builds
-	// is, and a key saying so in every session would be noise. The weights
-	// themselves are not written — they are megabytes, and they are still sitting
-	// in the mesh's own file, which is where the load reads them from again.
-	if (doc.skin_from_file)
-	{
-		text.append_string("  \"skin_from_file\": true,\n");
-	}
-
 	text.append_string(`  "dots": [`);
 	foreach (i, dot : doc.dots.array_view())
 	{
@@ -434,6 +498,9 @@ fn String session_text(
 		// automatic edge and the model's default.
 		if (dot.grow != 0.0f) text.appendf(",\"grow\":%s", (JsonFloat)dot.grow)!!;
 		if (dot.band > 0.0f) text.appendf(",\"band\":%s", (JsonFloat)dot.band)!!;
+		// Only when its weights are its own; an automatic joint is every joint
+		// nobody has edited.
+		if (dot.held) text.append_string(",\"held\":true");
 
 		text.append_char('}');
 	}
@@ -464,31 +531,28 @@ fn String session_text(
 		pinned++;
 	}
 
-	// No "paint": the multipliers sessions before version 31 carried are read
-	// below and turned into stated rows as they load (`bake_legacy_paint`), so a
-	// document has none to write.
+	// No "paint" and no "pins": the multipliers and the rows older sessions
+	// carried are read below and turned into held columns as they load
+	// (`AppState.migrate_held_weights`), so a document has none to write.
 	text.append_string("]");
 
-	// The pins: flat triples, `%.9g` so a share
-	// round-trips a float exactly, and an entry naming a dot that has gone
-	// dropped here rather than when the dot went, because until the file is
-	// written a deletion is still one Ctrl+Z from coming back.
+	// The held joints' columns, one entry per dot — see version 32. Binary in
+	// base64 because a column is the whole mesh: as JSON numbers a fully edited
+	// figure of fifty thousand vertices would be several megabytes of text.
+	// Only held dots that still exist: a deleted dot's entries wait in the
+	// document for a Ctrl+Z, and once the file is written that is over.
 	//
-	// **Omitted entirely when there is none**, unlike the lists above and
-	// like the physics below: this key arrived in version 12, so every earlier
-	// file simply has none, and writing `"pins": []` onto every session crig has
-	// ever saved would be a line of noise for a layer most rigs never use.
-	usz stated = 0;
-	foreach (pin : doc.pins.array_view())
+	// **Omitted entirely when no joint is held**, like the physics below: most
+	// rigs keep the automatic weights, and `"weights": []` would be noise.
+	usz written = 0;
+	foreach (dot : doc.dots.array_view())
 	{
-		if (pin.dot_id == 0 || !doc.find(pin.dot_id)) continue;
-		text.append_string(stated == 0 ? ",\n  \"pins\": [" : ",");
-		// An author that has gone is written as nobody, by the same rule.
-		uint by = pin.by != 0 && doc.find(pin.by) ? pin.by : 0;
-		text.appendf("[%d,%d,%s,%d]", pin.vertex, pin.dot_id, (JsonFloat)pin.share, by)!!;
-		stated++;
+		if (!dot.held) continue;
+		text.append_string(written == 0 ? ",\n  \"weights\": [" : ",");
+		append_held_column(&text, doc, dot.id);
+		written++;
 	}
-	if (stated > 0) text.append_char(']');
+	if (written > 0) text.append_char(']');
 
 	// The chains, on the same terms as the paint and the attachments above:
 	// keyed by a dot, and dropped here when the dot they name is gone rather than
@@ -1481,7 +1545,9 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 	if (try String p = parsed.get_string("plan")) doc.set_plan(p);
 	// Absent means the binder, which is what every rig built in crig uses and what
 	// every session written before importing existed was bound with.
-	if (try bool s = parsed.get_bool("skin_from_file")) doc.skin_from_file = s;
+	// Never written since version 32, whose held columns carry the file's weights
+	// themselves; an older session's flag is kept for the load to migrate.
+	if (try bool s = parsed.get_bool("skin_from_file")) doc.legacy_skin_from_file = s;
 	// Version 11, and absent in every file the writer had nothing to say about —
 	// which is read as unset, the binder's own blend. Through the setter rather
 	// than assigned, so a hand-edited file naming a power outside the band the
@@ -1518,6 +1584,8 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		// Absent before version 31 and for every joint on its automatic edge.
 		if (try double g = entry.get_float("grow")) doc.set_grow(id, (float)g);
 		if (try double b = entry.get_float("band")) doc.set_band(id, (float)b);
+		// Absent before version 32 and for every joint on the automatic weights.
+		if (try bool held = entry.get_bool("held")) doc.set_held(id, held);
 
 	}
 
@@ -1593,6 +1661,7 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 	// Vertex indices are not checked against a mesh here either — there is no
 	// mesh in `core/` to check them against, and one past the end of whatever is
 	// eventually loaded is dropped by `pin_columns` when the bind asks for it.
+	// Version 27 added a fourth number, whose edit wrote the row; it is read past.
 	if (try Object* stated = parsed.get("pins"))
 	{
 		if (!is_list(stated)) return SESSION_SHAPE~;
@@ -1600,13 +1669,22 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		{
 			Object* pin = stated.get_at(i);
 			if (!is_list(pin) || pin.get_len() < 3 || pin.get_len() > 4) return SESSION_SHAPE~;
-			// Version 27; before it every pin is nobody's.
-			uint by = pin.get_len() == 4 ? pin.get_uint_at(3)! : 0;
 			if (!doc.set_pin(
 				pin.get_uint_at(0)!,
 				pin.get_uint_at(1)!,
-				(float)pin.get_float_at(2)!,
-				by)) return SESSION_SHAPE~;
+				(float)pin.get_float_at(2)!)) return SESSION_SHAPE~;
+		}
+	}
+
+	// Version 32: each held dot's column, as `append_held_column` wrote it. A
+	// column naming a dot the file did not place, or arrays that do not pair up,
+	// mean this is not a session crig wrote.
+	if (try Object* columns = parsed.get("weights"))
+	{
+		if (!is_list(columns)) return SESSION_SHAPE~;
+		for (sz i = 0; i < columns.get_len(); i++)
+		{
+			read_held_column(doc, columns.get_at(i))!;
 		}
 	}
 

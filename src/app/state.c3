@@ -317,6 +317,17 @@ struct AppState
 	TintMode tint_mode;
 
 	<*
+	 The Unused overlay: vertices no joint holds marked magenta, over whichever
+	 weight view is up or over the plain mesh when none is.
+
+	 Beside `tint_mode` rather than a third mode of it, because it answers a
+	 different question — "does anything move this vertex" — that has an answer
+	 under every view at once. Not remembered between runs, for the tint views'
+	 reason: a diagnostic switched on is one about the model in hand.
+	*>
+	bool show_unused;
+
+	<*
 	 What Z goes back to from Wireframe: the fill the user was looking at.
 
 	 The shading itself is `config.viewport_shading`, remembered between runs.

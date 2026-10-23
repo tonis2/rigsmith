@@ -447,6 +447,7 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case SET_REACH: self.set_reach(edit.id, edit.reach_after);
 		case SET_GROW: self.set_grow(edit.id, edit.grow_after);
 		case SET_BAND: self.set_band(edit.id, edit.band_after);
+		case SET_HELD: self.set_held(edit.id, edit.held_after);
 		case SET_POSE_WEIGHT: self.set_pose_weight(edit.id, edit.pose_weight_after);
 		case SET_SHARPNESS: self.set_sharpness(edit.sharp_after);
 		case SET_KNUCKLE_BLEND: self.set_knuckle_blend(edit.knuckle_after);
@@ -486,6 +487,7 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.insert_dot(edit.id, edit.before, edit.name, edit.reach_before, edit.pose_weight_before);
 			self.set_grow(edit.id, edit.grow_before);
 			self.set_band(edit.id, edit.band_before);
+			self.set_held(edit.id, edit.held_before);
 			// `remove_dot` hands the root to whatever was left, so putting the
 			// dot back is not enough to put the root back. Restored from the
 			// edit rather than re-derived, because the guess it made on the way
@@ -501,6 +503,8 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.set_grow(edit.id, edit.grow_before);
 		case SET_BAND:
 			self.set_band(edit.id, edit.band_before);
+		case SET_HELD:
+			self.set_held(edit.id, edit.held_before);
 		case SET_POSE_WEIGHT:
 			self.set_pose_weight(edit.id, edit.pose_weight_before);
 		case SET_SHARPNESS:

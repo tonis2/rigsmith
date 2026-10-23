@@ -130,7 +130,6 @@ fn void AppState.replay_pin_stroke(&self, Edit edit, bool forwards)
 			.vertex = change.vertex,
 			.dot_id = change.dot_id,
 			.share = forwards ? change.after : change.before,
-			.by = forwards ? change.by_after : change.by_before,
 		};
 	}
 
@@ -333,6 +332,9 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 
 	float[] skin = self.weights(mem, &view);
 	defer alloc::free(mem, skin);
+	// Nothing moves a vertex no joint holds, so the file rides it on the root —
+	// said in the notice, since nothing in the file will.
+	usz unused = unused_rows(skin, view.len());
 
 	// **Nothing is pruned.** An export writes its `<stem>.crig.json` beside it, so
 	// the pair is a document and not only an asset — and the two halves have to
@@ -491,6 +493,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 		self.mesh_resized = false;
 	}
 	String lossy = whole ? "" : " · no UVs/materials, so Ctrl+S keeps saving the original";
+	if (unused > 0) lossy = string::tformat(" · %d vertices no joint holds follow the root%s", unused, lossy);
 
 	// One line, four optional halves. The clip count is only worth printing when
 	// there are clips, and the idle count only when there is one — a line that
@@ -970,7 +973,13 @@ fn void AppState.load_session(&self)
 	self.source_has_model_transform = loaded.model_transform_in_mesh;
 
 	self.mark_rig_stale();
-	self.bake_legacy_paint();
+	// An older session stored that the weights came from the file, never the
+	// weights themselves — see `reload_imported_skin`. Read before the migration,
+	// which rebuilds what that session showed from them and holds them.
+	bool from_file = self.doc.legacy_skin_from_file;
+	if (from_file) (void)self.reload_imported_skin();
+	usz kept = self.doc.read_version < HELD_SESSION ? self.migrate_held_weights() : 0;
+	self.doc.legacy_skin_from_file = false;
 	self.undo_stack.clear();
 	self.select(0);
 
@@ -983,10 +992,16 @@ fn void AppState.load_session(&self)
 	// A rig saved before the automatic weights ended at a band binds differently
 	// now — tighter, with no joint's tail across the body — and a model that
 	// suddenly deforms otherwise with nothing said would read as a broken file.
-	if (self.doc.read_version < WINDOWED_SESSION && !self.doc.skin_from_file && self.doc.dots.len() > 1)
+	if (self.doc.read_version < WINDOWED_SESSION && !from_file && self.doc.dots.len() > 1)
 	{
 		self.@notice("loaded %s · its weights were re-derived: each joint now ends a band past its neighbours instead of reaching the whole body",
 			base_name(path));
+		return;
+	}
+	if (kept > 0)
+	{
+		self.@notice("loaded %s · %d %s keep their edited weights · Reset any to make it follow the joint",
+			base_name(path), kept, kept == 1 ? "joint" : "joints");
 		return;
 	}
 	self.@notice("loaded %s · %d joints, %d bones", base_name(path), self.doc.dots.len(), self.doc.edges.len());

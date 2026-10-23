@@ -586,12 +586,12 @@ fn void forking_the_timeline_drops_the_abandoned_stroke() @test
 }
 
 // ---------------------------------------------------------------------------
-// The share verb
+// The weight verb
 //
-// The one thing a caller says out loud. Everything under it is multipliers,
-// which mean nothing without knowing the base; a share means the same thing at
-// every vertex and either side of the renormalisation. So what these assert is
-// that asking for a share and then measuring it gives the number back.
+// The one thing a caller says out loud: one dot's own weight on some vertices.
+// What these assert is that the weight asked for is the weight written, that no
+// other dot's moves to make room for it, and that a share — what the views and
+// the file show — is that weight over the row's total.
 
 // One dot's share of one vertex, normalised the way the views and the file are.
 fn float share_of(crig::AppState* app, uint vertex, uint dot)
@@ -614,34 +614,52 @@ fn float share_of(crig::AppState* app, uint vertex, uint dot)
 	return sum > 0.0f ? dense[at + (usz)joint] / sum : 0.0f;
 }
 
-<*
- A share asked for is the share measured.
+// One dot's own weight on one vertex, as the views read it before dividing.
+fn float weight_of(crig::AppState* app, uint vertex, uint dot)
+{
+	crig::RigView? opened = app.open_rig(mem);
+	if (catch opened) return -1.0f;
+	crig::RigView view = opened;
+	defer view.free(mem);
+	float[] column = app.column_of(mem, &view, dot);
+	defer if (column.len > 0) alloc::free(mem, column);
+	return (usz)vertex < column.len ? column[vertex] : -1.0f;
+}
 
- The whole verb in one check. If this holds, the solve is right; if it drifts,
- every layer above it is describing something the file does not contain.
+<*
+ A weight asked for is the weight written, and nothing else on the vertex moves:
+ the share it comes to is that weight over the row's total.
+
+ *Re-introduce:* rescale the rest of the row to make room, as the share verb
+ did, and the other dot's weight moves.
 *>
-fn void a_share_asked_for_is_the_share_measured() @test
+fn void a_weight_asked_for_is_the_weight_written() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
 
 	uint hips = dot_named(&app, "hips");
+	uint knee = dot_named(&app, "knee");
 	uint[1] one = { 0 };
+	float knee_had = weight_of(&app, 0, knee);
 
 	float[4] targets = { 0.0f, 0.1f, 0.5f, 0.85f };
 	foreach (want : targets)
 	{
 		crig::PaintResult did = app.paint_share(hips, one[..], want);
-		test::@check(did.blocked == 0 && did.alone == 0,
-			"the vertex can be given a share of %s", want);
-		test::@check(math::abs(share_of(&app, 0, hips) - want) < 1.0e-5f,
-			"asked for %s, measured %s", want, share_of(&app, 0, hips));
+		test::@check(did.blocked == 0, "the vertex can be given a weight of %s", want);
+		test::@check(weight_of(&app, 0, hips) == want, "asked for %s, measured %s", want, weight_of(&app, 0, hips));
+		test::@check(weight_of(&app, 0, knee) == knee_had, "the knee's weight moved to %s", weight_of(&app, 0, knee));
 	}
+	float rest = 0.0f;
+	foreach (dot : app.doc.dots.array_view()) if (dot.id != hips) rest += weight_of(&app, 0, dot.id);
+	test::@check(math::abs(share_of(&app, 0, hips) - 0.85f / (0.85f + rest)) < 1.0e-5f,
+		"the share is not the weight over the row's total");
 }
 
 <*
- The brush states shares, so it can raise a joint the vertex gave nothing — which
- no multiplier can — and a stroke of several moves is one undo step.
+ The brush moves the joint's own weight, so it can raise one the vertex gave
+ nothing — and a stroke of several moves is one undo step.
 *>
 fn void the_brush_raises_a_zero_weight_in_one_step() @test
 {
@@ -653,21 +671,22 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 	uint[1] one = { 0 };
 
 	// Vertex 0 wholly the hips', so the knee holds exactly nothing there.
-	app.pin_vertices(one[..], hips, 1.0f);
+	state_row(&app, 0, hips, 1.0f);
 	test::@check(share_of(&app, 0, knee) == 0.0f, "the knee did not start at nothing");
 
 	app.begin_stroke();
 	float[1] half = { 0.5f };
 	test::@check(app.brush_share(knee, one[..], 1.0f, half[..]) > 0, "the dab changed nothing");
-	float first = share_of(&app, 0, knee);
+	float first = weight_of(&app, 0, knee);
 	test::@check(math::abs(first - 0.5f) < 1.0e-5f, "a half pull from nothing landed at %f", first);
 	app.brush_share(knee, one[..], 1.0f, half[..]);
-	test::@check(math::abs(share_of(&app, 0, knee) - 0.75f) < 1.0e-5f,
-		"a second half pull landed at %f", share_of(&app, 0, knee));
+	test::@check(math::abs(weight_of(&app, 0, knee) - 0.75f) < 1.0e-5f,
+		"a second half pull landed at %f", weight_of(&app, 0, knee));
+	test::@check(weight_of(&app, 0, hips) == 1.0f, "raising the knee moved the hips to %f", weight_of(&app, 0, hips));
 	app.end_stroke();
 
 	test::@check(app.undo(), "the stroke left nothing to undo");
-	test::@check(share_of(&app, 0, knee) == 0.0f, "one undo left the knee at %f", share_of(&app, 0, knee));
+	test::@check(weight_of(&app, 0, knee) == 0.0f, "one undo left the knee at %f", weight_of(&app, 0, knee));
 	test::@check(math::abs(share_of(&app, 0, hips) - 1.0f) < 1.0e-5f, "undo did not give the hips the vertex back");
 
 	// Taking off goes all the way to nothing too.
@@ -676,17 +695,14 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 	float[1] all = { 1.0f };
 	app.brush_share(knee, one[..], 0.0f, all[..]);
 	app.end_stroke();
-	test::@check(share_of(&app, 0, knee) == 0.0f, "a full take-off left %f", share_of(&app, 0, knee));
+	test::@check(weight_of(&app, 0, knee) == 0.0f, "a full take-off left %f", weight_of(&app, 0, knee));
 }
 
 <*
- A share is relative to the rig as it now stands.
-
- The rest of a row is shared out from the row as shown — so painting one dot
- down gives the room up and the next dot asked for a share takes it from what
- is left, rather than from what the binder alone would have said.
+ Two dots' weights on one vertex are two numbers: setting the second leaves
+ the first where it was put, and the shares are each over the two together.
 *>
-fn void shares_compose_across_two_dots() @test
+fn void weights_of_two_dots_do_not_touch() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -698,16 +714,14 @@ fn void shares_compose_across_two_dots() @test
 	app.paint_share(hips, one[..], 0.25f);
 	app.paint_share(knee, one[..], 0.5f);
 
-	test::@check(math::abs(share_of(&app, 0, knee) - 0.5f) < 1.0e-5f,
-		"the second dot got exactly what it asked for");
-	// hips kept a quarter of what was left over after knee took half.
-	test::@check(share_of(&app, 0, hips) > 0.0f && share_of(&app, 0, hips) < 0.25f,
-		"and the first gave up room rather than holding its old number");
+	test::@check(weight_of(&app, 0, knee) == 0.5f, "the second dot did not get the weight it asked for");
+	test::@check(weight_of(&app, 0, hips) == 0.25f, "the first dot's weight moved to %f", weight_of(&app, 0, hips));
+	test::@check(share_of(&app, 0, knee) > share_of(&app, 0, hips), "the heavier dot holds the smaller share");
 }
 
 <*
- A share of one is the whole vertex: a stated row can say every other dot holds
- nothing, which the multipliers this replaced could only approach.
+ The whole vertex is one dot's when it holds full weight and every other dot is
+ taken off it.
 *>
 fn void asking_for_all_of_a_vertex_gives_it_all() @test
 {
@@ -718,18 +732,17 @@ fn void asking_for_all_of_a_vertex_gives_it_all() @test
 	uint[1] one = { 0 };
 
 	app.paint_share(hips, one[..], 1.0f);
+	foreach (dot : app.doc.dots.array_view()) if (dot.id != hips) app.paint_share(dot.id, one[..], 0.0f);
 
 	float got = share_of(&app, 0, hips);
 	test::@check(math::abs(got - 1.0f) < 1.0e-6f, "asking for all of it measured %s", got);
 }
 
 <*
- A dot that already holds the whole vertex has no share to give up.
-
- Not caller error — the rig is saying there is no second dot near enough to take
- what is offered, and a solve would divide by the nothing that is left.
+ Taking the only dot on a vertex off it leaves the vertex to nobody, and says
+ so: nothing hands it to anyone.
 *>
-fn void a_lone_dot_reports_that_there_is_no_share_to_take() @test
+fn void taking_the_only_dot_off_leaves_the_vertex_unused() @test
 {
 	crig::AppState app = shared_app::open_cube();
 	defer app.free();
@@ -738,17 +751,22 @@ fn void a_lone_dot_reports_that_there_is_no_share_to_take() @test
 	uint[1] one = { 0 };
 
 	crig::PaintResult did = app.paint_share(only, one[..], 0.5f);
-	test::@check(did.alone == 1 && did.changed == 0,
-		"a one-dot rig cannot give half of a vertex to anything else");
-	test::@check(app.doc.pins.len() == 0, "and nothing was written");
+	test::@check(did.emptied == 0 && did.changed == 1, "half of a lone dot's vertex was refused");
+	test::@check(math::abs(share_of(&app, 0, only) - 1.0f) < 1.0e-6f, "the lone dot does not hold all of what is left");
+
+	did = app.paint_share(only, one[..], 0.0f);
+	test::@check(did.emptied == 1 && did.changed == 1, "taking the lone dot off was not reported as emptying the vertex");
+	crig::WeightSurvey survey = app.survey_weights(mem)!!;
+	defer survey.free(mem);
+	test::eq(survey.unused, (usz)1);
 }
 
 <*
- A share asked for is a stated row, so it holds where it was put when the dot
- moves. What re-derives with the dot is the automatic weights under it, and a
- grow — never a share somebody named.
+ A weight asked for is the joint's own, so it holds where it was put when the
+ dot moves. What re-derives with the dot is the automatic weights of the joints
+ nobody edited — never a weight somebody named.
 *>
-fn void a_stated_share_holds_when_the_dot_moves() @test
+fn void a_stated_weight_holds_when_the_dot_moves() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -757,23 +775,18 @@ fn void a_stated_share_holds_when_the_dot_moves() @test
 	uint[1] one = { 0 };
 
 	app.paint_share(hips, one[..], 0.5f);
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) < 1.0e-5f, "solved to a half");
+	test::@check(weight_of(&app, 0, hips) == 0.5f, "the weight was not written");
 
-	// Toward vertex 0 at (-1,-1,-1), and it has to be *toward*. Moving it the
-	// other way changes nothing measurable: hips' bone runs down to knee, and
-	// `segment_distance_sq` clamps to the segment — so for a vertex behind the
-	// joint the closest point is the knee end either way, and the base does not
-	// move. The same clamping PLAN.md calls the sibling tie.
 	usz stated = (usz)app.doc.pins.len();
 	app.doc.move_dot(hips, { -0.9, -0.9, -0.9 });
+	app.mark_rig_stale();
 
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) < 1.0e-5f,
-		"moving the dot moved a stated share to %s", share_of(&app, 0, hips));
-	test::@check((usz)app.doc.pins.len() == stated, "the stated row changed");
+	test::@check(weight_of(&app, 0, hips) == 0.5f, "moving the dot moved a stated weight to %s", weight_of(&app, 0, hips));
+	test::@check((usz)app.doc.pins.len() == stated, "the stored column changed");
 }
 
 <*
- A share request is one undoable stroke over every vertex it touched.
+ A weight request is one undoable stroke over every vertex it touched.
 *>
 fn void a_share_request_is_one_step() @test
 {
@@ -784,14 +797,15 @@ fn void a_share_request_is_one_step() @test
 	uint[4] some = { 0, 1, 2, 3 };
 
 	crig::PaintResult did = app.paint_share(hips, some[..], 0.2f);
-	test::@check(did.changed >= 4, "four vertices restated %d pins", did.changed);
+	test::@check(did.changed == 4, "four vertices changed %d", did.changed);
 	for (uint v = 0; v < 4; v++)
 	{
-		test::@check(math::abs(share_of(&app, v, hips) - 0.2f) < 1.0e-5f, "vertex %d measured %s", v, share_of(&app, v, hips));
+		test::@check(weight_of(&app, v, hips) == 0.2f, "vertex %d measured %s", v, weight_of(&app, v, hips));
 	}
 
 	test::@check(app.undo(), "the whole request is one step");
 	test::eq(app.doc.pins.len(), (sz)0);
+	test::@check(!app.weights_held(hips), "the undo left the hips held");
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,7 +1060,7 @@ fn uint arm_over_the_cube(crig::AppState* app)
 }
 
 <*
- Mirroring a dot carries its paint and pins across to the twin, at the
+ Mirroring a dot carries its edited weights across to the twin, at the
  mirror-image vertices, in the same undo step.
 
  Painting one side and mirroring is the whole workflow — nobody wants to fix
@@ -1066,13 +1080,12 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	app.connect_recorded(dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
-	crig::VertexPin[2] dabs = {
-		{ .vertex = 0, .dot_id = arm, .share = 0.3f },
-		{ .vertex = 7, .dot_id = arm, .share = 0.6f },
-	};
-	test::eq(app.pin_dabs(dabs[..]), (usz)2);
-	crig::VertexPin[1] pins = {{ .vertex = 4, .dot_id = arm, .share = 0.8f }};
-	test::eq(app.pin_dabs(pins[..]), (usz)1);
+	uint[1] at0 = { 0 };
+	uint[1] at7 = { 7 };
+	uint[1] at4 = { 4 };
+	app.set_weight_vertices(at0[..], arm, 0.3f);
+	app.set_weight_vertices(at7[..], arm, 0.6f);
+	app.set_weight_vertices(at4[..], arm, 0.8f);
 	sz history = app.undo_stack.cursor;
 
 	app.select(arm);
@@ -1087,30 +1100,29 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	test::@check(app.doc.pin_of(1, twin) == 0.3f, "corner 0's dab did not land on corner 1 (%.2f)", app.doc.pin_of(1, twin));
 	test::@check(app.doc.pin_of(6, twin) == 0.6f, "corner 7's dab did not land on corner 6 (%.2f)", app.doc.pin_of(6, twin));
 	test::@check(app.doc.pin_of(5, twin) == 0.8f, "corner 4's pin did not land on corner 5 (%.2f)", app.doc.pin_of(5, twin));
-	test::@check(app.doc.pin_of(0, twin) == 0.0f && app.doc.pin_of(0, arm) == 0.3f,
-		"the crossing painted the wrong side");
-	test::eq(app.doc.pins.len(), (sz)6);
+	test::@check(app.doc.pin_of(0, arm) == 0.3f && app.weights_held(twin), "the crossing painted the wrong side");
 
 	// One undo takes the paint back off the twin — the twin dot stays, it was
 	// there before the mirror; one redo brings the crossed paint back.
 	test::@check(app.undo(), "the mirror would not undo");
 	test::eq(app.undo_stack.cursor, history);
 	test::@check(dot_named(&app, "arm_R") == twin, "undo disturbed the pre-placed twin");
-	test::eq(app.doc.pins.len(), (sz)3);
+	test::@check(!app.weights_held(twin) && app.doc.pin_of(1, twin) == 0.0f, "undo left the twin's weights");
 	test::@check(app.redo(), "the mirror would not redo");
 	test::@check(app.doc.pin_of(1, twin) == 0.3f && app.doc.pin_of(5, twin) == 0.8f,
 		"redo did not bring the twin's paint back");
 }
 
 <*
- The twin's own paint is overwritten by the source's, the way its position and
- reach are — and a twin already carrying the right paint is already in place.
+ The twin's own weights are overwritten by the source's, the way its position
+ and reach are — and a twin already carrying the right weights is already in
+ place.
 
- "The selection is the side that survives" has to hold for the layer too, or
+ "The selection is the side that survives" has to hold for the weights too, or
  mirroring a repainted side onto a twin painted last week would merge the two
- into something nobody painted. A vertex the source leaves clean is cleared on
- the twin; a vertex with no partner across the plane is left alone, since the
- source says nothing about it.
+ into something nobody painted. Every twin vertex with a partner across the
+ plane takes the source's weight there; one with no partner is left alone,
+ since the source says nothing about it.
 *>
 fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 {
@@ -1122,12 +1134,13 @@ fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 	app.connect_recorded(dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
-	crig::VertexPin[3] dabs = {
-		{ .vertex = 0, .dot_id = arm, .share = 0.3f },  // crosses onto corner 1
-		{ .vertex = 1, .dot_id = twin, .share = 0.9f }, // overwritten by it
-		{ .vertex = 2, .dot_id = twin, .share = 0.1f }, // corner 3 is clean on the source: cleared
-	};
-	test::eq(app.pin_dabs(dabs[..]), (usz)3);
+	uint[1] at0 = { 0 };
+	uint[1] at1 = { 1 };
+	uint[1] at2 = { 2 };
+	app.set_weight_vertices(at0[..], arm, 0.3f);  // crosses onto corner 1
+	app.set_weight_vertices(at1[..], twin, 0.9f); // overwritten by it
+	app.set_weight_vertices(at2[..], twin, 0.1f); // overwritten by corner 3's
+	float arm_at_3 = app.doc.pin_of(3, arm);
 
 	app.select(arm);
 	usz moved;
@@ -1138,8 +1151,7 @@ fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 	test::@check(total == 1 && moved == 1 && unmatched == 0 && painted,
 		"a square twin with the wrong paint was not pulled into line (total %d, moved %d)", total, moved);
 	test::@check(app.doc.pin_of(1, twin) == 0.3f, "the source's dab did not overwrite the twin's (%.2f)", app.doc.pin_of(1, twin));
-	test::@check(app.doc.pin_of(2, twin) == 0.0f, "a dab the source has no partner for was kept (%.2f)", app.doc.pin_of(2, twin));
-	test::eq(app.doc.pins.len(), (sz)2);
+	test::@check(app.doc.pin_of(2, twin) == arm_at_3, "corner 3's weight did not overwrite corner 2's (%.2f)", app.doc.pin_of(2, twin));
 
 	// Mirrored again, there is nothing left to do — and the notice can say so.
 	total = app.mirror_selection(&moved, &square, &unmatched, &painted);
@@ -1218,13 +1230,13 @@ fn void a_stroke_depends_on_where_it_passed_not_how_long() @test
 	uint[1] one = { 0 };
 
 	app.paint_share(hips, one[..], 0.8f);
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.8f) < 1.0e-5f, "the starting share was not set");
+	test::@check(math::abs(weight_of(&app, 0, hips) - 0.8f) < 1.0e-5f, "the starting weight was not set");
 
 	// One stroke, the rim of the circle over this vertex the whole way.
 	app.begin_stroke();
 	float[1] pull = { app.stroke_pull(0, 0.5f) };
 	app.paint_share(hips, one[..], 0.0f, pull[..]);
-	float after = share_of(&app, 0, hips);
+	float after = weight_of(&app, 0, hips);
 	test::@check(math::abs(after - 0.4f) < 1.0e-5f,
 		"half of the way from 0.8 toward 0 is 0.4, measured %s", after);
 
@@ -1235,14 +1247,14 @@ fn void a_stroke_depends_on_where_it_passed_not_how_long() @test
 		test::@check(again[0] == 0.0f, "dwelling at the same distance asked for more pull");
 		app.paint_share(hips, one[..], 0.0f, again[..]);
 	}
-	test::@check(math::abs(share_of(&app, 0, hips) - after) < 1.0e-6f,
+	test::@check(math::abs(weight_of(&app, 0, hips) - after) < 1.0e-6f,
 		"holding the brush still moved the vertex");
 
 	// Closer in, same stroke: the extra is owed and the total is the new falloff.
 	float[1] closer = { app.stroke_pull(0, 0.75f) };
 	app.paint_share(hips, one[..], 0.0f, closer[..]);
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.2f) < 1.0e-5f,
-		"three quarters of the way from 0.8 is 0.2, measured %s", share_of(&app, 0, hips));
+	test::@check(math::abs(weight_of(&app, 0, hips) - 0.2f) < 1.0e-5f,
+		"three quarters of the way from 0.8 is 0.2, measured %s", weight_of(&app, 0, hips));
 
 	// A second stroke starts the memory over, so it can carry further.
 	app.begin_stroke();
@@ -1269,22 +1281,22 @@ fn void a_partial_request_lands_part_of_the_way() @test
 
 	// From a known starting point, so the fractions below are predictable.
 	app.paint_share(hips, one[..], 0.8f);
-	float start = share_of(&app, 0, hips);
-	test::@check(math::abs(start - 0.8f) < 1.0e-5f, "the starting share was not set");
+	float start = weight_of(&app, 0, hips);
+	test::@check(math::abs(start - 0.8f) < 1.0e-5f, "the starting weight was not set");
 
 	app.paint_share(hips, one[..], 0.0f, half[..]);
-	float once = share_of(&app, 0, hips);
+	float once = weight_of(&app, 0, hips);
 	test::@check(math::abs(once - 0.4f) < 1.0e-5f,
 		"half way from 0.8 toward 0 is 0.4, measured %s", once);
 
 	app.paint_share(hips, one[..], 0.0f, half[..]);
-	float twice = share_of(&app, 0, hips);
+	float twice = weight_of(&app, 0, hips);
 	test::@check(math::abs(twice - 0.2f) < 1.0e-5f,
 		"and again is 0.2, measured %s", twice);
 
 	// It approaches the target and never crosses it, however many times it runs.
 	for (usz i = 0; i < 40; i++) app.paint_share(hips, one[..], 0.0f, half[..]);
-	float settled = share_of(&app, 0, hips);
+	float settled = weight_of(&app, 0, hips);
 	test::@check(settled >= 0.0f && settled < 0.01f,
 		"repeated partial strokes did not converge on the target, landing at %s", settled);
 }
@@ -1351,7 +1363,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 
 	// From nothing to as much as the dot can hold, the way ctrl-drag goes.
 	app.paint_share(hips, one[..], 0.0f);
-	test::@check(share_of(&app, 0, hips) < 1.0e-4f, "the vertex did not start at nothing");
+	test::@check(weight_of(&app, 0, hips) < 1.0e-4f, "the vertex did not start at nothing");
 
 	float target = 1.0f;
 
@@ -1361,7 +1373,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 	app.begin_stroke();
 	float[1] centred = { app.stroke_pull(0, GENTLE) };
 	app.paint_share(hips, one[..], target, centred[..]);
-	float first = share_of(&app, 0, hips);
+	float first = weight_of(&app, 0, hips);
 	test::@check(first > 0.2f && first < 0.45f,
 		"one centred pass should land near a third of the way, measured %s", first);
 
@@ -1371,7 +1383,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 		float[1] again = { app.stroke_pull(0, GENTLE) };
 		app.paint_share(hips, one[..], target, again[..]);
 	}
-	test::@check(math::abs(share_of(&app, 0, hips) - first) < 1.0e-5f,
+	test::@check(math::abs(weight_of(&app, 0, hips) - first) < 1.0e-5f,
 		"holding the brush still carried it further");
 
 	// Lifting and going again is what gets there.
@@ -1382,7 +1394,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 		float[1] pull = { app.stroke_pull(0, GENTLE) };
 		app.paint_share(hips, one[..], target, pull[..]);
 
-		float now = share_of(&app, 0, hips);
+		float now = weight_of(&app, 0, hips);
 		test::@check(now > last, "pass %d carried it no further than the one before", pass + 2);
 		last = now;
 	}
@@ -1394,8 +1406,8 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 	app.begin_stroke();
 	float[1] full = { app.stroke_pull(0, crig::BRUSH_STRENGTH_MAX) };
 	app.paint_share(hips, one[..], target, full[..]);
-	test::@check(share_of(&app, 0, hips) > target - 1.0e-3f,
-		"one full-strength pass stopped short, measured %s", share_of(&app, 0, hips));
+	test::@check(weight_of(&app, 0, hips) > target - 1.0e-3f,
+		"one full-strength pass stopped short, measured %s", weight_of(&app, 0, hips));
 }
 
 // ---------------------------------------------------------------------------
@@ -1592,16 +1604,10 @@ fn void a_sharpened_document_binds_sharper() @test
 }
 
 <*
- A share asked for is still the share measured under a sharpened bind.
-
- The interaction that decides where the sharpening goes. It is applied *before*
- the paint and inside the base the solver borrows, so `p = S·R / ((1 − S)·b)` is
- solved against the numbers the user is looking at. Applied afterwards — or in
- the preview and not in the base — the correction would be solved against one
- bind and measured against another, and every painted share would land somewhere
- else.
+ A weight asked for is still the weight written under a sharpened bind: the
+ sharpness shapes the automatic weights, never a weight somebody named.
 *>
-fn void a_share_asked_for_survives_a_sharpened_bind() @test
+fn void a_weight_asked_for_survives_a_sharpened_bind() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -1613,9 +1619,11 @@ fn void a_share_asked_for_survives_a_sharpened_bind() @test
 	app.mark_rig_stale();
 
 	crig::PaintResult did = app.paint_share(hips, one[..], 0.7f);
-	test::@check(did.blocked == 0 && did.alone == 0, "the vertex can be given a share under gamma 2");
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.7f) < 1.0e-5f,
-		"asked for 0.7 under gamma 2, measured %s", share_of(&app, 0, hips));
+	test::@check(did.blocked == 0 && did.emptied == 0, "the vertex can be given a weight under gamma 2");
+	test::@check(weight_of(&app, 0, hips) == 0.7f, "asked for 0.7 under gamma 2, measured %s", weight_of(&app, 0, hips));
+	test::@check(app.doc.set_sharpness(1.0f), "the document did not take the sharpness back");
+	app.mark_rig_stale();
+	test::@check(weight_of(&app, 0, hips) == 0.7f, "changing the sharpness moved a stated weight to %s", weight_of(&app, 0, hips));
 }
 
 <*
@@ -2051,15 +2059,11 @@ fn void no_pins_leaves_the_matrix_alone() @test
 }
 
 <*
- The columns a bind is handed arrive grouped by vertex.
-
- `pin_over` rewrites a whole row around every pin on it at once, so a vertex
- appearing twice in the input would have its row rescaled a second time against
- numbers the first pass had already replaced. The document stores pins in the
- order they were made, which interleaves vertices as soon as a second region
- crosses the first — so the grouping is `pin_columns`' promise and this is it.
+ Only held joints' stored weights reach the bind: an entry left in the document
+ for a joint on the automatic weights says nothing, and the binder's column
+ stands.
 *>
-fn void pin_columns_arrive_grouped_by_vertex() @test
+fn void only_held_joints_columns_reach_the_bind() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -2067,10 +2071,10 @@ fn void pin_columns_arrive_grouped_by_vertex() @test
 	uint hips = dot_named(&app, "hips");
 	uint foot = dot_named(&app, "foot");
 
-	// Interleaved on purpose: vertex 0, then 1, then 0 again.
 	app.doc.set_pin(0, hips, 0.5f);
 	app.doc.set_pin(1, hips, 0.5f);
 	app.doc.set_pin(0, foot, 0.25f);
+	app.doc.set_held(hips, true);
 
 	crig::RigView? opened = app.open_rig(mem);
 	if (catch opened)
@@ -2081,12 +2085,12 @@ fn void pin_columns_arrive_grouped_by_vertex() @test
 	crig::RigView view = opened;
 	defer view.free(mem);
 
-	test::eq((usz)view.pins.len, (usz)3);
-	for (usz i = 1; i < view.pins.len; i++)
-	{
-		test::@check(view.pins[i].vertex >= view.pins[i - 1].vertex,
-			"pin %d is on vertex %d after vertex %d", i, view.pins[i].vertex, view.pins[i - 1].vertex);
-	}
+	test::eq((usz)view.pins.len, (usz)2);
+	foreach (pin : view.pins) test::@check(pin.joint == (usz)view.joint_of(hips), "an unheld joint's entry reached the bind");
+	test::@check(weight_of(&app, 2, hips) == 0.0f, "a held joint kept a weight where it stores none");
+	float[] automatic = app.weights(mem, &view, AUTOMATIC);
+	defer alloc::free(mem, automatic);
+	test::@check(weight_of(&app, 0, foot) == automatic[(usz)view.joint_of(foot)], "the unheld foot did not keep its automatic weight");
 }
 
 <*
@@ -2170,13 +2174,14 @@ fn void a_large_region_is_one_step_and_undoes_exactly() @test
 }
 
 <*
- Pinning a region takes it off whichever dot had it.
+ Setting a region on one dot leaves every other dot's weight there alone: two
+ dots over one vertex blend, which is what "it may not change any other joint"
+ means.
 
- The second half of "these vertices belong to this dot". Without it two dots
- each state a share of the same vertex and `pin_over` divides it between them,
- which is the opposite of what drawing over a region means.
+ *Re-introduce:* clear the rivals' weights on a re-pinned region, as the lasso
+ did, and the first dot loses its hold.
 *>
-fn void pinning_a_region_clears_a_rivals_pins() @test
+fn void setting_a_region_on_one_dot_leaves_another_alone() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -2185,32 +2190,27 @@ fn void pinning_a_region_clears_a_rivals_pins() @test
 	uint foot = dot_named(&app, "foot");
 
 	uint[3] region = { 0, 1, 2 };
-	test::eq(app.pin_vertices(region[..], hips, 1.0f), (usz)3);
+	app.set_weight_vertices(region[..], hips, 1.0f);
+	float foot_had = weight_of(&app, 0, foot);
 
-	// The same region to the other dot: three new pins and three rivals cleared.
-	test::eq(app.pin_vertices(region[..], foot, 1.0f), (usz)6);
-	test::eq(app.doc.pins.len(), (sz)3);
-	test::@check(app.doc.pin_of(0, hips) == 0.0f, "the first dot kept its hold on a re-pinned vertex");
-	test::@check(app.doc.pin_of(0, foot) == 1.0f, "the second dot did not take it");
+	app.set_weight_vertices(region[..], foot, 1.0f);
+	test::@check(app.doc.pin_of(0, hips) == 1.0f, "the first dot lost its hold on a vertex given to another");
+	test::@check(weight_of(&app, 0, foot) == 1.0f, "the second dot did not get the weight");
 
-	// One Ctrl+Z takes the whole exchange back — the clearing and the pinning are
-	// one gesture, not two.
-	test::@check(app.undo(), "the exchange is one step");
-	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(0, foot) == 0.0f,
-		"undo did not restore the first dot's region");
+	test::@check(app.undo(), "the second region is one step");
+	test::@check(app.doc.pin_of(0, hips) == 1.0f && weight_of(&app, 0, foot) == foot_had,
+		"undo did not put the foot back as it was");
 
-	// Without exclusivity both stand, which is what a caller asking for a
-	// fractional split wants.
 	app.redo();
-	test::eq(app.pin_vertices(region[..], hips, 0.5f, exclusive: false), (usz)3);
+	app.set_weight_vertices(region[..], hips, 0.5f);
 	test::@check(app.doc.pin_of(0, hips) == 0.5f && app.doc.pin_of(0, foot) == 1.0f,
-		"a non-exclusive pin cleared the rival anyway");
+		"lowering one dot moved the other");
 }
 
 <*
- Clearing takes the whole layer off in one step, and leaves the corrections.
+ Letting every joint go is one step, and puts every stored weight back on undo.
 *>
-fn void clearing_the_pins_is_one_step() @test
+fn void letting_every_joint_go_is_one_step() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -2218,18 +2218,20 @@ fn void clearing_the_pins_is_one_step() @test
 	uint hips = dot_named(&app, "hips");
 
 	uint[2] region = { 0, 1 };
-	app.pin_vertices(region[..], hips, 1.0f);
+	app.set_weight_vertices(region[..], hips, 1.0f);
+	sz stored = app.doc.pins.len();
 
-	test::eq(app.clear_pins(), (usz)2);
+	test::eq(app.release_all_recorded(), (usz)1);
 	test::eq(app.doc.pins.len(), (sz)0);
+	test::@check(!app.weights_held(hips), "letting go left the hips held");
 
-	test::@check(app.undo() && app.doc.pins.len() == (sz)2, "the clear is one step");
-	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(1, hips) == 1.0f,
-		"and each pin came back with its own share");
+	test::@check(app.undo() && app.doc.pins.len() == stored, "letting go is one step");
+	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(1, hips) == 1.0f && app.weights_held(hips),
+		"and each weight came back as it was");
 
-	test::@check(app.redo() && app.doc.pins.len() == 0, "the clear redoes");
-	test::eq(app.clear_pins(), (usz)0);
-	test::@check(!app.undo_stack.can_redo(), "clearing an empty layer forked the timeline");
+	test::@check(app.redo() && app.doc.pins.len() == 0, "letting go redoes");
+	test::eq(app.release_all_recorded(), (usz)0);
+	test::@check(!app.undo_stack.can_redo(), "letting go of nothing forked the timeline");
 }
 
 <*
@@ -2253,9 +2255,11 @@ fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 	}
 	before.free(mem);
 
-	// The whole cube, so the answer is unambiguous whatever the binder thought.
+	// The whole cube, and every other dot off it, so the answer is unambiguous
+	// whatever the binder thought.
 	uint[8] whole = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	app.pin_vertices(whole[..], stray, 1.0f);
+	app.set_weight_vertices(whole[..], stray, 1.0f);
+	foreach (dot : app.doc.dots.array_view()) if (dot.id != stray) app.set_weight_vertices(whole[..], dot.id, 0.0f);
 
 	crig::WeightSurvey after = app.survey_weights(mem)!!;
 	defer after.free(mem);
@@ -2277,11 +2281,10 @@ fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 }
 
 <*
- A share asked for over a pinned vertex restates the pin: the request and the
- pin are the same kind of edit now, so the one asked for last is the one that
- holds, and the vertex measures what it asked for.
+ A weight asked for over a vertex another dot holds blends with it: the other
+ dot keeps its weight, and each one's share is over the two together.
 *>
-fn void a_share_over_a_pin_restates_it() @test
+fn void a_weight_over_another_dots_blends_with_it() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -2290,15 +2293,15 @@ fn void a_share_over_a_pin_restates_it() @test
 	uint knee = dot_named(&app, "knee");
 
 	uint[1] one = { 0 };
-	app.pin_vertices(one[..], hips, 1.0f);
-	test::@check(math::abs(share_of(&app, 0, hips) - 1.0f) < 1.0e-6f, "the pin did not take the vertex");
+	app.set_weight_vertices(one[..], hips, 1.0f);
+	foreach (dot : app.doc.dots.array_view()) if (dot.id != hips) app.set_weight_vertices(one[..], dot.id, 0.0f);
+	test::@check(math::abs(share_of(&app, 0, hips) - 1.0f) < 1.0e-6f, "the hips do not hold the vertex alone");
 
 	crig::PaintResult did = app.paint_share(knee, one[..], 0.4f);
-	test::@check(did.changed > 0 && did.alone == 0, "the share over the pin changed nothing");
-	test::@check(math::abs(share_of(&app, 0, knee) - 0.4f) < 1.0e-5f,
-		"the knee measured %s over the pin", share_of(&app, 0, knee));
-	test::@check(math::abs(share_of(&app, 0, hips) - 0.6f) < 1.0e-5f,
-		"the hips kept %s rather than the rest", share_of(&app, 0, hips));
+	test::@check(did.changed > 0 && did.emptied == 0, "the weight over the hips changed nothing");
+	test::@check(weight_of(&app, 0, hips) == 1.0f, "the hips' weight moved to %s", weight_of(&app, 0, hips));
+	test::@check(math::abs(share_of(&app, 0, knee) - 0.4f / 1.4f) < 1.0e-5f,
+		"the knee measured %s, not its weight over the row", share_of(&app, 0, knee));
 }
 
 <*
@@ -2999,34 +3002,38 @@ fn void harden_takes_the_nearly_rigid_and_leaves_the_rest() @test
 	uint hips = dot_named(&app, "hips");
 	uint foot = dot_named(&app, "foot");
 
-	uint[1] nearly = { 0 };
-	uint[1] leading = { 1 };
-	uint[1] rigid = { 2 };
-	app.pin_vertices(nearly[..], hips, 0.85f);
-	app.pin_vertices(leading[..], hips, 0.75f);
-	app.pin_vertices(rigid[..], foot, 1.0f);
-
-	sz edits_before = app.undo_stack.edits.len();
+	state_row(&app, 0, hips, 0.85f, foot);
+	state_row(&app, 1, hips, 0.75f, foot);
+	state_row(&app, 2, foot, 1.0f);
 
 	usz did = app.harden_weights();
 	test::@check(did > 0, "harden found nothing on a fixture built for it");
 	test::@check(app.notice().contains("rigid"), "and said nothing about it: \"%s\"", app.notice());
 
-	// One entry however much of the mesh moved.
-	test::eq(app.undo_stack.edits.len(), edits_before + 1);
-
-	test::@check(app.doc.pin_of(0, hips) == 1.0f,
+	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(0, foot) == 0.0f,
 		"the vertex at 0.85 came out at %s rather than rigid", app.doc.pin_of(0, hips));
-	test::@check(app.doc.pin_of(1, hips) == 0.75f,
+	test::@check(app.doc.pin_of(1, hips) == 0.75f && app.doc.pin_of(1, foot) == 0.25f,
 		"the vertex at 0.75 was moved to %s", app.doc.pin_of(1, hips));
 	test::@check(app.doc.pin_of(2, foot) == 1.0f, "an already-rigid vertex was rewritten");
 	test::@check(app.doc.pin_of(2, hips) == 0.0f, "an already-rigid vertex changed hands");
 
 	test::@check(app.undo(), "harden is one step on the ledger");
-	test::@check(app.doc.pin_of(0, hips) == 0.85f,
+	test::@check(app.doc.pin_of(0, hips) == 0.85f && math::abs(app.doc.pin_of(0, foot) - 0.15f) < 1.0e-6f,
 		"undo left the vertex at %s rather than the 0.85 it found", app.doc.pin_of(0, hips));
 	test::@check(app.doc.pin_of(1, hips) == 0.75f && app.doc.pin_of(2, foot) == 1.0f,
-		"undo did not put the rest of the layer back");
+		"undo did not put the rest back");
+}
+
+// Vertex `v`'s row stated outright: `dot` at `weight`, `other` at the rest of
+// one, and every other dot off it.
+fn void state_row(crig::AppState* app, uint v, uint dot, float weight, uint other = 0)
+{
+	uint[1] one = { v };
+	foreach (each : app.doc.dots.array_view())
+	{
+		float want = each.id == dot ? weight : each.id == other ? 1.0f - weight : 0.0f;
+		app.set_weight_vertices(one[..], each.id, want);
+	}
 }
 
 <*
@@ -3060,7 +3067,7 @@ fn void hardening_an_already_rigid_bind_records_nothing() @test
 	// And again through the pin layer, which reaches the same row by the other
 	// door.
 	uint[8] whole = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	app.pin_vertices(whole[..], hips, 1.0f);
+	app.set_weight_vertices(whole[..], hips, 1.0f);
 
 	settled = app.undo_stack.edits.len();
 	test::eq(app.harden_weights(), (usz)0);
@@ -3199,8 +3206,10 @@ fn void smoothing_widens_a_hard_boundary() @test
 		far[i * 2] = (uint)((i + 6) * 2);
 		far[i * 2 + 1] = (uint)((i + 6) * 2 + 1);
 	}
-	app.pin_vertices(near[..], left, 1.0f);
-	app.pin_vertices(far[..], right, 1.0f);
+	app.set_weight_vertices(near[..], left, 1.0f);
+	app.set_weight_vertices(near[..], right, 0.0f);
+	app.set_weight_vertices(far[..], right, 1.0f);
+	app.set_weight_vertices(far[..], left, 0.0f);
 
 	float[] before = shares_of(&app, left);
 	defer alloc::free(mem, before);
@@ -3213,12 +3222,13 @@ fn void smoothing_widens_a_hard_boundary() @test
 	}
 	test::eq(steps, (usz)1);
 
-	sz edits_before = app.undo_stack.edits.len();
+	sz edits_before = app.undo_stack.cursor;
 
 	usz did = app.smooth_boundaries();
 	test::@check(did > 0, "smoothing found no boundary on a two-dot strip: \"%s\"", app.notice());
 	test::@check(app.notice().contains("smoothed"), "and said nothing about it: \"%s\"", app.notice());
-	test::eq(app.undo_stack.edits.len(), edits_before + 1);
+	test::@check(app.undo() && app.undo_stack.cursor == edits_before, "the pass was more than one undo step");
+	app.redo();
 
 	float[] after = shares_of(&app, left);
 	defer alloc::free(mem, after);
@@ -3574,13 +3584,12 @@ fn void the_face_pass_does_not_paint_through_the_model() @test
 }
 
 <*
- A remove stroke over vertices the joint holds alone, with nothing else near to
- take them, changes nothing and says so on release: a stroke that silently did
- nothing reads as a broken brush.
+ A remove stroke over vertices the joint holds alone takes it off them anyway —
+ nothing hands them to anyone — and says on release that they are unused now.
 
- Re-introduce: drop `stroke_alone` from `AppState.brush_share`.
+ Re-introduce: drop `stroke_emptied` from `AppState.brush_share`.
 *>
-fn void removing_a_joint_with_nowhere_to_go_says_so() @test
+fn void removing_a_joint_with_nowhere_to_go_leaves_the_vertices_unused() @test
 {
 	crig::AppState app = shared_app::open_cube();
 	defer app.free();
@@ -3595,13 +3604,14 @@ fn void removing_a_joint_with_nowhere_to_go_says_so() @test
 	foreach (v, &vertex : every) *vertex = (uint)v;
 	pulls[..] = 1.0f;
 
-	sz pins_before = app.doc.pins.len();
 	app.begin_stroke();
-	test::eq(app.brush_share(only, every, 0.0f, pulls), (usz)0);
-	test::@check(app.stroke_alone, "a stroke with nowhere to put the joint was not noted");
+	test::eq(app.brush_share(only, every, 0.0f, pulls), count);
+	test::@check(app.stroke_emptied, "a stroke that left vertices to nobody was not noted");
 	app.end_stroke();
-	test::@check(app.notice().contains("only joint"), "the stroke ended without saying why: %s", app.notice());
-	test::eq(app.doc.pins.len(), pins_before);
+	test::@check(app.notice().contains("unused"), "the stroke ended without saying so: %s", app.notice());
+	crig::WeightSurvey survey = app.survey_weights(mem)!!;
+	defer survey.free(mem);
+	test::eq(survey.unused, count);
 }
 
 <*
@@ -3621,22 +3631,21 @@ fn crig::AppState sliver_grid(List{Vec3}* positions, List{uint}* indices)
 	uint[] every = alloc::new_array(mem, uint, (sz)positions.len());
 	defer alloc::free(mem, every);
 	foreach (v, &vertex : every) *vertex = (uint)v;
-	app.pin_vertices(every, b, 1.0f);
-	uint[1] middle = { 12 };
-	app.pin_vertices(middle[..], a, 0.999f);
-	app.pin_vertices(middle[..], f, 0.001f, exclusive: false);
+	foreach (dot : app.doc.dots.array_view()) app.set_weight_vertices(every, dot.id, dot.id == b ? 1.0f : 0.0f);
+	state_row(&app, 12, a, 0.999f, f);
 	return app;
 }
 
 <*
- Taking a joint off a vertex it held all of but a sliver gives the vertex to
- the surface around it, not to the sliver: the middle of a grid B holds goes to
- B, and the thousandth of F stays a thousandth.
+ Taking a joint off a vertex moves no other joint's weight there: the middle of
+ a grid A held but for F's thousandth keeps the thousandth and B's nothing, and
+ the vertex rides what is left. Nothing hands it to the surface around — that is
+ the brush's or the lasso's to do.
 
- Re-introduce: in `AppState.others_of`, hand the rest to the row's own others
- whatever they hold together.
+ *Re-introduce:* hand the freed share to the field, as the brush did, and B's
+ weight on the middle moves.
 *>
-fn void removing_a_joint_hands_it_to_the_surface_around() @test
+fn void removing_a_joint_moves_no_other_joint() @test
 {
 	List{Vec3} positions;
 	positions.init(mem);
@@ -3649,28 +3658,24 @@ fn void removing_a_joint_hands_it_to_the_surface_around() @test
 	uint a = dot_named(&app, "A");
 	uint b = dot_named(&app, "B");
 	uint f = dot_named(&app, "F");
-	test::@check(math::abs(share_of(&app, 12, f) - 0.001f) < 1.0e-4f, "the fixture's sliver is %f", share_of(&app, 12, f));
+	float sliver = weight_of(&app, 12, f);
+	test::@check(math::abs(sliver - 0.001f) < 1.0e-6f, "the fixture's sliver is %f", sliver);
 
 	uint[1] middle = { 12 };
 	float[1] all = { 1.0f };
 	app.begin_stroke();
 	test::@check(app.brush_share(a, middle[..], 0.0f, all[..]) > 0, "the stroke changed nothing");
 	app.end_stroke();
-	test::@check(share_of(&app, 12, a) < 1.0e-5f, "A kept %f", share_of(&app, 12, a));
-	test::@check(share_of(&app, 12, f) < crig::AREA_LEAK_FLOOR, "the sliver of F grew to %f", share_of(&app, 12, f));
-	test::@check(share_of(&app, 12, b) > 0.99f, "the surface around's B got %f", share_of(&app, 12, b));
+	test::@check(weight_of(&app, 12, a) == 0.0f, "A kept %f", weight_of(&app, 12, a));
+	test::@check(weight_of(&app, 12, f) == sliver, "F's sliver moved to %f", weight_of(&app, 12, f));
+	test::@check(weight_of(&app, 12, b) == 0.0f, "B was handed %f", weight_of(&app, 12, b));
 }
 
 <*
- An Apply that takes a joint's twin off the rows outside its part treats a
- sliver the same way: a mirrored Apply once handed a tail root to the hundredth
- of a knee it carried. The middle vertex, A's but for F's thousandth, goes to B
- with A applied as C's twin elsewhere.
-
- Re-introduce: in `AppState.others_of`, hand the rest to the row's own others
- whatever they hold together.
+ An Apply moves no other joint either: the twin applied on a far corner comes
+ off the middle, and F's thousandth and B's nothing stay as they were.
 *>
-fn void an_apply_does_not_hand_a_row_to_a_sliver() @test
+fn void an_apply_moves_no_other_joint() @test
 {
 	List{Vec3} positions;
 	positions.init(mem);
@@ -3693,11 +3698,12 @@ fn void an_apply_does_not_hand_a_row_to_a_sliver() @test
 	defer alloc::free(mem, theirs);
 	mine[0] = true;
 	theirs[4] = true;
+	float sliver = weight_of(&app, 12, f);
 	test::@check(app.apply_area(c, mine, 0.0f, twin: a, twin_mask: theirs, pieces: true) > 0, "the Apply wrote nothing");
 
-	test::@check(share_of(&app, 12, a) < 1.0e-5f, "the twin kept %f", share_of(&app, 12, a));
-	test::@check(share_of(&app, 12, f) < crig::AREA_LEAK_FLOOR, "the sliver of F grew to %f", share_of(&app, 12, f));
-	test::@check(share_of(&app, 12, b) > 0.99f, "the surface around's B got %f", share_of(&app, 12, b));
+	test::@check(weight_of(&app, 12, a) == 0.0f, "the twin kept %f", weight_of(&app, 12, a));
+	test::@check(weight_of(&app, 12, f) == sliver, "F's sliver moved to %f", weight_of(&app, 12, f));
+	test::@check(weight_of(&app, 12, b) == 0.0f, "B was handed %f", weight_of(&app, 12, b));
 }
 
 <*
@@ -3728,16 +3734,16 @@ fn void a_stray_is_a_far_island_of_a_joints_weight() @test
 	uint[] every = alloc::new_array(mem, uint, positions.len());
 	defer alloc::free(mem, every);
 	foreach (v, &vertex : every) *vertex = (uint)v;
-	app.pin_vertices(every[:81], b, 1.0f);
-	app.pin_vertices(every[:18], k, 1.0f);
-	app.pin_vertices(every[81:4], k, 1.0f);
+	assign(&app, every[:81], b);
+	assign(&app, every[:18], k);
+	assign(&app, every[81:4], k);
 
 	crig::StrayIsland[] strays = app.stray_islands(mem);
 	test::@check(strays.len == 0, "%d strays on a clean bind", strays.len);
 	crig::free_strays(mem, strays);
 
 	uint[1] top = { 76 };
-	app.pin_vertices(top[..], k, 1.0f);
+	assign(&app, top[..], k);
 	strays = app.stray_islands(mem);
 	defer crig::free_strays(mem, strays);
 	test::@check(strays.len == 1, "%d strays, not the one given away", strays.len);
@@ -3762,23 +3768,22 @@ fn float automatic_share(crig::AppState* app, uint vertex, uint dot)
 	return sum > 0.0f ? base[(usz)vertex * bones + (usz)joint] / sum : 0.0f;
 }
 
-fn usz pins_on(crig::AppState* app, uint vertex)
+// Give `vertices` wholly to `dot`: its weight full, every other dot off them.
+fn void assign(crig::AppState* app, uint[] vertices, uint dot)
 {
-	usz held = 0;
-	foreach (pin : app.doc.pins.array_view()) if (pin.vertex == vertex) held++;
-	return held;
+	foreach (each : app.doc.dots.array_view()) app.set_weight_vertices(vertices, each.id, each.id == dot ? 1.0f : 0.0f);
 }
 
 <*
- Fix strays puts a stray back on the automatic weights: on a grid pinned to B
- and K at its bottom rows, a top vertex pinned to K is a stray. Fixed, its pin is
- gone and it is mostly B's again, as the binder has it; a second survey finds
+ Fix strays takes a stray's joint off it and touches nothing else: on a grid
+ given to B and K at its bottom rows, K put on a top vertex beside B is a stray.
+ Fixed, K holds none of it and B exactly what it held; a second survey finds
  nothing, and one undo brings the stray back.
 
- Re-introduce: in `AppState.fix_strays`, fill every stray from the mesh around
- it, and the vertex keeps a pin.
+ *Re-introduce:* in `AppState.fix_strays`, fill the stray from the mesh around
+ it, and B's weight on the vertex moves.
 *>
-fn void fixing_a_stray_gives_it_back_to_the_automatic_weights() @test
+fn void fixing_a_stray_takes_its_joint_off_it() @test
 {
 	List{Vec3} positions;
 	positions.init(mem);
@@ -3795,35 +3800,30 @@ fn void fixing_a_stray_gives_it_back_to_the_automatic_weights() @test
 	uint[] every = alloc::new_array(mem, uint, positions.len());
 	defer alloc::free(mem, every);
 	foreach (v, &vertex : every) *vertex = (uint)v;
-	app.pin_vertices(every[18..], b, 1.0f);
-	app.pin_vertices(every[:18], k, 1.0f);
-	test::@check(automatic_share(&app, 76, k) < crig::STRAY_SHARE, "the binder gives K %f of the top", automatic_share(&app, 76, k));
+	assign(&app, every[18..], b);
+	assign(&app, every[:18], k);
 
 	uint[1] top = { 76 };
-	app.pin_vertices(top[..], k, 1.0f);
+	app.set_weight_vertices(top[..], k, 1.0f);
 	test::eq(app.find_strays(), (usz)1);
 	usz fixed = app.fix_found_strays();
 	test::eq(fixed, (usz)1);
-	test::eq(pins_on(&app, 76), (usz)0);
-	test::@check(math::abs(share_of(&app, 76, k) - automatic_share(&app, 76, k)) < 1.0e-4f,
-		"the fixed vertex holds K %f, not the binder's %f", share_of(&app, 76, k), automatic_share(&app, 76, k));
+	test::@check(weight_of(&app, 76, k) == 0.0f, "the fixed vertex still holds K %f", weight_of(&app, 76, k));
+	test::@check(weight_of(&app, 76, b) == 1.0f, "the fix moved B to %f", weight_of(&app, 76, b));
 	test::@check(app.strays_current() && app.strays.len == 0, "the survey after the fix still finds strays");
-	test::@check(pins_on(&app, 0) == 1 && pins_on(&app, 75) == 1, "the fix touched rows around the stray");
+	test::@check(weight_of(&app, 0, k) == 1.0f && weight_of(&app, 75, b) == 1.0f, "the fix touched rows around the stray");
 
 	test::@check(app.undo(), "nothing to undo");
-	test::@check(share_of(&app, 76, k) > 0.99f, "undo did not bring the stray back");
+	test::@check(weight_of(&app, 76, k) == 1.0f, "undo did not bring the stray back");
 	test::@check(!app.strays_current(), "the survey outlived the undo");
 }
 
 <*
  A stray the automatic weights made itself — the binder's row holds the stray's
- joint — would come straight back, so it takes the weights of the mesh around
- it instead, stated as pins and the stray's joint's work.
-
- Re-introduce: in `AppState.fix_strays`, send every stray back to the automatic
- weights.
+ joint — is taken off its joint all the same: the joint is held, so the stray
+ does not come back.
 *>
-fn void a_stray_the_binder_made_takes_the_mesh_around_it() @test
+fn void a_stray_the_binder_made_is_taken_off_too() @test
 {
 	List{Vec3} positions;
 	positions.init(mem);
@@ -3841,17 +3841,15 @@ fn void a_stray_the_binder_made_takes_the_mesh_around_it() @test
 	defer alloc::free(mem, every);
 	foreach (v, &vertex : every) *vertex = (uint)v;
 	// The bottom middle vertex, which the binder gives K, shown as everyone else's B.
-	app.pin_vertices(every, b, 1.0f);
+	assign(&app, every, b);
 	test::@check(automatic_share(&app, 4, k) >= crig::STRAY_SHARE, "the binder gives K only %f of its own tip", automatic_share(&app, 4, k));
 
 	uint[1] tip = { 4 };
-	app.pin_vertices(tip[..], k, 1.0f);
+	app.set_weight_vertices(tip[..], k, 1.0f);
 	crig::StrayIsland[1] strays = {{ .dot = k, .vertices = tip[..] }};
 	test::eq(app.fix_strays(strays[..]), (usz)1);
-	test::@check(share_of(&app, 4, b) > 0.99f, "the vertex did not take the B around it: %f", share_of(&app, 4, b));
-	bool by_k = false;
-	foreach (pin : app.doc.pins.array_view()) if (pin.vertex == 4) by_k = pin.by == k;
-	test::@check(by_k, "the fixed row is not K's work");
+	test::@check(share_of(&app, 4, b) > 0.99f, "the vertex did not keep the B on it: %f", share_of(&app, 4, b));
+	test::@check(app.weights_held(k), "the fixed joint is not held");
 }
 
 <*
@@ -3879,10 +3877,10 @@ fn void an_island_a_pose_cannot_pull_out_is_not_a_stray() @test
 	uint[] every = alloc::new_array(mem, uint, positions.len());
 	defer alloc::free(mem, every);
 	foreach (v, &vertex : every) *vertex = (uint)v;
-	app.pin_vertices(every[18..], b, 1.0f);
-	app.pin_vertices(every[:18], k, 1.0f);
+	assign(&app, every[18..], b);
+	assign(&app, every[:18], k);
 	uint[1] top = { 76 };
-	app.pin_vertices(top[..], k, 1.0f);
+	assign(&app, top[..], k);
 
 	crig::StrayIsland[] strays = app.stray_islands(mem);
 	defer crig::free_strays(mem, strays);

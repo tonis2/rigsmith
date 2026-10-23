@@ -44,3 +44,13 @@ const float BAND_SHARE_DEFAULT = 0.5f;
 
 // A joint holds a vertex, for the stray survey, at this share or more.
 const float STRAY_SHARE = 0.25f;
+
+<*
+ A vertex whose joints together hold no more than this is unused: nothing
+ moves it, so posed or exported it falls back to the root (`sparsify_weights`).
+
+ A total rather than a share, because a share needs a total to divide by and
+ this is the case where there is none. Nothing hands an unused vertex to anyone
+ — the Unused view marks it so the user can.
+*>
+const float UNUSED_TOTAL = 1e-6f;

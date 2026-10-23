@@ -33,9 +33,27 @@ fn String? tool_show_weights(Object* args, void* user_data, DString* detail) @pr
 {
 	AppState* app = (AppState*)user_data;
 
-	if (!takes_object(args, detail, `show_weights takes an object: {"mode": one of off, territory, falloff, "dot": a name from get_skeleton}`)) return WEIGHTS_BAD_ARGS~;
+	if (!takes_object(args, detail, `show_weights takes an object: {"mode": one of off, territory, falloff, "dot": a name from get_skeleton, "unused": true or false}`)) return WEIGHTS_BAD_ARGS~;
+
+	// The Unused overlay sits beside the view rather than being one of them, so
+	// a call that only flips it leaves the view as it is.
+	bool? unused = args.get_bool("unused");
 	String asked;
-	if (!required_string(args, "mode", &asked, detail, `show_weights needs "mode": one of off, territory, falloff. get_weights answers the same as numbers and needs no view to be on.`)) return WEIGHTS_BAD_ARGS~;
+	if (try given = args.get_string("mode"))
+	{
+		asked = given;
+	}
+	else if (try unused)
+	{
+		if (unused != app.show_unused) app.toggle_unused();
+		app.refresh_ui();
+		return showing_json(app);
+	}
+	else
+	{
+		detail.append_string(`show_weights needs "mode": one of off, territory, falloff, or "unused" on its own. get_weights answers the same as numbers and needs no view to be on.`);
+		return WEIGHTS_BAD_ARGS~;
+	}
 
 	TintMode mode;
 	switch (asked)
@@ -60,6 +78,7 @@ fn String? tool_show_weights(Object* args, void* user_data, DString* detail) @pr
 		return WEIGHTS_BAD_ARGS~;
 	}
 
+	if (try unused) if (unused != app.show_unused) app.toggle_unused();
 	app.show_tint(mode);
 	app.refresh_ui();
 	return showing_json(app);
@@ -110,7 +129,12 @@ fn String showing_json(AppState* app)
 	}
 	out.append_string(`,"painting":"`);
 	json_escape_into(&out, painting);
-	out.append_string(`"}`);
+	out.appendf(`","unused":%s`, app.show_unused ? "true" : "false");
+	if (app.show_unused)
+	{
+		out.append_string(`,"unused_marks":"magenta over the view: vertices no dot holds. Nothing moves them, so posed or exported they follow the root."`);
+	}
+	out.append_char('}');
 
 	return out.copy_str(mem);
 }
@@ -196,8 +220,8 @@ fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = 
 	DString out = dstring::new(mem);
 	defer out.free();
 
-	out.appendf(`{"vertices":%d,"unclaimed":%d,"floor":%s,"dots":[`,
-		survey.vertices, survey.unclaimed, (JsonFloat)SHOWN_FLOOR);
+	out.appendf(`{"vertices":%d,"unclaimed":%d,"unused":%d,"floor":%s,"dots":[`,
+		survey.vertices, survey.unclaimed, survey.unused, (JsonFloat)SHOWN_FLOOR);
 
 	foreach (i, stake : survey.stakes)
 	{
@@ -277,22 +301,14 @@ fn void vertex_rows_json(AppState* app, DString* out, uint[] rows) @private
 				if (k > 0) out.append_char(',');
 				out.append_string(`{"name":"`);
 				append_dot_name(out, app, dots[k]);
-				out.appendf(`","share":%.4g}`, shares[k]);
+				// The joint's own weight beside its share: columns are not rescaled
+				// around each other, so the two differ wherever a row does not sum to one.
+				sz joint = view.joint_of(dots[k]);
+				float weight = joint >= 0 ? shown[(usz)v * bones + (usz)joint] : 0.0f;
+				out.appendf(`","share":%.4g,"weight":%.4g,"edited":%s}`, shares[k], weight,
+					app.weights_held(dots[k]) ? "true" : "false");
 			}
-			out.append_char(']');
-
-			List{VertexPin} pinned;
-			pinned.init(mem);
-			defer pinned.free();
-			foreach (pin : app.doc.pins.array_view()) if (pin.vertex == v) pinned.push(pin);
-			uint by = row_author(pinned.array_view());
-			if (by != 0)
-			{
-				out.append_string(`,"by":"`);
-				append_dot_name(out, app, by);
-				out.append_char('"');
-			}
-			out.append_char('}');
+			out.append_string("]}");
 		}
 	}
 	out.append_char(']');
@@ -332,42 +348,41 @@ fn void strays_json(AppState* app, DString* out) @private
 
  The selection is the survey's own vocabulary read backwards — see `PaintPick` —
  so the refusals here are about the *rig* rather than about the request wherever
- they can be: a vertex the binder gives this dot nothing on cannot be painted
- onto it at all, and saying which and how many is the difference between a
- caller that moves the dot and one that tries the same call again.
+ they can be: a vertex off this dot's limb cannot be painted onto it at all, and
+ saying which and how many is the difference between a caller that moves the dot
+ and one that tries the same call again.
 *>
 fn String? tool_paint_weights(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 
-	if (!takes_object(args, detail, `paint_weights takes an object: {"dot": name, "share": 0..1}`)) return WEIGHTS_BAD_ARGS~;
+	if (!takes_object(args, detail, `paint_weights takes an object: {"dot": name, "weight": 0..1}`)) return WEIGHTS_BAD_ARGS~;
 
 	String named;
-	if (!required_string(args, "dot", &named, detail, `paint_weights needs "dot": whose share is being set. `))
+	if (!required_string(args, "dot", &named, detail, `paint_weights needs "dot": whose weight is being set. `))
 	{
 		append_dot_names(detail, app);
 		return WEIGHTS_BAD_ARGS~;
 	}
 	uint dot = resolve_dot(app, named, detail)!;
 
-	if ((args.get_bool("reset") ?? false))
-	{
-		// Every hand edit: the stated rows this tool, the brush and the card write.
-		usz cleared = app.clear_pins();
-		app.refresh_ui();
-		return string::format(mem, `{"reset":true,"cleared":%d}`, cleared);
-	}
+	if ((args.get_bool("reset") ?? false)) return released_json(app, dot, args.get_bool("all") ?? false);
 
-	double? asked = args.get_float("share");
+	if (args.has_key("share"))
+	{
+		detail.append_string(`"share" is gone: a dot's weights are its own column now, and setting one never rescales another, so the share a vertex ends up with is this weight over the row's total. Pass "weight" instead.`);
+		return WEIGHTS_BAD_ARGS~;
+	}
+	double? asked = args.get_float("weight");
 	if (catch asked)
 	{
-		detail.appendf(`paint_weights needs "share": what fraction of each vertex %s should end up holding, 0 to 1. `, named);
-		detail.append_string(`Use "reset": true to take every correction off instead.`);
+		detail.appendf(`paint_weights needs "weight": how much of each vertex %s should hold, 0 to 1 — other dots keep what they hold. `, named);
+		detail.append_string(`Use "reset": true to put the dot back on the automatic weights instead.`);
 		return WEIGHTS_BAD_ARGS~;
 	}
 	if (asked < 0.0 || asked > 1.0)
 	{
-		detail.appendf(`"share" is %s, and a share is a fraction of one vertex — it has to be between 0 and 1.`, asked);
+		detail.appendf(`"weight" is %s, and has to be between 0 and 1.`, asked);
 		return WEIGHTS_BAD_ARGS~;
 	}
 
@@ -379,6 +394,26 @@ fn String? tool_paint_weights(Object* args, void* user_data, DString* detail) @p
 	app.refresh_ui();
 
 	return painted_json(app, named, (float)asked, chosen.len, did);
+}
+
+<*
+ `reset` for either writing tool: the named dot back on the automatic weights,
+ or with `all` every dot, as one undo step (`release_recorded`).
+*>
+fn String released_json(AppState* app, uint dot, bool all) @private
+{
+	usz released = 0;
+	if (all)
+	{
+		released = app.release_all_recorded();
+	}
+	else
+	{
+		if (app.release_recorded(dot)) released = 1;
+		app.undo_stack.commit();
+	}
+	app.refresh_ui();
+	return string::format(mem, `{"reset":true,"released":%d,"means":"those dots follow the automatic weights again"}`, released);
 }
 
 <*
@@ -426,125 +461,121 @@ fn uint[]? paint_selection(AppState* app, uint dot, Object* args, DString* detai
 <*
  What a paint call did, including what it could not do and why.
 *>
-fn String painted_json(AppState* app, String dot, float share, usz asked, PaintResult did) @private
+fn String painted_json(AppState* app, String dot, float weight, usz asked, PaintResult did) @private
 {
 	DString out = dstring::new(mem);
 	defer out.free();
 
 	out.appendf(`{"dot":`)!!;
 	append_json_string(&out, dot);
-	out.appendf(`,"share":%.6g,"selected":%d,"painted":%d`, share, asked, did.changed)!!;
+	out.appendf(`,"weight":%.6g,"selected":%d,"painted":%d`, weight, asked, did.changed)!!;
 
 	// Only when there is something to say. A caller that got what it asked for
 	// should not have to read two zeroes to find that out.
-	if (did.alone > 0)
+	if (did.blocked > 0) out.appendf(`,"blocked":%d,"blocked_means":"off this dot's limb, where it held nothing: pin_weights hands such vertices over"`, did.blocked)!!;
+	if (did.emptied > 0)
 	{
-		out.appendf(`,"alone":%d`, did.alone)!!;
-		out.append_string(`,"alone_means":"no other dot can hold those vertices, so there is no share to take — they are already wholly this dot's"`);
+		out.appendf(`,"emptied":%d`, did.emptied)!!;
+		out.append_string(`,"emptied_means":"no other dot holds those vertices, so they now hold nothing and follow the root: paint another dot onto them"`);
 	}
 	if (asked == 0)
 	{
 		out.append_string(`,"note":"nothing matched the selection: get_weights lists which dots actually share vertices with this one"`);
 	}
 
-	out.appendf(`,"painting":"shares are stated rows, the brush's: they hold where they were put when a dot moves, and Reset on the Weights card or reset:true takes them off"}`)!!;
+	out.appendf(`,"painting":"this dot's own weights, held from now on: no other dot's changed, moving dots will not change these, and Reset on the Weights card or reset:true puts it back on the automatic weights"}`)!!;
 	return out.copy_str(mem);
 }
 
 <*
- The other weight tool that writes, and the one that can state a value.
+ The other weight tool that writes: the lasso over the wire.
 
  `tool_paint_weights` in shape all the way through — same selection, same
- refusals — because the two differ in what they write rather than in how they
- are asked. Where they part is the reset: this one takes the pins off and leaves
- the corrections, since the layers are independent and a caller clearing one
- rarely means both.
+ reset — and differing in what it writes: the weight outright, with no limb to
+ stay on, so a prop held at arm's length can be given to the hand.
 *>
 fn String? tool_pin_weights(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 
-	if (!takes_object(args, detail, `pin_weights takes an object: {"dot": name, "share": 0..1}`)) return WEIGHTS_BAD_ARGS~;
+	if (!takes_object(args, detail, `pin_weights takes an object: {"dot": name, "weight": 0..1}`)) return WEIGHTS_BAD_ARGS~;
 
 	String named;
-	if (!required_string(args, "dot", &named, detail, `pin_weights needs "dot": which dot the vertices are handed to. `))
+	if (!required_string(args, "dot", &named, detail, `pin_weights needs "dot": which dot the vertices are given to. `))
 	{
 		append_dot_names(detail, app);
 		return WEIGHTS_BAD_ARGS~;
 	}
 	uint dot = resolve_dot(app, named, detail)!;
 
-	if ((args.get_bool("reset") ?? false))
-	{
-		usz cleared = app.clear_pins();
-		app.refresh_ui();
-		return string::format(mem, `{"reset":true,"cleared":%d}`, cleared);
-	}
+	if ((args.get_bool("reset") ?? false)) return released_json(app, dot, args.get_bool("all") ?? false);
 
-	// Unlike a share, which has no default worth guessing: a pin with no number
-	// on it is the rigid one, which is what the lasso writes and what a caller
-	// saying "this belongs to that dot" means.
-	double asked = args.get_float("share") ?? 1.0;
-	if (asked < 0.0 || asked > 1.0)
+	if (args.has_key("share") || args.has_key("exclusive"))
 	{
-		detail.appendf(`"share" is %s, and a share is a fraction of one vertex — it has to be between 0 and 1.`, asked);
+		detail.append_string(`"share" and "exclusive" are gone: a dot's weights are its own column now, and setting one never takes a vertex off another dot. Pass "weight" — the share a vertex ends up with is that over the row's total.`);
 		return WEIGHTS_BAD_ARGS~;
 	}
-
-	bool exclusive = args.get_bool("exclusive") ?? true;
+	// A weight with no number on it is the full one, which is what the lasso
+	// writes and what a caller saying "this belongs to that dot" means.
+	double asked = args.get_float("weight") ?? 1.0;
+	if (asked < 0.0 || asked > 1.0)
+	{
+		detail.appendf(`"weight" is %s, and has to be between 0 and 1.`, asked);
+		return WEIGHTS_BAD_ARGS~;
+	}
 
 	uint[] chosen = paint_selection(app, dot, args, detail)!;
 	defer if (chosen.len > 0) alloc::free(mem, chosen);
 
-	usz changed = app.pin_vertices(chosen, dot, (float)asked, exclusive);
-	app.undo_stack.commit();
+	usz changed = app.set_weight_vertices(chosen, dot, (float)asked);
 	app.refresh_ui();
 
 	return pinned_json(app, named, (float)asked, chosen.len, changed);
 }
 
 <*
- fix_strays: the Weights card's Fix strays over the wire. Every stray get_weights
- lists goes back to the automatic weights, or where the binder made it, to the
- mesh around it (`AppState.fix_strays`), as one undo step. Answers how many it
- found, how many vertices moved, and the strays left in get_weights' words.
+ fix_strays: the Weights card's Fix strays over the wire. Each stray get_weights
+ lists is taken off its dot — that dot's weight on the island goes to 0 and no
+ other dot's changes (`AppState.fix_strays`) — as one undo step. Answers how
+ many it found, how many vertices moved, how many were left holding nothing,
+ and the strays left in get_weights' words.
 *>
 fn String? tool_fix_strays(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 	StrayIsland[] strays = app.stray_islands(mem);
 	defer free_strays(mem, strays);
-	usz fixed = app.fix_strays(strays);
+	usz emptied = 0;
+	usz fixed = app.fix_strays(strays, &emptied);
 	app.refresh_ui();
 
 	DString out = dstring::new(mem);
 	defer out.free();
-	out.appendf(`{"found":%d,"fixed":%d`, strays.len, fixed);
+	out.appendf(`{"found":%d,"fixed":%d,"emptied":%d`, strays.len, fixed, emptied);
 	strays_json(app, &out);
 	out.append_char('}');
 	return out.copy_str(mem);
 }
 
 <*
- What a pin call did. `painted_json`'s voice, minus its diagnosis: "alone" is
- about there being no share to take, and a pin takes the whole vertex by saying
- so. What is left is what was asked for, what was selected and what moved.
+ What a pin call did, in `painted_json`'s voice: what was asked for, what was
+ selected and what moved.
 *>
-fn String pinned_json(AppState* app, String dot, float share, usz asked, usz changed) @private
+fn String pinned_json(AppState* app, String dot, float weight, usz asked, usz changed) @private
 {
 	DString out = dstring::new(mem);
 	defer out.free();
 
 	out.appendf(`{"dot":`)!!;
 	append_json_string(&out, dot);
-	out.appendf(`,"share":%.6g,"selected":%d,"pinned":%d`, share, asked, changed)!!;
+	out.appendf(`,"weight":%.6g,"selected":%d,"pinned":%d`, weight, asked, changed)!!;
 
 	if (asked == 0)
 	{
 		out.append_string(`,"note":"nothing matched the selection: get_weights lists which dots actually share vertices with this one"`);
 	}
 
-	out.appendf(`,"pinning":"a pin states the share and is applied after the corrections, so it is the last word on a vertex — and it does not move when the dot does"}`)!!;
+	out.appendf(`,"pinning":"this dot's own weight on those vertices, held from now on; other dots keep theirs, so where they hold the vertex too the two blend"}`)!!;
 	return out.copy_str(mem);
 }
 

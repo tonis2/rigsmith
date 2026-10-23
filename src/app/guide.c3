@@ -49,7 +49,7 @@ struct SkinSurvey
 	uint revision;
 	uint geometry;
 	float due;
-	bool from_file; // the model's own weights are in use: what they leave empty was the artist's choice
+	usz edited; // joints whose weights are their own (`Dot.held`) rather than automatic
 }
 
 struct BoundTally
@@ -69,7 +69,7 @@ struct GuideStatus
 	usz unnamed;
 	uint first_unnamed;
 	bool skin_known;
-	bool skin_from_file;
+	usz skin_edited;
 	usz clips;
 	usz clips_found;
 	bool unsaved;
@@ -182,25 +182,18 @@ fn void AppState.tick_guide(&self, float dt)
 fn bool AppState.guide_pending(&self) => !self.config.hide_guide && !self.skin_survey.ready;
 
 <*
- Whether the model's own weights are in use. An empty rig or mesh is surveyed
- as nothing to report.
+ How many joints keep edited weights — the file's adopted ones included — and
+ how many follow the automatic weights. An empty rig or mesh is surveyed as
+ nothing to report.
 *>
 fn void AppState.survey_skin(&self)
 {
 	SkinSurvey* s = &self.skin_survey;
 	s.ready = true;
 	s.surveyed = true;
-	s.from_file = false;
-	if (!self.has_mesh() || self.doc.dots.len() == 0 || !self.doc.skin_from_file) return;
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return;
-	RigView view = opened;
-	defer view.free(mem);
-
-	float[] taken = self.imported_dense(mem, &view);
-	s.from_file = taken.len > 0;
-	if (taken.len > 0) alloc::free(mem, taken);
+	s.edited = 0;
+	if (!self.has_mesh()) return;
+	foreach (dot : self.doc.dots.array_view()) if (dot.held) s.edited++;
 }
 
 <*
@@ -230,7 +223,7 @@ fn GuideStatus AppState.guide_status(&self)
 		.has_mesh = self.has_mesh(),
 		.joints = (usz)self.doc.dots.len(),
 		.skin_known = self.skin_survey.surveyed,
-		.skin_from_file = self.skin_survey.from_file,
+		.skin_edited = self.skin_survey.edited,
 		.unsaved = self.unsaved(),
 		.saved = self.saves_in_place,
 	};

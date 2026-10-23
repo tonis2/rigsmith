@@ -214,13 +214,10 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 		return false;
 	}
 
-	// `skin_from_file` is deliberately **not** set here, though the file now does
-	// hold this rig's weights. The flag means "these weights came from somewhere
-	// crig cannot reproduce" — a shoulder somebody painted — and it is what stops
-	// the binder overwriting them. Weights crig itself just derived are not that:
-	// setting the flag would make the next reach the user sizes do nothing, since
-	// `bind_base` would keep handing back what the file says instead of binding
-	// the rig again.
+	// No joint is held for writing the file, though it now holds this rig's
+	// weights: an automatic joint's weights are crig's own answer, and holding
+	// them would stop it following the rig — the next reach the user sizes would
+	// do nothing to it.
 	io::printfn("wrote the rig into %s (%d joints, %d vertices)", path, bones, parts.vertices);
 	return true;
 }

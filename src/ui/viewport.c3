@@ -2064,12 +2064,12 @@ fn Vec3 camera_right(AppState* app, OrbitCamera* camera)
 
  Called on the press and on every mouse move until the button goes, so a stroke
  is many of these. Each one is cheap to *ask* for and does nothing when the
- circle covers nothing already at a different share — `restate_share` drops
- rows that change nothing, which is what keeps a slow drag over painted mesh
- from filling the ledger with entries that undo to themselves.
+ circle covers nothing already at a different weight — `replace_column` drops
+ vertices that change nothing, which is what keeps a slow drag over painted
+ mesh from filling the ledger with entries that undo to themselves.
 
  The target is 0 or 1 rather than a settable value: the brush takes a joint off
- the mesh or puts it on, as stated shares — see `AppState.brush_share` — and
+ the mesh or puts it on, in its own weights — see `AppState.brush_share` — and
  anything between is what `paint_weights` is for, where a number can be typed.
 
  The stroke paints against the body on screen — the rest mesh, or the posed

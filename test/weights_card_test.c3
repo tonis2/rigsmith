@@ -140,13 +140,6 @@ fn void a_grown_joint_shows_at_once_and_the_brush_draws_it() @test
 		uint finger = open_card_on_a_finger(&app);
 		if (mode != app.tint_mode) app.show_tint(mode);
 
-		// Wearing the file's own weights there is no automatic edge to move, and
-		// Grow says so rather than doing nothing.
-		app.doc.skin_from_file = true;
-		test::@check(!app.grow_joint(2) && app.notice().contains("own weights"),
-			"Grow on the file's weights said: %s", app.notice());
-		app.doc.skin_from_file = false;
-
 		uint[] before = drawn(&app);
 		defer alloc::free(mem, before);
 		test::@check(app.grow_joint(2), "the joint would not grow");

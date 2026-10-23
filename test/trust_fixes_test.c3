@@ -145,12 +145,16 @@ fn bool near_positions(Vec3[] a, Vec3[] b) @local
 }
 
 <*
- A rename keeps the model's own weights: a name has no effect on geometry. An
- added joint does replace them, says so once, and undo brings them back.
+ The model's own weights arrive as every joint's held column, and stay put: a
+ rename changes none of them, and neither does a joint added beside them — it
+ follows the automatic weights while the file's columns stay as painted.
+
+ *Re-introduce:* let an added joint drop the file's weights for the binder's, as
+ the import's whole-rig flag did, and every column moves.
 *>
-fn void a_rename_keeps_the_imported_weights() @test
+fn void an_added_joint_keeps_the_imported_weights() @test
 {
-	io::printn("a rename keeps the imported weights; an added joint warns once");
+	io::printn("a rename and an added joint keep the imported weights");
 	String path = "build/trust-rename.glb";
 	copy_humanoid(path);
 	defer remove_with_sidecar(path);
@@ -160,44 +164,38 @@ fn void a_rename_keeps_the_imported_weights() @test
 	crig::AppState app = crig::new_app(mesh, path);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	test::@check(app.doc.skin_from_file, "the humanoid should arrive with its own weights");
+	usz dots = (usz)app.doc.dots.len();
+	foreach (dot : app.doc.dots.array_view()) test::@check(dot.held, "%s arrived without the file's weights", dot.name);
 
 	crig::RigView view = app.open_rig(mem)!!;
-	float[] before = app.imported_dense(mem, &view);
 	uint renamed = view.dot_ids[1];
+	float[][] before = alloc::new_array(mem, float[], (sz)dots);
+	foreach (j, id : view.dot_ids) before[j] = app.column_of(mem, &view, id);
+	uint[] ids = alloc::clone_slice(mem, view.dot_ids);
 	view.free(mem);
-	defer if (before.len > 0) alloc::free(mem, before);
-	test::@check(before.len > 0, "the imported weights should cover the imported rig");
+	defer
+	{
+		foreach (column : before) alloc::free(mem, column);
+		alloc::free(mem, before);
+		alloc::free(mem, ids);
+	}
 
 	test::@check(app.rename(renamed, "renamed_joint"), "the rename was refused");
-	view = app.open_rig(mem)!!;
-	float[] after = app.imported_dense(mem, &view);
-	defer if (after.len > 0) alloc::free(mem, after);
-	test::eq(after.len, before.len);
-	usz differ = 0;
-	for (sz i = 0; i < after.len && i < before.len; i++) if (after[i] != before[i]) differ++;
-	test::eq(differ, (usz)0);
-	float[] shown = app.weights(mem, &view);
-	alloc::free(mem, shown);
-	view.free(mem);
-
-	app.add_recorded(app.doc.dots[0].position + (Vec3){ 0.01f, 0.0f, 0.0f });
+	uint added = app.add_recorded(app.doc.dots[0].position + (Vec3){ 0.01f, 0.0f, 0.0f });
 	app.undo_stack.commit();
-	view = app.open_rig(mem)!!;
-	float[] gone = app.imported_dense(mem, &view);
-	test::eq(gone.len, (sz)0);
-	shown = app.weights(mem, &view);
-	alloc::free(mem, shown);
-	view.free(mem);
-	test::@check(app.notice().contains("replaces the model's own skin weights"),
-		"adding a joint should warn that the imported weights are replaced, not: %s", app.notice());
+	app.mark_rig_stale();
+	test::@check(!app.weights_held(added), "the added joint came in holding weights");
 
-	test::@check(app.undo(), "the added joint did not undo");
 	view = app.open_rig(mem)!!;
-	float[] back = app.imported_dense(mem, &view);
-	view.free(mem);
-	defer if (back.len > 0) alloc::free(mem, back);
-	test::eq(back.len, before.len);
+	defer view.free(mem);
+	usz moved = 0;
+	foreach (j, id : ids)
+	{
+		float[] now = app.column_of(mem, &view, id);
+		defer alloc::free(mem, now);
+		foreach (v, w : now) if (w != before[j][v]) moved++;
+	}
+	test::@check(moved == 0, "a rename and an added joint moved %d of the file's weights", moved);
 }
 
 <*
@@ -207,11 +205,8 @@ fn void a_rename_keeps_the_imported_weights() @test
  authored, they stayed put, and a finger joint moved to the next finger left its
  vertices behind (a thumb whose weights were the middle finger's).
 
- The Rig menu's "Use the model's own weights" turns the file's weights back on,
- and off again, for a model that carries some.
-
  *Re-introduce:* drop the `PACK_KEY_WEIGHTS` check in `import_rig_from_source`
- and the reopened export comes back with `skin_from_file` set.
+ and the reopened export comes back with every joint held.
 *>
 fn void crig_weights_reopen_as_crig_weights() @test
 {
@@ -231,10 +226,10 @@ fn void crig_weights_reopen_as_crig_weights() @test
 	crig::AppState app = crig::new_app(mesh, source);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	test::@check(app.doc.skin_from_file, "the humanoid arrives with weights of its own");
+	test::@check(app.weights_edited(), "the humanoid arrives with weights of its own");
 
-	// Off: crig's weights for the joints, which the export then writes and marks.
-	app.doc.skin_from_file = false;
+	// Let go: crig's weights for the joints, which the export then writes and marks.
+	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 	app.export_rig(exported);
 	test::@check(file::is_file(exported), "the export wrote nothing: %s", app.notice());
@@ -256,6 +251,6 @@ fn void crig_weights_reopen_as_crig_weights() @test
 	crig::AppState reopened = crig::new_app(again, exported);
 	defer reopened.free();
 	test::@check(reopened.import_rig_from_source(), "the exported rig must import");
-	test::@check(!reopened.doc.skin_from_file, "crig's own weights came back held as the file's");
+	test::@check(!reopened.weights_edited(), "crig's own weights came back held as the file's");
 	test::@check(reopened.imported_skin.present(), "the file's weights should still be read, for the menu to offer");
 }

@@ -1,4 +1,4 @@
-// Rig › Use the model's own weights.
+// Rig › Use the model's own weights, and Rig › Reset all weights to automatic.
 module crig_tests::ui;
 
 import crig;
@@ -6,24 +6,29 @@ import cui;
 import std::core::test;
 
 <*
- Turning the model's own weights off puts crig's automatic weights on the rig as
- it stands, and says so; with no weights of the file's to go back to, the item
- is then greyed rather than offering a switch that cannot happen.
+ With no weights of the file's to adopt, Use the model's own weights says so and
+ holds nothing; Reset all weights is greyed until a joint keeps edited weights,
+ and then lets every one go in one step.
 *>
-fn void the_model_weights_item_hands_the_skin_to_the_joints() @test
+fn void the_model_weights_items_adopt_and_let_go() @test
 {
 	Fixture f;
 	f.open()!!;
 	defer f.close();
 	f.reset();
-	f.two_dots();
+	uint chest = f.two_dots();
 
-	f.app.doc.skin_from_file = true;
-	test::@check(crig::query_model_weights(f.ui).checked, "the item is not checked over the model's own weights");
+	test::@check(crig::query_reset_all_weights(f.ui).disabled, "Reset all weights is offered with nothing edited");
 	crig::menu_model_weights(f.ui);
-	test::@check(!f.app.doc.skin_from_file, "the item did not hand the skin to crig's weights");
-	test::@check(f.app.notice().contains("automatic weights"), "the switch said nothing: %s", f.app.notice());
-	test::@check(f.app.unsaved(), "switching weights left nothing to save");
-	test::@check(crig::query_model_weights(f.ui).disabled, "with no file weights to return to, the item is not greyed");
+	test::@check(f.app.notice().contains("no weights of its own"), "the item said nothing: %s", f.app.notice());
+	test::@check(!f.app.weights_edited(), "a model with no weights of its own held a joint");
+
+	uint[1] one = { 0 };
+	f.app.set_weight_vertices(one[..], chest, 0.5f);
+	test::@check(!crig::query_reset_all_weights(f.ui).disabled, "Reset all weights is greyed over an edited joint");
+	crig::menu_reset_all_weights(f.ui);
+	test::@check(!f.app.weights_edited() && f.app.doc.pins.len() == 0, "Reset all weights left a joint held");
+	test::@check(f.app.notice().contains("automatic weights again"), "the reset said nothing: %s", f.app.notice());
+	test::@check(f.app.undo() && f.app.weights_held(chest), "one undo did not bring the edit back");
 	f.reset();
 }

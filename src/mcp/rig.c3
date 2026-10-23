@@ -38,7 +38,7 @@ faultdef RIG_REFUSED;
 *>
 const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 	"ops":{"type":"array","description":"Applied in order, as one undo step. An op that fails takes the whole call back with it.","items":{"type":"object","properties":{
-		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","grow","sharpness","knuckle_blend","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. grow: push a joint's weight region out past its automatic edge, or pull it in, and set how far it blends — the Weights card's Grow, Shrink and Soft edge. sharpness: how crisp every blend is, for the whole model. knuckle_blend: how wide the blend at each knuckle of every finger is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan. Every joint, a limit taken off on purpose included, unless joints narrows it."},
+		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","grow","sharpness","knuckle_blend","attach","detach","limits","exclude","include","symmetry","plan_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. grow: push a joint's weight region out past its automatic edge, or pull it in, and set how far it blends — the Weights card's Grow, Shrink and Soft edge; writes that joint's weights and no other's, and holds them. sharpness: how crisp every blend is, for the whole model. knuckle_blend: how wide the blend at each knuckle of every finger is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan. Every joint, a limit taken off on purpose included, unless joints narrows it."},
 		"joints":{"type":"array","items":{"type":"string"},"description":"plan_limits only: re-plan and mend only these joints' tables, leaving every other joint's as it is. Omit for every joint."},
 		"joint":{"type":"string","description":"Which dot, by the name get_skeleton reports; bone_<id> reaches an unnamed one. Used by move, name, remove, root, reach, attach and limits."},
 		"name":{"type":"string","description":"The name to give a dot — place and name. Empty un-names it, which is the hand-placed state; only named dots can be animated."},
@@ -46,7 +46,7 @@ const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 		"connect_to":{"type":"string","description":"place only: hang the new dot off this one, so it arrives with its bone already made."},
 		"a":{"type":"string","description":"connect/disconnect: one end of the bone. exclude/include: one of the two joints."},
 		"b":{"type":"string","description":"connect/disconnect: the other end. exclude/include: the other joint."},
-		"grow":{"type":"number","description":"grow only: how far the joint's region is pushed out past where the automatic weights put its edge, in model units — negative pulls it in, 0 is the automatic edge. Live: measured through the same distances the automatic weights are, so it moves with the dot and get_weights reads it at once."},
+		"grow":{"type":"number","description":"grow only: how far the joint's region is pushed out past where the automatic weights put its edge, in model units — negative pulls it in, 0 is the automatic edge. Written into the joint's own weights at once (get_weights reads them); they stay as written when the dot moves, until grow is set again or the weights are reset."},
 		"soft":{"type":"number","description":"grow only, optional: how far the joint blends with its neighbours, as a share of its own bone (0.05 to 2; 0 puts the model's default back)."},
 		"reach":{"type":"number","description":"reach only: how far this dot's influence carries, in model units — the same units as position. 0 is no limit, which is what every dot has until asked otherwise. Use it when a dot pulls on mesh it should not: get_weights names the pairs that overlap, and a reach is how you end one without moving the joint off the anatomy."},
 		"value":{"type":"number","description":"sharpness only: the power the binder's weights are raised to, 0.25 to 4, one number for the whole model. 1 is the binder's own blend; above it narrows every transition band at once, which is what a model assembled from solid pieces wants and what no per-dot setting can say. knuckle_blend: 0 to 1, the share of a finger segment either side of each knuckle where its two joints share the skin — 0 is a hard switch at the joint, 0.5 the default, 1 a segment blended from end to end. Names no joint."},
@@ -383,19 +383,14 @@ fn bool op_reach(AppState* app, Object* op, usz index, DString* detail) @local
 
 <*
  Push a joint's weight region out or in, and set its soft edge — the Weights
- card's Grow, Shrink and Soft edge, by number. Refused on a rig wearing its
- file's own weights, which has no automatic edge to move.
+ card's Grow, Shrink and Soft edge, by number — then write the joint's column
+ from them (`AppState.shape_edges`), which holds it. No other joint's weights
+ change.
 *>
 fn bool op_grow(AppState* app, Object* op, usz index, DString* detail) @local
 {
 	uint id = op_joint(app, op, index, detail);
 	if (id == 0) return false;
-	if (app.doc.skin_from_file)
-	{
-		detail.appendf(`ops[%d]: this rig wears the model's own weights, which have no automatic edge to grow — `
-			`switch to crig's weights (Rig › Use the model's own weights, off) first.`, index);
-		return false;
-	}
 
 	Object* grown = member(op, "grow");
 	Object* soft = member(op, "soft");
@@ -431,6 +426,8 @@ fn bool op_grow(AppState* app, Object* op, usz index, DString* detail) @local
 		}
 		app.set_band_recorded(id, (float)want);
 	}
+	uint[1] dots = { id };
+	app.shape_edges(dots[..]);
 	return true;
 }
 

@@ -1,11 +1,13 @@
 <*
- The tint-view switch: two icon buttons at the right of a 3D view's header, one
- per diagnostic colouring of the mesh, lit while its view is the one showing.
+ The tint-view switch: icon buttons at the right of a 3D view's header, one per
+ diagnostic colouring of the mesh, lit while it is showing.
 
  Blender's shading-mode cluster, and for the same reason it is a cluster: the
- two are answers to one question — what is painted on the model — so at most one
- is ever on, and a segmented strip says that where two separate checkboxes would
- not. It sits in the pane rather than on the window bar because that is the
+ first two are answers to one question — what is painted on the model — so at
+ most one of them is ever on, and a segmented strip says that where two separate
+ checkboxes would not. The third, Unused, is an overlay rather than a view: it
+ marks the vertices no joint holds over either of them, or over the plain mesh.
+ It sits in the pane rather than on the window bar because that is the
  question it answers: the model in *this* pane.
 
  Nothing here decides anything. What lights up, what greys out and what a click
@@ -27,7 +29,7 @@ import std::math;
 // one control instead of two.
 const float TINT_CELL_W = 28.0;
 const float TINT_CELL_H = 22.0;
-const float TINT_STRIP_W = TINT_CELL_W * 2.0;
+const float TINT_STRIP_W = TINT_CELL_W * 3.0;
 
 // Gap between the strip and the right edge of the pane it sits in. Read by
 // ViewPanel, which is what places it.
@@ -44,22 +46,31 @@ const float[3] TERRITORY_CUTS = { 70.0, 150.0, 300.0 };
 
 faultdef NO_TINT_CELL;
 
+// Which icon a cell draws.
+enum TintGlyph
+{
+	TERRITORY,
+	FALLOFF,
+	UNUSED,
+}
+
 <*
- One button. `mode` chooses the icon and nothing else — the state and the action
- are the menu's own wiring, borrowed whole.
+ One button. `glyph` chooses the icon and nothing else — the state and the
+ action are the menu's own wiring, borrowed whole.
 *>
 struct TintToggle
 {
-	TintMode mode;
+	TintGlyph glyph;
 	MenuQuery state;
 	OnClick on_select;
 }
 
 // A global rather than a const for the same reason the menus below `build_ui`
 // are: these initialisers take function addresses.
-TintToggle[2] tint_toggles = {
-	{ .mode = TintMode.TERRITORY, .state = &query_weights, .on_select = &menu_weights },
-	{ .mode = TintMode.FALLOFF, .state = &query_falloff, .on_select = &menu_falloff },
+TintToggle[3] tint_toggles = {
+	{ .glyph = TintGlyph.TERRITORY, .state = &query_weights, .on_select = &menu_weights },
+	{ .glyph = TintGlyph.FALLOFF, .state = &query_falloff, .on_select = &menu_falloff },
+	{ .glyph = TintGlyph.UNUSED, .state = &query_unused, .on_select = &menu_unused },
 };
 
 struct TintToggles (Widget)
@@ -71,7 +82,7 @@ struct TintToggles (Widget)
 	// What the last repaint drew. Polled per frame rather than pushed, because
 	// the keyboard and the rig change these as much as a click does and neither
 	// path knows this widget exists.
-	MenuItemFlags[2] shown;
+	MenuItemFlags[3] shown;
 }
 
 fn Vec2 TintToggles.layout(&self, Element* elem, Constraints constraints) @dynamic
@@ -80,9 +91,9 @@ fn Vec2 TintToggles.layout(&self, Element* elem, Constraints constraints) @dynam
 }
 
 <*
- Re-reads the two queries and repaints when one of them moved.
+ Re-reads the queries and repaints when one of them moved.
 
- The cheap half of the same bargain the HUD makes: two struct calls a frame buys
+ The cheap half of the same bargain the HUD makes: a struct call per cell a frame buys
  a strip that is right after a keypress, after an undo, and after the last dot
  is deleted out from under an open view.
 *>
@@ -131,23 +142,23 @@ fn void TintToggles.paint(&self, Element* elem, Painter* painter) @dynamic
 			ink = TEXT_DIM.dim(0.55);
 		}
 
-		paint_tint_icon(painter, toggle.mode, { x + TINT_CELL_W * 0.5f, TINT_CELL_H * 0.5f }, ink);
+		paint_tint_icon(painter, toggle.glyph, { x + TINT_CELL_W * 0.5f, TINT_CELL_H * 0.5f }, ink);
 	}
 }
 
 <*
- The two glyphs, drawn from primitives rather than loaded from an atlas — there
- is no icon font in the build and two shapes do not justify one.
+ The glyphs, drawn from primitives rather than loaded from an atlas — there is
+ no icon font in the build and three shapes do not justify one.
 
- Both are built on a circle so the strip reads as one control, and they are told
- apart by what is inside it: wedges, rings.
+ All are built on a circle so the strip reads as one control, and they are told
+ apart by what is inside it: wedges, rings, a slash.
 
  @param centre : `Middle of the cell, in element-local pixels.`
  @param ink : `Stroke colour; the caller has already resolved lit and greyed.`
 *>
-fn void paint_tint_icon(Painter* painter, TintMode mode, Vec2 centre, Color ink)
+fn void paint_tint_icon(Painter* painter, TintGlyph glyph, Vec2 centre, Color ink)
 {
-	switch (mode)
+	switch (glyph)
 	{
 		case TERRITORY:
 			// A disc cut into wedges — one region per joint, which is what the
@@ -177,8 +188,11 @@ fn void paint_tint_icon(Painter* painter, TintMode mode, Vec2 centre, Color ink)
 				.border_width = TINT_STROKE,
 				.border_color = ink.dim(0.65),
 			});
-		default:
-			break;
+		case UNUSED:
+			// The empty set: a ring struck through — the vertices nothing holds.
+			painter.circle(centre, TINT_ICON_R * 0.8f, { .border_width = TINT_STROKE, .border_color = ink });
+			Vec2 arm = { TINT_ICON_R * 0.75f, -TINT_ICON_R * 0.75f };
+			painter.line(centre - arm, centre + arm, TINT_STROKE, ink);
 	}
 }
 
@@ -237,9 +251,10 @@ fn void TintToggles.on_hover(&self, Element* elem, bool entered) @dynamic
 }
 
 // One sentence per cell, in `tint_toggles` order.
-String[2] tint_tips = {
+String[3] tint_tips = {
 	"Weight preview — tint the mesh by which joint owns each part",
 	"Weight falloff (F) — tint the mesh by how strongly the selected joint pulls",
+	"Unused weights — mark the vertices no joint holds; posed, they follow the root",
 };
 
 fn String tint_tip(Element* holder, Vec2 pos)

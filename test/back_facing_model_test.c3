@@ -70,7 +70,7 @@ fn void a_model_facing_back_turns_with_its_rig() @test
 	crig::AppState app = crig::new_app(opened, turned);
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the turned humanoid's rig must import");
-	test::@check(app.doc.skin_from_file, "and with the file's own weights");
+	test::@check(app.weights_edited(), "and with the file's own weights");
 
 	test::@check(app.geometry.positions.len == facing.geometry.positions.len, "the same body, vertex for vertex");
 	if (app.geometry.positions.len != facing.geometry.positions.len) return;

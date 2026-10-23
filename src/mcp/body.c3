@@ -95,16 +95,18 @@ fn String? build_body_json(AppState* app, Object* args, DString* detail)
 		return BODY_REFUSED~;
 	}
 
-	// The pins, on the same terms one level finer: a shell id names a piece of
-	// the loaded mesh and a vertex index names a point on it, and a generated
-	// body has neither — its vertices are a ring per bone in an order this
-	// function decides. Carrying them over would silently pin whichever points of
-	// the new mesh happened to land on those indices.
-	if (app.doc.pins.len() > 0)
+	// The edited weights, on the same terms one level finer: a shell id names a
+	// piece of the loaded mesh and a vertex index names a point on it, and a
+	// generated body has neither — its vertices are a ring per bone in an order
+	// this function decides. Carrying them over would silently give whichever
+	// points of the new mesh happened to land on those indices to their dots.
+	usz edited = 0;
+	foreach (dot : app.doc.dots.array_view()) if (dot.held) edited++;
+	if (edited > 0)
 	{
 		detail.appendf(
-			`%d vertices of the loaded mesh are pinned to dots, and a generated body's vertices are built from the bones — nothing those pins would still name. Clear them with pin_weights reset first; nothing here sweeps them, because losing hand-drawn regions with no undo behind it is worse than being asked.`,
-			app.doc.pins.len());
+			`%d joints keep edited weights on the loaded mesh's vertices, and a generated body's vertices are built from the bones — nothing those weights would still name. Put them back on the automatic weights with paint_weights reset (all: true) first; nothing here does it for you, because losing hand edits with no undo behind it is worse than being asked.`,
+			edited);
 		return BODY_REFUSED~;
 	}
 

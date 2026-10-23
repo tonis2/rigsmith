@@ -108,25 +108,35 @@ struct Dot
 	float reach;
 
 	<*
-	 How far this joint's region is pushed out past where the automatic weights
+	 How far this joint's region was pushed out past where the automatic weights
 	 put its edge, in model units — negative pulls it in. Zero is the automatic
 	 edge, which is what every dot has until the Weights card's Grow or Shrink.
 
-	 Live rather than written into the weights: the bind measures every joint's
-	 distance through the body, and a grown joint is measured that much nearer
-	 (`rig::grown_d2`), so it owns exactly the vertices up to that much further
-	 from it than from its neighbours — and moving the dot later carries the
-	 grown edge with it. The same distances the automatic weights are made from,
-	 so a Grow and a Reset are one operation run two ways.
+	 A record of how a held joint's weights were last shaped, not a live input:
+	 Grow measures this joint that much nearer (`rig::grown_d2`) in a bind of its
+	 own and writes the column it gets into `pins`, so no other joint's weights
+	 depend on it. The automatic weights every unheld joint follows ignore it.
 	*>
 	float grow;
 
 	<*
 	 How far this joint blends with its neighbours, as a share of its own bone —
 	 the Weights card's Soft edge. Zero is the model's default
-	 (`BAND_SHARE_DEFAULT`); see `rig::window_bind` for what the band ends.
+	 (`BAND_SHARE_DEFAULT`); see `rig::window_bind` for what the band ends. A
+	 record on the terms `grow` is.
 	*>
 	float band;
+
+	<*
+	 Whether this joint's weights are its own: stored in `pins` and changed only
+	 by an edit made to this joint, never by the rig moving around it.
+
+	 False is the automatic weights, live — the binder's column for this joint,
+	 which follows the dot as it moves and the joints placed around it. The first
+	 edit any weight tool makes to a joint holds it, starting from the column it
+	 had, so nothing on screen jumps; Reset lets go of it again.
+	*>
+	bool held;
 
 	<*
 	 How much this joint holds its ground when a pose is pulled, as a multiplier
@@ -247,20 +257,18 @@ struct PaintColumn
  vertices reordered. That caveat is inherited from the paint layer and is not
  fixed here.
 
- **`by` is whose edit wrote the row**: the dot an Apply, a brush stroke or a
- lasso was working on, the same on every pin one edit lays on a vertex. 0 is
- nobody's — a whole-model op, or a session from before version 27. It is what
- lets Reset take back one joint's work and leave every row a neighbour wrote
- alone: the shares alone cannot say whether a joint is on a row because it was
- painted there or because a neighbour's soft edge kept it in proportion. See
- `row_author` for how a row with no author is read.
+ **Only a held dot's entries mean anything** (`Dot.held`): together they are
+ its whole column, and a vertex with no entry is one it holds nothing of. An
+ unheld dot's column comes from the binder and its entries, if any are left
+ over, are ignored. Each column stands alone — no entry is rescaled when
+ another dot's changes, and a row's entries need not add up to one; what the
+ skin rides is the row divided by its total (`sparsify_weights`).
 *>
 struct VertexPin
 {
 	uint vertex;
 	uint dot_id;
 	float share;
-	uint by;
 }
 
 <*
@@ -269,10 +277,6 @@ struct VertexPin
  `PaintColumn`'s sibling in every respect — see there for why the crossing
  happens once per bind rather than once per pin, and why none of these is ever
  stored.
-
- **Grouped by vertex**, which `PaintColumn` need not be: `pin_over` rewrites a
- whole row around the pins on it, so every pin on one vertex has to be in hand at
- once. `AppState.pin_columns` is what guarantees the grouping.
 *>
 struct PinColumn
 {
@@ -292,9 +296,6 @@ struct PinColumn
  already-painted mesh has a previous value per vertex that nothing else
  remembers. Recomputing it from the binder would give the base, not the
  correction that was there.
-
- `by_before` and `by_after` are a pin's author either side (see `VertexPin.by`);
- a paint dab has none and leaves them 0.
 *>
 struct PaintChange
 {
@@ -302,8 +303,6 @@ struct PaintChange
 	uint dot_id;
 	float before;
 	float after;
-	uint by_before;
-	uint by_after;
 }
 
 <*
@@ -545,21 +544,13 @@ struct RigDocument
 	String plan; // owned
 
 	<*
-	 Whether this rig's weights came out of the mesh's file rather than from
-	 crig's binder — see `app/import_rig.c3`.
-
-	 A record of where the rig came from, not a cache of what it holds: the weights
-	 themselves live on `AppState` and are re-read from the file on every open, so
-	 this is what tells the load to go looking for them.
-
-	 It survives a rig edit on purpose, and is never cleared. Moving a dot does not
-	 repaint anybody's weights, and dropping an imported binding because a joint
-	 was nudged would throw away the thing the import was for. What decides per
-	 bind is whether the columns still cover the rig — `AppState.imported_dense` —
-	 so a flag left true over a rig the file can no longer describe costs a failed
-	 lookup and nothing else.
+	 Whether a session before version 32 said this rig wore the mesh file's own
+	 weights. Read so the load can rebuild what that session showed
+	 (`AppState.migrate_held_weights`) and cleared once it has; never written.
+	 Since version 32 the file's weights are held columns like any other edit
+	 (`Dot.held`), stored in the session itself.
 	*>
-	bool skin_from_file;
+	bool legacy_skin_from_file;
 
 	<*
 	 The session version this document was read from, or 0 for one made in this
@@ -965,6 +956,20 @@ fn bool RigDocument.set_grow(&self, uint id, float grow)
 	return true;
 }
 
+<*
+ Holds a joint's weights or lets go of them — see `Dot.held`. Only the flag:
+ the column itself is written through `pins` by whoever holds the joint.
+
+ @return `True if the dot existed.`
+*>
+fn bool RigDocument.set_held(&self, uint id, bool held)
+{
+	Dot* dot = self.find(id);
+	if (!dot) return false;
+	dot.held = held;
+	return true;
+}
+
 // The widest band a joint's soft edge takes, as a share of its bone.
 const float BAND_SHARE_MAX = 2.0;
 
@@ -1195,11 +1200,10 @@ fn float RigDocument.paint_of(&self, uint vertex, uint dot_id)
  `AppState.pin_dabs`, which is the bulk form and the only one any tool uses.
 
  @param vertex : `Index into the mesh this document was pinned against.`
- @param share : `0 to 1, the fraction of the vertex this dot ends up holding. 0 removes the pin.`
- @param by : `Whose edit wrote the row — see VertexPin.by. 0 for nobody's.`
+ @param share : `0 to 1, this dot's own weight on the vertex. 0 removes the pin.`
  @return `True if anything changed.`
 *>
-fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share, uint by = 0)
+fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share)
 {
 	if (dot_id == 0 || !self.find(dot_id)) return false;
 
@@ -1210,7 +1214,7 @@ fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share, uint b
 	foreach (sz i, pin : self.pins.array_view())
 	{
 		if (pin.vertex != vertex || pin.dot_id != dot_id) continue;
-		if (pin.share == held && (clean || pin.by == by)) return false;
+		if (pin.share == held) return false;
 
 		if (clean)
 		{
@@ -1219,13 +1223,12 @@ fn bool RigDocument.set_pin(&self, uint vertex, uint dot_id, float share, uint b
 		else
 		{
 			self.pins.get_ref(i).share = held;
-			self.pins.get_ref(i).by = by;
 		}
 		return true;
 	}
 
 	if (clean) return false;
-	self.pins.push({ .vertex = vertex, .dot_id = dot_id, .share = held, .by = by });
+	self.pins.push({ .vertex = vertex, .dot_id = dot_id, .share = held });
 	return true;
 }
 
@@ -1435,6 +1438,7 @@ enum EditKind
 	SET_REACH,
 	SET_GROW,
 	SET_BAND,
+	SET_HELD,
 	SET_POSE_WEIGHT,
 	SET_SHARPNESS,
 	SET_KNUCKLE_BLEND,
@@ -1527,6 +1531,11 @@ struct Edit
 	float grow_after;
 	float band_before;
 	float band_after;
+
+	// SET_HELD both ways, and DELETE_DOT's `held_before`, so a deleted joint comes
+	// back with its weights still its own.
+	bool held_before;
+	bool held_after;
 
 	// SET_POSE_WEIGHT both ways, and DELETE_DOT's `pose_weight_before`, on the
 	// reach's reasoning: a deleted joint comes back holding as it did.

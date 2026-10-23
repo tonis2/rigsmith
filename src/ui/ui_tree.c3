@@ -382,46 +382,57 @@ fn void AppState.give_tool_the_model(&self)
 }
 
 <*
- Rig › Use the model's own weights: switch between the weights the model file
- carries and crig's automatic weights for the joints as they are now.
+ Rig › Use the model's own weights: every joint takes the column the model file
+ painted for it, as its own, in one undo step (`AppState.adopt_model_weights`).
 
- The file's weights are held as authored, so they do not follow a joint that
- moves — which is right for weights an artist painted and wrong for weights that
- were only some binder's answer for an older rig. Turning this off is how a rig
- whose fingers were moved since gets weights for where the fingers are.
+ Held as authored, so they do not follow a joint that moves — which is right
+ for weights an artist painted. Rig › Reset all weights to automatic is the way
+ back to crig's weights for the joints as they are now, and Reset on the
+ Weights card the way back for one.
 *>
 fn void menu_model_weights(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	if (app.doc.skin_from_file)
+	usz adopted = app.adopt_model_weights();
+	if (adopted == 0)
 	{
-		app.doc.skin_from_file = false;
-		app.@notice("using crig's automatic weights for the joints as they are · the model's own are back with this item again");
-	}
-	else if (app.imported_skin.present())
-	{
-		app.doc.skin_from_file = true;
-		app.@notice("using the model's own weights again");
+		app.@notice("this model carries no weights of its own for these joints");
 	}
 	else
 	{
-		app.@notice("this model carries no weights of its own to use");
-		app.refresh_ui();
-		return;
+		app.undo_stack.commit();
+		app.@notice("%d joints keep the model's own weights · Ctrl+Z puts back what they had", adopted);
 	}
-	// Neither choice is a document edit the ledger records, so the bind is
-	// rebuilt here and the next save writes whichever is chosen.
-	app.authored_dirty = true;
-	app.mark_rig_stale();
-	app.refresh_pose_display();
 	app.refresh_ui();
 }
 
 fn MenuItemFlags query_model_weights(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	return { .checked = app.doc.skin_from_file, .disabled = !app.doc.skin_from_file && !app.imported_skin.present() };
+	return { .disabled = !app.has_mesh() || app.doc.dots.len() == 0 };
 }
+
+<*
+ Rig › Reset all weights to automatic: every joint lets go of its edited
+ weights and follows the automatic weights again, in one undo step.
+*>
+fn void menu_reset_all_weights(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	usz released = app.release_all_recorded();
+	if (released == 0)
+	{
+		app.@notice("every joint already uses automatic weights");
+	}
+	else
+	{
+		app.@notice("%d %s the automatic weights again · Ctrl+Z puts the edits back", released,
+			released == 1 ? "joint follows" : "joints follow");
+	}
+	app.refresh_ui();
+}
+
+fn MenuItemFlags query_reset_all_weights(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.weights_edited() };
 
 <*
  The Scale tool: a ring around the model's origin that resizes the whole model
@@ -760,6 +771,13 @@ fn void menu_falloff(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	app.toggle_falloff();
+	app.refresh_ui();
+}
+
+fn void menu_unused(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.toggle_unused();
 	app.refresh_ui();
 }
 
@@ -1210,6 +1228,19 @@ fn MenuItemFlags query_falloff(Ui* ui)
 }
 
 <*
+ The Unused overlay needs weights to find holes in, so it greys out with no
+ mesh or no rig — and, like the views, never while it is on.
+*>
+fn MenuItemFlags query_unused(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	return {
+		.checked = app.show_unused,
+		.disabled = !app.show_unused && (app.doc.dots.len() == 0 || app.geometry.positions.len == 0),
+	};
+}
+
+<*
  Is this clip worth clicking, and is it the one playing?
 
  `disabled` is `AppState.clip_playable` — either the rig can carry the clip
@@ -1350,7 +1381,7 @@ MenuItem[6] edit_items = {
 // cell in the Assets pane is the answer. So the item is here and it opens the
 // same panel a skinless import raises, which still gets its list from the packs.
 // The Assets route is unchanged.
-MenuItem[21] rig_items = {
+MenuItem[22] rig_items = {
 	{ .label = "Apply body plan…", .on_select = &menu_apply_body_plan, .state = &query_any_mesh },
 	// Under the fit it redoes: for a fit whose measured facing came out wrong and
 	// no Turn offer asked. Rotate skeleton below turns a rig edited since.
@@ -1376,11 +1407,11 @@ MenuItem[21] rig_items = {
 	// change what the bind says without moving a dot, and these are the pair that
 	// says it about the whole model at once. Greyed on an empty document, since a
 	// sharpness is a power applied to weights and there are none.
-	// Whether the skin is the model file's own weights or crig's, from the joints.
-	// Off puts the binder on the rig as it stands now — the way out of weights a
-	// file brought in that no longer fit joints moved since — and on takes the
-	// file's back, so the choice can be tried both ways.
+	// The whole model's weights at once, either way: every joint given the model
+	// file's own column, or every joint let go back to crig's automatic weights —
+	// the way out of weights that no longer fit joints moved since.
 	{ .label = "Use the model's own weights", .on_select = &menu_model_weights, .state = &query_model_weights },
+	{ .label = "Reset all weights to automatic", .on_select = &menu_reset_all_weights, .state = &query_reset_all_weights },
 	{ .label = "Sharpen blending", .shortcut = "]", .on_select = &menu_sharpen_blend, .state = &query_any_dots },
 	{ .label = "Soften blending", .shortcut = "[", .on_select = &menu_soften_blend, .state = &query_any_dots },
 	// Under the pair above, since all four change what the bind says without
@@ -1412,7 +1443,7 @@ MenuItem[21] rig_items = {
 //
 // B for the mesh because M is already the mirror. S is free and is the letter
 // the item starts with, which is as much as either key can claim.
-MenuItem[27] view_items = {
+MenuItem[28] view_items = {
 	{ .label = "Front", .shortcut = "1", .on_select = &menu_view_front, .state = &query_has_view },
 	{ .label = "Back", .shortcut = "Ctrl+1", .on_select = &menu_view_back, .state = &query_has_view },
 	{ .label = "Right", .shortcut = "3", .on_select = &menu_view_right, .state = &query_has_view },
@@ -1431,6 +1462,7 @@ MenuItem[27] view_items = {
 	{ .label = "Ghost settings...", .on_select = &menu_ghost_settings },
 	{ .label = "Motion path", .on_select = &menu_motion_path, .state = &query_motion_path },
 	{ .label = "Weight falloff", .shortcut = "F", .on_select = &menu_falloff, .state = &query_falloff },
+	{ .label = "Unused weights", .on_select = &menu_unused, .state = &query_unused },
 	// With the tint views rather than beside the mesh toggles: like them it
 	// paints an answer onto a rig that is already on screen, and like them it is
 	// meaningless until the document has something to say.
@@ -1787,6 +1819,7 @@ fn void AppRoot.update(&self, Element* elem, float dt) @dynamic
 	// Ahead of the camera's early-out, because the weight debounce has to keep
 	// running through the frames where nothing is moving — which is every frame
 	// that matters to it, since what it is waiting for is the user going still.
+	app.tick_edges(dt);
 	app.tick_weights(dt);
 	// Its twin for the skin under a parked body, which the player's tick below
 	// leaves alone while the clock is stopped.

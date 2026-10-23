@@ -4270,22 +4270,22 @@ fn void the_mirror_notice_says_when_paint_crossed() @test
 	// Both sides placed, square about the plane — the paint crosses onto the twin
 	// that is there, it is never made.
 	uint left = fixture.app.add_recorded({ plane - unit, 0.5f, 0.0f }, "arm_L");
-	fixture.app.add_recorded({ plane + unit, 0.5f, 0.0f }, "arm_R");
+	uint right = fixture.app.add_recorded({ plane + unit, 0.5f, 0.0f }, "arm_R");
 	fixture.app.undo_stack.commit();
-	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = left, .share = 0.4f }};
-	test::eq(fixture.app.pin_dabs(dab[..]), (usz)1);
+	uint[1] dab = { 0 };
+	test::eq(fixture.app.set_weight_vertices(dab[..], left, 0.4f), (usz)1);
 
 	fixture.app.select(left);
 	fixture.tap(SPOT_LEFT, Key.M);
 	test::@check(fixture.doc().dots.len() == 2, "the arm did not mirror: \"%s\"", fixture.notice_text());
 	test::@check(fixture.notice_text().ends_with("weight paint crossed too"),
 		"the notice does not mention the paint: \"%s\"", fixture.notice_text());
-	test::@check(fixture.doc().pins.len() == 2, "the pin did not cross (%d pins)", fixture.doc().pins.len());
+	test::@check(fixture.app.weights_held(right), "the edited weights did not cross");
 
 	// Nothing painted on the source: the plain wording — the pair is now square
 	// with no paint, so the mirror finds nothing to do.
 	fixture.chord(SPOT_LEFT, Key.LEFT_CTRL, Key.Z);
-	test::@check(fixture.app.clear_pins() > 0, "the pins would not clear");
+	test::@check(fixture.app.release_all_recorded() > 0, "the edited weights would not let go");
 	fixture.app.select(left);
 	fixture.tap(SPOT_LEFT, Key.M);
 	test::@check(fixture.doc().dots.len() == 2 && !fixture.notice_text().contains("paint"),
@@ -8530,21 +8530,17 @@ fn void turning_holds_the_joint_and_carries_the_limb() @test
 }
 
 <*
- The pin layer survives the session file, a fractional share comes back exactly,
- and the key is absent when there is nothing to say.
+ Held joints' columns survive the session file, a fractional weight comes back
+ exactly, and the key is absent when there is nothing to say.
 
- The paint layer's claims one layer up, and version 12 is a bump for the same
- reason version 8 was — except louder: a pin *states* a share rather than
- correcting one, so a file read by a binary that does not know the key comes back
- with every hand-drawn region blended again, and nothing on screen would say so.
-
- The omission is asserted as well as the round trip. Most rigs never draw a
- region, and a `"pins": []` written into every session crig has ever saved would
- be a line of noise in all of them.
+ The omission is asserted as well as the round trip. Most rigs keep the
+ automatic weights, and a `"weights": []` written into every session would be a
+ line of noise in all of them. A column of a joint that is not held, or of one
+ deleted since, does not reach the file.
 *>
-fn void the_pin_layer_round_trips_through_the_session() @test
+fn void held_columns_round_trip_through_the_session() @test
 {
-	io::printn("stated shares round-trip through the session file");
+	io::printn("held columns round-trip through the session file");
 
 	RigDocument doc;
 	doc.dots.init(mem);
@@ -8558,23 +8554,26 @@ fn void the_pin_layer_round_trips_through_the_session() @test
 	uint knee = doc.add_dot({ 0, -0.5f, 0 }, "knee");
 	doc.connect(hips, knee);
 
-	// Nothing pinned yet, so the writer has nothing to say and must say nothing.
+	// Nothing held yet, so the writer has nothing to say and must say nothing.
 	String bare = crig::session_text(mem, &doc, SESSION_MESH);
 	defer bare.free(mem);
-	test::@check(!bare.contains(`"pins"`), "an unpinned rig still wrote a pins key");
+	test::@check(!bare.contains(`"weights"`) && !bare.contains(`"pins"`), "a rig with no held joint still wrote weights");
 
-	// One rigid, and one fraction that needs all nine digits to come back as
+	// One full weight, and one fraction that needs every bit to come back as
 	// itself — the smooth op writes those, so the exactness is not decorative.
+	doc.set_held(hips, true);
+	doc.set_held(knee, true);
 	doc.set_pin(3, hips, 1.0f);
 	doc.set_pin(3, knee, 0.123456789f);
 	doc.set_pin(41, knee, 0.5f);
 
-	// A pin on a dot that is about to go. It stays in the document — undo could
-	// still bring the dot back — and must not reach the file.
+	// A column on a dot that is about to go. It stays in the document — undo
+	// could still bring the dot back — and must not reach the file.
 	uint doomed = doc.add_dot({ 1, 0, 0 }, "doomed");
+	doc.set_held(doomed, true);
 	doc.set_pin(7, doomed, 1.0f);
 	doc.remove_dot(doomed);
-	test::@check(doc.pins.len() == 4, "the document kept the stale pin for undo");
+	test::@check(doc.pins.len() == 4, "the document kept the stale column for undo");
 
 	if (catch io::file::delete(SESSION_FILE)) {}
 	if (catch fault error = crig::write_session(SESSION_FILE, &doc, SESSION_MESH))
@@ -8593,12 +8592,13 @@ fn void the_pin_layer_round_trips_through_the_session() @test
 	defer back.free();
 	(void)io::file::delete(SESSION_FILE);
 
-	// %.9g round-trips a float32 exactly, so this is equality and not an epsilon.
-	test::@check(back.pin_of(3, hips) == 1.0f, "the rigid pin came back as %s", back.pin_of(3, hips));
+	// The bits themselves are written, so this is equality and not an epsilon.
+	test::@check(back.pin_of(3, hips) == 1.0f, "the full weight came back as %s", back.pin_of(3, hips));
 	test::@check(back.pin_of(3, knee) == 0.123456789f,
-		"the fractional share came back as %s", back.pin_of(3, knee));
-	test::@check(back.pin_of(41, knee) == 0.5f, "the second dot's pin came back as %s", back.pin_of(41, knee));
-	test::@check(back.pins.len() == 3, "the stale pin was dropped on the way out");
+		"the fractional weight came back as %s", back.pin_of(3, knee));
+	test::@check(back.pin_of(41, knee) == 0.5f, "the second dot's weight came back as %s", back.pin_of(41, knee));
+	test::@check(back.pins.len() == 3, "the stale column was dropped on the way out");
+	test::@check(back.find(hips).held && back.find(knee).held, "the held flags did not come back");
 }
 
 <*
@@ -14686,10 +14686,7 @@ fn void a_brush_stroke_over_a_parked_clip_reskins_as_it_goes() @test
 		"the release did not rebuild the posed surface");
 	test::@check(fixture.app.animating && fixture.app.anim_paused && fixture.app.posed_surface_shown(),
 		"the stroke took the clip down");
-	foreach (pin : fixture.app.doc.pins.array_view())
-	{
-		test::@check(pin.dot_id != chest || pin.share < 1.0f, "a taking stroke gave the chest a whole vertex");
-	}
+	test::@check(!raised(&fixture, chest), "a taking stroke gave the chest a whole vertex");
 }
 
 <*
@@ -14799,10 +14796,7 @@ fn void a_brush_stroke_paints_under_the_circle() @test
 
 	// Every row takes weight off the selected joint rather than adding it: shift
 	// beside ctrl is the destructive direction.
-	foreach (pin : fixture.app.doc.pins.array_view())
-	{
-		test::@check(pin.dot_id != chest || pin.share < 1.0f, "a ctrl+shift-drag added weight instead of taking it off");
-	}
+	test::@check(!raised(&fixture, chest), "a ctrl+shift-drag added weight instead of taking it off");
 
 	// The press and the move are two steps of one gesture: one undo takes both.
 	test::@check(fixture.app.undo_stack.cursor > before, "the stroke left nothing on the ledger");
@@ -14916,9 +14910,10 @@ fn void the_brush_never_places_or_edits_joints() @test
 	test::eq(fixture.doc().edges.len(), edges);
 	// The front face's corners are vertices 4 to 7; the far side stays out of it.
 	test::@check(pinned_vertices(&fixture) > 0, "a click on the face painted none of its corners");
-	foreach (pin : fixture.app.doc.pins.array_view())
 	{
-		test::@check(pin.vertex >= 4, "the click on the front face painted vertex %d on the far side", pin.vertex);
+		bool[] edited = edited_mask(&fixture);
+		defer alloc::free(mem, edited);
+		foreach (v, on : edited) test::@check(!on || v >= 4, "the click on the front face painted vertex %d on the far side", v);
 	}
 	test::@check(fixture.app.selected == chest && fixture.app.brushing, "the click changed the joint or closed the brush");
 	test::@check(fixture.app.undo(), "the click's stroke did not undo");
@@ -15011,9 +15006,10 @@ fn void the_brush_does_not_paint_through_the_model() @test
 
 	// The front face is z = +1, which is vertices 4 through 7 in `cube_positions`.
 	// Anything below that index is a corner on the far side.
-	foreach (pin : fixture.app.doc.pins.array_view())
 	{
-		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
+		bool[] edited = edited_mask(&fixture);
+		defer alloc::free(mem, edited);
+		foreach (v, on : edited) test::@check(!on || v >= 4, "vertex %d is on the far side of the cube and was painted anyway", v);
 	}
 }
 
@@ -15083,9 +15079,10 @@ fn void the_xray_box_paints_through_the_model() @test
 	stroke_with(&fixture, front_only[..]);
 	usz painted = pinned_vertices(&fixture);
 	test::@check(painted > 0 && painted < 4, "alt with X-ray ticked painted %d corners, not the front ones", painted);
-	foreach (pin : fixture.app.doc.pins.array_view())
 	{
-		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
+		bool[] edited = edited_mask(&fixture);
+		defer alloc::free(mem, edited);
+		foreach (v, on : edited) test::@check(!on || v >= 4, "vertex %d is on the far side of the cube and was painted anyway", v);
 	}
 }
 
@@ -15154,11 +15151,12 @@ fn void a_brush_stroke_in_the_middle_of_a_face_paints_it() @test
 	fixture.feed(to);
 	test::@check(fixture.app.camera.yaw == yaw, "the drag in the middle of the face turned the model");
 	test::@check(pinned_vertices(&fixture) > 0, "the stroke in the middle of the face painted none of its corners");
-	foreach (pin : fixture.app.doc.pins.array_view())
 	{
-		test::@check(pin.vertex >= 4, "vertex %d is on the far side of the cube and was painted anyway", pin.vertex);
-		test::@check(pin.dot_id != chest || pin.share < 1.0f, "the remove stroke put the joint on");
+		bool[] edited = edited_mask(&fixture);
+		defer alloc::free(mem, edited);
+		foreach (v, on : edited) test::@check(!on || v >= 4, "vertex %d is on the far side of the cube and was painted anyway", v);
 	}
+	test::@check(!raised(&fixture, chest), "the remove stroke put the joint on");
 }
 
 <*
@@ -15226,25 +15224,17 @@ fn void the_brush_sizes_only_while_its_key_is_held() @test
 		"pressing F while brushing turned off the view the brush paints against");
 }
 
-// One dot's share of one vertex, normalised the way the falloff view is.
-fn float brush_share_of(Fixture* f, uint vertex, uint dot)
+// One dot's own weight on one vertex: what the brush moves.
+fn float brush_weight_of(Fixture* f, uint vertex, uint dot)
 {
 	crig::RigView? opened = f.app.open_rig(mem);
 	if (catch opened) return -1.0f;
 	crig::RigView view = opened;
 	defer view.free(mem);
 
-	sz joint = view.joint_of(dot);
-	if (joint < 0) return -1.0f;
-
-	float[] dense = f.app.weights(mem, &view);
-	defer alloc::free(mem, dense);
-
-	usz bones = view.len();
-	usz at = (usz)vertex * bones;
-	float sum = 0.0f;
-	for (usz b = 0; b < bones; b++) sum += dense[at + b];
-	return sum > 0.0f ? dense[at + (usz)joint] / sum : 0.0f;
+	float[] column = f.app.column_of(mem, &view, dot);
+	defer if (column.len > 0) alloc::free(mem, column);
+	return (usz)vertex < column.len ? column[vertex] : -1.0f;
 }
 
 <*
@@ -15297,7 +15287,7 @@ fn void the_strength_slider_sets_how_far_one_tap_goes() @test
 	// "did one tap finish it" is a question with a visible answer.
 	uint[1] target = { 4 };
 	fixture.app.paint_share(chest, target[..], 0.0f);
-	test::@check(brush_share_of(&fixture, 4, chest) < 0.01f, "the corner did not start at nothing");
+	test::@check(brush_weight_of(&fixture, 4, chest) < 0.01f, "the corner did not start at nothing");
 
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.W);
 	test::@check(fixture.app.brushing, "the brush did not open");
@@ -15311,7 +15301,7 @@ fn void the_strength_slider_sets_how_far_one_tap_goes() @test
 	fixture.feed(corner, left: true, keys: adding[..]);
 	fixture.feed(corner, keys: adding[..]);
 
-	float after = brush_share_of(&fixture, 4, chest);
+	float after = brush_weight_of(&fixture, 4, chest);
 	test::@check(after > 0.05f, "one gentle tap moved the corner not at all, measured %s", after);
 	test::@check(after < 0.6f,
 		"one tap at a quarter strength took the corner most of the way to full (%s)", after);
@@ -15319,13 +15309,13 @@ fn void the_strength_slider_sets_how_far_one_tap_goes() @test
 	// Back to nothing — the tap is one undo step — and the same tap at full
 	// strength finishes it.
 	test::@check(fixture.app.undo(), "the tap did not undo");
-	test::@check(brush_share_of(&fixture, 4, chest) < 0.01f, "the corner did not go back to nothing");
+	test::@check(brush_weight_of(&fixture, 4, chest) < 0.01f, "the corner did not go back to nothing");
 	fixture.app.set_brush_strength(crig::BRUSH_STRENGTH_MAX);
 	fixture.feed(corner, keys: adding[..]);
 	fixture.feed(corner, left: true, keys: adding[..]);
 	fixture.feed(corner, keys: adding[..]);
 
-	after = brush_share_of(&fixture, 4, chest);
+	after = brush_weight_of(&fixture, 4, chest);
 	test::@check(after > 0.95f, "one tap at full strength left the corner at %s", after);
 }
 
@@ -16432,27 +16422,37 @@ fn void a_drawn_region_pins_in_one_step() @test
 	fixture.feed(shape[2]);
 	fixture.feed(shape[2]);
 
-	sz pinned = fixture.app.doc.pins.len();
+	usz pinned = pinned_vertices(&fixture);
 	test::@check(pinned > 0, "the region pinned nothing at all");
-	test::@check(pinned < (sz)fixture.app.geometry.positions.len,
+	test::@check(pinned < fixture.app.geometry.positions.len,
 		"the region pinned the whole mesh (%d of %d) — the polygon is not bounding it",
 		pinned, fixture.app.geometry.positions.len);
 
 	foreach (pin : fixture.app.doc.pins.array_view())
 	{
-		test::@check(pin.dot_id == chest, "a pin landed on a dot other than the selected one");
-		test::@check(pin.share == 1.0f, "a lasso wrote a share of %s rather than a rigid one", pin.share);
+		test::@check(pin.dot_id == chest, "a weight landed on a dot other than the selected one");
 	}
+	{
+		bool[] edited = edited_mask(&fixture);
+		defer alloc::free(mem, edited);
+		foreach (v, on : edited)
+		{
+			if (on) test::@check(brush_weight_of(&fixture, (uint)v, chest) == 1.0f, "a lasso left vertex %d at %s rather than full", v,
+				brush_weight_of(&fixture, (uint)v, chest));
+		}
+	}
+	sz stored = fixture.app.doc.pins.len();
 
 	// The outline goes with the gesture.
 	test::@check(drawn(&fixture, DrawingKind.LINE, crig::LASSO_PINNING) == 0,
 		"the region outlived its own release");
 
-	test::eq(fixture.app.undo_stack.cursor, before + 1);
+	test::@check(fixture.app.undo_stack.cursor > before, "the region left nothing on the ledger");
 	test::@check(fixture.app.undo(), "the region is one step on the ledger");
 	test::eq(fixture.app.doc.pins.len(), (sz)0);
+	test::@check(fixture.app.undo_stack.cursor == before, "the region was more than one step on the ledger");
 
-	test::@check(fixture.app.redo() && fixture.app.doc.pins.len() == pinned, "and it redoes as one");
+	test::@check(fixture.app.redo() && fixture.app.doc.pins.len() == stored, "and it redoes as one");
 }
 
 <*
@@ -16550,6 +16550,9 @@ fn void a_ctrl_drawn_region_unpins() @test
 
 	sz pinned = fixture.app.doc.pins.len();
 	test::@check(pinned > 0, "the first region pinned nothing, so there is nothing to take back");
+	bool[] region = edited_mask(&fixture);
+	defer alloc::free(mem, region);
+	uint chest = fixture.app.selected;
 
 	Key[1] ctrl = { Key.LEFT_CTRL };
 	fixture.feed(shape[0], keys: ctrl[..]);
@@ -16564,7 +16567,10 @@ fn void a_ctrl_drawn_region_unpins() @test
 	fixture.feed(shape[2], keys: ctrl[..]);
 	fixture.feed(shape[2]);
 
-	test::eq(fixture.app.doc.pins.len(), (sz)0);
+	foreach (v, on : region)
+	{
+		if (on) test::@check(brush_weight_of(&fixture, (uint)v, chest) == 0.0f, "the removal left the joint on vertex %d", v);
+	}
 	test::@check(fixture.app.undo() && fixture.app.doc.pins.len() == pinned,
 		"undoing the removal did not bring the region back");
 }
@@ -16703,7 +16709,7 @@ fn void the_cleanup_ops_are_in_the_rig_menu() @test
 }
 
 <*
- Choosing Harden writes the pin layer, in one Ctrl+Z.
+ Choosing Harden writes the joints' columns, in one Ctrl+Z.
 
  Driven through the menu item's own function rather than through a click on the
  dropdown, the way `Fixture.toggle_weights` reaches the tint views: the Rig menu
@@ -16724,25 +16730,27 @@ fn void harden_from_the_menu_is_one_step() @test
 
 	uint chest = fixture.two_dots();
 
-	// One vertex stated at just over the threshold, so the op has something it
-	// must pick up whatever the binder thinks of a cube.
+	// One vertex stated at just over the threshold, the other dot holding the
+	// rest, so the op has something it must pick up whatever the binder thinks
+	// of a cube.
 	uint[1] nearly = { 0 };
-	fixture.app.pin_vertices(nearly[..], chest, 0.85f);
+	uint other = 0;
+	foreach (dot : fixture.app.doc.dots.array_view()) if (dot.id != chest) other = dot.id;
+	fixture.app.set_weight_vertices(nearly[..], chest, 0.85f);
+	fixture.app.set_weight_vertices(nearly[..], other, 0.15f);
 	fixture.app.refresh_ui();
-
-	sz before = fixture.app.undo_stack.cursor;
 
 	crig::menu_harden_weights(fixture.ui);
 
 	test::@check(fixture.app.doc.pin_of(0, chest) == 1.0f,
 		"the stated vertex came out at %s rather than rigid", fixture.app.doc.pin_of(0, chest));
+	test::@check(fixture.app.doc.pin_of(0, other) == 0.0f, "the other joint kept %s of the hardened vertex", fixture.app.doc.pin_of(0, other));
 	test::@check(fixture.app.notice().contains("rigid"),
 		"the result line says \"%s\"", fixture.app.notice());
-	test::eq(fixture.app.undo_stack.cursor, before + 1);
 
 	test::@check(fixture.app.undo(), "the pass is one step on the ledger");
-	test::@check(fixture.app.doc.pin_of(0, chest) == 0.85f,
-		"undo left the vertex at %s", fixture.app.doc.pin_of(0, chest));
+	test::@check(fixture.app.doc.pin_of(0, chest) == 0.85f && fixture.app.doc.pin_of(0, other) == 0.15f,
+		"one undo left the vertex at %s and %s", fixture.app.doc.pin_of(0, chest), fixture.app.doc.pin_of(0, other));
 }
 
 // ---------------------------------------------------------------------------
@@ -16819,9 +16827,11 @@ fn void the_area_tool_grows_live_and_applies_a_chosen_part() @test
 	fixture.feed(below, keys: shift[..]);
 	fixture.feed(below);
 	test::@check(fixture.doc().find(chest).grow > 0.0f, "a shift-drag did not grow the chest");
-	test::@check(!fixture.app.area_pending() && fixture.doc().pins.len() == 0, "the grow left a part or pins");
+	test::@check(!fixture.app.area_pending(), "the grow left a part waiting");
+	test::@check(fixture.app.weights_held(chest) && fixture.doc().pins.len() > 0, "the grow did not write the chest's weights");
 	test::@check(fixture.app.undo(), "the grow left nothing to undo");
-	test::@check(fixture.doc().find(chest).grow == 0.0f, "the drag was more than one undo step");
+	test::@check(fixture.doc().find(chest).grow == 0.0f && fixture.doc().pins.len() == 0 && !fixture.app.weights_held(chest),
+		"the drag was more than one undo step");
 
 	// The menu picks a part; a click after it leaves the part as it is.
 	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
@@ -16896,8 +16906,10 @@ fn void the_weights_card_drives_the_area_tool() @test
 	fixture.click(fixture.center_of(crig::WEIGHTS_GROW_ID)!!);
 	crig::Dot* grown_dot = fixture.doc().find(chest);
 	test::@check(grown_dot != null && grown_dot.grow > 0.0f, "Grow did not push the chest's edge out");
-	test::@check(!fixture.app.area_pending() && fixture.doc().pins.len() == 0, "Grow left a part or pins behind");
-	test::@check(fixture.app.undo() && fixture.doc().find(chest).grow == 0.0f, "one undo did not take the Grow back");
+	test::@check(!fixture.app.area_pending(), "Grow left a part waiting");
+	test::@check(fixture.app.weights_held(chest), "Grow did not write the chest's weights");
+	test::@check(fixture.app.undo() && fixture.doc().find(chest).grow == 0.0f && !fixture.app.weights_held(chest),
+		"one undo did not take the Grow back");
 	fixture.app.set_area_part(WITH_CHILDREN);
 	fixture.app.refresh_ui();
 	fixture.feed(VIEWPORT_CENTER);
@@ -16947,13 +16959,13 @@ fn void the_weights_card_drives_the_area_tool() @test
 	fixture.app.redo();
 	fixture.feed(VIEWPORT_CENTER);
 
-	// A grown joint, with no pins at all: Reset puts its edge back, as one step.
+	// A grown joint: Reset puts its edge back and lets it go, as one step.
 	fixture.click(fixture.center_of(crig::WEIGHTS_GROW_ID)!!);
 	test::@check(fixture.doc().find(chest).grow > 0.0f, "Grow did not grow the chest");
 	fixture.click(fixture.center_of(crig::WEIGHTS_RESET_ID)!!);
 	test::@check(fixture.doc().find(chest).grow == 0.0f && fixture.doc().find(chest).band == 0.0f,
 		"reset kept the grown edge");
-	test::@check(fixture.notice_text().contains("back to automatic"), "reset said: %s", fixture.notice_text());
+	test::@check(fixture.notice_text().contains("follows the automatic weights again"), "reset said: %s", fixture.notice_text());
 	test::@check(fixture.app.undo() && fixture.doc().find(chest).grow > 0.0f, "one undo did not bring the grow back");
 	fixture.app.redo();
 
@@ -17120,32 +17132,64 @@ fn void the_knuckle_blend_slider_is_one_undo_step() @test
 
 // How many unique vertices carry a pin.
 // How many corners on the cube's far face (z = -1, vertices 0 to 3) carry a pin.
+// Whether each vertex's weights differ from the automatic ones: what the hand
+// edits changed. Not the pins themselves — an edited joint stores its whole
+// column, so every vertex it holds has one.
+fn bool[] edited_mask(Fixture* fixture)
+{
+	usz count = fixture.app.geometry.positions.len;
+	bool[] edited = alloc::new_array(mem, bool, (sz)count);
+	crig::RigView? opened = fixture.app.open_rig(mem);
+	if (catch opened) return edited;
+	crig::RigView view = opened;
+	defer view.free(mem);
+	usz bones = view.len();
+	float[] shown = fixture.app.weights(mem, &view);
+	defer if (shown.len > 0) alloc::free(mem, shown);
+	float[] automatic = fixture.app.weights(mem, &view, AUTOMATIC);
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
+	if (shown.len != count * bones || automatic.len != shown.len) return edited;
+	foreach (usz i, w : shown) if (w != automatic[i]) edited[i / bones] = true;
+	return edited;
+}
+
+// Whether any vertex holds more of `dot` than the automatic weights give it.
+fn bool raised(Fixture* fixture, uint dot)
+{
+	crig::RigView view = fixture.app.open_rig(mem)!!;
+	defer view.free(mem);
+	sz joint = view.joint_of(dot);
+	if (joint < 0) return false;
+	usz bones = view.len();
+	float[] shown = fixture.app.weights(mem, &view);
+	defer alloc::free(mem, shown);
+	float[] automatic = fixture.app.weights(mem, &view, AUTOMATIC);
+	defer alloc::free(mem, automatic);
+	for (usz v = 0; v < fixture.app.geometry.positions.len; v++)
+	{
+		if (shown[v * bones + (usz)joint] > automatic[v * bones + (usz)joint]) return true;
+	}
+	return false;
+}
+
+// How many of the cube's far corners (vertices 0 to 3) a hand edit changed.
 fn usz far_side_pinned(Fixture* fixture)
 {
-	bool[4] seen;
+	bool[] edited = edited_mask(fixture);
+	defer alloc::free(mem, edited);
 	usz far = 0;
-	foreach (pin : fixture.app.doc.pins.array_view())
-	{
-		if (pin.vertex >= 4 || seen[pin.vertex]) continue;
-		seen[pin.vertex] = true;
-		far++;
-	}
+	foreach (v, on : edited) if (on && v < 4) far++;
 	return far;
 }
 
+// How many vertices a hand edit changed.
 fn usz pinned_vertices(Fixture* fixture)
 {
-	usz count = fixture.app.geometry.positions.len;
-	bool[] seen = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, seen);
-	usz unique = 0;
-	foreach (pin : fixture.app.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count || seen[pin.vertex]) continue;
-		seen[pin.vertex] = true;
-		unique++;
-	}
-	return unique;
+	bool[] edited = edited_mask(fixture);
+	defer alloc::free(mem, edited);
+	usz changed = 0;
+	foreach (on : edited) if (on) changed++;
+	return changed;
 }
 
 fn void the_n_panel_starts_closed() @test
@@ -17193,7 +17237,7 @@ fn void the_card_finds_and_fixes_strays() @test
 		if (position.y < fixture.app.geometry.positions[lowest].y) lowest = (uint)v;
 	}
 	uint[1] corner = { lowest };
-	fixture.app.pin_vertices(corner[..], chest, 1.0f);
+	fixture.app.set_weight_vertices(corner[..], chest, 1.0f);
 	fixture.app.drop_strays();
 	fixture.app.strays = alloc::new_array(mem, crig::StrayIsland, 1);
 	fixture.app.strays[0] = { .dot = chest, .vertices = alloc::new_array(mem, uint, 1) };

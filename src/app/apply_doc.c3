@@ -187,6 +187,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 		float reach = dot.reach;
 		float grow = dot.grow;
 		float band = dot.band;
+		bool held = dot.held;
 		float pose_weight = dot.pose_weight;
 		String dot_name = (String)@clone_slice((char[])dot.name);
 		uint previous_root = self.doc.root_id;
@@ -201,6 +202,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 			.reach_before = reach,
 			.grow_before = grow,
 			.band_before = band,
+			.held_before = held,
 			.pose_weight_before = pose_weight,
 		});
 		diff.removed++;
@@ -213,8 +215,7 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 	//
 	// `plan`, `animations` and `auto_connect` are documented on the struct as
 	// outside the undo stack — they are choices about the project rather than
-	// edits to the rig. `sym_x` is the symmetry plane and `skin_from_file` is a
-	// record of where the weights came from; neither is an `EditKind` either.
+	// edits to the rig. `sym_x` is the symmetry plane, not an `EditKind` either.
 	// They are applied rather than recorded, which means an undo after this does
 	// not take them back — the same as it does not for the panels that set them.
 	if (self.doc.auto_connect != want.auto_connect)
@@ -225,11 +226,6 @@ fn DocumentDiff? AppState.apply_document(&self, RigDocument* want)
 	if (self.doc.sym_x != want.sym_x)
 	{
 		self.doc.sym_x = want.sym_x;
-		diff.settings++;
-	}
-	if (self.doc.skin_from_file != want.skin_from_file)
-	{
-		self.doc.skin_from_file = want.skin_from_file;
 		diff.settings++;
 	}
 	if (self.doc.plan != want.plan)
@@ -330,7 +326,7 @@ fn bool same_pins(RigDocument* have, RigDocument* want) @local
 	foreach (sz i, pin : have.pins.array_view())
 	{
 		VertexPin other = want.pins[i];
-		if (pin.vertex != other.vertex || pin.dot_id != other.dot_id || pin.share != other.share || pin.by != other.by)
+		if (pin.vertex != other.vertex || pin.dot_id != other.dot_id || pin.share != other.share)
 		{
 			return false;
 		}

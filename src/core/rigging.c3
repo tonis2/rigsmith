@@ -177,36 +177,12 @@ fn usz dot_slot(Dot[] dots, uint id) @private
 // The weight preview.
 
 <*
- The hand corrections, multiplied into a bind that is already in joint order.
+ The stated shares, written over a bind that is already in joint order — what
+ a session before version 32 showed, and only its migration reads it now
+ (`AppState.legacy_weights`): pins were whole rows then, not one joint's
+ column.
 
- 	`paint_over(dense, bones, view.paint);`
-
- **Between the binder and the prune**, always — after the weights exist and
- before `sparsify_weights` picks the four a vertex keeps. A correction that
- pushes a joint out of the top four should take it out of the file too, and one
- that pulls a joint in should put it there; doing it after the prune could only
- rescale influences the prune had already chosen.
-
- Every caller that binds has to call this, or the views disagree with the file —
- which is the one defect `vertex_tints` exists to prevent. Empty paint is the
- ordinary case and costs a single branch.
-
- @param dense : `vertices x bones, as the binder returns it. Modified in place.`
- @param bones : `The row stride: the joint count of the build the columns were resolved against.`
-*>
-fn void paint_over(float[] dense, usz bones, PaintColumn[] paint)
-{
-	foreach (column : paint)
-	{
-		usz at = (usz)column.vertex * bones + column.joint;
-		if (at < dense.len) dense[at] *= column.factor;
-	}
-}
-
-<*
- The stated shares, written over a bind that is already in joint order.
-
- 	`pin_over(dense, bones, view.pins);`
+ 	`pin_over(dense, bones, pins);`
 
  **After the paint, before the prune, always** — the last word on a row, which
  is the whole point of the layer: the binder, the sharpness and the corrections
@@ -236,7 +212,7 @@ fn void paint_over(float[] dense, usz bones, PaintColumn[] paint)
 
  @param dense : `vertices x bones, as the binder returns it. Modified in place.`
  @param bones : `The row stride: the joint count of the build the columns were resolved against.`
- @param pins : `Grouped by vertex — every pin on one vertex contiguous, which is what AppState.pin_columns guarantees. Ungrouped input would rewrite a row twice and rescale the first rewrite.`
+ @param pins : `Grouped by vertex — every pin on one vertex contiguous, which is what AppState.legacy_weights sorts them into. Ungrouped input would rewrite a row twice and rescale the first rewrite.`
 *>
 fn void pin_over(float[] dense, usz bones, PinColumn[] pins)
 {
@@ -393,6 +369,28 @@ fn void normalise_loud_rows(float[] dense, usz bones)
 	}
 }
 
+<*
+ Every row that holds anything divided by its total, so each sums to one.
+
+ The last step of every bind, so the binder's columns and a held joint's
+ stored ones (`Dot.held`) are on one scale: a joint brushed to full holds a
+ vertex as fully as an automatic owner does, where against raw scores — which
+ span orders of magnitude — a stored 1 could be a sliver or everything. Every
+ reader divides by the row's total anyway, so the picture does not change.
+*>
+fn void normalise_rows(float[] dense, usz bones)
+{
+	if (bones == 0 || dense.len % bones != 0) return;
+	for (usz at = 0; at < dense.len; at += bones)
+	{
+		float[] row = dense[at:bones];
+		float sum = 0.0f;
+		foreach (weight : row) sum += weight;
+		if (!(sum > 0.0f)) continue;
+		foreach (&weight : row) *weight /= sum;
+	}
+}
+
 // The largest score `normalise_loud_rows` leaves as a score: raised to
 // `SHARPNESS_MAX` it is still a float.
 const float SHARPEN_SCORE_CEILING = 1.0e8;
@@ -508,6 +506,23 @@ fn uint[] falloff_tints(Allocator allocator, float[] dense, usz vertices, usz bo
 	}
 
 	return tints;
+}
+
+// Whether a vertex's row leaves it to nobody — see `UNUSED_TOTAL`.
+fn bool unused_row(float[] row)
+{
+	float sum = 0.0f;
+	foreach (weight : row) sum += weight;
+	return sum <= UNUSED_TOTAL;
+}
+
+// How many of a matrix's rows leave their vertex to nobody.
+fn usz unused_rows(float[] dense, usz bones)
+{
+	if (bones == 0) return 0;
+	usz unused = 0;
+	for (usz at = 0; at + bones <= dense.len; at += bones) if (unused_row(dense[at:bones])) unused++;
+	return unused;
 }
 
 <*

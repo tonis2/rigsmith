@@ -327,6 +327,22 @@ fn bool AppState.set_band_recorded(&self, uint id, float band)
 }
 
 <*
+ Holds a joint's weights or lets go of them, leaving the group open — see
+ `Dot.held`. The flag only: `hold_recorded` and `release_recorded` write the
+ column that goes with it.
+
+ @return `True when it changed.`
+*>
+fn bool AppState.set_held_recorded(&self, uint id, bool held)
+{
+	Dot* dot = self.doc.find(id);
+	if (!dot || dot.held == held) return false;
+	self.doc.set_held(id, held);
+	self.undo_stack.record({ .kind = SET_HELD, .id = id, .held_before = !held, .held_after = held });
+	return true;
+}
+
+<*
  Sets how much a joint holds its ground when a pose is pulled, leaving the group
  open; see `Dot.pose_weight`. A weight that is already held is no edit.
 

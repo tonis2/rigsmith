@@ -604,7 +604,7 @@ fn void sync_mesh(AppState* app, ModelSlot* s, Character* c) @local
 
 	// Only the character being edited shows its weights: the tint is a reading of
 	// the edit in hand, and every panel that explains it is about that one.
-	bool tinted = focus && app.tint_mode != TintMode.OFF
+	bool tinted = focus && app.tinting()
 		&& c.tints.len > 0
 		&& c.tints.len == geometry.positions.len;
 

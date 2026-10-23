@@ -665,6 +665,7 @@ fn bool AppState.remove_recorded(&self, uint id)
 	float reach       = dot.reach;
 	float grow        = dot.grow;
 	float band        = dot.band;
+	bool held         = dot.held;
 	float pose_weight = dot.pose_weight;
 	String dot_name   = (String)@clone_slice((char[])dot.name);
 
@@ -688,6 +689,7 @@ fn bool AppState.remove_recorded(&self, uint id)
 			.reach_before = reach,
 			.grow_before = grow,
 			.band_before = band,
+			.held_before = held,
 			.pose_weight_before = pose_weight,
 		}
 	);
@@ -965,7 +967,12 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
 	}
 
 	bool paint_touched = false;
-	if (self.doc.pins.len() > 0)
+	bool any_held = false;
+	foreach (pair : plan)
+	{
+		if (pair.twin != 0 && (self.weights_held(pair.source) || self.weights_held(pair.twin))) any_held = true;
+	}
+	if (any_held)
 	{
 		rig::MirrorLookup across = rig::build_mirror_lookup(
 			mem,
@@ -1033,15 +1040,15 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
  skin. A twin already square about the plane is still worth mirroring for this
  alone, so a call that moves nothing can still report dots pulled into line.
 
- **And so does the hand-painted weight.** Every dab and every pin the source
- carries is set on the twin at the mirror-image vertex — the one sitting at the
- vertex's reflection, within the same tolerance — and whatever the twin
- carried on vertices the source does not is taken off, the same overwrite its
- position and reach get. A correction painted down one side and mirrored is
- the same correction on both, which is the only reason to paint one side
+ **And so do the edited weights.** A source whose weights are its own
+ (`Dot.held`) gives the twin its column at the mirror-image vertices — the ones
+ sitting at each vertex's reflection, within the same tolerance — the same
+ overwrite its position and reach get; a source on the automatic weights lets
+ the twin go back to them too. A correction painted down one side and mirrored
+ is the same correction on both, which is the only reason to paint one side
  first. A vertex with no partner on the other side — an asymmetric patch, a
  seam split on one side only — is left as the twin had it, since the source
- says nothing about it; and the paint alone counts as pulling a twin into
+ says nothing about it; and the weights alone count as pulling a twin into
  line, like the reach does. See `mirror_paint_recorded`.
 
  **So do the rotation limits, reflected.** A joint's table is a box in its own
@@ -1456,22 +1463,19 @@ fn bool AppState.symmetry_plane(&self, float* out)
 }
 
 <*
- Cross one dot's hand edits onto its twin, as the mirror's own stroke.
+ Cross one dot's weights onto its twin, as the mirror's own edit.
 
  `if (app.mirror_paint_recorded(&across, thigh_L, thigh_R)) …`
 
- One batch, recorded through the pin layer's stroke record and left chained —
- the caller commits, so the edits undo with the twin they were crossed onto
- rather than as a step of their own. What the twin ends up carrying is exactly
- the source's layer reflected: a pin the source has lands on the twin at the
- mirror-image vertex, and a pin the twin had on a vertex whose partner the
- source leaves clean is cleared. Vertices with no partner are not touched
- either way.
+ Left chained — the caller commits, so the weights undo with the twin they were
+ crossed onto rather than as a step of their own. A held source makes the twin
+ held with the source's column reflected: each twin vertex with a partner takes
+ the source's weight there, and a vertex with no partner keeps what it had. An
+ unheld source lets the twin go too, so both sides follow the automatic weights.
+ Either way no third joint is touched.
 
- The clears are found by walking the twin's entries against the wanted set
- rather than by clearing everything and writing it back, so a twin already
- carrying the right pins records nothing — which is what lets the caller count
- it as already in place.
+ A twin already carrying the reflection records nothing — which is what lets
+ the caller count it as already in place.
 
  @param across : `The mesh's mirror lookup, built for the document's plane.`
  @return `True when anything moved.`
@@ -1479,54 +1483,27 @@ fn bool AppState.symmetry_plane(&self, float* out)
 fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint source, uint twin)
 {
 	usz count = self.geometry.positions.len;
-	if (count == 0 || source == twin) return false;
+	if (count == 0 || source == twin || !self.doc.find(twin)) return false;
+	self.flush_edges();
+	if (!self.weights_held(source)) return self.release_recorded(twin);
 
-	// Which vertices the source's layer reaches on the twin, so the twin's own
-	// entries can be told apart from the ones about to be written. One flag
-	// per vertex rather than a search per entry.
-	bool[] wanted = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, wanted);
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
 
-	bool moved = false;
+	float[] from = self.column_of(mem, &view, source);
+	defer if (from.len > 0) alloc::free(mem, from);
+	float[] column = self.column_of(mem, &view, twin);
+	defer if (column.len > 0) alloc::free(mem, column);
+	if (from.len != count || column.len != count) return false;
 
-
+	for (usz u = 0; u < count; u++)
 	{
-		sz held           = self.doc.pins.len();
-		VertexPin[] batch = alloc::new_array(mem, VertexPin, held);
-		defer alloc::free(mem, batch);
-		usz asked = 0;
-
-		foreach (pin : self.doc.pins.array_view())
-		{
-			if (pin.dot_id != source || (usz)pin.vertex >= count) continue;
-			sz partner = across.twin_of(self.geometry.positions[pin.vertex]);
-			if (partner < 0) continue;
-			wanted[partner] = true;
-			// The source's own rows become the twin's; a neighbour's row has no
-			// twin this can name, so the copy is nobody's.
-			batch[asked++] = { .vertex = (uint)partner, .dot_id = twin, .share = pin.share, .by = pin.by == source ? twin : 0 };
-		}
-		foreach (pin : self.doc.pins.array_view())
-		{
-			if (pin.dot_id != twin || (usz)pin.vertex >= count || wanted[pin.vertex]) continue;
-			if (across.twin_of(self.geometry.positions[pin.vertex]) < 0) continue;
-			batch[asked++] = { .vertex = pin.vertex, .dot_id = twin, .share = 0.0f };
-		}
-
-		if (asked > 0)
-		{
-			PaintChange[] changes = alloc::new_array(mem, PaintChange, (sz)asked);
-			defer alloc::free(mem, changes);
-			usz changed = self.write_pins(batch[:asked], changes);
-			if (changed > 0)
-			{
-				self.undo_stack.record_pin_stroke(changes[:changed]);
-				moved = true;
-			}
-		}
+		sz partner = across.twin_of(self.geometry.positions[u]);
+		if (partner >= 0) column[u] = from[(usz)partner];
 	}
-
-	return moved;
+	return self.replace_column(&view, twin, column, commit: false) > 0;
 }
 
 // The dot on the other side that already answers to this one, or 0 for none.

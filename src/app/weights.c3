@@ -17,6 +17,11 @@
  `survey_weights` is the same numbers without the colours, for the HUD and for
  `get_weights` over MCP. It exists because a picture cannot be asserted on and
  cannot be read by an agent.
+
+ **What the weights are.** One funnel, `weights`: the automatic bind for every
+ joint nobody has edited, and the stored column of every joint that has been
+ (`Dot.held`). The Unused overlay, beside either view, marks the vertices the
+ two leave holding nothing.
 *>
 module crig;
 
@@ -81,6 +86,24 @@ fn void AppState.toggle_tint(&self, TintMode mode)
 }
 
 <*
+ Whether the mesh is recoloured at all: a weight view is up, or the Unused
+ overlay is on. Every gate that used to ask "is a view on" asks this, since the
+ overlay needs the same debounced recolour the views do.
+*>
+fn bool AppState.tinting(&self) => self.tint_mode != OFF || self.show_unused;
+
+<*
+ The Unused overlay on or off. Recoloured at once, like `show_tint`: the
+ weights did not change, only what is painted from them.
+*>
+fn void AppState.toggle_unused(&self)
+{
+	self.show_unused = !self.show_unused;
+	self.weights_stale = true;
+	self.weights_due = 0.0f;
+}
+
+<*
  Show the view named, rather than toggling it.
 
  What `toggle_tint` does after it has worked out which view the key meant. A
@@ -91,7 +114,7 @@ fn void AppState.toggle_tint(&self, TintMode mode)
 fn void AppState.show_tint(&self, TintMode mode)
 {
 	self.tint_mode = mode;
-	if (mode == OFF) return;
+	if (!self.tinting()) return;
 
 	self.weights_stale = true;
 	self.weights_due = 0.0f;
@@ -173,7 +196,7 @@ fn void AppState.mark_rig_stale(&self)
 *>
 fn void AppState.tick_weights(&self, float dt)
 {
-	if (self.tint_mode == OFF || !self.weights_stale) return;
+	if (!self.tinting() || !self.weights_stale) return;
 
 	self.weights_due -= dt;
 	if (self.weights_due > 0.0f) return;
@@ -248,7 +271,8 @@ fn bool AppState.ticking(&self)
 	return self.brushing
 		|| (self.animating && !self.anim_paused)
 		|| self.notice_length > 0
-		|| (self.tint_mode != OFF && self.weights_stale)
+		|| (self.tinting() && self.weights_stale)
+		|| self.edge_pending
 		|| (self.skin_stale && self.skinned())
 		// A text-to-motion job is polled a frame at a time; see `tick_motion_job`.
 		|| self.motion_job.running;
@@ -297,9 +321,76 @@ fn float[] AppState.base_bind_for(&self, RigView* view)
 }
 
 <*
+ The rig bound with these joints' grows and soft edges on it and nobody else's:
+ what Grow, Shrink and Soft edge write a held joint's column from.
+
+ 	`float[] shaped = app.tool_bind_for(&view, { knee, twin });`
+
+ A bind of its own because the live one (`base_bind_for`) reads no grow at all —
+ a grown joint changes who owns a vertex, and with it every neighbour's window,
+ so a grow in the live bind would move weights the user never touched. Here the
+ change is read off only for the joints asked about. With none of them grown or
+ softened it *is* the live bind, so a joint shrunk back to nothing gets exactly
+ the column it would follow unheld.
+
+ Cached on its own key, one bind at a time — a Grow drag asks for the same
+ joint's again and again. **Borrowed**, on `base_bind_for`'s terms, and valid
+ until the next tool bind or the next rig change.
+
+ @param dots : `The joints whose grow and soft edge to bind with; ids not in the view are skipped.`
+ @return `Vertices x joints in the view's order, rows summing to one; empty with nothing to bind.`
+*>
+fn float[] AppState.tool_bind_for(&self, RigView* view, uint[] dots)
+{
+	usz bones = view.len();
+	usz wanted = self.geometry.positions.len * bones;
+	if (wanted == 0) return {};
+
+	float[] grows = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, grows);
+	float[] bands = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, bands);
+	bool shaped = false;
+	ulong key = self.bind_key(view);
+	foreach (id : dots)
+	{
+		sz j = view.joint_of(id);
+		if (j < 0) continue;
+		grows[(usz)j] = j < view.grows.len ? view.grows[(usz)j] : 0.0f;
+		bands[(usz)j] = j < view.bands.len ? view.bands[(usz)j] : 0.0f;
+		if (grows[(usz)j] != 0.0f || bands[(usz)j] > 0.0f) shaped = true;
+		mix_key(&key, (ulong)id);
+		mix_key(&key, (ulong)bitcast(grows[(usz)j], uint));
+		mix_key(&key, (ulong)bitcast(bands[(usz)j], uint));
+	}
+	if (!shaped) return self.base_bind_for(view);
+	if (self.tool_bind.len == wanted && self.tool_key == key) return self.tool_bind;
+
+	self.drop_tool_bind();
+	int[] riders = self.shells.count > 0 ? alloc::new_array(mem, int, (sz)self.shells.count) : (int[]){};
+	defer if (riders.len > 0) alloc::free(mem, riders);
+	float[] distances = alloc::new_array(mem, float, (sz)wanted);
+	defer alloc::free(mem, distances);
+	self.tool_bind = self.bind_binder(mem, view, grows, bands, riders, {}, distances);
+	normalise_rows(self.tool_bind, bones);
+	self.tool_key = key;
+	if (self.tool_bind.len != wanted) return {};
+	return self.tool_bind;
+}
+
+// Releases the cached tool bind. Safe on one never made.
+fn void AppState.drop_tool_bind(&self)
+{
+	if (self.tool_bind.len > 0) alloc::free(mem, self.tool_bind);
+	self.tool_bind = {};
+}
+
+<*
  A fingerprint of everything the base bind is made from: the joints, their
- tree, their reaches, grows and soft edges, which shells ride which joint, the model's sharpness and
- knuckle blend, whether the file's weights are worn, and the mesh itself.
+ tree, their reaches, which shells ride which joint, the model's sharpness and
+ knuckle blend, and the mesh itself. Not
+ the grows or soft edges, which the live bind does not read — see
+ `tool_bind_for`.
 
  What makes the cache trustworthy rather than merely fast. `mark_rig_stale`
  drops it on every recorded edit, but a cache that is only as fresh as the last
@@ -313,7 +404,6 @@ fn ulong AppState.bind_key(&self, RigView* view)
 	ulong hash = 0xcbf2_9ce4_8422_2325;
 	mix_key(&hash, (ulong)(uptr)self.geometry.positions.ptr);
 	mix_key(&hash, (ulong)self.geometry.positions.len);
-	mix_key(&hash, (ulong)self.doc.skin_from_file);
 	mix_key(&hash, (ulong)bitcast(self.doc.sharpness, uint));
 	mix_key(&hash, (ulong)bitcast(self.doc.knuckle_blend, uint));
 	foreach (b, joint : view.skeleton.joints)
@@ -325,8 +415,6 @@ fn ulong AppState.bind_key(&self, RigView* view)
 		mix_key(&hash, (ulong)view.dot_ids[b]);
 	}
 	foreach (reach : view.reaches) mix_key(&hash, (ulong)bitcast(reach, uint));
-	foreach (grow : view.grows) mix_key(&hash, (ulong)bitcast(grow, uint));
-	foreach (band : view.bands) mix_key(&hash, (ulong)bitcast(band, uint));
 	foreach (rides : view.attachments) mix_key(&hash, (ulong)(uint)rides);
 	return hash;
 }
@@ -348,8 +436,8 @@ fn void mix_key(ulong* hash, ulong value) @private
 *>
 enum WeightLayer
 {
-	AUTOMATIC, // the binder's answer with the model's own adjustments on it — grows, soft edges: what Reset goes back to
-	EDITED,    // that, with every hand edit stated over it: what the views draw, the skin rides and the file holds
+	AUTOMATIC, // every joint as the binder places it now: what an unheld joint follows and Reset goes back to
+	EDITED,    // held joints' own columns as stored, the rest automatic: what the views draw, the skin rides and the file holds
 }
 
 <*
@@ -361,10 +449,15 @@ enum WeightLayer
  **The funnel.** The views, the posed skin, the exporters, the survey, the
  brush, the Area tool, the stray fixer and MCP all read the weights through
  here, so none of them can disagree with what another shows. A copy of the
- cached base (`base_bind_for`) — the automatic weights, grows and soft edges
- included — with, for `EDITED`, the hand edits stated over it (`pin_over`).
+ cached live bind (`base_bind_for`), and for `EDITED` every held joint's column
+ replaced by the one it stores (`Dot.held`).
 
- Rows are unnormalised; every consumer divides by the row's own sum.
+ **Column by column, never row by row.** A held column is written as stored,
+ whatever the automatic columns beside it hold, and they are not rescaled around
+ it — so editing one joint moves no other joint's weight, and a vertex a held
+ joint was taken off with nothing automatic on it is left holding nothing
+ (unused; see `UNUSED_TOTAL`). Rows therefore need not sum to one; every
+ consumer divides by the row's own total.
 
  The caller owns the returned array; the cache stays behind.
 
@@ -372,17 +465,25 @@ enum WeightLayer
 *>
 fn float[] AppState.weights(&self, Allocator allocator, RigView* view, WeightLayer layer = EDITED)
 {
-	float[] base = self.base_bind_for(view);
-	if (base.len == 0) return {};
+	usz bones = view.len();
+	usz wanted = self.geometry.positions.len * bones;
+	if (wanted == 0) return {};
 
-	float[] out = alloc::new_array(allocator, float, (sz)base.len);
-	out[..] = base[..];
+	// A rig whose every joint is held shows nothing of the binder's, so the bind
+	// is not worth making.
+	bool all_held = layer == EDITED && view.all_held();
+	float[] base = all_held ? (float[]){} : self.base_bind_for(view);
+	if (!all_held && base.len == 0) return {};
 
-	// Last, over the corrections, which is the pin layer's whole contract — see
-	// `pin_over`. No sharpening above it: the base already carries γ, so this
-	// copy inherits it, and raising a stated share to a power would be the binder
-	// arguing with the user.
-	if (layer == EDITED) pin_over(out, view.len(), view.pins);
+	float[] out = alloc::new_array(allocator, float, (sz)wanted);
+	if (!all_held) out[..] = base[..];
+	if (layer == AUTOMATIC || view.held.len == 0) return out;
+
+	for (usz v = 0; v < wanted; v += bones)
+	{
+		for (usz j = 0; j < bones; j++) if (view.held[j]) out[v + j] = 0.0f;
+	}
+	foreach (pin : view.pins) out[(usz)pin.vertex * bones + pin.joint] = pin.share;
 	return out;
 }
 
@@ -422,65 +523,6 @@ fn float[] AppState.bind_field(&self, RigView* view, int[]* riders)
 	return self.field_nearest;
 }
 
-<*
- Turn the multipliers an older session carried into stated rows, once, as it
- loads — the one hand-edit layer every tool now writes.
-
- Each vertex a multiplier touched is restated as the row it produced: the base
- with the old multipliers on it, cut to the strongest few. A vertex that also
- carried a pin showed the pin, so it keeps the pin and the multiplier goes. Not
- recorded — the load clears the history — and the document's list is emptied
- so nothing writes multipliers again.
-
- @return `How many vertices were restated.`
-*>
-fn usz AppState.bake_legacy_paint(&self)
-{
-	if (self.doc.paint.len() == 0) return 0;
-	defer self.doc.paint.clear();
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return 0;
-	RigView view = opened;
-	defer view.free(mem);
-	usz bones = view.len();
-	usz count = self.geometry.positions.len;
-	float[] base = self.base_bind_for(&view);
-	if (bones == 0 || base.len < count * bones) return 0;
-
-	PaintColumn[] columns = self.paint_columns(mem, view.dot_ids);
-	defer if (columns.len > 0) alloc::free(mem, columns.ptr);
-	bool[] pinned = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, pinned);
-	foreach (pin : self.doc.pins.array_view()) if ((usz)pin.vertex < count) pinned[pin.vertex] = true;
-
-	float[] row = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, row);
-	uint[SKIN_INFLUENCES] dots;
-	float[SKIN_INFLUENCES] shares;
-	PinDraft draft;
-	draft.init(count);
-	defer draft.free();
-	foreach (column : columns)
-	{
-		uint v = column.vertex;
-		if (pinned[v] || draft.claimed(v)) continue;
-		row[..] = base[(usz)v * bones:bones];
-		foreach (other : columns) if (other.vertex == v) row[other.joint] *= other.factor;
-		usz kept = top_row(row, view.dot_ids, -1, dots[..], shares[..]);
-		draft.state(v, dots[:kept], shares[:kept], view.dot_ids[column.joint]);
-	}
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, draft.pins.len());
-	defer alloc::free(mem, batch);
-	foreach (i, pin : draft.pins.array_view()) batch[i] = pin;
-	PaintChange[] changes = alloc::new_array(mem, PaintChange, (sz)batch.len);
-	defer alloc::free(mem, changes);
-	self.write_pins(batch, changes);
-	self.mark_paint_stale();
-	usz restated = 0;
-	foreach (claimed : draft.first) if (claimed >= 0) restated++;
-	return restated;
-}
-
 // Releases the cached distances. Safe on ones that were never filled.
 fn void AppState.drop_field(&self)
 {
@@ -499,6 +541,7 @@ fn void AppState.drop_base_bind(&self)
 {
 	if (self.base_bind.len > 0) alloc::free(mem, self.base_bind);
 	self.base_bind = {};
+	self.drop_tool_bind();
 	self.drop_field();
 }
 
@@ -551,12 +594,38 @@ fn void AppState.rebind_tints(&self)
 			}
 			self.tints = falloff_tints(mem, painted, self.geometry.positions.len, view.len(), (usz)found,
 				SHOWN_FLOOR, &self.falloff_held);
-		default:
+		case TERRITORY:
 			self.tints = vertex_tints(mem, painted, self.geometry.positions.len, view.len());
+		case OFF:
+			// The Unused overlay with no view under it: the plain mesh colour, so
+			// the magenta is the only thing painted and says only one thing.
+			self.tints = alloc::new_array(mem, uint, (sz)self.geometry.positions.len);
+			self.tints[..] = rgb(MESH_COLOR.r, MESH_COLOR.g, MESH_COLOR.b);
 	}
 	self.overlay_area_tints(&view, painted);
 	self.overlay_limb_tints(&view, painted);
+	self.overlay_unused_tints(view.len(), painted);
 	self.overlay_stray_tints();
+}
+
+<*
+ Count the vertices no joint holds and, while the overlay is on, mark them in
+ `UNUSED_MAGENTA` over whatever the view painted. Counted either way, so the
+ card and `get_weights` can say how many there are without the overlay up.
+*>
+fn void AppState.overlay_unused_tints(&self, usz bones, float[] painted)
+{
+	usz count = self.geometry.positions.len;
+	self.unused_count = 0;
+	if (bones == 0 || painted.len != count * bones) return;
+	bool marking = self.show_unused && self.tints.len == count;
+	uint magenta = rgb(UNUSED_MAGENTA.x, UNUSED_MAGENTA.y, UNUSED_MAGENTA.z);
+	for (usz v = 0; v < count; v++)
+	{
+		if (!unused_row(painted[v * bones:bones])) continue;
+		self.unused_count++;
+		if (marking) self.tints[v] = magenta;
+	}
 }
 
 <*
@@ -599,6 +668,7 @@ struct WeightSurvey
 {
 	usz vertices;
 	usz unclaimed;
+	usz unused;  // vertices no joint holds — see UNUSED_TOTAL
 	JointStake[] stakes;
 	BlendShare[] shared;
 }
@@ -657,6 +727,7 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 	int[] riders;
 	float[] nearest = self.bind_field(&view, &riders);
 
+	usz unused = 0;
 	JointStake[] stakes = alloc::new_array(allocator, JointStake, (sz)bones);
 	for (usz j = 0; j < bones; j++)
 	{
@@ -683,6 +754,7 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 		// normalisation `falloff_tints` paints and `sparsify_weights` writes.
 		float sum;
 		sz owner = row_owner(dense[base:bones], &sum);
+		if (sum <= UNUSED_TOTAL) unused++;
 		if (sum <= 0.0f || owner < 0) continue;
 		usz best = (usz)owner;
 		stakes[best].owns++;
@@ -754,6 +826,7 @@ fn WeightSurvey? AppState.survey_weights(&self, Allocator allocator, uint dot = 
 	return {
 		.vertices = vertices,
 		.unclaimed = unclaimed,
+		.unused = unused,
 		.stakes = stakes,
 		.shared = shared,
 	};
@@ -794,6 +867,10 @@ const float STRAY_GAP = 0.1f;
 // How far a pose has to be able to pull an island off the mesh around it, as a
 // fraction of the model's height, for it to be a stray — see `pull_apart`.
 const float STRAY_PULL = 0.05f;
+
+// The colour the Unused overlay marks a vertex no joint holds in — Blender's
+// "missing" colour, which no territory hue, the falloff ramp nor stray red is.
+const Vec3 UNUSED_MAGENTA = { 1.0, 0.0, 1.0 };
 
 // The colour a stray is marked in while the Weights card lists it.
 const Vec3 STRAY_RED = { 0.95, 0.1, 0.2 };
@@ -1008,23 +1085,24 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 }
 
 <*
- Put strays back where they belong, as one undo step.
+ Take each stray's joint off the stray, as one undo step.
 
- A stray is nearly always an edit's leftover — a joint taken off a row and the
- rest handed to a sliver of another — so its vertices go back to the automatic
- weights: their pins go, and they follow the rig again. Where the automatic row
- holds the stray's joint itself, the binder made the stray and that would put it
- back; those take the rows of the surface around the strays instead, averaged
- ring by ring inward, stated as pins and the stray's joint's work
- (`VertexPin.by`).
+ A stray is an island of one joint's weight cut off from the rest of it, so
+ the fix is that joint's alone: its weight on the island's vertices goes to 0
+ and every other joint keeps what it holds there. The joint is held from then
+ on (`replace_column`). A vertex nobody else held is left unused rather than
+ handed to somebody — the Unused view shows it, and the brush or the lasso
+ gives it to the joint it belongs to.
 
- @return `How many vertices it restated; 0 when nothing changed.`
+ @param emptied : `Filled with how many vertices were left holding nothing. Null to not ask.`
+ @return `How many vertices changed; 0 when nothing did.`
 *>
-fn usz AppState.fix_strays(&self, StrayIsland[] strays)
+fn usz AppState.fix_strays(&self, StrayIsland[] strays, usz* emptied = null)
 {
+	if (emptied) *emptied = 0;
 	usz count = self.geometry.positions.len;
-	rig::MeshAdjacency* around = self.adjacency_for();
-	if (strays.len == 0 || count == 0 || around.vertices() != count || !around.usable()) return 0;
+	if (strays.len == 0 || count == 0) return 0;
+	self.flush_edges();
 
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return 0;
@@ -1035,116 +1113,36 @@ fn usz AppState.fix_strays(&self, StrayIsland[] strays)
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (bones == 0 || painted.len < count * bones) return 0;
 
-	float[] automatic = self.weights(mem, &view, AUTOMATIC);
-	defer if (automatic.len > 0) alloc::free(mem, automatic);
-	if (automatic.len < count * bones) return 0;
-
-	// Whose stray each weld is, 0 for none: the first island to name it. And
-	// whether the automatic row holds one of the joints that name it.
-	usz classes = around.classes();
-	uint[] owner = alloc::new_array(mem, uint, (sz)classes);
-	defer alloc::free(mem, owner);
-	bool[] binder_made = alloc::new_array(mem, bool, (sz)classes);
-	defer alloc::free(mem, binder_made);
-	foreach (stray : strays)
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	usz changed = 0;
+	foreach (usz i, stray : strays)
 	{
+		// One column per joint, however many of its islands were found: the first
+		// stray naming a joint writes all of them.
+		bool seen = false;
+		for (usz k = 0; k < i; k++) if (strays[k].dot == stray.dot) seen = true;
 		sz joint = view.joint_of(stray.dot);
-		foreach (v : stray.vertices)
-		{
-			if ((usz)v >= count) continue;
-			uint c = around.class_of[v];
-			if (owner[c] == 0) owner[c] = stray.dot;
-			usz at = (usz)around.first[c] * bones;
-			float sum = 0.0f;
-			for (usz b = 0; b < bones; b++) sum += automatic[at + b];
-			if (joint >= 0 && sum > 0.0f && automatic[at + (usz)joint] >= STRAY_SHARE * sum) binder_made[c] = true;
-		}
-	}
+		if (seen || joint < 0) continue;
 
-	// Every weld's row as shares: as shown off the strays, automatic on the ones
-	// that go back to it, and the rest filled in below.
-	float[] fill = alloc::new_array(mem, float, (sz)(classes * bones));
-	defer alloc::free(mem, fill);
-	bool[] known = alloc::new_array(mem, bool, (sz)classes);
-	defer alloc::free(mem, known);
-	bool[] back = alloc::new_array(mem, bool, (sz)classes);
-	defer alloc::free(mem, back);
-	List{uint} ring;
-	ring.init(mem);
-	defer ring.free();
-	for (usz c = 0; c < classes; c++)
-	{
-		usz at = (usz)around.first[c] * bones;
-		float[] from = owner[c] != 0 ? automatic : painted;
-		float sum = 0.0f;
-		for (usz b = 0; b < bones; b++) sum += from[at + b];
-		if (sum > 0.0f) for (usz b = 0; b < bones; b++) fill[c * bones + b] = from[at + b] / sum;
-		if (owner[c] != 0)
+		for (usz v = 0; v < count; v++) column[v] = painted[v * bones + (usz)joint];
+		foreach (other : strays[i..])
 		{
-			back[c] = sum > 0.0f && !binder_made[c];
-			if (!back[c])
+			if (other.dot != stray.dot) continue;
+			foreach (v : other.vertices)
 			{
-				fill[c * bones:bones] = 0.0f;
-				ring.push((uint)c);
-				continue;
+				if ((usz)v >= count || column[v] == 0.0f) continue;
+				column[v] = 0.0f;
+				float total = 0.0f;
+				for (usz b = 0; b < bones; b++) if ((sz)b != joint) total += painted[(usz)v * bones + b];
+				if (emptied && total <= UNUSED_TOTAL) (*emptied)++;
 			}
 		}
-		known[c] = sum > 0.0f;
+		changed += self.replace_column(&view, stray.dot, column, commit: false);
 	}
-
-	// A ring is the strays touching something known; each reads only what was
-	// known before it, so the order inside a ring does not matter.
-	List{uint} filled;
-	filled.init(mem);
-	defer filled.free();
-	while (ring.len() > 0)
-	{
-		filled.clear();
-		foreach (c : ring)
-		{
-			float[] row = fill[(usz)c * bones:bones];
-			usz rows = 0;
-			foreach (n : around.around(c))
-			{
-				if (!known[n]) continue;
-				for (usz b = 0; b < bones; b++) row[b] += fill[(usz)n * bones + b];
-				rows++;
-			}
-			if (rows == 0) continue;
-			foreach (&weight : row) *weight /= (float)rows;
-			filled.push(c);
-		}
-		if (filled.len() == 0) break;
-		foreach (c : filled) known[c] = true;
-		sz kept = 0;
-		foreach (c : ring) if (!known[c]) ring[kept++] = c;
-		while (ring.len() > kept) ring.pop()!!;
-	}
-
-	PinDraft draft;
-	defer draft.free();
-	draft.init(count);
-	uint[SKIN_INFLUENCES] dots;
-	float[SKIN_INFLUENCES] shares;
-	usz stated = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		uint c = around.class_of[v];
-		if (owner[c] == 0 || !known[c]) continue;
-		if (back[c])
-		{
-			draft.state((uint)v, {}, {});
-			stated++;
-			continue;
-		}
-		usz kept = top_row(fill[(usz)c * bones:bones], view.dot_ids, -1, dots[..], shares[..]);
-		if (kept == 0) continue;
-		draft.state((uint)v, dots[:kept], shares[:kept], owner[c]);
-		stated++;
-	}
-	if (stated == 0 || self.lay_draft(&draft) == 0) return 0;
-	if (self.skinned()) self.refresh_pose_display();
-	return stated;
+	if (changed == 0) return 0;
+	self.undo_stack.commit();
+	return changed;
 }
 
 <*
@@ -1160,7 +1158,7 @@ fn usz AppState.find_strays(&self)
 	self.strays_checked = true;
 	self.strays_revision = self.undo_stack.revision;
 	self.strays_generation = next_generation();
-	if (self.tint_mode != OFF)
+	if (self.tinting())
 	{
 		self.weights_stale = true;
 		self.weights_due = 0.0f;
@@ -1199,19 +1197,21 @@ fn usz AppState.fix_found_strays(&self)
 		self.@notice("find strays first");
 		return 0;
 	}
-	usz fixed = self.fix_strays(self.strays);
+	usz emptied = 0;
+	usz fixed = self.fix_strays(self.strays, &emptied);
 	usz left = self.find_strays();
+	String unused = emptied > 0 ? string::tformat(" · %d left unused, View › Unused weights shows them", emptied) : "";
 	if (fixed == 0)
 	{
-		self.@notice("nothing to change — the strays are the automatic weights'");
+		self.@notice("nothing to change");
 	}
 	else if (left == 0)
 	{
-		self.@notice("fixed %d stray vertices", fixed);
+		self.@notice("fixed %d stray vertices%s", fixed, unused);
 	}
 	else
 	{
-		self.@notice("fixed %d stray vertices · %d %s left", fixed, left, left == 1 ? "stray" : "strays");
+		self.@notice("fixed %d stray vertices · %d %s left%s", fixed, left, left == 1 ? "stray" : "strays", unused);
 	}
 	return fixed;
 }

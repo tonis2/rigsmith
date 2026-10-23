@@ -86,9 +86,10 @@ fn void guide_words(AppState* app, GuideStatus g, GuideStep step, GuideText* out
 		case SKIN:
 			if (!g.has_mesh || g.joints == 0) { *detail = "Fit a skeleton first"; break; }
 			if (!g.skin_known) { *detail = "Checking the skin…"; break; }
-			*detail = g.skin_from_file
-				? "The model's own weights · click to show the weights"
-				: "Weights ready · click to show the weights";
+			*detail = g.skin_edited > 0
+				? format_into(out.detail[..], "%d %s edited weights · click to show the weights",
+					g.skin_edited, g.skin_edited == 1 ? "joint keeps" : "joints keep")
+				: "Automatic weights · click to show the weights";
 		case ANIMATIONS:
 			if (g.clips > 0) *note = format_into(out.note[..], "(%d)", g.clips);
 			if (g.clips == 0) { *detail = "No animations yet · click to create or add one"; break; }
@@ -181,7 +182,7 @@ fn bool GuideBar.differs(&self, AppState* app, GuideStatus g)
 {
 	GuideStatus s = self.shown;
 	return s.has_mesh != g.has_mesh || s.joints != g.joints || s.unnamed != g.unnamed
-		|| s.skin_known != g.skin_known || s.skin_from_file != g.skin_from_file
+		|| s.skin_known != g.skin_known || s.skin_edited != g.skin_edited
 		|| s.first_unnamed != g.first_unnamed || s.clips != g.clips || s.clips_found != g.clips_found
 		|| s.unsaved != g.unsaved || s.saved != g.saved
 		|| self.source != app.source_path.ptr || self.source_len != app.source_path.len

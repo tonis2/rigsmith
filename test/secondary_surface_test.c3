@@ -92,6 +92,9 @@ fn void Figure.open(&self)
 	// Every vertex handed to its dot outright, so the regions are the boxes:
 	// the body's eight to the body, the tail's front four to the root and its
 	// back four to the tip.
+	self.app.doc.set_held(self.body, true);
+	self.app.doc.set_held(self.tail_root, true);
+	self.app.doc.set_held(self.tail_tip, true);
 	for (uint vertex = 0; vertex < 8; vertex++) self.app.doc.set_pin(vertex, self.body, 1.0f);
 	for (uint vertex = 8; vertex < 16; vertex++)
 	{

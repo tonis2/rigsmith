@@ -5,12 +5,11 @@
  layer above, where a region of the mesh becomes one undoable gesture and the
  views are told to catch up.
 
- **The one hand-edit layer.** The lasso, the brush, the Area tool's Apply, the
- stray fixer and MCP all write `VertexPin`s, which state a share outright — so
- they can give a joint a vertex the automatic weights gave it nothing on, which
- is precisely the defect a region tool is reached for. The price is stated in
- `VertexPin`: a pin is absolute and does not move when the dot does; the edit
- that moves with the rig is a grow (`Dot.grow`).
+ **The one hand-edit layer.** The lasso, the brush, the Area tool's Apply, Grow,
+ the stray fixer and MCP all write one joint's column (`replace_column`), which
+ holds the joint (`Dot.held`): from then on its weights are what was written and
+ nothing the rig does around it changes them. No edit touches another joint's
+ column — see the section on one joint's column below.
 
  **Everything here is bulk.** `set_pin` and `pin_of` are scans of the layer, so
  a twenty-thousand-vertex lasso through them is quadratic in the region. The
@@ -170,11 +169,7 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 		// puts one back on the same vertex leaves one live entry rather than two.
 		bool live = at >= 0 && !buried[at];
 		float before = live ? self.doc.pins[at].share : 0.0f;
-		uint by_before = live ? self.doc.pins[at].by : 0;
-		uint by_after = want == 0.0f ? 0 : entry.by;
-		// The same share written by a different edit is a change of author, which
-		// Reset reads, so it is recorded like any other.
-		if (before == want && by_before == by_after) continue;
+		if (before == want) continue;
 
 		if (want == 0.0f)
 		{
@@ -190,12 +185,11 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 				removals--;
 			}
 			self.doc.pins.get_ref(at).share = want;
-			self.doc.pins.get_ref(at).by = by_after;
 		}
 		else
 		{
 			sz slot = self.doc.pins.len();
-			self.doc.pins.push({ .vertex = entry.vertex, .dot_id = entry.dot_id, .share = want, .by = by_after });
+			self.doc.pins.push({ .vertex = entry.vertex, .dot_id = entry.dot_id, .share = want });
 			index.next[slot] = index.head[entry.vertex];
 			index.head[entry.vertex] = (int)slot;
 		}
@@ -207,8 +201,6 @@ fn usz AppState.write_pins(&self, VertexPin[] batch, PaintChange[] changes)
 				.dot_id = entry.dot_id,
 				.before = before,
 				.after = want,
-				.by_before = by_before,
-				.by_after = by_after,
 			};
 		}
 		changed++;
@@ -276,104 +268,7 @@ fn usz AppState.pin_dabs(&self, VertexPin[] batch, bool commit = true)
 }
 
 <*
- Whole rows to state outright, gathered before any of it is written.
-
- 	`PinDraft draft; draft.init(count); defer draft.free();`
- 	`draft.state(v, dots, shares); app.lay_draft(&draft);`
-
- A claimed vertex says exactly what its row lists and nothing else: every other
- pin already on it is cleared when the draft is laid, which is the `exclusive`
- rule for a row rather than for one dot. An empty row claims the vertex and
- states nothing, handing it back to the automatic weights.
-*>
-struct PinDraft
-{
-	int[] first;  // per vertex: where its pins start in `pins`, -1 when untouched
-	char[] held;  // per vertex: how many pins its row states
-	PinList pins;
-}
-
-fn void PinDraft.init(&self, usz count)
-{
-	self.first = alloc::new_array(mem, int, (sz)count);
-	self.first[..] = -1;
-	self.held = alloc::new_array(mem, char, (sz)count);
-	self.pins.init(mem);
-}
-
-fn void PinDraft.free(&self)
-{
-	if (self.first.len > 0) alloc::free(mem, self.first);
-	if (self.held.len > 0) alloc::free(mem, self.held);
-	self.pins.free();
-	*self = {};
-}
-
-fn bool PinDraft.claimed(&self, uint v) => (usz)v < self.first.len && self.first[v] >= 0;
-
-<*
- State one vertex's row. A vertex already claimed keeps its first row.
-
- @param dots : `The dots the row names.`
- @param shares : `One per dot. A share of 0 or less is left out.`
- @param by : `Whose edit the row is — see VertexPin.by. 0 for nobody's.`
-*>
-fn void PinDraft.state(&self, uint v, uint[] dots, float[] shares, uint by = 0)
-{
-	if ((usz)v >= self.first.len || self.claimed(v)) return;
-	self.first[v] = (int)self.pins.len();
-	foreach (i, dot : dots)
-	{
-		if (shares[i] <= 0.0f) continue;
-		self.pins.push({ .vertex = v, .dot_id = dot, .share = math::min(shares[i], 1.0f), .by = by });
-		self.held[v]++;
-	}
-}
-
-<*
- Write a draft onto the pin layer: its rows, and a clear for every other pin on
- a claimed vertex.
-
- @param commit : `False leaves the undo group open, for a stroke that closes it on release.`
- @return `How many entries changed.`
-*>
-fn usz AppState.lay_draft(&self, PinDraft* draft, bool commit = true)
-{
-	usz rivals = 0;
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if (draft.claimed(pin.vertex) && !draft.restates(pin)) rivals++;
-	}
-
-	sz stated = draft.pins.len();
-	if (stated == 0 && rivals == 0) return 0;
-
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, stated + (sz)rivals);
-	defer alloc::free(mem, batch);
-
-	usz at = 0;
-	foreach (pin : draft.pins.array_view()) batch[at++] = pin;
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if (!draft.claimed(pin.vertex) || draft.restates(pin)) continue;
-		batch[at++] = { .vertex = pin.vertex, .dot_id = pin.dot_id, .share = 0.0f };
-	}
-	return self.pin_dabs(batch[:at], commit);
-}
-
-// Whether the draft's row for this pin's vertex names the pin's dot.
-fn bool PinDraft.restates(&self, VertexPin pin)
-{
-	usz from = (usz)self.first[pin.vertex];
-	for (usz i = from; i < from + (usz)self.held[pin.vertex]; i++)
-	{
-		if (self.pins[(sz)i].dot_id == pin.dot_id) return true;
-	}
-	return false;
-}
-
-<*
- The strongest few shares of a row, renormalised to one: what a stated row keeps.
+ The strongest few shares of a row, renormalised to one.
 
  `SKIN_INFLUENCES` of them, the width the file keeps anyway. `keep` goes in first
  whatever its size, so a joint being raised from almost nothing is not dropped
@@ -421,131 +316,244 @@ fn usz top_row(float[] row, uint[] dot_ids, sz keep, uint[] out_dots, float[] ou
 	return held;
 }
 
-<*
- The author every pin on a row agrees on (see `VertexPin.by`), or 0 when they
- name none or disagree.
-*>
-fn uint row_by(VertexPin[] row)
+// ---------------------------------------------------------------------------
+// One joint's column
+//
+// Every hand edit is an edit to one joint's column and to nothing else. The
+// first one holds the joint (`Dot.held`), starting from the column it had on
+// screen, so nothing jumps; from then on its weights are what was written, and
+// no edit to another joint, no dot moved and no rebind changes them. Nothing
+// here rescales a neighbour to make room, and nothing hands a vertex a joint was
+// taken off to anybody — a vertex left holding nothing is unused, and the Unused
+// overlay shows it.
+
+// Whether a joint's weights are its own — see `Dot.held`.
+fn bool AppState.weights_held(&self, uint dot_id)
 {
-	if (row.len == 0) return 0;
-	uint by = row[0].by;
-	foreach (pin : row) if (pin.by != by) return 0;
-	return by;
+	Dot* dot = self.doc.find(dot_id);
+	return dot && dot.held;
+}
+
+// Whether any joint's weights are its own.
+fn bool AppState.weights_edited(&self)
+{
+	foreach (dot : self.doc.dots.array_view()) if (dot.held) return true;
+	return false;
 }
 
 <*
- Whose edit a vertex's row is: the author its pins name, or, for a row with no
- author — written before version 27, or by a whole-model op — the dot holding
- the largest share of it, which is whose part it most likely was. 0 for an
- empty row.
+ What the document stores for a dot, one weight per vertex, held or not: what
+ a write to its column is measured against.
+
+ The caller owns the result, which is exactly as long as the mesh.
 *>
-fn uint row_author(VertexPin[] row)
+fn float[] AppState.stored_column(&self, Allocator allocator, uint dot_id)
 {
-	uint by = row_by(row);
-	if (by != 0 || row.len == 0) return by;
-	VertexPin strongest = row[0];
-	foreach (pin : row) if (pin.share > strongest.share) strongest = pin;
-	return strongest.dot_id;
+	usz count = self.geometry.positions.len;
+	float[] column = alloc::new_array(allocator, float, (sz)count);
+	foreach (pin : self.doc.pins.array_view())
+	{
+		if (pin.dot_id == dot_id && (usz)pin.vertex < count) column[pin.vertex] = pin.share;
+	}
+	return column;
 }
 
 <*
- Hand a set of vertices to a dot, and take them off every other dot.
+ One joint's weight on every vertex, as the views show it: what it stores when
+ held, the binder's column when not.
 
- 	`usz did = app.pin_vertices(caught, app.selected, 1.0f);`
+ 	`float[] knee_weights = app.column_of(mem, &view, knee);`
 
- The verb the lasso and `pin_weights` both speak, and the one place the batch a
- region implies is assembled. What `exclusive` adds is the second half of what
- "these belong to this dot" means: without it, pinning a region that was already
- pinned elsewhere would leave two dots each stating a share of it, and
- `pin_over` would divide the vertex between them rather than hand it over.
+ Read from the document as it is now rather than from `view.pins`, so a caller
+ that has just held the joint reads the column it now has.
 
- **A share of 0 clears**, and with `exclusive` it clears the region outright —
- every dot's pins on those vertices, not only the named one's. That is the
- ctrl-lasso, and it is why the eraser needs no separate entry point. A dot id of
- 0 says the same thing without naming any dot at all; with any other share it is
- refused, since a pin has to name what it hands the vertex to.
-
- One `pin_dabs`, so the whole region is one Ctrl+Z.
-
- @param vertices : `Which vertices. Repeats are one pin, not two.`
- @param dot_id : `The dot they should ride. 0 is only meaningful with a share of 0, where it means every dot.`
- @param share : `0 to 1. 0 removes.`
- @param exclusive : `Also clear every other dot's pins on those vertices.`
- @return `How many entries changed.`
+ The caller owns the result; empty when the dot is not in the view or there is
+ no bind.
 *>
-fn usz AppState.pin_vertices(&self, uint[] vertices, uint dot_id, float share, bool exclusive = true, bool commit = true)
+fn float[] AppState.column_of(&self, Allocator allocator, RigView* view, uint dot_id)
 {
-	if (vertices.len == 0) return 0;
-	if (dot_id == 0 && share != 0.0f) return 0;
+	usz count = self.geometry.positions.len;
+	usz bones = view.len();
+	sz joint = view.joint_of(dot_id);
+	if (joint < 0 || count == 0) return {};
+	if (self.weights_held(dot_id)) return self.stored_column(allocator, dot_id);
 
-	usz span = 0;
-	foreach (v : vertices)
+	float[] base = self.base_bind_for(view);
+	if (base.len < count * bones) return {};
+	float[] column = alloc::new_array(allocator, float, (sz)count);
+	for (usz v = 0; v < count; v++) column[v] = base[v * bones + (usz)joint];
+	return column;
+}
+
+<*
+ Write one joint's whole column, holding the joint if it was not: the one
+ primitive every hand edit ends in.
+
+ 	`usz moved = app.replace_column(&view, knee, column);`
+
+ Diffed against what is on screen, so a column that says what the joint
+ already shows writes nothing and holds nothing — an Apply repeated, a lasso
+ over vertices already full. Otherwise one stroke on the ledger, after the
+ hold, so Ctrl+Z puts the joint back exactly as it was, automatic included.
+
+ No other column is read or written: a vertex taken off this joint keeps
+ whatever the others hold of it, and holds nothing if they hold nothing.
+
+ The view's `held` and `pins` are stale afterwards; reopen the rig to read the
+ weights again.
+
+ @param column : `One weight per vertex, 0 to 1; clamped.`
+ @param commit : `Close the undo group — false for a stroke still in flight, or a twin to follow.`
+ @return `How many vertices changed; 0 when the column was already the joint's.`
+*>
+fn usz AppState.replace_column(&self, RigView* view, uint dot_id, float[] column, bool commit = true)
+{
+	usz count = self.geometry.positions.len;
+	if (column.len != count || !self.doc.find(dot_id)) return 0;
+	// An edge drag still waiting on its debounce lands first, so it cannot land
+	// later over this.
+	self.flush_edges();
+	float[] shown = self.column_of(mem, view, dot_id);
+	defer if (shown.len > 0) alloc::free(mem, shown);
+	if (shown.len != count) return 0;
+
+	usz moved = 0;
+	foreach (v, &weight : column)
 	{
-		if ((usz)v + 1 > span) span = (usz)v + 1;
+		*weight = math::clamp(*weight, 0.0f, 1.0f);
+		if (*weight != shown[v]) moved++;
 	}
-	if (span == 0) return 0;
+	if (moved == 0) return 0;
+	self.store_column(dot_id, column, commit);
+	return moved;
+}
 
-	// Membership as a flag per vertex rather than a search per pin, which is also
-	// how the repeats are folded out: a lasso gathers each vertex once, but a
-	// caller naming them by hand need not have.
-	bool[] wanted = alloc::new_array(mem, bool, (sz)span);
-	defer alloc::free(mem, wanted);
+<*
+ Hold a joint with exactly this column stored, whatever is on screen: the half
+ of `replace_column` after its diff, and what adopting the file's weights uses,
+ where a column the binder happens to agree with must still be held.
 
-	usz singles = 0;
-	foreach (v : vertices)
-	{
-		if (wanted[v]) continue;
-		wanted[v] = true;
-		singles++;
-	}
+ @param column : `One weight per vertex, already 0 to 1.`
+ @return `Whether anything changed: the flag, or a stored weight.`
+*>
+fn bool AppState.store_column(&self, uint dot_id, float[] column, bool commit = true)
+{
+	float[] stored = self.stored_column(mem, dot_id);
+	defer alloc::free(mem, stored);
+	if (stored.len != column.len) return false;
+	bool held_now = self.set_held_recorded(dot_id, true);
 
-	usz rivals = 0;
-	if (exclusive)
-	{
-		foreach (pin : self.doc.pins.array_view())
-		{
-			if ((usz)pin.vertex >= span || !wanted[pin.vertex]) continue;
-			if (pin.dot_id == dot_id) continue;
-			rivals++;
-		}
-	}
-
-	usz room = (dot_id != 0 ? singles : 0) + rivals;
-	if (room == 0) return 0;
-
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, (sz)room);
+	usz differs = 0;
+	foreach (v, weight : column) if (weight != stored[v]) differs++;
+	VertexPin[] batch = alloc::new_array(mem, VertexPin, (sz)differs);
 	defer alloc::free(mem, batch);
-
 	usz at = 0;
-	if (dot_id != 0)
+	foreach (v, weight : column)
 	{
-		for (usz v = 0; v < span; v++)
-		{
-			if (wanted[v]) batch[at++] = { .vertex = (uint)v, .dot_id = dot_id, .share = share, .by = dot_id };
-		}
+		if (weight != stored[v]) batch[at++] = { .vertex = (uint)v, .dot_id = dot_id, .share = weight };
 	}
-	if (rivals > 0)
-	{
-		foreach (pin : self.doc.pins.array_view())
-		{
-			if ((usz)pin.vertex >= span || !wanted[pin.vertex]) continue;
-			if (pin.dot_id == dot_id) continue;
-			batch[at++] = { .vertex = pin.vertex, .dot_id = pin.dot_id, .share = 0.0f };
-		}
-	}
-
-	return self.pin_dabs(batch[:at], commit);
+	if (self.pin_dabs(batch[:at], commit) > 0) return true;
+	if (!held_now) return false;
+	// Holding alone changed what is on screen: the stored column was already
+	// this one, left from before the joint was let go.
+	if (commit) self.undo_stack.commit();
+	self.mark_paint_stale();
+	if (self.skinned()) self.refresh_pose_display();
+	return true;
 }
 
 <*
- The lasso's region across the plane, given to the selected joint's twin — or
- taken off it — while Mirror is on: the one Mirror every weight tool reads.
- Leaves the group open for the caller, so the region and its mirror are one
- undo step.
+ Set a joint's weight on some vertices and leave everything else as it is: the
+ lasso's verb, and `pin_weights`'.
 
- @return `How many pins changed on the twin's side.`
+ 	`usz did = app.set_weight_vertices(caught, app.selected, 1.0f);`
+
+ One joint's column, so drawing around vertices another joint holds gives this
+ one its weight there beside the other's — the two blend — and a weight of 0
+ takes this joint off and leaves the vertex to whoever else holds it.
+
+ @param vertices : `Which vertices. Out-of-range entries and repeats are skipped.`
+ @param weight : `0 to 1.`
+ @param commit : `Close the undo group.`
+ @return `How many vertices changed.`
 *>
-fn usz AppState.lasso_mirror(&self, uint[] caught, float share)
+fn usz AppState.set_weight_vertices(&self, uint[] vertices, uint dot_id, float weight, bool commit = true)
+{
+	if (vertices.len == 0 || !self.doc.find(dot_id)) return 0;
+	self.flush_edges();
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+
+	float[] column = self.column_of(mem, &view, dot_id);
+	defer if (column.len > 0) alloc::free(mem, column);
+	if (column.len == 0) return 0;
+	foreach (v : vertices) if ((usz)v < column.len) column[v] = weight;
+	return self.replace_column(&view, dot_id, column, commit);
+}
+
+<*
+ Let go of a joint's weights: no grow, the model's soft edge, nothing stored,
+ and the joint follows the automatic weights again — Reset. Leaves the group
+ open for the caller.
+
+ @return `Whether anything changed.`
+*>
+fn bool AppState.release_recorded(&self, uint dot_id)
+{
+	self.flush_edges();
+	Dot* dot = self.doc.find(dot_id);
+	if (!dot) return false;
+	bool changed = self.set_grow_recorded(dot_id, 0.0f);
+	if (self.set_band_recorded(dot_id, 0.0f)) changed = true;
+
+	usz stored = 0;
+	foreach (pin : self.doc.pins.array_view()) if (pin.dot_id == dot_id) stored++;
+	if (stored > 0)
+	{
+		VertexPin[] batch = alloc::new_array(mem, VertexPin, (sz)stored);
+		defer alloc::free(mem, batch);
+		usz at = 0;
+		foreach (pin : self.doc.pins.array_view())
+		{
+			if (pin.dot_id == dot_id) batch[at++] = { .vertex = pin.vertex, .dot_id = dot_id, .share = 0.0f };
+		}
+		if (self.pin_dabs(batch[:at], commit: false) > 0) changed = true;
+	}
+	if (self.set_held_recorded(dot_id, false)) changed = true;
+	if (changed) self.mark_paint_stale();
+	if (changed && self.skinned()) self.refresh_pose_display();
+	return changed;
+}
+
+<*
+ Let go of every joint's weights, as one undoable step: the whole rig back on
+ the automatic weights.
+
+ @return `How many joints were let go.`
+*>
+fn usz AppState.release_all_recorded(&self)
+{
+	usz count = (usz)self.doc.dots.len();
+	if (count == 0) return 0;
+	uint[] ids = alloc::new_array(mem, uint, (sz)count);
+	defer alloc::free(mem, ids);
+	foreach (i, dot : self.doc.dots.array_view()) ids[i] = dot.id;
+	usz released = 0;
+	foreach (id : ids) if (self.release_recorded(id)) released++;
+	if (released > 0) self.undo_stack.commit();
+	return released;
+}
+
+<*
+ The lasso's region across the plane, set on the selected joint's twin while
+ Mirror is on: the one Mirror every weight tool reads. Leaves the group open
+ for the caller, so the region and its mirror are one undo step.
+
+ @return `How many vertices changed on the twin's side.`
+*>
+fn usz AppState.lasso_mirror(&self, uint[] caught, float weight)
 {
 	uint twin = self.area_mirrors() ? self.mirror_twin(self.selected) : 0;
 	if (twin == 0 || caught.len == 0) return 0;
@@ -556,44 +564,20 @@ fn usz AppState.lasso_mirror(&self, uint[] caught, float share)
 	usz count = self.geometry.positions.len;
 	usz kept = 0;
 	foreach (partner : partners) if ((usz)partner < count) partners[kept++] = partner;
-	return self.pin_vertices(partners[:kept], twin, share, commit: false);
-}
-
-<*
- Take every pin off the rig, as one undoable step.
-
- The way out of a region handed to the wrong dot. One gesture rather than one per vertex, for the reason pinning is.
-
- @return `How many pins were cleared.`
-*>
-fn usz AppState.clear_pins(&self)
-{
-	sz held = self.doc.pins.len();
-	if (held == 0) return 0;
-
-	// Copied out first: `pin_dabs` writes the same list this is emptying, and a
-	// list being written while it is read is a different bug every time.
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, held);
-	defer alloc::free(mem, batch);
-
-	foreach (usz i, pin : self.doc.pins.array_view())
-	{
-		batch[i] = { .vertex = pin.vertex, .dot_id = pin.dot_id, .share = 0.0f };
-	}
-	return self.pin_dabs(batch);
+	return self.set_weight_vertices(partners[:kept], twin, weight, commit: false);
 }
 
 // ---------------------------------------------------------------------------
 // Cleaning up: harden and smooth
 //
-// Two verbs over the whole mesh rather than two more things to draw with, which
-// is what the layer under them makes possible: both of them compute a share per
-// vertex and then *state* it, and stating a share is the one thing a pin can do
-// and a dab cannot.
+// Two verbs over the whole mesh rather than two more things to draw with: both
+// compute whole rows and write them a joint's column at a time
+// (`write_columns`), so every joint they touch is held. The only tools that
+// write more than one joint, because what they state is a row.
 //
-// Both read the bind as the user currently sees it — binder, sharpness, paint
-// and the pins already there — so running either twice is running it on its own
-// output, and that is the intended way to use them.
+// Both read the weights as the user currently sees them, so running either
+// twice is running it on its own output, and that is the intended way to use
+// them.
 
 <*
  How much of a vertex one dot has to hold before Harden calls it rigid.
@@ -672,15 +656,17 @@ fn bool AppState.weights_ready(&self)
  rigid by a lasso, and a piece the binder froze onto a bone, both arrive here as
  a single-influence row and are left alone.
 
- **The result is pinned, so it is baked** — see `VertexPin`. Move the dot
- afterwards and the hardened vertices stay where they were told, which is the
- point of hardening and the price of it. One Ctrl+Z takes the whole pass back.
+ **The result is held, so it is baked** — every joint it touches keeps the
+ column it was given (`Dot.held`). Move a dot afterwards and the hardened
+ vertices stay where they were told, which is the point of hardening and the
+ price of it. One Ctrl+Z takes the whole pass back.
 
  @return `How many vertices were hardened; 0 when there was nothing to do.`
 *>
 fn usz AppState.harden_weights(&self)
 {
 	if (!self.weights_ready()) return 0;
+	self.flush_edges();
 
 	RigView? opened = self.open_rig(mem);
 	if (catch opened)
@@ -738,41 +724,60 @@ fn usz AppState.harden_weights(&self)
 		return 0;
 	}
 
-	// Exclusive, the `pin_vertices` rule: a vertex being handed to one dot has to
-	// come off every other, or `pin_over` divides it between the two.
-	usz rivals = 0;
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count) continue;
-		if (pick[pin.vertex] == 0 || pin.dot_id == pick[pin.vertex]) continue;
-		rivals++;
-	}
-
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, (sz)(singles + rivals));
-	defer alloc::free(mem, batch);
-
-	usz at = 0;
+	// The owner to one and every other joint off, which is the one place a
+	// tool writes more than the joint it was asked about: making a vertex rigid
+	// is a statement about the whole row. Each joint touched is held.
+	float[] rows_after = alloc::new_array(mem, float, (sz)painted.len);
+	defer alloc::free(mem, rows_after);
+	rows_after[..] = painted[..];
 	for (usz v = 0; v < count; v++)
 	{
 		if (pick[v] == 0) continue;
-		batch[at++] = { .vertex = (uint)v, .dot_id = pick[v], .share = 1.0f };
-	}
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count) continue;
-		if (pick[pin.vertex] == 0 || pin.dot_id == pick[pin.vertex]) continue;
-		batch[at++] = { .vertex = pin.vertex, .dot_id = pin.dot_id, .share = 0.0f };
+		usz base = v * bones;
+		for (usz b = 0; b < bones; b++) rows_after[base + b] = view.dot_ids[b] == pick[v] ? 1.0f : 0.0f;
 	}
 
-	// One `pin_dabs`, so the whole mesh is one Ctrl+Z.
-	if (self.pin_dabs(batch[:at]) == 0)
+	usz joints = self.write_columns(&view, painted, rows_after);
+	if (joints == 0)
 	{
 		self.@notice("nothing to make rigid — every vertex already says what this would");
 		return 0;
 	}
 
-	self.@notice("made %d vertices rigid", singles);
+	self.@notice("made %d vertices rigid · %d %s now keep their weights as written", singles, joints,
+		joints == 1 ? "joint" : "joints");
 	return singles;
+}
+
+<*
+ Write every column `next` differs from `painted` in, as one undo step: the
+ whole-model cleanups' way of stating many rows at once, a joint at a time.
+ Every joint written is held.
+
+ @param painted : `The weights as shown — AppState.weights of the same view.`
+ @param rewritten : `The same shape, with the rows to change rewritten.`
+ @return `How many joints were written; the group is committed when any were.`
+*>
+fn usz AppState.write_columns(&self, RigView* view, float[] painted, float[] rewritten)
+{
+	usz count = self.geometry.positions.len;
+	usz bones = view.len();
+	if (painted.len != count * bones || rewritten.len != painted.len) return 0;
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	usz joints = 0;
+	for (usz b = 0; b < bones; b++)
+	{
+		bool differs = false;
+		for (usz v = 0; v < count; v++)
+		{
+			column[v] = rewritten[v * bones + b];
+			if (column[v] != painted[v * bones + b]) differs = true;
+		}
+		if (differs && self.replace_column(view, view.dot_ids[b], column, commit: false) > 0) joints++;
+	}
+	if (joints > 0) self.undo_stack.commit();
+	return joints;
 }
 
 <*
@@ -793,9 +798,9 @@ fn usz AppState.harden_weights(&self)
  across rather than leaving a ridge along it. The pass is over welds for the same
  reason: every copy of a split point gets one answer, by construction.
 
- **This bakes the band.** The result is written as fractional pins, so it no
- longer tracks the rig — move a dot afterwards and the smoothed vertices say what
- they were told, exactly as `VertexPin` warns. That is the trade the op is: a
+ **This bakes the band.** Every joint it touches is held, so it no longer
+ tracks the rig — move a dot afterwards and the smoothed vertices say what they
+ were told. That is the trade the op is: a
  computed blend that drifted with every rebind would be a different answer every
  time, and nothing would be gained by computing it. Running it again smooths
  further, from where the last run left off; one Ctrl+Z takes a whole pass back.
@@ -805,6 +810,7 @@ fn usz AppState.harden_weights(&self)
 fn usz AppState.smooth_boundaries(&self)
 {
 	if (!self.weights_ready()) return 0;
+	self.flush_edges();
 
 	rig::MeshAdjacency* around = self.adjacency_for();
 	if (!around.usable())
@@ -1019,71 +1025,38 @@ fn usz AppState.smooth_boundaries(&self)
 		kept[into] = held;
 	}
 
+	// Each band vertex's row becomes its weld's kept shares, every joint left
+	// out of them off it — a statement about the whole row, like Make rigid's,
+	// and every joint it touches is held.
+	float[] rows_after = alloc::new_array(mem, float, (sz)painted.len);
+	defer alloc::free(mem, rows_after);
+	rows_after[..] = painted[..];
 	usz touched = 0;
-	usz singles = 0;
 	for (usz v = 0; v < count; v++)
 	{
 		sz into = slot[(usz)around.class_of[v]];
 		if (into < 0) continue;
 		touched++;
-		singles += kept[into];
-	}
-
-	// Exclusive, for `harden_weights`' reason: a dot that held part of a band
-	// vertex and is not in its new top four has to lose it outright.
-	usz rivals = 0;
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count) continue;
-		sz into = slot[(usz)around.class_of[pin.vertex]];
-		if (into < 0 || named_by(dots, shares, (usz)into * influences, kept[into], pin.dot_id)) continue;
-		rivals++;
-	}
-
-	VertexPin[] batch = alloc::new_array(mem, VertexPin, (sz)(singles + rivals));
-	defer alloc::free(mem, batch);
-
-	usz at = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		sz into = slot[(usz)around.class_of[v]];
-		if (into < 0) continue;
-
+		usz base = v * bones;
+		for (usz b = 0; b < bones; b++) rows_after[base + b] = 0.0f;
 		usz from = (usz)into * influences;
 		for (usz i = 0; i < kept[into]; i++)
 		{
-			if (shares[from + i] <= 0.0f) continue;
-			batch[at++] = { .vertex = (uint)v, .dot_id = dots[from + i], .share = shares[from + i] };
+			sz joint = view.joint_of(dots[from + i]);
+			if (joint >= 0) rows_after[base + (usz)joint] = shares[from + i];
 		}
 	}
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= count) continue;
-		sz into = slot[(usz)around.class_of[pin.vertex]];
-		if (into < 0 || named_by(dots, shares, (usz)into * influences, kept[into], pin.dot_id)) continue;
-		batch[at++] = { .vertex = pin.vertex, .dot_id = pin.dot_id, .share = 0.0f };
-	}
 
-	if (self.pin_dabs(batch[:at]) == 0)
+	usz joints = self.write_columns(&view, painted, rows_after);
+	if (joints == 0)
 	{
 		self.@notice("nothing to smooth — the weights already say what this would");
 		return 0;
 	}
 
-	self.@notice("smoothed %d boundary vertices", touched);
+	self.@notice("smoothed %d boundary vertices · %d %s now keep their weights as written", touched, joints,
+		joints == 1 ? "joint" : "joints");
 	return touched;
-}
-
-// Whether one of a band weld's kept influences is this dot, which is what makes
-// an existing pin on it a rival rather than one of the shares about to be
-// written over it.
-fn bool named_by(uint[] dots, float[] shares, usz at, usz held, uint dot_id) @private
-{
-	for (usz i = 0; i < held; i++)
-	{
-		if (dots[at + i] == dot_id && shares[at + i] > 0.0f) return true;
-	}
-	return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1491,31 +1464,32 @@ fn void AppState.lasso_commit(&self, Matrix4f view_projection, Vec2 viewport, Ve
 		}
 		else if (!removing)
 		{
-			self.pin_vertices(caught[:found], self.selected, 1.0f, commit: false);
+			self.set_weight_vertices(caught[:found], self.selected, 1.0f, commit: false);
 			self.lasso_mirror(caught[:found], 1.0f);
 			self.undo_stack.commit();
 
 			// What the region now says, not what changed: drawing over vertices
 			// already this dot's writes nothing and has still said the true thing
-			// about them, and "pinned 0 vertices" would read as a failure.
+			// about them, and "0 vertices" would read as a failure.
 			String name = dot.name.len > 0 ? dot.name : "that joint";
-			self.@notice("pinned %d vertices to %s", found, name);
+			self.@notice("%s holds %d vertices fully · other joints keep theirs", name, found);
 		}
 		else
 		{
 			// Removal is the other way round: what was taken is the only number
-			// there is to report, since the region caught mesh that was never
-			// pinned as readily as mesh that was.
-			usz did = self.pin_vertices(caught[:found], self.selected, 0.0f, commit: false);
+			// there is to report, since the region caught mesh the joint never
+			// held as readily as mesh it did.
+			usz did = self.set_weight_vertices(caught[:found], self.selected, 0.0f, commit: false);
 			did += self.lasso_mirror(caught[:found], 0.0f);
 			self.undo_stack.commit();
+			String name = dot.name.len > 0 ? dot.name : "that joint";
 			if (did > 0)
 			{
-				self.@notice("unpinned %d vertices", did);
+				self.@notice("took %s off %d vertices", name, did);
 			}
 			else
 			{
-				self.@notice("nothing in that region was pinned");
+				self.@notice("%s holds nothing in that region", name);
 			}
 		}
 	}

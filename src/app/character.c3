@@ -323,6 +323,13 @@ struct Character
 	float grow_drag_from;
 	uint grow_drag_twin;
 	float grow_drag_twin_from;
+
+	// An edge a grow drag or the soft-edge slider moved, waiting for the hand to
+	// stop before the joint's column (and the twin's) is rewritten — see
+	// `AppState.tick_edges`.
+	bool edge_pending;
+	float edge_due;
+	uint[2] edge_dots;
 	bool area_by_card; // opened by showing the Weights card, so hiding it closes it
 	bool area_islands; // the part is whole UV islands, and grows, shrinks and clicks by island
 	int area_hover_island; // the island under the pointer while picking islands, or -1
@@ -342,6 +349,11 @@ struct Character
 	*>
 	float[] base_bind;
 	ulong base_key; // `AppState.bind_key` of the inputs `base_bind` was bound from
+
+	// The last tool bind (`AppState.tool_bind_for`): the rig bound with one
+	// joint's grow and soft edge on it, and the key of what it was bound from.
+	float[] tool_bind;
+	ulong tool_key;
 
 	<*
 	 The squared distance from each vertex to its nearest bone, and the joint
@@ -386,7 +398,7 @@ struct Character
 	bool stroke_blocked;
 	// That it tried to take the joint off vertices nothing else holds, which
 	// keep it; said once the same way.
-	bool stroke_alone;
+	bool stroke_emptied;
 	// The twin a stroke in flight paints too, with Mirror on, and the vertex
 	// lookup across the plane it maps the circle's vertices through — built once
 	// per stroke rather than per move. 0 and empty with Mirror off.
@@ -413,6 +425,10 @@ struct Character
 	 Only meaningful while `tint_mode` is FALLOFF; stale otherwise.
 	*>
 	usz falloff_held;
+
+	// How many vertices the last recolour found unused (`UNUSED_TOTAL`). Counted
+	// on every recolour, so it is current whenever a tint is.
+	usz unused_count;
 
 	<*
 	 The document's body plan re-fitted onto this mesh: where the plan wants each
@@ -684,17 +700,12 @@ struct Character
 	 The weights the mesh's own file carried, when the rig came out of it — see
 	 `import_rig.c3`. Empty for a rig built here, which is most of them.
 
-	 Held rather than re-read because both the preview and the export ask for it,
-	 and it is the whole file's skin: re-parsing a .glb to answer one rebind would
-	 cost more than the binder it is standing in for. `doc.skin_from_file` is what
-	 says it should be used; this is only what it is.
+	 Read on import, where it becomes every joint's held column
+	 (`AppState.adopt_model_weights`), and again only when asked for — Rig › Use
+	 the model's own weights, or an older session's migration. Kept rather than
+	 re-read because the file is the whole skin, and a .glb is slow to parse.
 	*>
 	ImportedSkin imported_skin;
-
-	// Whether the imported weights have covered the rig since they were read,
-	// and whether the one warning that crig's own now replace them has been said.
-	bool imported_skin_covered;
-	bool imported_skin_warned;
 
 	<*
 	 The animation player: a template-driven full-body animation, running on the

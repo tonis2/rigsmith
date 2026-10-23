@@ -50,26 +50,26 @@ struct RigView
 	// One per joint, in model units; 0 is unlimited.
 	float[] reaches;
 
-	// One per joint: how far its region is pushed past its automatic edge, in
-	// model units (`Dot.grow`), and how far it blends, as a share of its bone
-	// (`Dot.band`, 0 the default). Empty when no dot has one.
+	// One per joint: how far its region was last pushed past its automatic edge,
+	// in model units (`Dot.grow`), and how far it blends, as a share of its bone
+	// (`Dot.band`, 0 the default). Empty when no dot has one. Records of how a
+	// held joint was shaped — the automatic weights read neither.
 	float[] grows;
 	float[] bands;
 
+	// One per joint: whether its weights are its own (`Dot.held`). Empty when no
+	// joint's are, which is every rig nobody has edited a weight on.
+	bool[] held;
 
 	<*
-	 The stated shares, with their dot ids already turned into joint indices for
-	 this build and **grouped by vertex**. Empty when nothing is pinned.
+	 The held joints' stored weights, with their dot ids already turned into
+	 joint indices for this build. Empty when no joint is held.
 
-	 Resolved here for the reason `paint` is, and grouped besides: `pin_over`
-	 rewrites a whole row around every pin on it at once, so the pins on one
-	 vertex have to arrive together. The document stores them in the order they
-	 were made, which interleaves vertices as soon as a second lasso crosses the
-	 first — see `pin_columns`, where the grouping is done.
-
-	 A pin whose dot is no longer in the rig is dropped, exactly as a dab is: the
-	 document keeps it so undo can bring it back with the dot, and there is no
-	 column to write while the dot is gone.
+	 Only held joints' entries: together they are each one's whole column, which
+	 `AppState.weights` writes over the binder's. An entry whose dot is no longer
+	 in the rig is dropped, exactly as a dab is — the document keeps it so undo
+	 can bring it back with the dot, and there is no column to write while the
+	 dot is gone.
 	*>
 	PinColumn[] pins;
 }
@@ -101,6 +101,7 @@ fn RigView? AppState.open_rig(&self, Allocator allocator)
 		.reaches = self.reach_joints(allocator, dot_ids),
 		.grows = self.grow_joints(allocator, dot_ids),
 		.bands = self.band_joints(allocator, dot_ids),
+		.held = self.held_joints(allocator, dot_ids),
 		.pins = self.pin_columns(allocator, dot_ids),
 	};
 }
@@ -148,8 +149,8 @@ fn void AppState.drop_playback_rig(&self)
 
 <*
  The multipliers an older session carried, with their dot ids resolved against
- this build's joint order — read once, by `bake_legacy_paint`, which turns them
- into stated rows. Empty when there are none, which is every session written
+ this build's joint order — read once, by `legacy_weights`, which bakes them
+ into the weights an older session showed. Empty when there are none, which is every session written
  since version 31.
 *>
 fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_ids)
@@ -178,46 +179,76 @@ fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_i
 	return columns[:kept];
 }
 
-// Vertex order, which is the grouping `pin_over` needs. Ties are left to the
-// sort, since two pins on one vertex name different dots and the row rewrite
-// treats them as a set.
-fn int by_pinned_vertex(PinColumn a, PinColumn b) @local
+<*
+ Which joints are held (`Dot.held`): one flag per joint, empty when none is.
+*>
+fn bool[] AppState.held_joints(&self, Allocator allocator, uint[] dot_ids)
 {
-	if (a.vertex < b.vertex) return -1;
-	if (a.vertex > b.vertex) return 1;
-	return 0;
+	bool holding = false;
+	foreach (dot : self.doc.dots.array_view()) if (dot.held) holding = true;
+	if (!holding) return {};
+	bool[] held = alloc::new_array(allocator, bool, (sz)dot_ids.len);
+	foreach (usz j, id : dot_ids)
+	{
+		Dot* dot = self.doc.find(id);
+		held[j] = dot && dot.held;
+	}
+	return held;
 }
 
 <*
- The document's pins with their dot ids resolved against this build's joint
- order, grouped by vertex.
+ One slot per dot id up to the largest in `dot_ids`: the joint it became, plus
+ one, or 0 for none — so a pass over a long sparse list resolves each entry in
+ one read rather than a search of the joints.
 
- `paint_columns` for the other layer — same one pass over a sparse list, same
- drop of a stale dot and of a vertex past the end of the mesh — plus the sort
- that puts every pin on a vertex beside its siblings. Sorted rather than
- gathered through a per-vertex index because the layer is sparse and the mesh is
- not: a chain index costs one entry per *vertex*, and this costs one comparison
- per pin.
+ The caller owns the result.
+*>
+fn usz[] joint_table(Allocator allocator, uint[] dot_ids)
+{
+	uint top = 0;
+	foreach (id : dot_ids) if (id > top) top = id;
+	usz[] table = alloc::new_array(allocator, usz, (sz)top + 1);
+	foreach (usz j, id : dot_ids) table[id] = j + 1;
+	return table;
+}
 
- Empty when nothing is pinned, which is the ordinary case and costs no
+<*
+ The held joints' stored weights with their dot ids resolved against this
+ build's joint order.
+
+ `paint_columns` for the other layer — one pass over a sparse list, dropping an
+ entry whose dot is gone or not held and a vertex past the end of the mesh. A
+ full column per held joint is a long list, so each entry is resolved through
+ one table read (`joint_table`) rather than a search of the joints.
+
+ Empty when no joint is held, which is the ordinary case and costs no
  allocation.
 *>
 fn PinColumn[] AppState.pin_columns(&self, Allocator allocator, uint[] dot_ids)
 {
-	sz held = self.doc.pins.len();
-	if (held == 0) return {};
+	sz stored = self.doc.pins.len();
+	if (stored == 0) return {};
 
-	PinColumn[] columns = alloc::new_array(allocator, PinColumn, held);
+	usz[] table = joint_table(mem, dot_ids);
+	defer alloc::free(mem, table);
+	bool[] held = alloc::new_array(mem, bool, (sz)table.len);
+	defer alloc::free(mem, held);
+	usz holding = 0;
+	foreach (dot : self.doc.dots.array_view())
+	{
+		if (!dot.held || (usz)dot.id >= table.len) continue;
+		held[dot.id] = true;
+		holding++;
+	}
+	if (holding == 0) return {};
+
+	PinColumn[] columns = alloc::new_array(allocator, PinColumn, stored);
 	usz kept = 0;
 	foreach (pin : self.doc.pins.array_view())
 	{
 		if ((usz)pin.vertex >= self.geometry.positions.len) continue;
-		foreach (usz j, id : dot_ids)
-		{
-			if (id != pin.dot_id) continue;
-			columns[kept++] = { .vertex = pin.vertex, .joint = j, .share = pin.share };
-			break;
-		}
+		if ((usz)pin.dot_id >= table.len || !held[pin.dot_id] || table[pin.dot_id] == 0) continue;
+		columns[kept++] = { .vertex = pin.vertex, .joint = table[pin.dot_id] - 1, .share = pin.share };
 	}
 
 	if (kept == 0)
@@ -225,8 +256,6 @@ fn PinColumn[] AppState.pin_columns(&self, Allocator allocator, uint[] dot_ids)
 		alloc::free(allocator, columns);
 		return {};
 	}
-
-	sort::quicksort(columns[:kept], &by_pinned_vertex);
 	return columns[:kept];
 }
 
@@ -245,11 +274,23 @@ fn void RigView.free(&self, Allocator allocator)
 	if (self.reaches.len > 0) alloc::free(allocator, self.reaches);
 	if (self.grows.len > 0) alloc::free(allocator, self.grows);
 	if (self.bands.len > 0) alloc::free(allocator, self.bands);
+	if (self.held.len > 0) alloc::free(allocator, self.held);
 	if (self.pins.len > 0) alloc::free(allocator, self.pins.ptr);
 	*self = {};
 }
 
 fn usz RigView.len(&self) => self.skeleton.len();
+
+// Whether joint `j` is held — see `Dot.held`.
+fn bool RigView.holds(&self, usz j) => j < self.held.len && self.held[j];
+
+// Whether every joint is held, so nothing of the binder's is on show.
+fn bool RigView.all_held(&self)
+{
+	if (self.held.len != self.len() || self.held.len == 0) return false;
+	foreach (on : self.held) if (!on) return false;
+	return true;
+}
 
 <*
  Which joint a dot became.

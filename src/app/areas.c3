@@ -3,26 +3,26 @@
 
  The user picks a part of the mesh for the selected joint — its own bone's
  vertices, its whole subtree's, the UV islands it holds, a separate piece, or a
- hand-grown patch — and
- Apply makes that part follow the joint and nothing outside it. The automatic
- binder stays the starting point; a part is written over it as absolute
- `VertexPin` shares, so undo, sessions and export already carry it.
+ hand-grown patch — and Apply makes that part the joint's column: the joint
+ moves the part and nothing outside it. Grow, Shrink and Soft edge reshape the
+ joint's own bone instead, from the automatic weights with only this joint's
+ edge moved (`AppState.tool_bind_for`).
+
+ **One joint, one column.** Every tool here writes the selected joint's column
+ (and its twin's, mirroring) and no other, and holds the joint (`Dot.held`) —
+ the other joints keep what they hold, so where they hold the part too the two
+ blend, and a vertex nothing else holds that the joint lets go of is left to
+ nobody. The card's preview draws the column Apply writes, so pressing Apply
+ changes nothing on screen.
 
  **The soft edge runs inward.** The band of the part nearest its boundary
- blend from the joint down toward the neighbours — the other joints share the
- rest as they hold it now, earlier Applies included — and nothing outside the part
- is given to the joint. The card's preview, which draws the rows Apply lays as
- the weights they become, is then a true picture of everything the joint will
- move, and a separate piece — a part with no boundary — stays rigid whatever the
- edge width. Outside the part the joint's automatic share is handed
- to the other joints on those rows, which is what "exactly" costs: without it a
- vertex just outside the edge could hold more of the joint than the edge itself.
+ fades from the joint toward nothing, and nothing outside the part is given to
+ the joint, so a separate piece — a part with no boundary — stays rigid
+ whatever the edge width.
 
- **Reset takes back one joint's work.** Every row an Apply writes is marked as
- that joint's (`VertexPin.by`), and Reset to automatic rebuilds exactly those
- rows and no others — a finger reset leaves the fingers corrected before it as
- they were. In a hand those rows go back to the knuckle bands at the blend asked
- for now (see `reset_area`).
+ **Reset lets go.** The joint's stored column, grow and soft edge are dropped
+ and it follows the automatic weights again (`release_recorded`); nothing a
+ neighbour holds is touched.
 *>
 module crig;
 
@@ -115,11 +115,11 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 		}
 	}
 
-	// A finger's part from the knuckle planes, over the bind with no paint or pins
-	// on it. A piece riding one joint rigidly keeps its rider, as it does in the bind.
+	// A finger's part from the knuckle planes, over the automatic bind — which
+	// moves no knuckle plane for a grow, so neither does this. A piece riding one
+	// joint rigidly keeps its rider, as it does in the bind.
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);
-	bands.grow = view.grows;
 	bool banded = (usz)found < bands.digit.len && bands.digit[(usz)found];
 	float[] base = banded ? self.base_bind_for(&view) : {};
 	if (base.len < count * bones) banded = false;
@@ -673,26 +673,18 @@ fn bool[] AppState.area_twin_part(&self, Allocator allocator, uint twin, AreaPar
 
  	`usz held = app.apply_area(head, mask, soft: app.area_soft_distance());`
 
- Inside the part the joint's pin is 1; within `soft` (model units, over the
- surface) of the edge it falls toward 0, and what is left goes to the other
- joints in the proportions they hold the vertex now — see `others_of`. That is
- what keeps a neighbour's work: a joint an earlier Apply took off these vertices
- stays off them, where handing the rest to the automatic weights brought it back
- (a finger corrected, the next finger applied, and the first one reaching across
- again). Each part row is stated whole, so every other pin on it goes. Outside, a row
- where the joint (or the twin) still holds at least `AREA_LEAK_FLOOR` is
- restated without it — from the row as shown, or where the two held all of it
- but a sliver, from the surface around it: a mirrored Apply that took a thigh
- off the tail root once handed it to the hundredth of a knee left there.
+ The joint's column becomes the part: 1 inside, falling toward 0 within `soft`
+ (model units, over the surface) of the edge, and nothing outside it
+ (`area_column`). That column and the twin's are all it writes — the other
+ joints keep exactly what they hold, inside the part as well as outside, so on a
+ vertex another joint holds the two blend, and a vertex outside the part that
+ only this joint held is left to nobody (unused). Both joints are held from here
+ on.
 
- Every row it states is the joint's work (`VertexPin.by`), the twin's part the
- twin's, which is what `reset_area` takes back.
-
- A part reaching off the joint's limb gives it nothing there (`limb_family`):
- those vertices are left as they are, as if the part stopped short. Not a
- vertex the joint already holds — a rim an earlier Apply gave it stays its own
- on the next — and not a part of whole `pieces`, Whole piece or UV islands, which the menu
- named rather than a hand pressed out.
+ A part reaching off the joint's limb gives it nothing there (`limb_family`).
+ Not a vertex the joint already holds — a rim an earlier Apply gave it stays its
+ own on the next — and not a part of whole `pieces`, Whole piece or UV islands,
+ which the menu named rather than a hand pressed out.
 
  @param twin_mask : `The twin's part, or empty for none.`
  @param pieces : `The parts are whole pieces of the mesh, applied whole off the limb too — see area_names_pieces.`
@@ -702,6 +694,9 @@ fn bool[] AppState.area_twin_part(&self, Allocator allocator, uint twin, AreaPar
 fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twin = 0, bool[] twin_mask = {},
 	bool pieces = false, usz* refused = null)
 {
+	if (refused) *refused = 0;
+	self.flush_edges();
+	usz count = self.geometry.positions.len;
 	RigView? opened = self.open_rig(mem);
 	if (catch opened) return 0;
 	RigView view = opened;
@@ -710,721 +705,91 @@ fn usz AppState.apply_area(&self, uint dot_id, bool[] mask, float soft, uint twi
 	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 
-	PinDraft draft;
-	defer draft.free();
-	usz held = self.area_rows(&draft, &view, painted, dot_id, mask, soft, twin, twin_mask, pieces, refused);
-	if (held == 0 || self.lay_draft(&draft) == 0) return 0;
-	if (self.skinned()) self.refresh_pose_display();
+	bool with_twin = twin != 0 && twin != dot_id && twin_mask.len == count && view.joint_of(twin) >= 0;
+	uint[2] owners = { dot_id, twin };
+	bool[][2] parts = { mask, twin_mask };
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+
+	usz held = 0;
+	usz moved = 0;
+	usz sides = with_twin ? 2 : 1;
+	for (usz p = 0; p < sides; p++)
+	{
+		usz off = 0;
+		usz caught = self.area_column(&view, painted, owners[p], parts[p], soft, pieces, column, &off);
+		if (refused) *refused += off;
+		if (caught == 0) continue;
+		held += caught;
+		moved += self.replace_column(&view, owners[p], column, commit: false);
+	}
+	if (moved == 0) return 0;
+	self.undo_stack.commit();
 	return held;
 }
 
 <*
- The rows an Apply states, drafted and not laid: what `apply_area` writes, and
- what the Weights card draws while a part waits for it — one computation, so
- the picture is the weights Apply leaves.
+ The column an Apply gives a joint: what `apply_area` writes, and what the
+ Weights card draws while a part waits for it — one computation, so the picture
+ is the weights Apply leaves.
 
- @param draft : `Filled; the caller frees it, whatever this returns.`
- @param painted : `The bind as shown — AppState.weights of the same view.`
- @param pieces : `The parts are whole pieces, not limited to the limb — see apply_area.`
- @param refused : `Filled with how many part vertices were off their joint's limb and left out. Null to not ask.`
- @return `How many vertices the joint and its twin would hold; 0 when there is nothing to state.`
+ @param painted : `The weights as shown — AppState.weights of the same view.`
+ @param column : `Filled, one weight per vertex: the part's ramp, 0 outside it.`
+ @param pieces : `The part is whole pieces, not limited to the limb — see apply_area.`
+ @param refused : `Filled with how many part vertices were off the joint's limb and left out. Null to not ask.`
+ @return `How many vertices the joint would hold; 0 when there is nothing to state.`
 *>
-fn usz AppState.area_rows(&self, PinDraft* draft, RigView* view, float[] painted, uint dot_id, bool[] mask, float soft,
-	uint twin = 0, bool[] twin_mask = {}, bool pieces = false, usz* refused = null)
+fn usz AppState.area_column(&self, RigView* view, float[] painted, uint dot_id, bool[] mask, float soft,
+	bool pieces, float[] column, usz* refused = null)
 {
 	if (refused) *refused = 0;
 	usz count = self.geometry.positions.len;
-	if (count == 0 || mask.len != count || !self.doc.find(dot_id)) return 0;
+	if (count == 0 || mask.len != count || column.len != count) return 0;
+	column[..] = 0.0f;
 
 	rig::MeshAdjacency* around = self.adjacency_for();
 	if (around.vertices() != count) return 0;
 
 	usz bones = view.len();
 	sz joint = view.joint_of(dot_id);
-	if (joint < 0 || bones == 0) return 0;
-
-	bool with_twin = twin != 0 && twin != dot_id && twin_mask.len == count && view.joint_of(twin) >= 0;
-	sz twin_joint = with_twin ? view.joint_of(twin) : -1;
-
-	if (painted.len < count * bones) return 0;
+	if (joint < 0 || bones == 0 || painted.len < count * bones) return 0;
 
 	float[] automatic = self.weights(mem, view, AUTOMATIC);
 	defer if (automatic.len > 0) alloc::free(mem, automatic);
 	if (automatic.len < count * bones) return 0;
-	Handoff handoff = self.handoff_for(view);
-	defer handoff.free();
 
-	draft.init(count);
-
-	float limit = math::max(soft, 0.0f);
-	usz held = 0;
-	Vec3[] points = class_points(around, self.geometry.positions);
-	defer alloc::free(mem, points);
-
-	float[] row = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, row);
-	uint[SKIN_INFLUENCES] keep_dots;
-	float[SKIN_INFLUENCES] keep_shares;
-
-	// The pins already on each vertex, so a soft edge stated again lands on the
-	// shares it already has rather than on their rounding.
-	PinIndex stated = pin_index(mem, &self.doc.pins, math::max(pin_span(&self.doc.pins, {}), count), 0);
-	defer stated.free(mem);
-
-	uint[2] owners = { dot_id, twin };
-	bool[][2] parts = { mask, twin_mask };
-	usz sides = with_twin ? 2 : 1;
-	for (usz p = 0; p < sides; p++)
+	// The part as far as the joint's limb goes, with whatever the joint already
+	// holds, and its soft edge measured from there — so a part reaching off the
+	// limb fades out where it stops rather than ending in a step.
+	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
+	defer alloc::free(mem, family);
+	bool[] part = alloc::new_array(mem, bool, (sz)count);
+	defer alloc::free(mem, part);
+	foreach (v, on : mask)
 	{
-		// The part as far as its joint's limb goes — the twin's against the twin,
-		// and with whatever the joint already holds — and its soft edge measured
-		// from there, so a part reaching off the limb fades out where it stops
-		// rather than ending in a step.
-		usz side = (usz)(p == 0 ? joint : twin_joint);
-		bool[] family = limb_family(mem, &view.skeleton, side);
-		defer alloc::free(mem, family);
-		bool[] part = alloc::new_array(mem, bool, (sz)count);
-		defer alloc::free(mem, part);
-		foreach (v, on : parts[p])
-		{
-			if (!on) continue;
-			usz at = (usz)v * bones;
-			part[v] = pieces || on_limb(automatic[at:bones], family) || joint_share(painted[at:bones], side) >= AREA_LEAK_FLOOR;
-			if (!part[v] && refused) (*refused)++;
-		}
-		bool[] cls = classes_of(around, part);
-		defer alloc::free(mem, cls);
-		float[] depth = edge_depths(around, points, cls, limit);
-		defer alloc::free(mem, depth);
-
-		uint[1] dots = { owners[p] };
-		foreach (v, on : part)
-		{
-			if (!on || draft.claimed((uint)v)) continue;
-			held++;
-			float share = area_share(depth[(usz)around.class_of[v]], limit);
-			if (share >= 1.0f)
-			{
-				float[1] whole = { 1.0f };
-				draft.state((uint)v, dots[..], whole[..], owners[p]);
-				continue;
-			}
-			// The soft edge: the rest of the vertex goes to the other joints as they
-			// hold it now, so a joint an earlier Apply took off it stays off.
-			self.others_of(painted, view, &handoff, (uint)v, joint, twin_joint, row);
-			usz kept = band_row(row, view.dot_ids, owners[p], share, keep_dots[..], keep_shares[..]);
-			self.keep_stated(&stated, (uint)v, keep_dots[:kept], keep_shares[:kept]);
-			draft.state((uint)v, keep_dots[:kept], keep_shares[:kept], owners[p]);
-		}
+		if (!on) continue;
+		usz at = (usz)v * bones;
+		part[v] = pieces || on_limb(automatic[at:bones], family) || joint_share(painted[at:bones], (usz)joint) >= AREA_LEAK_FLOOR;
+		if (!part[v] && refused) (*refused)++;
 	}
 
-	// Outside every part: take the joints off the rows they still reach.
-	for (usz v = 0; v < count; v++)
+	float limit = math::max(soft, 0.0f);
+	Vec3[] points = class_points(around, self.geometry.positions);
+	defer alloc::free(mem, points);
+	bool[] cls = classes_of(around, part);
+	defer alloc::free(mem, cls);
+	float[] depth = edge_depths(around, points, cls, limit);
+	defer alloc::free(mem, depth);
+
+	usz held = 0;
+	foreach (v, on : part)
 	{
-		if (draft.claimed((uint)v)) continue;
-		usz at = v * bones;
-		float sum = 0.0f;
-		for (usz b = 0; b < bones; b++) sum += painted[at + b];
-		if (sum <= 0.0f) continue;
-
-		bool leaks = painted[at + (usz)joint] / sum >= AREA_LEAK_FLOOR;
-		if (twin_joint >= 0 && painted[at + (usz)twin_joint] / sum >= AREA_LEAK_FLOOR) leaks = true;
-		if (!leaks) continue;
-
-		float left = self.others_of(painted, view, &handoff, (uint)v, joint, twin_joint, row);
-		usz kept = left > 0.0f ? top_row(row, view.dot_ids, -1, keep_dots[..], keep_shares[..]) : 0;
-		// The row is the work of whichever of the two it was taken off more of.
-		uint by = twin_joint >= 0 && painted[at + (usz)twin_joint] > painted[at + (usz)joint] ? twin : dot_id;
-		draft.state((uint)v, keep_dots[:kept], keep_shares[:kept], by);
+		if (!on) continue;
+		held++;
+		column[v] = area_share(depth[(usz)around.class_of[v]], limit);
 	}
 	return held;
 }
-
-<*
- What the field needs to re-derive a row: the bands the automatic weights end
- at, and the bind's softness. Built once per operation — see
- `AppState.handoff_for` — because both cost a pass over the rig or the mesh and
- a stroke asks for a row per vertex under the circle.
-*>
-struct Handoff
-{
-	float[] bands;
-	float eps;
-}
-
-fn Handoff AppState.handoff_for(&self, RigView* view)
-{
-	return { .bands = self.bind_bands(mem, view), .eps = self.bind_eps() };
-}
-
-fn void Handoff.free(&self)
-{
-	if (self.bands.len > 0) alloc::free(mem, self.bands);
-	*self = {};
-}
-
-<*
- Where a vertex goes when a joint (and its twin) are taken off it: the
- automatic row the distance field gives it with those joints left out.
-
- The binder's own rules re-run over the one row — the falloff from each joint's
- distance, the chain isolation, the model's sharpness and the window — so the
- joints that come back are the ones that would own the vertex had the removed
- joint never been placed: the next joint down a leg, never a hip that held two
- percent of a boot. That is the answer the user means by "take this joint off",
- and the same one whichever tool asked.
-
- A rig wearing its file's weights has no field of crig's; there the automatic
- row without the two is the answer.
-
- @param row : `Filled, one weight per joint, unnormalised.`
- @return `What the row adds up to; 0 when the field gives the vertex to nobody else.`
-*>
-fn float AppState.field_row(&self, RigView* view, Handoff* handoff, uint vertex, sz joint, sz twin_joint, float[] row)
-{
-	usz bones = view.len();
-	usz count = self.geometry.positions.len;
-	usz at = (usz)vertex * bones;
-	row[:bones] = 0.0f;
-	if ((usz)vertex >= count) return 0.0f;
-
-	if (self.field_distances.len != count * bones)
-	{
-		float[] base = self.base_bind_for(view);
-		if (base.len < count * bones) return 0.0f;
-		float left = 0.0f;
-		for (usz b = 0; b < bones; b++)
-		{
-			if ((sz)b == joint || (sz)b == twin_joint) continue;
-			row[b] = base[at + b];
-			left += row[b];
-		}
-		return left;
-	}
-
-	float[] near = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, near);
-	near[..] = self.field_distances[at:bones];
-	if (joint >= 0) near[(usz)joint] = rig::NO_DISTANCE;
-	if (twin_joint >= 0) near[(usz)twin_joint] = rig::NO_DISTANCE;
-	for (usz b = 0; b < bones; b++)
-	{
-		if (near[b] >= rig::NO_DISTANCE) continue;
-		float reach = b < view.reaches.len ? view.reaches[b] : 0.0f;
-		row[b] = rig::field_score(near[b], reach, handoff.eps);
-	}
-	rig::isolate_chains(mem, row[:bones], view.skeleton.parents);
-	sharpen_weights(row[:bones], self.doc.sharpness);
-	rig::window_bind(row[:bones], near, bones, handoff.bands);
-
-	float left = 0.0f;
-	foreach (weight : row[:bones]) left += weight;
-	return left;
-}
-
-<*
- The rest of a row once a joint (and its twin) are taken off it: who the freed
- share goes to.
-
- The other joints as shown — earlier Applies and brush strokes included, so a
- joint an earlier edit took off stays off — when together they hold a real
- share of the vertex (`SHOWN_FLOOR`). **Below that they say nothing** about
- where the vertex belongs: a few percent is the falloff's tail, and scaled up it
- would hand the vertex to it — a knee taken off a shin went wholly to the two
- percent of hip on it. Then the field decides (`field_row`).
-
- @param row : `Filled, one weight per joint.`
- @return `What the rest adds up to; 0 when nothing else can hold the vertex.`
-*>
-fn float AppState.others_of(&self, float[] painted, RigView* view, Handoff* handoff, uint vertex, sz joint,
-	sz twin_joint, float[] row)
-{
-	usz bones = view.len();
-	float shown = shown_others(painted, (usz)vertex * bones, bones, joint, twin_joint, row);
-	if (shown >= SHOWN_FLOOR) return shown;
-	return self.field_row(view, handoff, vertex, joint, twin_joint, row);
-}
-
-// A row as shown without the joint and its twin, as shares of the vertex.
-fn float shown_others(float[] painted, usz at, usz bones, sz joint, sz twin_joint, float[] row) @private
-{
-	float sum = 0.0f;
-	for (usz b = 0; b < bones; b++) sum += painted[at + b];
-	float left = 0.0f;
-	for (usz b = 0; b < bones; b++)
-	{
-		row[b] = ((sz)b == joint || (sz)b == twin_joint || sum <= 0.0f) ? 0.0f : painted[at + b] / sum;
-		left += row[b];
-	}
-	return left;
-}
-
-<*
- A soft-edge row: the joint at `share`, and the strongest others of `row`
- sharing the rest in their proportions. The joint's own share stays exactly
- `share`, whatever the cut to `SKIN_INFLUENCES` leaves of the others.
-
- @param out_dots : `SKIN_INFLUENCES long.`
- @return `How many were written; 1 when nothing else holds the vertex.`
-*>
-fn usz band_row(float[] row, uint[] dot_ids, uint dot_id, float share, uint[] out_dots, float[] out_shares) @private
-{
-	out_dots[0] = dot_id;
-	out_shares[0] = share;
-	usz others = top_row(row, dot_ids, -1, out_dots[1..], out_shares[1..]);
-	for (usz i = 1; i <= others; i++) out_shares[i] *= 1.0f - share;
-	return others + 1;
-}
-
-<*
- Where the pins on a vertex already state this row, give or take a rounding,
- take their shares over. Stating the row again then changes nothing, so applying
- the same part twice records nothing and the card can say so.
-*>
-fn void AppState.keep_stated(&self, PinIndex* index, uint v, uint[] dots, float[] shares)
-{
-	if ((usz)v >= index.head.len) return;
-	usz held = 0;
-	for (int walk = index.head[v]; walk >= 0; walk = index.next[walk])
-	{
-		VertexPin pin = self.doc.pins[(sz)walk];
-		usz i = 0;
-		while (i < dots.len && dots[i] != pin.dot_id) i++;
-		if (i == dots.len || math::abs(shares[i] - pin.share) > 1.0e-3f) return;
-		held++;
-	}
-	if (held != dots.len) return;
-	for (int walk = index.head[v]; walk >= 0; walk = index.next[walk])
-	{
-		VertexPin pin = self.doc.pins[(sz)walk];
-		foreach (i, dot : dots) if (dot == pin.dot_id) shares[i] = pin.share;
-	}
-}
-
-<*
- Take back a joint's own work, as one undo step: every row its Apply or its
- brush wrote (`VertexPin.by`, and the twin's), and no other.
-
- On those rows the joint goes back to its automatic share, and the others keep
- what they hold:
-
- - A row that states other joints — its soft edge, the rows its Apply took it
-   off, a partial stroke — keeps them as stated, and the joint comes back
-   beside them at its automatic share scaled the way the row holds them against
-   theirs (`held_against_automatic`), which is the row as it was before the
-   joint's Apply. A joint the row leaves out stays out: an earlier Apply took it
-   off, and resetting this joint is not resetting that one. Not where the joint
-   held all of the automatic row but a sliver: those others came from the
-   surface around (`others_of`), and the row goes back as a whole one does.
- - A row it holds whole — its part's interior, a full stroke — says nothing
-   about the others, so they are read off the rows around it: a joint the
-   joint's own rows bordering it leave out, though the automatic weights would
-   have kept it, was taken off before this joint's Apply, and stays off.
-
- With nothing taken off that is exactly the automatic row, and a row that comes
- out as the automatic row is cleared rather than stated — so a fresh Apply and a
- Reset leave no pin behind. A row that cannot be cleared names the strongest
- joint it leaves out as its author: those rows are that joint's leak, as they
- were before this joint's Apply wrote over them, and resetting that joint later
- finds them.
-
- **In a hand the row goes back whole.** Resetting the wrist or a finger joint —
- any joint the knuckle bands shape (`rig::DigitBands.shapes`) — clears each row
- of its work that a finger joint holds a share of (`fingers_hold`) to the
- automatic row, others and all. There the automatic weights are the bands at
- the knuckle blend the model asks for now, while the others the row states are
- the bind as it stood when the joint wrote it: a blend since changed, or weights
- from before the bands, which kept the hand broken through any number of resets.
- A finger applied before this one can come back across their shared knuckle, by
- as much as the knuckle blend gives it — the blend, which the Knuckle blend
- setting narrows to a hard switch. On a file's own weights (`skin_from_file`)
- nothing is banded, and the rows are taken back as below.
-
- Rows another joint wrote are never touched, which is the whole promise:
- resetting a finger leaves the finger beside it and the one before it exactly as
- they were painted. A row from before authors were kept (version 26) is read as
- the work of its strongest joint — see `row_author`.
-
- @return `How many pin entries changed.`
-*>
-fn usz AppState.reset_area(&self, uint dot_id, uint twin = 0)
-{
-	usz count = self.geometry.positions.len;
-	if (count == 0 || !self.doc.find(dot_id) || self.doc.pins.len() == 0) return 0;
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return 0;
-	RigView view = opened;
-	defer view.free(mem);
-
-	usz bones = view.len();
-	sz joint = view.joint_of(dot_id);
-	if (joint < 0 || bones == 0) return 0;
-	sz twin_joint = twin != 0 && twin != dot_id ? view.joint_of(twin) : -1;
-	if (twin_joint < 0) twin = 0;
-
-	float[] automatic = self.weights(mem, &view, AUTOMATIC);
-	defer if (automatic.len > 0) alloc::free(mem, automatic);
-	if (automatic.len < count * bones) return 0;
-
-	// Each vertex's row, gathered.
-	int[] start = alloc::new_array(mem, int, (sz)count + 1);
-	defer alloc::free(mem, start);
-	foreach (pin : self.doc.pins.array_view()) if ((usz)pin.vertex < count) start[pin.vertex + 1]++;
-	for (usz v = 0; v < count; v++) start[v + 1] += start[v];
-	if (start[count] == 0) return 0;
-	VertexPin[] rows = alloc::new_array(mem, VertexPin, (sz)start[count]);
-	defer alloc::free(mem, rows);
-	int[] fill = alloc::new_array(mem, int, (sz)count);
-	defer alloc::free(mem, fill);
-	fill[..] = start[:count];
-	foreach (pin : self.doc.pins.array_view()) if ((usz)pin.vertex < count) rows[fill[pin.vertex]++] = pin;
-
-	// Which rows are the joint's work, and which of those it holds whole.
-	bool[] ours = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, ours);
-	bool[] whole = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, whole);
-	for (usz v = 0; v < count; v++)
-	{
-		VertexPin[] row = rows[start[v]:start[v + 1] - start[v]];
-		if (row.len == 0) continue;
-		uint author = row_author(row);
-		if (author != dot_id && (twin == 0 || author != twin)) continue;
-		ours[v] = true;
-		whole[v] = true;
-		foreach (pin : row) if (pin.dot_id != dot_id && (twin == 0 || pin.dot_id != twin)) whole[v] = false;
-	}
-
-	// A hand joint's rows a finger holds go back to the automatic row whole, and
-	// are no evidence of what was taken off the others. Only on the binder's own
-	// weights: a file's fingers are not banded, and the guarantee stays there.
-	bool[] outright = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, outright);
-	rig::DigitBands bands = self.doc.skin_from_file ? (rig::DigitBands){} : rig::digit_bands(mem, &view.skeleton);
-	defer bands.free(mem);
-	if (bands.shapes((usz)joint) || (twin_joint >= 0 && bands.shapes((usz)twin_joint)))
-	{
-		for (usz v = 0; v < count; v++)
-		{
-			if (!ours[v]) continue;
-			if (!fingers_hold(&bands, &view, automatic[v * bones:bones], rows[start[v]:start[v + 1] - start[v]])) continue;
-			outright[v] = true;
-			ours[v] = false;
-			whole[v] = false;
-		}
-	}
-
-	bool[] taken = alloc::new_array(mem, bool, (sz)bones);
-	defer alloc::free(mem, taken);
-	self.taken_off_around(&view, automatic, rows, start, ours, whole, joint, twin_joint, taken);
-
-	float[] row_w = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, row_w);
-	uint[SKIN_INFLUENCES] new_dots;
-	float[SKIN_INFLUENCES] new_shares;
-	uint[SKIN_INFLUENCES] auto_dots;
-	float[SKIN_INFLUENCES] auto_shares;
-
-	PinIndex stated = pin_index(mem, &self.doc.pins, math::max(pin_span(&self.doc.pins, {}), count), 0);
-	defer stated.free(mem);
-
-	PinDraft draft;
-	draft.init(count);
-	defer draft.free();
-	for (usz v = 0; v < count; v++)
-	{
-		VertexPin[] row = rows[start[v]:start[v + 1] - start[v]];
-		if (row.len == 0) continue;
-		if (outright[v])
-		{
-			draft.state((uint)v, {}, {});
-			continue;
-		}
-		usz at = v * bones;
-		float total = 0.0f;
-		for (usz b = 0; b < bones; b++) total += automatic[at + b];
-		if (total <= 0.0f) continue;
-
-		if (!ours[v])
-		{
-			// A row from before authors were kept that is exactly the automatic
-			// row without the joint: its own Apply took it off over automatic
-			// weights, and the row goes, which puts it back.
-			if (row_by(row) != 0) continue;
-			bool held = false;
-			foreach (pin : row) if (pin.dot_id == dot_id || (twin != 0 && pin.dot_id == twin)) held = true;
-			if (held) continue;
-			bool reaches = automatic[at + (usz)joint] / total >= AREA_LEAK_FLOOR
-				|| (twin_joint >= 0 && automatic[at + (usz)twin_joint] / total >= AREA_LEAK_FLOOR);
-			if (!reaches) continue;
-			for (usz b = 0; b < bones; b++)
-			{
-				row_w[b] = ((sz)b == joint || (sz)b == twin_joint) ? 0.0f : automatic[at + b];
-			}
-			usz wanted = top_row(row_w, view.dot_ids, -1, new_dots[..], new_shares[..]);
-			if (wanted == row.len && row_matches(row, new_dots[:wanted], new_shares[:wanted])) draft.state((uint)v, {}, {});
-			continue;
-		}
-
-		// Where the two held all of the automatic row but a sliver, the others the
-		// row states came from the surface around it (`others_of`) and say nothing
-		// of what it was: it goes back like a whole one.
-		float rest = 0.0f;
-		for (usz b = 0; b < bones; b++) if ((sz)b != joint && (sz)b != twin_joint) rest += automatic[at + b];
-
-		row_w[..] = 0.0f;
-		if (whole[v] || rest < AREA_LEAK_FLOOR * total)
-		{
-			// The automatic row, less the joints taken off around it.
-			float kept_weight = 0.0f;
-			for (usz b = 0; b < bones; b++)
-			{
-				bool own = (sz)b == joint || (sz)b == twin_joint;
-				row_w[b] = taken[b] && !own ? 0.0f : automatic[at + b];
-				kept_weight += row_w[b];
-			}
-			if (kept_weight <= 0.0f) row_w[..] = automatic[at:bones];
-		}
-		else
-		{
-			// The stated others as they are, and the joint beside them at its
-			// automatic weight, scaled the way the row holds the others against
-			// theirs; `top_row` normalises.
-			float scale = held_against_automatic(row, automatic[at:bones], total, &view, dot_id, twin);
-			row_w[(usz)joint] = automatic[at + (usz)joint] / total * scale;
-			if (twin_joint >= 0) row_w[(usz)twin_joint] = automatic[at + (usz)twin_joint] / total * scale;
-			foreach (pin : row)
-			{
-				if (pin.dot_id == dot_id || (twin != 0 && pin.dot_id == twin)) continue;
-				sz b = view.joint_of(pin.dot_id);
-				if (b >= 0) row_w[(usz)b] += pin.share;
-			}
-		}
-
-		sz keep = twin_joint >= 0 && row_w[(usz)twin_joint] > row_w[(usz)joint] ? twin_joint : joint;
-		usz kept = top_row(row_w, view.dot_ids, keep, new_dots[..], new_shares[..]);
-		usz auto_kept = top_row(automatic[at:bones], view.dot_ids, keep, auto_dots[..], auto_shares[..]);
-		if (same_row(new_dots[:kept], new_shares[:kept], auto_dots[:auto_kept], auto_shares[:auto_kept]))
-		{
-			draft.state((uint)v, {}, {});
-			continue;
-		}
-		uint by = strongest_left_out(new_dots[:kept], auto_dots[:auto_kept], auto_shares[:auto_kept], dot_id, twin);
-		self.keep_stated(&stated, (uint)v, new_dots[:kept], new_shares[:kept]);
-		draft.state((uint)v, new_dots[:kept], new_shares[:kept], by);
-	}
-	usz changed = self.lay_draft(&draft);
-	if (changed > 0 && self.skinned()) self.refresh_pose_display();
-	return changed;
-}
-
-<*
- The joints taken off the vertices around a joint's whole rows, before its
- Apply wrote over them: the evidence `reset_area` reads for what a whole row
- held, since the row itself no longer says.
-
- Read off the joint's own rows that border one of its whole rows — its soft
- edge, the rows it took itself off — whose others are the row as it stood when
- the joint wrote it. A joint is taken off there if it has no pin on the row,
- holds at least `AREA_LEAK_FLOOR` of the automatic row, and is strong enough
- that the cut to `SKIN_INFLUENCES` would have kept it: absent for that reason,
- it was left out by somebody's edit rather than by the cut. Rows other joints
- wrote are not evidence; with none, nothing is taken off and the whole rows go
- back to automatic.
-
- @param taken : `Set per joint.`
-*>
-fn void AppState.taken_off_around(&self, RigView* view, float[] automatic, VertexPin[] rows, int[] start,
-	bool[] ours, bool[] whole, sz joint, sz twin_joint, bool[] taken)
-{
-	usz count = ours.len;
-	usz bones = view.len();
-	rig::MeshAdjacency* around = self.adjacency_for();
-	if (around.vertices() != count || !around.usable()) return;
-
-	// One vertex per weld class, to read a neighbouring class's row from.
-	int[] first = alloc::new_array(mem, int, (sz)around.classes());
-	defer alloc::free(mem, first);
-	first[..] = -1;
-	for (usz v = 0; v < count; v++) if (first[around.class_of[v]] < 0) first[around.class_of[v]] = (int)v;
-
-	bool[] judged = alloc::new_array(mem, bool, (sz)count);
-	defer alloc::free(mem, judged);
-	bool[] chosen = alloc::new_array(mem, bool, (sz)bones);
-	defer alloc::free(mem, chosen);
-	for (usz v = 0; v < count; v++)
-	{
-		if (!whole[v]) continue;
-		foreach (cls : around.around(around.class_of[v]))
-		{
-			int u = first[cls];
-			if (u < 0 || judged[u] || !ours[u] || whole[u]) continue;
-			judged[u] = true;
-
-			VertexPin[] row = rows[start[u]:start[u + 1] - start[u]];
-			usz at = (usz)u * bones;
-			float total = 0.0f;
-			for (usz b = 0; b < bones; b++) total += automatic[at + b];
-			if (total <= 0.0f) continue;
-
-			// The room the row had for others once the joint took its place.
-			usz mine = 0;
-			foreach (pin : row)
-			{
-				sz b = view.joint_of(pin.dot_id);
-				if (b >= 0 && (b == joint || b == twin_joint)) mine++;
-			}
-			usz room = SKIN_INFLUENCES - math::min(mine, (usz)SKIN_INFLUENCES);
-			chosen[..] = false;
-			for (usz k = 0; k < room; k++)
-			{
-				sz best = -1;
-				for (usz b = 0; b < bones; b++)
-				{
-					if ((sz)b == joint || (sz)b == twin_joint || chosen[b] || automatic[at + b] <= 0.0f) continue;
-					if (best < 0 || automatic[at + b] > automatic[at + (usz)best]) best = (sz)b;
-				}
-				if (best < 0) break;
-				chosen[(usz)best] = true;
-				if (automatic[at + (usz)best] / total < AREA_LEAK_FLOOR) continue;
-				bool stated = false;
-				foreach (pin : row) if (pin.dot_id == view.dot_ids[(usz)best]) stated = true;
-				if (!stated) taken[(usz)best] = true;
-			}
-		}
-	}
-}
-
-<*
- Whether the finger joints together hold at least `rig::DIGIT_GATE_LOW` of a
- vertex, in its automatic row or as stated on its pins: a row of the hand, as
- much as the knuckle bands reach it — see `reset_area`.
-*>
-fn bool fingers_hold(rig::DigitBands* bands, RigView* view, float[] automatic, VertexPin[] row) @private
-{
-	float total = 0.0f;
-	float held = 0.0f;
-	foreach (usz b, weight : automatic)
-	{
-		total += weight;
-		if (b < bands.digit.len && bands.digit[b]) held += weight;
-	}
-	if (total > 0.0f && held / total >= rig::DIGIT_GATE_LOW) return true;
-	float stated = 0.0f;
-	foreach (pin : row)
-	{
-		sz b = view.joint_of(pin.dot_id);
-		if (b >= 0 && (usz)b < bands.digit.len && bands.digit[(usz)b]) stated += pin.share;
-	}
-	return stated >= rig::DIGIT_GATE_LOW;
-}
-
-<*
- How a row holds the joints stated on it against their automatic shares, as the
- one ratio most of them agree on: what `reset_area` scales a joint's automatic
- share by to put it back beside them.
-
- A row the joint took itself off was some other row first — automatic, or a
- neighbour's soft edge — minus the joint and renormalised. In either, the others
- hold the automatic proportions among themselves, all but the part's owner, whose
- share its Apply stated. So the ratio the others share is the one the joint had
- too, and putting it back at that ratio gives the row back as it was:
-
- - Three or more others: the median, which the owner cannot move.
- - Two: the lower, since which is the owner cannot be told — at worst the joint
-   comes back short, and never takes more from a neighbour than it held.
- - One: its own.
-
- Only joints holding at least `AREA_LEAK_FLOOR` of the automatic row are read;
- the ratio of a share of a millionth is rounding. With none, 1: the joint at its
- automatic share beside the row as it is.
-*>
-fn float held_against_automatic(VertexPin[] row, float[] automatic, float total, RigView* view, uint dot_id, uint twin) @private
-{
-	float[16] ratios;
-	usz n = 0;
-	foreach (pin : row)
-	{
-		if (n == ratios.len || pin.dot_id == dot_id || (twin != 0 && pin.dot_id == twin)) continue;
-		sz b = view.joint_of(pin.dot_id);
-		if (b < 0) continue;
-		float share = automatic[(usz)b] / total;
-		if (share < AREA_LEAK_FLOOR) continue;
-		ratios[n++] = pin.share / share;
-	}
-	if (n == 0) return 1.0f;
-	for (usz i = 1; i < n; i++)
-	{
-		for (usz j = i; j > 0 && ratios[j] < ratios[j - 1]; j--)
-		{
-			float swap = ratios[j];
-			ratios[j] = ratios[j - 1];
-			ratios[j - 1] = swap;
-		}
-	}
-	if (n <= 2) return ratios[0];
-	return n % 2 == 1 ? ratios[n / 2] : 0.5f * (ratios[n / 2 - 1] + ratios[n / 2]);
-}
-
-<*
- The author for a row Reset has to state rather than clear: the strongest joint
- the automatic row would have kept that the row leaves out — the joint whose
- leak it is — or 0 when it leaves none out.
-*>
-fn uint strongest_left_out(uint[] dots, uint[] auto_dots, float[] auto_shares, uint dot_id, uint twin) @private
-{
-	uint by = 0;
-	float strongest = 0.0f;
-	foreach (i, dot : auto_dots)
-	{
-		if (dot == dot_id || (twin != 0 && dot == twin) || auto_shares[i] < AREA_LEAK_FLOOR) continue;
-		bool kept = false;
-		foreach (other : dots) if (other == dot) kept = true;
-		if (kept || auto_shares[i] <= strongest) continue;
-		strongest = auto_shares[i];
-		by = dot;
-	}
-	return by;
-}
-
-// Whether two cut rows name the same dots at the same shares, give or take a rounding.
-fn bool same_row(uint[] dots, float[] shares, uint[] other_dots, float[] other_shares) @private
-{
-	if (dots.len != other_dots.len) return false;
-	foreach (i, dot : dots)
-	{
-		bool found = false;
-		foreach (j, other : other_dots)
-		{
-			if (other != dot) continue;
-			found = math::abs(shares[i] - other_shares[j]) <= 1.0e-3f;
-			break;
-		}
-		if (!found) return false;
-	}
-	return true;
-}
-
-// Whether a vertex's pins state exactly this row, give or take a rounding.
-fn bool row_matches(VertexPin[] pins, uint[] dots, float[] shares) @private
-{
-	foreach (pin : pins)
-	{
-		bool found = false;
-		foreach (i, dot : dots)
-		{
-			if (dot != pin.dot_id) continue;
-			found = math::abs(shares[i] - pin.share) <= 1.0e-3f;
-			break;
-		}
-		if (!found) return false;
-	}
-	return true;
-}
-
-// ---------------------------------------------------------------------------
-// The Area tool (W)
 
 <*
  Open the Area tool on the selected joint. It borrows the falloff view, the
@@ -1485,7 +850,7 @@ fn void AppState.area_changed(&self)
 {
 	self.area_generation++;
 	self.area_preview = self.area_mask.len > 0;
-	if (self.tint_mode == OFF) return;
+	if (!self.tinting()) return;
 	self.weights_stale = true;
 	self.weights_due = 0.0f;
 }
@@ -1643,19 +1008,6 @@ fn bool AppState.area_click(&self, sz vertex, IslandPick how = TOGGLE)
 	return self.pick_area_island(vertex, how);
 }
 
-<*
- Whether the joint's edge cannot be moved, said out loud when so: a rig wearing
- its file's own weights has no automatic edge of crig's for a grow or a soft
- edge to move, and a button that did nothing would be the one thing worse than
- a refusal.
-*>
-fn bool AppState.refuses_edge(&self)
-{
-	if (!self.doc.skin_from_file) return false;
-	self.@notice("this rig wears the model's own weights · Grow, Shrink and Soft edge shape crig's automatic ones — untick Rig › Use the model's own weights first");
-	return true;
-}
-
 // One Grow or Shrink step for a joint, in model units: a tenth of its bone.
 fn float AppState.grow_step(&self, uint dot_id) => self.area_scale(dot_id) * AREA_STEP;
 
@@ -1663,40 +1015,104 @@ fn float AppState.grow_step(&self, uint dot_id) => self.area_scale(dot_id) * ARE
  Push the selected joint's region out by whole steps, or pull it in — the card's
  Grow and Shrink, and the twin with it while Mirror is on.
 
- **Live, not a part.** The joint's edge moves through the same distances the
- automatic weights are made from (`Dot.grow`), so the mesh shows the result as
- the button is pressed, there is nothing to Apply, a dot moved afterwards
- carries the grown edge with it, and Reset is the same edge put back. One undo
- step per press.
+ The joint's column is rewritten from the automatic weights with its edge moved
+ that far (`Dot.grow`, `shape_edges`), so the mesh shows the result as the
+ button is pressed and there is nothing to Apply. Only this joint's column (and
+ the twin's) changes: the neighbours keep what they hold, so the grown edge
+ blends over them rather than taking their vertices. One undo step per press.
 
  @return `Whether anything changed.`
 *>
 fn bool AppState.grow_joint(&self, int steps)
 {
 	Dot* dot = self.doc.find(self.selected);
-	if (!dot || steps == 0 || self.refuses_edge()) return false;
-	bool wrote = self.set_grow_recorded(dot.id, dot.grow + (float)steps * self.grow_step(dot.id));
-	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
+	if (!dot || steps == 0) return false;
+	uint id = dot.id;
+	bool wrote = self.set_grow_recorded(id, dot.grow + (float)steps * self.grow_step(id));
+	uint twin = self.area_mirrors() ? self.mirror_twin(id) : 0;
 	Dot* other = twin != 0 ? self.doc.find(twin) : null;
 	if (other && self.set_grow_recorded(twin, other.grow + (float)steps * self.grow_step(twin))) wrote = true;
 	if (!wrote) return false;
+	uint[2] dots = { id, other ? twin : 0 };
+	self.shape_edges(dots[..]);
 	self.undo_stack.commit();
-	self.mark_rig_stale();
 	return true;
 }
 
 <*
+ Write each joint's column from the automatic weights with its own grow and
+ soft edge on it (`tool_bind_for`): what Grow, Shrink and Soft edge leave.
+ Leaves the group open for the caller.
+
+ @param dots : `The joint and its twin, or 0s for none.`
+ @return `How many vertices changed.`
+*>
+fn usz AppState.shape_edges(&self, uint[] dots)
+{
+	self.edge_pending = false;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+
+	usz count = self.geometry.positions.len;
+	usz bones = view.len();
+	float[] shaped = self.tool_bind_for(&view, dots);
+	if (shaped.len < count * bones) return 0;
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	usz moved = 0;
+	foreach (id : dots)
+	{
+		sz joint = view.joint_of(id);
+		if (joint < 0) continue;
+		for (usz v = 0; v < count; v++) column[v] = shaped[v * bones + (usz)joint];
+		moved += self.replace_column(&view, id, column, commit: false);
+	}
+	return moved;
+}
+
+<*
+ A grow drag or a soft-edge slider changed an edge: rewrite the columns once
+ the hand is still (`tick_edges`) rather than binding on every mouse move.
+*>
+fn void AppState.edges_moved(&self, uint dot_id, uint twin)
+{
+	self.edge_dots = { dot_id, twin };
+	self.edge_pending = true;
+	self.edge_due = WEIGHT_DEBOUNCE;
+}
+
+// Rewrite the columns an edge drag is waiting on, now. Safe with none pending.
+fn void AppState.flush_edges(&self)
+{
+	if (self.edge_pending) self.shape_edges(self.edge_dots[..]);
+}
+
+<*
+ The edge drag's debounce, one frame's worth — `tick_weights`' sibling, and run
+ whether or not a weight view is up, since what it writes is the weights.
+*>
+fn void AppState.tick_edges(&self, float dt)
+{
+	if (!self.edge_pending) return;
+	self.edge_due -= dt;
+	if (self.edge_due > 0.0f) return;
+	self.flush_edges();
+}
+
+<*
  Start a grow or shrink drag on the mesh (shift-drag grows, ctrl-drag shrinks):
- the same live edge as the card's buttons, a step per stretch of the drag, and
- one undo step for the whole drag. Remembers where the joint and its twin
- started so dragging back takes steps off again.
+ the same edge as the card's buttons, a step per stretch of the drag, and one
+ undo step for the whole drag. Remembers where the joint and its twin started
+ so dragging back takes steps off again.
 *>
 fn bool AppState.begin_grow_drag(&self)
 {
 	if (!self.areaing || self.area_shaping()) return false;
 	self.area_follow_selection();
 	Dot* dot = self.doc.find(self.area_dot);
-	if (!dot || self.refuses_edge()) return false;
+	if (!dot) return false;
 	self.grow_drag = true;
 	self.grow_drag_from = dot.grow;
 	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
@@ -1714,34 +1130,46 @@ fn bool AppState.grow_drag_to(&self, int steps)
 	if (self.grow_drag_twin != 0
 		&& self.set_grow_recorded(self.grow_drag_twin,
 			self.grow_drag_twin_from + (float)steps * self.grow_step(self.grow_drag_twin))) wrote = true;
-	if (wrote) self.mark_rig_stale();
+	if (wrote) self.edges_moved(self.area_dot, self.grow_drag_twin);
 	return wrote;
 }
 
-// The button came up: the drag is one undo step. Safe with no drag open.
+// The button came up: the columns catch up and the drag is one undo step. Safe
+// with no drag open.
 fn void AppState.end_grow_drag(&self)
 {
 	if (!self.grow_drag) return;
 	self.grow_drag = false;
+	self.flush_edges();
 	self.undo_stack.commit();
 }
 
 <*
  Set how far the selected joint blends with its neighbours — the card's Soft
  edge — and the twin's with it while Mirror is on. Leaves the group open so a
- slider drag is one undo step; the slider's release commits.
+ slider drag is one undo step; `commit_soft_edge`, on the release, writes the
+ columns and closes it.
 
  @param share : `A share of the joint's bone.`
 *>
 fn bool AppState.soften_joint(&self, float share)
 {
 	Dot* dot = self.doc.find(self.selected);
-	if (!dot || self.refuses_edge()) return false;
-	bool wrote = self.set_band_recorded(dot.id, share);
-	uint twin = self.area_mirrors() ? self.mirror_twin(dot.id) : 0;
-	if (twin != 0 && self.doc.find(twin) && self.set_band_recorded(twin, share)) wrote = true;
-	if (wrote) self.mark_rig_stale();
+	if (!dot) return false;
+	uint id = dot.id;
+	bool wrote = self.set_band_recorded(id, share);
+	uint twin = self.area_mirrors() ? self.mirror_twin(id) : 0;
+	if (twin != 0 && !self.doc.find(twin)) twin = 0;
+	if (twin != 0 && self.set_band_recorded(twin, share)) wrote = true;
+	if (wrote) self.edges_moved(id, twin);
 	return wrote;
+}
+
+// The soft-edge slider came up: the columns catch up, one undo step.
+fn void AppState.commit_soft_edge(&self)
+{
+	self.flush_edges();
+	self.undo_stack.commit();
 }
 
 fn String AppState.area_joint_name(&self)
@@ -1807,9 +1235,11 @@ fn usz AppState.commit_area(&self)
 
 <*
  Reset to automatic for the selected joint (and its twin when mirroring): its
- edge goes back where the automatic weights put it — no grow, the model's soft
- edge — and its own Applies and strokes are taken back, while nothing a
- neighbour wrote is touched (`reset_area`). One undo step.
+ stored weights, grow and soft edge are let go, and it follows the automatic
+ weights again (`release_recorded`), while nothing a neighbour holds is touched.
+ One undo step.
+
+ @return `How many joints were let go.`
 *>
 fn usz AppState.reset_joint_area(&self)
 {
@@ -1826,30 +1256,21 @@ fn usz AppState.reset_joint_area(&self)
 		self.drop_area_part();
 	}
 
-	// The edge first, inside the same group the pins close.
-	bool edged = false;
-	if (self.set_grow_recorded(id, 0.0f)) edged = true;
-	if (self.set_band_recorded(id, 0.0f)) edged = true;
-	if (twin != 0 && self.doc.find(twin))
-	{
-		if (self.set_grow_recorded(twin, 0.0f)) edged = true;
-		if (self.set_band_recorded(twin, 0.0f)) edged = true;
-	}
-	if (edged) self.mark_rig_stale();
-	usz cleared = self.reset_area(id, twin);
+	usz released = self.release_recorded(id) ? 1 : 0;
+	if (twin != 0 && self.release_recorded(twin)) released++;
 	self.undo_stack.commit();
 
 	Dot* dot = self.doc.find(id);
 	String name = dot.name.len > 0 ? dot.name : "this joint";
-	if (cleared == 0 && !edged)
+	if (released == 0)
 	{
 		self.@notice("%s already uses automatic weights", name);
 	}
 	else
 	{
-		self.@notice("%s back to automatic weights", name);
+		self.@notice("%s follows the automatic weights again", name);
 	}
-	return cleared + (edged ? (usz)1 : (usz)0);
+	return released;
 }
 
 <*
@@ -1913,10 +1334,9 @@ fn float island_shade(int island) @private
  already drawn on — the joint's share on the falloff ramp, or the strongest
  joint on the territory map. Every other vertex keeps the weights it has.
 
- The rows are `area_rows`, the ones Apply lays, each put through `pin_over` from
- the automatic row with its own pins and no others, which is what `lay_draft`
- leaves on a vertex. So pressing Apply changes nothing on screen, and the brush
- then shows what the card showed.
+ The column is `area_column`, the one Apply writes, swapped into each row in
+ place of the joint's (and the twin's) as the funnel would. So pressing Apply
+ changes nothing on screen, and the brush then shows what the card showed.
 
  Only once the part has been shaped by hand (`area_preview`). The part the card
  picks for itself, so its buttons have something to act on, leaves the weights
@@ -1938,31 +1358,36 @@ fn void AppState.overlay_area_tints(&self, RigView* view, float[] painted)
 	sz joint = view.joint_of(self.area_dot);
 	if (joint < 0 || bones == 0) return;
 
-	PinDraft draft;
-	defer draft.free();
-	usz held = self.area_rows(&draft, view, painted, self.area_dot, self.area_mask, self.area_soft_distance(),
-		self.area_twin, self.area_twin_mask, self.area_names_pieces());
+	float[] shown = alloc::new_array(mem, float, (sz)painted.len);
+	defer alloc::free(mem, shown);
+	shown[..] = painted[..];
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	bool[] touched = alloc::new_array(mem, bool, (sz)count);
+	defer alloc::free(mem, touched);
+
+	uint[2] owners = { self.area_dot, self.area_twin };
+	bool[][2] parts = { self.area_mask, self.area_twin_mask };
+	usz held = 0;
+	foreach (p, owner : owners)
+	{
+		sz side = view.joint_of(owner);
+		if (side < 0 || parts[p].len != count || (p > 0 && owner == self.area_dot)) continue;
+		held += self.area_column(view, painted, owner, parts[p], self.area_soft_distance(), self.area_names_pieces(), column);
+		for (usz v = 0; v < count; v++)
+		{
+			if (column[v] == shown[v * bones + (usz)side]) continue;
+			shown[v * bones + (usz)side] = column[v];
+			touched[v] = true;
+		}
+	}
 	if (held == 0) return;
 
-	float[] automatic = self.weights(mem, view, AUTOMATIC);
-	defer if (automatic.len > 0) alloc::free(mem, automatic);
-	if (automatic.len < count * bones) return;
-
 	bool falloff = self.tint_mode == FALLOFF;
-	PinColumn[SKIN_INFLUENCES] stated;
 	for (usz v = 0; v < count; v++)
 	{
-		if (!draft.claimed((uint)v)) continue;
-		float[] row = automatic[v * bones:bones];
-		usz from = (usz)draft.first[v];
-		usz kept = 0;
-		for (usz i = from; i < from + (usz)draft.held[v] && kept < stated.len; i++)
-		{
-			VertexPin pin = draft.pins[(sz)i];
-			sz column = view.joint_of(pin.dot_id);
-			if (column >= 0) stated[kept++] = { .vertex = 0, .joint = (usz)column, .share = pin.share };
-		}
-		pin_over(row, bones, stated[:kept]);
+		if (!touched[v]) continue;
+		float[] row = shown[v * bones:bones];
 		self.tints[v] = falloff ? share_tint(joint_share(row, (usz)joint)) : joint_tint(strongest_joint(row));
 	}
 

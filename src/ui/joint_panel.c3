@@ -865,9 +865,9 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 														.width = WEIGHTS_PART_W, .style = VIEW_MENU_STYLE,
 														.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
 												};
-												@card_icon(GROW_GLYPH, "Grow — push this joint's edge out by a tenth of its bone, live; Reset puts it back",
+												@card_icon(GROW_GLYPH, "Grow — push this joint's edge out by a tenth of its bone; only this joint's weights change, Reset puts it back",
 													&weights_grow_pressed).with_id(WEIGHTS_GROW_ID);
-												@card_icon(SHRINK_GLYPH, "Shrink — pull this joint's edge in by a tenth of its bone, live; Reset puts it back",
+												@card_icon(SHRINK_GLYPH, "Shrink — pull this joint's edge in by a tenth of its bone; only this joint's weights change, Reset puts it back",
 													&weights_shrink_pressed).with_id(WEIGHTS_SHRINK_ID);
 												@card_icon(MIRROR_GLYPH, app.area_mirrors()
 													? "Mirror is on — Grow, Shrink, Soft edge, the brush, the lasso, Apply and Reset change the twin joint on the other side too. Click for this side only"
@@ -894,7 +894,6 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													.min = SOFT_EDGE_MIN * 100.0f,
 													.max = BAND_SHARE_MAX * 100.0f,
 													.step = 5.0f,
-													.disabled = app.doc.skin_from_file,
 													.on_change = &weights_soft_moved,
 													.on_commit = &weights_soft_committed,
 													.style = PHYSICS_SLIDER_STYLE,
@@ -911,8 +910,7 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 														.value = app.doc.knuckle_blend_fraction() * 100.0f,
 														.max = KNUCKLE_BLEND_MAX * 100.0f,
 														.step = 5.0f,
-														.disabled = app.doc.skin_from_file,
-														.on_change = &weights_knuckle_moved,
+															.on_change = &weights_knuckle_moved,
 														.on_commit = &weights_knuckle_committed,
 														.style = PHYSICS_SLIDER_STYLE,
 													}).with_id(WEIGHTS_KNUCKLE_ID);
@@ -934,7 +932,7 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													bool pinning = app.lassoing && app.lasso_job == LassoJob.PIN;
 													@card_icon(LASSO_GLYPH, pinning
 														? "Stop pinning (Shift+T) — put the lasso away"
-														: "Lasso pin (Shift+T) — draw round vertices to give them wholly to this joint",
+														: "Lasso pin (Shift+T) — draw round vertices to give this joint its full weight there; other joints keep theirs",
 														&menu_lasso_mode, pinning ? LIT : PLAIN,
 														"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
 														.with_id(WEIGHTS_LASSO_ID);
@@ -946,11 +944,11 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 											{
 												@card_icon(APPLY_GLYPH, app.areaing && app.area_pending()
-													? "Apply (Enter) — give this joint the part on show; it replaces the joint's weights, brush strokes too"
+													? "Apply (Enter) — give this joint the part on show; it replaces this joint's weights, and no other joint's"
 													: "Apply (Enter) — nothing waits: the joint's own bone changes live. Pick With children or UV islands for a part to apply",
 													&weights_apply_pressed, app.areaing && app.area_pending() ? COMMIT : PLAIN).with_id(WEIGHTS_APPLY_ID);
 												@card_icon(RESET_GLYPH,
-													"Reset to automatic — the joint back on its automatic edge, its grow, soft edge, parts and strokes taken back",
+													"Reset to automatic — this joint follows the automatic weights again: its grow, soft edge, parts and strokes let go",
 													&weights_reset_pressed).with_id(WEIGHTS_RESET_ID);
 											};
 											@node((Label) { .text = weights_readout(app, &self.readout),
@@ -1619,14 +1617,16 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 	usz total = app.geometry.positions.len;
 	if (!app.areaing || !app.area_pending())
 	{
-		// The joint itself, live: what it holds, and how far its edge was moved.
+		// The joint itself: whose weights it wears, what it holds, and how far its
+		// edge was moved.
 		Dot* dot = app.doc.find(app.selected);
 		if (!dot) return "Pick a part, or paint by hand.";
 		int steps = (int)math::round(dot.grow / math::max(app.grow_step(dot.id), 1.0e-9f));
-		String grown = steps == 0 ? "on its automatic edge" : string::tformat("grown %s%d", steps > 0 ? "+" : "", steps);
-		if (app.tint_mode != FALLOFF) return string::bformat(buffer, "Own bone, live · %s", grown);
+		String grown = steps == 0 ? "" : string::tformat(" · grown %s%d", steps > 0 ? "+" : "", steps);
+		String whose = dot.held ? "Edited, kept as written · Reset to follow the joint again" : "Automatic, follows the joint";
+		if (app.tint_mode != FALLOFF) return string::bformat(buffer, "%s%s", whose, grown);
 		int percent = total > 0 ? (int)math::round((float)app.falloff_held * 100.0f / (float)total) : 0;
-		return string::bformat(buffer, "Own bone, live · holds %d vertices (%d%%) · %s", app.falloff_held, percent, grown);
+		return string::bformat(buffer, "%s · holds %d vertices (%d%%)%s", whose, app.falloff_held, percent, grown);
 	}
 	usz held = app.area_held();
 	int percent = total > 0 ? (int)math::round((float)held * 100.0f / (float)total) : 0;
@@ -1785,7 +1785,7 @@ fn void weights_soft_moved(Ui* ui, float value) @private
 fn void weights_soft_committed(Ui* ui, float value) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	app.undo_stack.commit();
+	app.commit_soft_edge();
 	refresh_joint_panel(ui);
 }
 
