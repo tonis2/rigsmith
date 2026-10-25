@@ -413,11 +413,15 @@ fn bool preset_reversed(Preset preset, rig::Bounds box, rig::MeshVoxels* voxels,
 		forward = math::min(forward, facing_cost(preset, weights, grid, { .box = box, .reversed = false }, offset));
 		backward = math::min(backward, facing_cost(preset, weights, grid, { .box = box, .reversed = true }, offset));
 	}
-	return backward < forward;
+	// A tie by a rounding error is still a tie: on a featureless box the two costs
+	// differ in the sixth digit, and that must not turn the figure round.
+	return backward < forward * (1.0f - FACING_TIE);
 }
 
 const int FACING_SLIDES = 8;
 const float FACING_SLIDE_STEP = 0.03f; // of the box's depth, so ±24% either way
+// How much cheaper the reversed fit must be to win, as a share of the forward one.
+const float FACING_TIE = 0.01f;
 
 // The feet's slab and the shins' above it, as fractions of the box's height.
 const float FEET_SLAB = 0.04f;

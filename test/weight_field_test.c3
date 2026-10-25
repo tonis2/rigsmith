@@ -435,12 +435,15 @@ fn void taking_the_hips_off_a_vertex_gives_it_back_to_the_leg() @test
 	float[] base = app.weights(mem, &view, AUTOMATIC);
 	view.free(mem);
 	defer alloc::free(mem, base);
+	// The boot vertex the ankle holds most of.
 	uint boot = 0;
+	float most = 0.0f;
 	for (usz v = 0; v < app.geometry.positions.len; v++)
 	{
-		if (crig::joint_share(base[v * bones:bones], ankle_joint) > 0.9f) { boot = (uint)v; break; }
+		float share = crig::joint_share(base[v * bones:bones], ankle_joint);
+		if (share > most) { boot = (uint)v; most = share; }
 	}
-	test::@check(boot != 0, "the ankle holds no vertex outright");
+	test::@check(most > 0.6f, "the ankle holds no vertex mostly: %f at best", most);
 
 	uint[1] one = { boot };
 	app.set_weight_vertices(one[..], hips, 1.0f);

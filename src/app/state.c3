@@ -1252,8 +1252,10 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	self.pose_edit_pending = false;
 	self.stage = JOINTS_STAGE;
 	// The anchors named the joints of the model that just left, and their targets
-	// are world points in its pose. Neither means anything for the next one.
+	// are world points in its pose. Neither means anything for the next one, nor
+	// do the Keep angle cells set on its joints.
 	self.clear_position_locks();
+	self.angle_flips.free();
 	self.replace_authored_clips({});
 	self.authored_dirty = false;
 
@@ -1637,6 +1639,7 @@ fn void AppState.free_character_state(&self)
 	self.drop_layer_share_rows();
 	self.clear_aim_target();
 	self.clear_position_locks();
+	self.angle_flips.free();
 	self.drop_palette();
 	// Outlives every frame of playback by design, so it is here rather than in
 	// `drop_palette` beside the things one frame owns.

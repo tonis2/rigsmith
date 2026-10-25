@@ -181,6 +181,15 @@ struct DragState
 	Vec3 grab;
 
 	<*
+	 POSE: Alt held — the grabbed limb does the other thing with its angle. A
+	 hand turns with its forearm and a foot keeps the world angle it stood at, so
+	 with Alt the hand arrives as it faced and the foot tilts with the shin. The
+	 trunk keeps its world angle either way. Read on every move; each move solves
+	 from the gesture's start, so it can change mid-drag.
+	*>
+	bool flip_angle;
+
+	<*
 	 POSE begun on G, with no button down: where the pointer was, at the grab's
 	 depth, on the first mouse move. Every target after is the joint's start
 	 plus how far the pointer has come since, put onto the lock's line or plane

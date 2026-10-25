@@ -115,10 +115,12 @@ fn void Model.pin(&self, String name) => self.app.set_anchor(self.id(name), true
 <*
  One viewport pull: press on `name`, drag it `by` in a few moves, let go.
 *>
-fn void Model.pull(&self, String name, Vec3 by, DragAxis lock = FREE)
+fn void Model.pull(&self, String name, Vec3 by, DragAxis lock = FREE, bool flip_angle = false)
 {
 	self.app.select(self.id(name));
 	test::@check(self.app.begin_pose(true), "the pose gesture on %s did not begin", name);
+	// Alt held through the drag.
+	self.app.drag.flip_angle = flip_angle;
 	// The Move tool's arrow is the same gesture held to an axis.
 	if (lock != DragAxis.FREE) test::@check(self.app.lock_drag(lock), "the axis lock did not take");
 	Vec3 from = self.app.drag.from;
@@ -212,6 +214,16 @@ fn float angle_of(Quaternionf q)
 
 // How far a joint has turned in the world since `was`, in degrees.
 fn float Model.turned(&self, String name, Quaternionf was) => angle_of(self.world(name).mul(was.invert()));
+
+// A joint's rotation against its parent's, in the world: what turns with the limb.
+fn Quaternionf Model.to_parent(&self, String name)
+{
+	crig::RigView view = self.app.open_rig(mem)!!;
+	defer view.free(mem);
+	int parent = view.skeleton.parents[(usz)view.joint_of(self.id(name))];
+	crig::Dot* above = self.app.doc.find(view.dot_ids[(usz)parent]);
+	return self.world(above.name).invert().mul(self.world(name));
+}
 
 // How far a joint's up has leaned from where `was` had it, in degrees: a yaw is not a tilt.
 fn float Model.tilt(&self, String name, Quaternionf was)
@@ -600,6 +612,124 @@ fn void a_pinned_hand_holds_while_the_chest_moves() @test
 }
 
 <*
+ A wrist pulled up bends the arm, and the hand turns with the forearm: it keeps its
+ angle to its parent, not the way it faced in the world. Alt (`flip_angle`) is the
+ other answer — the hand arrives as it faced.
+*>
+fn void a_dragged_wrist_turns_the_hand_with_the_forearm() @test
+{
+	io::printn("humanoid: pull a wrist up, with and without Alt");
+	foreach (bool keep : { false, true })
+	{
+		Model m;
+		if (!m.open(PERSON, false)) return;
+		defer m.close();
+		Vec3 hand = m.at("wrist_L");
+		Quaternionf world = m.world("wrist_L");
+		Quaternionf local = m.to_parent("wrist_L");
+		Vec3 by = { 0, 0.12f * m.height, 0.04f * m.height };
+		m.pull("wrist_L", by, flip_angle: keep);
+		float turned = m.turned("wrist_L", world);
+		float bent = angle_of(m.to_parent("wrist_L").mul(local.invert()));
+		io::printfn("  keep=%s hand turned %.2f deg in the world, %.2f against the forearm, missed by %.4f",
+			keep, turned, bent, m.off("wrist_L", hand + by));
+		test::@check(m.off("wrist_L", hand + by) < 0.005f, "the wrist missed the pointer by %.4f heights", m.off("wrist_L", hand + by));
+		if (keep)
+		{
+			test::@check(turned < 3.0f, "with Alt the hand turned %.2f degrees in the world", turned);
+		}
+		else
+		{
+			test::@check(bent < 0.5f, "the hand turned %.2f degrees against its forearm", bent);
+			test::@check(turned > 10.0f, "the hand kept its world facing (turned %.2f degrees)", turned);
+		}
+	}
+}
+
+<*
+ A foot is the other way round from a hand: an ankle lifted out to the side stays
+ flat as it stood, where riding the shin would take the shin's roll and land the
+ foot turned. Alt makes it tilt with the shin.
+*>
+fn void a_dragged_ankle_keeps_the_foot_flat() @test
+{
+	io::printn("humanoid: lift an ankle out to the side, with and without Alt");
+	foreach (bool flip : { false, true })
+	{
+		Model m;
+		if (!m.open(PERSON, false)) return;
+		defer m.close();
+		Vec3 foot = m.at("ankle_L");
+		Quaternionf world = m.world("ankle_L");
+		Quaternionf local = m.to_parent("ankle_L");
+		Vec3 by = { 0.08f * m.height, 0.05f * m.height, 0 };
+		m.pull("ankle_L", by, flip_angle: flip);
+		float turned = m.turned("ankle_L", world);
+		float bent = angle_of(m.to_parent("ankle_L").mul(local.invert()));
+		io::printfn("  alt=%s foot turned %.2f deg in the world, %.2f against the shin, missed by %.4f",
+			flip, turned, bent, m.off("ankle_L", foot + by));
+		test::@check(m.off("ankle_L", foot + by) < 0.005f, "the ankle missed the pointer by %.4f heights", m.off("ankle_L", foot + by));
+		if (flip)
+		{
+			test::@check(bent < 0.5f, "with Alt the foot turned %.2f degrees against its shin", bent);
+		}
+		else
+		{
+			test::@check(turned < 3.0f, "the foot turned %.2f degrees in the world", turned);
+		}
+	}
+}
+
+<*
+ The Joint card's Keep angle cell swaps a joint's own way for every drag: a hand
+ set to keep arrives as it faced, a foot set the other way tilts with its shin,
+ and Alt swaps each back for one drag.
+*>
+fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
+{
+	io::printn("humanoid: Keep angle set the other way on a wrist and an ankle");
+	foreach (bool alt : { false, true })
+	{
+		Model m;
+		if (!m.open(PERSON, false)) return;
+		defer m.close();
+		foreach (String name : { "wrist_L", "ankle_L" })
+		{
+			bool own = m.app.pose_keeps_angle(m.id(name));
+			m.app.select(m.id(name));
+			test::@check(m.app.set_selection_keeps_angle(!own) == 1, "Keep angle did not set on %s", name);
+			test::@check(m.app.pose_keeps_angle(m.id(name)) == !own, "Keep angle did not flip %s", name);
+		}
+		m.app.select(m.id("hips"));
+		test::@check(m.app.set_selection_keeps_angle(false) == 0, "Keep angle set on the trunk");
+
+		Quaternionf hand = m.world("wrist_L");
+		Quaternionf shin_hand = m.to_parent("wrist_L");
+		m.pull("wrist_L", { 0, 0.12f * m.height, 0.04f * m.height }, flip_angle: alt);
+		float hand_turned = m.turned("wrist_L", hand);
+		float hand_bent = angle_of(m.to_parent("wrist_L").mul(shin_hand.invert()));
+
+		Quaternionf foot = m.world("ankle_L");
+		Quaternionf shin_foot = m.to_parent("ankle_L");
+		m.pull("ankle_L", { 0.08f * m.height, 0.05f * m.height, 0 }, flip_angle: alt);
+		float foot_turned = m.turned("ankle_L", foot);
+		float foot_bent = angle_of(m.to_parent("ankle_L").mul(shin_foot.invert()));
+		io::printfn("  alt=%s hand turned %.2f (%.2f to the forearm), foot turned %.2f (%.2f to the shin)",
+			alt, hand_turned, hand_bent, foot_turned, foot_bent);
+		if (alt)
+		{
+			test::@check(hand_bent < 0.5f, "with the cell and Alt the hand turned %.2f against its forearm", hand_bent);
+			test::@check(foot_turned < 3.0f, "with the cell and Alt the foot turned %.2f in the world", foot_turned);
+		}
+		else
+		{
+			test::@check(hand_turned < 3.0f, "with the cell the hand turned %.2f in the world", hand_turned);
+			test::@check(foot_bent < 0.5f, "with the cell the foot turned %.2f against its shin", foot_bent);
+		}
+	}
+}
+
+<*
  A squat deeper than the ankles can hold flat: the pins cannot all hold, and what
  they report has to be the miss on screen — the ground solve lifting the body off
  a foot that tilts is the pin missing, and saying 0 there was the lie.
@@ -747,6 +877,35 @@ fn void pose_joint_turns_a_joint() @test
 	turned.free();
 	Vec3 now = f.app.dot_position(*f.app.doc.find(paw));
 	test::@check((now - was).length() < 0.006f, "the paw moved %.4f", (now - was).length());
+}
+
+<*
+ pose_joint's keep_angle says outright what the Alt-drag swaps: a paw is a foot, so
+ left out it stays flat as it stood, and false turns it with its leg.
+*>
+fn void pose_joint_keep_angle_holds_a_limbs_world_angle() @test
+{
+	io::printn("pose_joint keep_angle: a lifted fore paw, left out, false and true");
+	float[3] turned;
+	foreach (usz i, String keep : { "", `,"keep_angle":false`, `,"keep_angle":true` })
+	{
+		mcp::Fixture f;
+		if (!open_dog_tools(&f)) return;
+		defer f.close();
+		uint paw = f.app.dot_named("fore_hoof_L").id;
+		Quaternionf was = f.app.dot_world_rotation(paw);
+		DString call = dstring::new(mem);
+		defer call.free();
+		call.appendf(`{"joint":"fore_hoof_L","move":[0.05,0.08,0],"key":false%s}`, keep);
+		Object*? posed = f.call_tool("pose_joint", call.str_view());
+		if (catch posed) { test::@check(false, "pose_joint refused"); return; }
+		posed.free();
+		turned[i] = angle_of(f.app.dot_world_rotation(paw).mul(was.invert()));
+	}
+	io::printfn("  paw turned %.2f degrees left out, %.2f with false, %.2f with true", turned[0], turned[1], turned[2]);
+	test::@check(turned[0] < 3.0f, "left out the paw turned %.2f degrees", turned[0]);
+	test::@check(turned[2] < 3.0f, "with keep_angle true the paw turned %.2f degrees", turned[2]);
+	test::@check(turned[1] > turned[2] + 5.0f, "with keep_angle false the paw did not turn with its leg (%.2f against %.2f)", turned[1], turned[2]);
 }
 
 // The dock's Apply to switch is the person's: an agent's key lands at its time alone.

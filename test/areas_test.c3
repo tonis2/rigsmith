@@ -193,8 +193,16 @@ fn void a_part_takes_exactly_what_it_names() @test
 		count_of(hand), count_of(palm));
 
 	// A whole piece: one shell, taken whole, and the head's whole weight once applied.
+	// Seeded in the smallest shell the head owns a vertex of — an eye rather than a
+	// body cast in one piece, whose other joints keep the weights they hold.
+	usz[] sizes = alloc::new_array(mem, usz, (sz)own.len);
+	defer alloc::free(mem, sizes);
+	foreach (v, on : own) sizes[(usz)app.shells.of[v]]++;
 	sz seed = -1;
-	foreach (v, on : own) if (on) { seed = (sz)v; break; }
+	foreach (v, on : own)
+	{
+		if (on && (seed < 0 || sizes[(usz)app.shells.of[v]] < sizes[(usz)app.shells.of[(usz)seed]])) seed = (sz)v;
+	}
 	bool[] piece = app.area_part_mask(mem, head, PIECE, seed);
 	defer alloc::free(mem, piece);
 	int shell = app.shells.of[(usz)seed];

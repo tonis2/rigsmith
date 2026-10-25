@@ -62,7 +62,8 @@ const String PIN_FEET_SCHEMA = `{"type":"object","properties":{
 }}`;
 
 const String POSE_JOINT_SCHEMA = `{"type":"object","properties":{
-	"joint":{"type":"string","description":"The joint to pose. A dragged joint goes to the point and keeps the angle it had, softly, so a hip pulled down drops the body with the chest still upright."},
+	"joint":{"type":"string","description":"The joint to pose. A dragged joint goes to the point. A trunk joint keeps the world angle it had, softly, so a hip pulled down drops the body with the chest still upright, and so does a foot, which stays flat; any other limb's joint keeps its angle to its parent, so a wrist pulled up turns the hand with the forearm."},
+	"keep_angle":{"type":"boolean","description":"true keeps the dragged joint's world angle, false turns it with its parent. Left out, the joint's Keep angle cell on the Joint card decides, and it starts with a foot keeping its world angle so it stays flat and any other limb's joint turning with its parent; the Alt-drag is the other one of the two. The trunk keeps its world angle either way."},
 	"move":{"type":"array","items":{"type":"number"},"description":"[x,y,z] to move the joint by, in model units along the model's world axes: the drag of a joint by that much."},
 	"target":{"type":"array","items":{"type":"number"},"description":"[x,y,z] model-space point to drag the joint to. Use move or target, not both."},
 	"turn":{"type":"object","description":"Turn the joint in place. Applied after a move or target when both are given.","properties":{
@@ -327,7 +328,7 @@ fn bool as_turn_axis(Object* obj, Vec3* into)
 fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
-	if (!takes_object(args, detail, `pose_joint takes an object: {"joint": name, "move": [x,y,z] | "target": [x,y,z], "turn": {"axis":..., "angle": radians}, "clip": name, "time": seconds, "key": bool}`)) return PINS_REFUSED~;
+	if (!takes_object(args, detail, `pose_joint takes an object: {"joint": name, "move": [x,y,z] | "target": [x,y,z], "turn": {"axis":..., "angle": radians}, "clip": name, "time": seconds, "key": bool, "keep_angle": bool}`)) return PINS_REFUSED~;
 	// A key lands at "time" alone, whatever the dock's Apply to switch or key
 	// selection says: those are the person's, not the agent's.
 	KeyReach reach = app.key_reach;
@@ -335,6 +336,7 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 	app.key_reach = FRAME;
 
 	bool key = args.get_bool("key") ?? true;
+	bool? keep_angle = args.get_bool("keep_angle");
 	Object* move = member(args, "move");
 	Object* target = member(args, "target");
 	Object* turn = member(args, "turn");
@@ -418,6 +420,8 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 			detail.appendf(`the pose gesture on "%s" would not begin: %s`, joint, app.notice());
 			return PINS_REFUSED~;
 		}
+		// Said outright, it is the Alt-drag when it differs from the joint's own way.
+		if (try keep = keep_angle) app.drag.flip_angle = keep != app.pose_keeps_angle(id);
 		Vec3 from = app.drag.from;
 		asked = move != null ? from + delta : goal;
 		asked_position = true;

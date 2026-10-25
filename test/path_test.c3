@@ -134,11 +134,13 @@ fn Vec3 Person.hand_at(&self, float time, AnimTemplate clip)
 	return self.view.skeleton.joints[self.hand].transform(palette[self.hand]);
 }
 
-// A small arc in front of the hand's rest place, out and back over the second.
+// A small arc in front of the hand's rest place, out and back over the second —
+// drawn a little in toward the body, so a T-pose arm reaches it with its elbow
+// bent rather than at full stretch.
 fn AnimPath Person.arc(&self)
 {
 	Vec3 rest = self.view.skeleton.joints[self.hand] / self.height;
-	Vec3[3] at = { rest + (Vec3){ 0, 0.02f, 0.04f }, rest + (Vec3){ 0, 0.05f, 0.07f }, rest + (Vec3){ 0, 0.08f, 0.04f } };
+	Vec3[3] at = { rest + (Vec3){ -0.03f, 0.02f, 0.04f }, rest + (Vec3){ -0.03f, 0.05f, 0.07f }, rest + (Vec3){ -0.03f, 0.08f, 0.04f } };
 	AnimPath path = line_path(false, at[..], false);
 	float[3] times = { 0.0f, 0.5f, 1.0f };
 	float[3] us = { 0.0f, 0.5f, 1.0f };

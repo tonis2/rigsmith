@@ -447,7 +447,10 @@ fn void a_guide_clips_keys_become_the_pipelines_poses() @test
 	Vec3 first = json_point(keys.get_at(0).get("joints")!!.get("RightHand")!!);
 	Vec3 raised = json_point(keys.get_at(1).get("joints")!!.get("RightHand")!!);
 	test::@check((first - at_rest).length() < 0.001f, "the rest key moved the hand %s", first - at_rest);
-	test::@check((raised - at_rest).length() > 0.2f, "the swung arm did not move the hand: %s", raised - at_rest);
+	// Against the arm's own length, so the figure's units do not decide it.
+	float arm = (at_rest - json_point(rest.get("RightArm")!!)).length();
+	test::@check((raised - at_rest).length() > 0.5f * arm, "the swung arm did not move the hand: %s of an arm %f long",
+		raised - at_rest, arm);
 
 	String json = crig::motion_job_json(&app.config.motion_generator, &&(crig::MotionRequest){ .prompt = "a wave" },
 		"Wave", 150, poses);

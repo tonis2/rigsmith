@@ -591,6 +591,11 @@ struct Character
 	*>
 	PositionLock[] position_locks;
 
+	// Joints whose Keep angle cell is set the other way from their own: a hand
+	// that keeps its world angle when dragged, a foot that turns with its shin.
+	// Session-only like the anchors, and cleared with them. See `pose_holds`.
+	List{uint} angle_flips;
+
 	// Whether `position_locks` was last rebuilt from the editing clip's pins
 	// (`sync_clip_pins`), so closing the clip knows to drop them. See `clip_pins.c3`.
 	bool pins_from_clip;

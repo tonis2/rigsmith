@@ -56,6 +56,8 @@ enum CardGlyph
 	BAKE_GLYPH,
 	MUTE_GLYPH,
 	FOLLOW_GLYPH,
+	// The Joint card's.
+	KEEP_ANGLE_GLYPH,
 }
 
 <*
@@ -241,6 +243,13 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			Vec2 tip = c + (Vec2){ r * 0.75f, -r * 0.05f };
 			painter.line(tip - (Vec2){ r * 0.55f, r * 0.45f }, tip, w, ink);
 			card_arrow_head(painter, tip, { 0.77f, 0.64f }, ink);
+		case KEEP_ANGLE_GLYPH:
+			// An angle on a level floor, its arc marking the turn held.
+			Vec2 corner = c + (Vec2){ -r * 0.8f, r * 0.7f };
+			Vec2 arm = { 0.7071f, -0.7071f };
+			painter.line(corner, corner + (Vec2){ r * 1.8f, 0 }, w, ink);
+			painter.line(corner, corner + arm * (r * 1.9f), w, ink);
+			painter.arc(corner, r * 1.0f, -(float)math::PI * 0.25f, (float)math::PI * 0.25f, w, ink);
 		case MUTE_GLYPH:
 			// An eye shut: the path is still there and does nothing.
 			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);

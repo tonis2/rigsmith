@@ -7527,19 +7527,23 @@ fn void posing_bends_the_limb_and_barely_moves_the_fork() @test
 	// Sideways and up, in several steps. Several rather than one because the
 	// per-sweep clamp rations how far a pivot may turn in a frame — a drag is
 	// meant to be walked, not teleported — and because of the two-move rule above.
+	// Alt held throughout: the grabbed joint keeps its world angle.
 	Vec2 target = { aimed.x + 40.0f, aimed.y - 20.0f };
-	for (usz i = 0; i < 6; i++) fixture.feed(target);
-	fixture.click(target);
+	Key[1] hold_alt = { Key.LEFT_ALT };
+	for (usz i = 0; i < 6; i++) fixture.feed(target, keys: hold_alt[..]);
+	fixture.feed(target, left: true, keys: hold_alt[..]);
+	fixture.feed(target, keys: hold_alt[..]);
+	fixture.feed(target);
 
 	// --- who moved --------------------------------------------------------
 
 	test::@check(fixture.app.working_pose(limb.thigh).rotation.v[3] != 1.0f, "the thigh did not turn");
 	test::@check(fixture.app.working_pose(limb.knee).rotation.v[3] != 1.0f, "the knee did not turn");
-	// The grabbed joint keeps the angle it faced, softly, rather than being left to
-	// turn with the shin: its own turn is whatever cancels the leg's, so in the world
-	// it has not moved from the identity it began with (a degree or two at most).
+	// With Alt the grabbed joint keeps the angle it faced, softly, rather than being
+	// left to turn with the shin: its own turn is whatever cancels the leg's, so in
+	// the world it has not moved from the identity it began with (a degree or two).
 	test::@check(math::abs(fixture.app.dot_world_rotation(limb.ankle).v[3]) > 0.9998f,
-		"the grabbed joint did not keep its angle — it turned with the limb");
+		"with Alt the grabbed joint did not keep its angle — it turned with the limb");
 
 	Vec3 hips_now = fixture.app.dot_position(*fixture.doc().find(limb.hips));
 	Vec3 ankle_now = fixture.app.dot_position(*fixture.doc().find(limb.ankle));
@@ -7582,7 +7586,18 @@ fn void posing_bends_the_limb_and_barely_moves_the_fork() @test
 		test::@check(false, "SKIPPED — the second gesture did not start");
 		return;
 	}
+	Quaternionf own = fixture.app.working_pose(limb.ankle).rotation;
+	Quaternionf faced = fixture.app.dot_world_rotation(limb.ankle);
 	fixture.feed(again);
+
+	// Without Alt the joint is a limb's, so it keeps its angle to its parent and
+	// turns with the shin: its own turn stays as the last gesture left it, and in
+	// the world it has turned with the leg.
+	Quaternionf own_now = fixture.app.working_pose(limb.ankle).rotation;
+	test::@check(math::abs(own_now.v.dot(own.v)) > 0.99999f,
+		"without Alt the grabbed joint turned against its parent instead of riding the limb");
+	test::@check(math::abs(fixture.app.dot_world_rotation(limb.ankle).v.dot(faced.v)) < 0.9999f,
+		"without Alt the grabbed joint kept its world angle — it did not turn with the limb");
 
 	Vec2? single = fixture.pixel_of(limb.ankle);
 	if (catch single)
@@ -14200,6 +14215,50 @@ fn void the_joint_card_anchors_the_selected_joint() @test
 	fixture.feed(SPOT_A, keys: { Key.LEFT_SHIFT, Key.L });
 	fixture.feed(SPOT_A);
 	test::@check(!fixture.app.is_anchored(id), "shift+L did not release rotation");
+}
+
+<*
+ The Keep angle cell sits under the pins for a limb joint: lit when a drag keeps
+ the joint's world angle, and a click sets it the other way. The trunk always
+ keeps its world angle, so its card has no cell.
+*>
+fn void the_joint_card_keep_angle_cell_flips_a_limb() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("the Joint card's Keep angle cell flips a limb joint");
+	fixture.reset();
+
+	PosedLimb limb = build_limb(fixture);
+	crig::AnimRef clip = fixture.app.new_clip("pose", 1);
+	test::@check(clip.valid(), "the clip did not author");
+	fixture.app.stop_animation();
+	fixture.app.editing = clip;
+	fixture.app.edit_time = 0.0f;
+	fixture.app.stage = crig::EditStage.POSE_STAGE;
+
+	fixture.app.select(limb.ankle);
+	fixture.feed(fixture.ui.input.mouse);
+	test::@check(fixture.in_tree(crig::JOINT_KEEP_ANGLE_ID), "the limb's card has no Keep angle cell");
+	test::@check(!fixture.app.pose_keeps_angle(limb.ankle), "a joint with no twin came up keeping its world angle");
+
+	fixture.click(fixture.center_of(crig::JOINT_KEEP_ANGLE_ID)!!);
+	fixture.feed(fixture.ui.input.mouse);
+	test::@check(fixture.app.pose_keeps_angle(limb.ankle), "the click did not set Keep angle");
+	fixture.click(fixture.center_of(crig::JOINT_KEEP_ANGLE_ID)!!);
+	fixture.feed(fixture.ui.input.mouse);
+	test::@check(!fixture.app.pose_keeps_angle(limb.ankle), "a second click did not put it back");
+	test::@check(fixture.app.angle_flips.len() == 0, "putting it back left %d flips", fixture.app.angle_flips.len());
+
+	fixture.app.select(limb.hips);
+	fixture.feed(fixture.ui.input.mouse);
+	test::@check(!fixture.in_tree(crig::JOINT_KEEP_ANGLE_ID), "the trunk's card shows a Keep angle cell");
 }
 
 <*

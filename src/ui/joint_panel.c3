@@ -64,6 +64,7 @@ const String WEIGHTS_INVERT_ID = "weights-invert";
 const String WEIGHTS_SHRINK_ID = "weights-shrink";
 const String WEIGHTS_SOFT_ID = "weights-soft";
 const String WEIGHTS_MIRROR_ID = "weights-mirror";
+const String JOINT_KEEP_ANGLE_ID = "joint-keep-angle";
 const String WEIGHTS_APPLY_ID = "weights-apply";
 const String WEIGHTS_RESET_ID = "weights-reset";
 const String WEIGHTS_READOUT_ID = "weights-readout";
@@ -717,6 +718,20 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 												@node((Label) { .text = "Pin · held in place while you pose another joint",
 													.size = 12.0f, .color = TEXT_DIM });
 												@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+
+												// What this joint does when it is the one dragged. The trunk always
+												// keeps its world angle, so the cell is for limbs only.
+												if (app.pose_hold(app.selected) != TRUNK)
+												{
+													bool keeps = app.pose_keeps_angle(app.selected);
+													@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+													{
+														@card_icon(KEEP_ANGLE_GLYPH, keeps
+															? "Keep angle is on — dragged, this joint keeps the way it faces in the world, as a foot stays flat. Click to turn it with its parent instead; Alt-drag swaps it for one drag"
+															: "Keep angle is off — dragged, this joint turns with its parent, as a hand with its forearm. Click to keep its world angle instead; Alt-drag swaps it for one drag",
+															&joint_keep_angle_pressed, keeps ? LIT : PLAIN).with_id(JOINT_KEEP_ANGLE_ID);
+													};
+												}
 
 												// A pin on the open clip is the clip's: held while it plays, over a
 												// window. Seconds into the clip; one undo step per commit.
@@ -1821,6 +1836,26 @@ fn void joint_pose_weight_auto(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	(void)app.set_selection_pose_weight(1.0f);
+	refresh_joint_panel(ui);
+}
+
+// The Keep angle cell: across the selection, the new state taken from the primary.
+fn void joint_keep_angle_pressed(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.selected == 0) return;
+	bool keep = !app.pose_keeps_angle(app.selected);
+	usz set = app.set_selection_keeps_angle(keep);
+	String what = keep ? "keeps its world angle" : "turns with its parent";
+	if (set > 1)
+	{
+		app.@notice("%d joints · each %s when dragged", (int)set, what);
+	}
+	else
+	{
+		app.@notice("dragged, this joint %s", what);
+	}
+	app.refresh_ui();
 	refresh_joint_panel(ui);
 }
 

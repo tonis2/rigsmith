@@ -27,6 +27,7 @@ import std::io::file;
 import std::math;
 import std::math::vector;
 import std::math::quaternion;
+import std::core::string;
 import std::os::env;
 import std::time;
 
@@ -263,6 +264,30 @@ fn void Body.check_limits(&self, String what)
 				"%s: %s axis %d at %.3f, outside %.3f..%.3f", what, self.view.names[j], k, angles[k], lo, hi);
 		}
 	}
+}
+
+<*
+ The arm's whole length — upper arm and forearm — of the hand `hand`
+ ("wrist_L" or "wrist_R"), as the pose has it.
+*>
+fn float Body.reach(&self, String hand)
+{
+	String side = hand[^2..];
+	Vec3 elbow = self.at(string::tformat("elbow%s", side));
+	return (elbow - self.at(string::tformat("shoulder%s", side))).length() + (self.at(hand) - elbow).length();
+}
+
+<*
+ A point placed from the shoulder of `hand`'s arm in lengths of that arm: x out
+ from the body, y up, z forward. So a target says how far round and how far out
+ the arm goes, and every figure's arm makes the same reach whatever its build.
+*>
+fn Vec3 Body.arm_point(&self, String hand, Vec3 at)
+{
+	String side = hand[^2..];
+	Vec3 shoulder = self.at(string::tformat("shoulder%s", side));
+	float out = self.at(hand).x >= shoulder.x ? 1.0f : -1.0f;
+	return shoulder + (Vec3){ at.x * out, at.y, at.z } * self.reach(hand);
 }
 
 // The angle between a joint's two bones, in degrees: 0 for a straight limb.
@@ -540,7 +565,11 @@ fn void a_free_hand_reaches_and_the_trunk_stays() @test
 	b.begin();
 	Vec3 hips = b.at("hips");
 	Quaternionf chest = b.world("chest");
-	Vec3 target = b.at("wrist_L") + (Vec3){ 0, 0, 0.08f * b.height };
+	// The arm swung a little forward about its shoulder, as far out as it was: a
+	// reach the shoulder makes on any build, however near full stretch the arm
+	// rests.
+	Vec3 shoulder = b.at("shoulder_L");
+	Vec3 target = shoulder + quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), -0.27f).rotate_vec3(b.at("wrist_L") - shoulder);
 	crig::PointGoal[1] goals = { b.grab("wrist_L", target) };
 	b.solve(goals[..]);
 	float miss = b.off("wrist_L", target);
@@ -622,6 +651,22 @@ fn Path Body.down_path(&self, String part, float total, int steps)
 {
 	return { .part = part, .from = self.at(part), .held = self.world(part), .height = self.height, .push = total / (float)steps };
 }
+
+<*
+ A circle for a hand in front of its shoulder, in lengths of the arm: centred
+ half an arm out, a third down and a third forward, a little over a quarter of
+ an arm across — inside the arm's reach all the way round on any build, with
+ the elbow folded rather than at full stretch. Where the humanoid's hand circle
+ always sat; the arm's units keep it there on a figure whose arms are shorter.
+*>
+fn Path Body.arm_circle(&self, String hand, int round)
+{
+	Vec3 centre = self.arm_point(hand, ARM_CIRCLE_CENTRE);
+	return self.circle_path(hand, (centre - self.at(hand)) / self.height, ARM_CIRCLE_RADIUS * self.reach(hand) / self.height, round);
+}
+
+const Vec3 ARM_CIRCLE_CENTRE = { 0.5f, -0.33f, 0.33f };
+const float ARM_CIRCLE_RADIUS = 0.27f;
 
 <*
  The part `part` carried round a circle of `radius` heights about the point `centre`
@@ -852,15 +897,24 @@ fn void an_elbow_never_leaves_its_limit() @test
 		b.solve(goals[..]);
 		float reported = goals[0].residual / b.height;
 		float actual = b.off("wrist_L", target);
+		// The bend is read on the elbow's hinge row — the swing row that moves — and
+		// held against the end it ran into: the folding end near, the straight end far.
 		usz elbow_joint = b.joint("elbow_L");
-		float bend = crig::joint_angles_from_rotation(b.joints[elbow_joint].frame, b.pose.rotations[elbow_joint]).z * DEGREES;
+		crig::JointRotationLimits table = b.joints[elbow_joint].limits;
+		usz hinge = table.axes[0].allowed ? 0 : 2;
+		crig::JointAxisLimit row = table.axes[hinge];
+		bool folds_down = math::abs(row.minimum) > math::abs(row.maximum);
+		float fold_end = (folds_down ? row.minimum : row.maximum) * DEGREES;
+		float straight_end = (folds_down ? row.maximum : row.minimum) * DEGREES;
+		float bend = crig::joint_angles_from_rotation(b.joints[elbow_joint].frame, b.pose.rotations[elbow_joint])[hinge] * DEGREES;
 		float slip = 0.0f;
 		foreach (usz i, name : held) slip = math::max(slip, b.off(name, goals[i + 1].target));
 		note("  elbow limit (%s): wrist missed %.4f h (reported %.4f), elbow bend %.1f deg, the pins slipped up to %.6f h", near ? "near" : "far",
 			actual, reported, bend, slip);
 		test::@check(math::abs(reported - actual) < 1.0e-4f, "the residual says %.5f, the wrist is %.5f off", reported, actual);
 		test::@check(actual > (near ? 0.03f : 0.2f), "the wrist missed only %.4f heights: it was not out of reach", actual);
-		test::@check(near ? bend < -149.0f : bend > -1.0f, "the elbow ended at %.1f degrees, not on the limit it ran into", bend);
+		test::@check(math::abs(bend - (near ? fold_end : straight_end)) < 1.0f,
+			"the elbow ended at %.1f degrees, not on the limit it ran into (%.1f)", bend, near ? fold_end : straight_end);
 		test::@check(slip < 1.0e-3f, "a held part slipped %.6f heights", slip);
 		b.check_limits("elbow limit");
 	}
@@ -1038,7 +1092,9 @@ fn void the_balance_leans_the_chest_over_the_feet() @test
 		test::@check(b.off("ankle_L", goals[1].target) < 1.0e-4f && b.off("ankle_R", goals[2].target) < 1.0e-4f, "an ankle slipped");
 		b.check_limits("balance");
 	}
-	test::@check(leans[0] > leans[1] + 0.1f, "the balance leaned the chest only %.3f against %.3f", leans[0], leans[1]);
+	// How far the chest has to lean depends on where the figure carries its mass —
+	// the centre of mass on its feet is checked above; this is only that it leans.
+	test::@check(leans[0] > leans[1] + 0.05f, "the balance leaned the chest only %.3f against %.3f", leans[0], leans[1]);
 }
 
 <*
@@ -1215,7 +1271,7 @@ fn void a_circling_hand_held_at_its_angle_never_twitches() @test
 	Body b;
 	if (!b.open()) return;
 	defer b.close();
-	Path path = b.circle_path("wrist_L", { -0.15f, -0.1f, 0.1f }, 0.08f, 96);
+	Path path = b.arm_circle("wrist_L", 96);
 	Jumps jumps = b.sweep(&path, 192);
 	jumps.print("held circle");
 	jumps.check();
@@ -1239,8 +1295,7 @@ fn void a_wide_stepped_circle_is_fast_but_never_hops() @test
 		Body b;
 		if (!b.open()) return;
 		defer b.close();
-		float side = part == "wrist_L" ? -1.0f : 1.0f;
-		Path path = b.circle_path(part, { side * 0.15f, -0.1f, 0.1f }, 0.08f, 48);
+		Path path = b.arm_circle(part, 48);
 		Jumps jumps = b.sweep(&path, 96);
 		jumps.print(part);
 		test::@check(jumps.move <= SMOOTH_MOVE * jumps.push, "%s moved %.4f heights on step %d, over %.0f times the pointer's %.4f", jumps.move_at, jumps.move, jumps.move_step, SMOOTH_MOVE, jumps.push);

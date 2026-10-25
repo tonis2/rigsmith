@@ -147,10 +147,24 @@ fn void the_humanoids_fingers_all_curl_about_x() @test
 				test::@check(id != 0, "no %s", name);
 				crig::JointRotationLimits table = app.doc.rotation_limits_of(id);
 				test::@check(table.constrained && !table.has_saved_frame, "%s has no plain table", name);
+				// Across the palm: in its plane, which faces down on a T-pose hand, and
+				// square to the bone. Which way round X runs follows the hand's own
+				// lean, so the side that closes the finger is read off the bone: the
+				// turn that carries its tip down toward the palm.
 				Vec3 x = frame_of(&app.doc, id).axis(X);
-				test::@check(x.z > 0.95f, "%s's X is %s, not across the palm", name, x);
+				test::@check(math::abs(x.y) < 0.35f, "%s's X is %s, not across the palm", name, x);
+				String next = string::tformat("%s_%d_%s", finger, k + 1, side);
+				Vec3 joint;
+				Vec3 tip;
+				foreach (dot : app.doc.dots.array_view())
+				{
+					if (dot.id == id) joint = dot.position;
+					if (dot.name == next) tip = dot.position;
+				}
+				Vec3 bone = (tip - joint).normalize();
+				test::@check(math::abs(x.dot(bone)) < 0.05f, "%s's X is %s, not square to its bone", name, x);
 				crig::JointAxisLimit curl = table.axes[0];
-				float closes = side == "L" ? -curl.minimum : curl.maximum;
+				float closes = x.cross(bone).y < 0.0f ? curl.maximum : -curl.minimum;
 				test::@check(curl.allowed && closes > 1.3f, "%s closes only %f about X", name, closes);
 				test::@check(!table.axes[1].allowed, "%s twists", name);
 				test::@check(table.axes[2].allowed == (k == 1), "%s %s sideways", name, k == 1 ? "does not spread" : "spreads");

@@ -1524,9 +1524,9 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 						// A press selects immediately, but it commits to no gesture yet.
 						// Waiting for CLICK_SLOP is what lets a plain click choose another
 						// posed joint without stopping the animation that put it there.
-						// Once the pointer genuinely drags, the MOVE handler decides: a
-						// bare drag poses this joint (as G does), and only Alt makes it
-						// edit the rest dot.
+						// Once the pointer genuinely drags, the MOVE handler decides: on
+						// Pose a drag poses this joint (as G does, Alt swapping how a hand
+						// or foot turns), and on Joints it moves the joint on the model.
 						//
 						// A press on a dot already inside a multi-selection keeps the
 						// whole group, so an Alt-drag can move it as one piece — pressing
@@ -2523,6 +2523,7 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 			int component = app.drag.axis.plane_normal_component();
 			if (component >= 0) moved[component] = 0.0f;
 		}
+		app.drag.flip_angle = elem.ui.input.alt_down();
 		app.pose_toward(app.drag.from + moved);
 		elem.request_paint();
 		return;
@@ -2549,6 +2550,8 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 		elem.request_paint();
 		return;
 	}
+	// A hand turns with its forearm and a foot stays flat; Alt swaps the two.
+	app.drag.flip_angle = elem.ui.input.alt_down();
 	app.pose_toward(target - app.drag.grab);
 	elem.request_paint();
 }

@@ -195,7 +195,7 @@ fn bool AppState.enter_pose_stage(&self)
 	if (self.drag.dot != 0) (void)self.cancel_drag();
 	if (!self.park_clip(self.editing, self.edit_time)) return false;
 	self.stage = POSE_STAGE;
-	self.@notice("Pose · drag a joint to pose it · switch to Joints to move it on the model");
+	self.@notice("Pose · drag a joint to pose it · Alt-drag swaps how a hand or foot turns · switch to Joints to move it on the model");
 	return true;
 }
 
@@ -1545,11 +1545,18 @@ fn void AppState.restore_body_start(&self, RigView* view, rig::Pose* pose, usz r
  cannot reach brings the chest, a thigh pulled moves the hips, and a waist pulled
  down sits the body on its feet.
 
- **The grab keeps its angle, softly.** The grabbed joint, and each selected mate
- with it, is asked to go to the pointer and to keep the world rotation it began
- with (`POINT_POSE_GRAB_HOLD`): a pulled waist drops the body with the chest
- still upright, a pulled hand arrives as it faced. The hold is light, so a limb that
- has to turn to reach turns.
+ **What keeps its angle.** The grabbed joint, and each selected mate with it, is
+ asked to go to the pointer. A joint of the trunk is also asked, softly, to keep
+ the world rotation it began with (`POINT_POSE_GRAB_HOLD`): a pulled waist drops
+ the body with the chest still upright. So is a foot, which stays flat as it
+ stood: one that rode its shin would take the shin's roll too, which the reach
+ leaves free, and land turned out. Any other limb's joint keeps its angle to its
+ parent — it holds no world rotation, so the solve leaves it as it was and it
+ rides the limb: a wrist pulled up turns the hand with the forearm. A joint's
+ Keep angle cell on the Joint card (`angle_flips`) swaps the two for that limb
+ joint, and Alt (`DragState.flip_angle`) swaps them again for one drag
+ (`pose_holds`): the hand arrives as it faced, the foot tilts with the shin. The
+ hold is light, so a limb that has to turn to reach turns.
 
  Each move is solved from the pose the gesture began with, not from the last
  move's answer, so the same pointer gives the same pose.
@@ -1605,6 +1612,9 @@ fn float AppState.pose_toward(&self, Vec3 target)
 		if (catch read) return 0.0f;
 		Quaternionf[] began = read;
 		defer alloc::free(mem, began);
+		PoseHold[] holds = pose_holds(mem, &view, height);
+		defer alloc::free(mem, holds);
+		bool flip = self.drag.flip_angle;
 		PointGoal[POSE_MATES + 1] gesture;
 		usz goals = 0;
 		gesture[goals++] = {
@@ -1612,7 +1622,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 			.position = true,
 			.soft = true,
 			.target = target - shift,
-			.rotation = true,
+			.rotation = holds[(usz)found].keeps_world(flip != self.angle_flipped(self.drag.dot)),
 			.orient = began[(usz)found],
 			.turn_weight = POINT_POSE_GRAB_HOLD,
 		};
@@ -1626,7 +1636,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 				.position = true,
 				.soft = true,
 				.target = mate.from + (target - self.drag.from),
-				.rotation = true,
+				.rotation = holds[(usz)j].keeps_world(flip != self.angle_flipped(mate.dot)),
 				.orient = began[(usz)j],
 				.turn_weight = POINT_POSE_GRAB_HOLD,
 			};
@@ -1655,6 +1665,123 @@ fn Vec3 AppState.gesture_shift(&self, RigView* view, Matrix4f[] palette, usz joi
 	Dot* dot = self.doc.find(view.dot_ids[joint]);
 	if (!dot) return {};
 	return self.dot_position(*dot) - view.skeleton.joints[joint].transform(palette[joint]);
+}
+
+// What a grabbed joint keeps of its angle while it is posed.
+enum PoseHold : char
+{
+	FOLLOW, // a limb's joint: its angle to its parent, so a hand turns with the forearm
+	FOOT,   // a foot: its world angle, so it stays flat as it stood
+	TRUNK,  // the root and the spine: their world angle, Alt or not
+}
+
+// Whether the grab holds its world rotation, with Alt (`flip`) swapping a limb's.
+fn bool PoseHold.keeps_world(self, bool flip) => self == TRUNK || (self == FOOT) != flip;
+
+// How far above the joint a gait plants a foot by its ankle may still stand, as a
+// share of the figure's height: a man's ankle over the ball of his foot, not his knee.
+const float POSE_FOOT_SHARE @local = 0.12f;
+
+<*
+ Each joint's `PoseHold`: the trunk by the same reading `pose_body` gives the
+ solve, the feet by the one a gait finds them by (`gait_find_feet`). That is the
+ joint the floor meets — the ball of a foot with toes — so the leg's joints just
+ above it, near the floor still, are the foot too: the ankle a hand grabs.
+*>
+fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height) @local
+{
+	usz n = view.skeleton.len();
+	PoseHold[] holds = alloc::new_array(allocator, PoseHold, (sz)n);
+	bool[] trunk = alloc::new_array(mem, bool, (sz)n);
+	defer alloc::free(mem, trunk);
+	float[] inv_mass = alloc::new_array(mem, float, (sz)n);
+	defer alloc::free(mem, inv_mass);
+	point_pose_masses(&view.skeleton, height, inv_mass, trunk, fork_carry: false);
+	usz[GAIT_FEET_MAX] feet;
+	usz count = gait_find_feet(&view.skeleton, view.names, feet[..]);
+	foreach (foot : feet[:count])
+	{
+		GaitLeg leg;
+		if (!gait_leg_of(&view.skeleton, foot, &leg)) continue;
+		float floor = view.skeleton.joints[foot].y;
+		// Never the leg's top two: the hip and the knee bend the leg, not the foot.
+		for (usz i = leg.bones; i >= 2; i--)
+		{
+			usz j = leg.joints[i];
+			if (view.skeleton.joints[j].y - floor > POSE_FOOT_SHARE * height) break;
+			holds[j] = FOOT;
+		}
+	}
+	foreach (j, is_trunk : trunk) if (is_trunk) holds[j] = TRUNK;
+	return holds;
+}
+
+<*
+ What a grab on `dot` keeps of its angle by the rig's shape alone, before its
+ Keep angle cell or Alt. `FOLLOW` for a dot that is no joint of the rig.
+*>
+fn PoseHold AppState.pose_hold(&self, uint dot)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return FOLLOW;
+	RigView view = opened;
+	defer view.free(mem);
+	sz joint = view.joint_of(dot);
+	if (joint < 0) return FOLLOW;
+	PoseHold[] holds = pose_holds(mem, &view, view.skeleton.height());
+	defer alloc::free(mem, holds);
+	return holds[(usz)joint];
+}
+
+// Whether `dot`'s Keep angle cell is set the other way from its own.
+fn bool AppState.angle_flipped(&self, uint dot)
+{
+	foreach (flipped : self.angle_flips) if (flipped == dot) return true;
+	return false;
+}
+
+<*
+ Whether a grab on `dot` keeps its world angle with Alt up — what its Keep angle
+ cell shows. A foot or the trunk does and any other limb's joint turns with its
+ parent, unless the cell was set the other way.
+*>
+fn bool AppState.pose_keeps_angle(&self, uint dot)
+	=> self.pose_hold(dot).keeps_world(self.angle_flipped(dot));
+
+<*
+ Set the Keep angle cell across the selection: each limb joint keeps its world
+ angle when dragged (`keep`) or turns with its parent. The trunk keeps its world
+ angle whatever the cell says, so it is left out. Session state, no undo step,
+ as the pins are.
+
+ @return `How many joints were set.`
+*>
+fn usz AppState.set_selection_keeps_angle(&self, bool keep)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+	PoseHold[] holds = pose_holds(mem, &view, view.skeleton.height());
+	defer alloc::free(mem, holds);
+
+	usz set = 0;
+	// The primary first, then every joint selected with it.
+	for (sz i = 0; i <= self.also_selected.len(); i++)
+	{
+		uint dot = i == 0 ? self.selected : self.also_selected[i - 1];
+		sz joint = view.joint_of(dot);
+		if (dot == 0 || joint < 0 || holds[(usz)joint] == TRUNK) continue;
+		bool flip = holds[(usz)joint].keeps_world(false) != keep;
+		sz n = self.angle_flips.len();
+		for (sz k = 0; k < n; k++)
+		{
+			if (self.angle_flips[k] == dot) { self.angle_flips.remove_at(k); break; }
+		}
+		if (flip) self.angle_flips.push(dot);
+		set++;
+	}
+	return set;
 }
 
 // The tree root above `joint`. Joints are ordered parents first, so the climb ends.

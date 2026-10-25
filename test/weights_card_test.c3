@@ -334,7 +334,9 @@ fn void a_fingers_parts_tile_it() @test
 	bool[] beyond = app.area_part_mask(mem, card_dot(&app, "index_2_L"), WITH_CHILDREN);
 	defer if (beyond.len > 0) alloc::free(mem, beyond);
 
-	foreach (i, part : own) test::@check(part.len == count, "%s has no own part", names[i]);
+	// The tip marks where the finger ends and may hold no skin of its own; the
+	// three joints with a bone after them each hold a part.
+	foreach (i, part : own) test::@check(part.len == count || i == 3, "%s has no own part", names[i]);
 	test::@check(beyond.len == count, "index_2_L has no part with children");
 	usz overlaps = 0;
 	usz differ = 0;

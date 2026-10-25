@@ -31,6 +31,7 @@ import std::core::test;
 import std::math;
 import std::math::vector;
 import std::math::quaternion;
+import std::core::string;
 
 const String PERSON = "humanoid.glb";
 
@@ -232,6 +233,23 @@ fn float Body.fold(&self, String above, String joint, String below)
 	return (float)math::acos(math::clamp(upper.dot(lower), -1.0f, 1.0f)) * 180.0f / (float)math::PI;
 }
 
+// The arm's whole length of the hand `hand`, as `body_solve::Body.reach` reads it.
+fn float Body.reach(&self, String hand)
+{
+	String side = hand[^2..];
+	Vec3 elbow = self.at(string::tformat("elbow%s", side));
+	return (elbow - self.at(string::tformat("shoulder%s", side))).length() + (self.at(hand) - elbow).length();
+}
+
+// A point from the shoulder in lengths of the arm, as `body_solve::Body.arm_point` places it.
+fn Vec3 Body.arm_point(&self, String hand, Vec3 at)
+{
+	String side = hand[^2..];
+	Vec3 shoulder = self.at(string::tformat("shoulder%s", side));
+	float out = self.at(hand).x >= shoulder.x ? 1.0f : -1.0f;
+	return shoulder + (Vec3){ at.x * out, at.y, at.z } * self.reach(hand);
+}
+
 <*
  What the body stood like as a gesture began: the world rotations of the parts a
  pinned figure is judged by, so the feet's turn and the pelvis's and chest's tilt can
@@ -287,7 +305,9 @@ fn void a_free_hand_reaches_and_leaves_the_trunk_alone() @test
 	Vec3 hips = b.at("hips");
 	Vec3 chest = b.at("chest");
 	Stance stance = b.stance();
-	Vec3 by = (Vec3){ -0.15f, -0.2f, 0.15f } * b.height;
+	// Down and forward across the body, nearly as far as the arm reaches: the
+	// elbow folds a little and nothing else needs to move.
+	Vec3 by = b.arm_point("wrist_L", { 0.5f, -0.66f, 0.53f }) - from;
 	crig::PointGoal[1] goals;
 	for (int k = 1; k <= 8; k++)
 	{
@@ -343,7 +363,9 @@ fn void a_pull_past_the_elbows_limit_keeps_tracking() @test
 		goals[2] = b.pin("ankle_R");
 		Stance stance = b.stance();
 		Vec3 from = b.at("wrist_L");
-		Vec3 to = from + (Vec3){ 0.2f, -0.6f, 0.2f } * b.height;
+		// Out, down and forward by two and a fifth of the arm: well past its reach
+		// on any build, as far as the humanoid's 0.66 heights always went.
+		Vec3 to = from + (Vec3){ 0.2f, -0.6f, 0.2f }.normalize() * 2.2f * b.reach("wrist_L");
 		float last = (from - to).length();
 		Vec3 held;
 		float travelled_late = 0.0f;
@@ -503,24 +525,31 @@ fn void a_swing_leaves_the_forearms_roll() @test
 		if (!b.open()) return;
 		defer b.close();
 		usz elbow = b.joint("elbow_L");
-		// Some roll to keep, first.
-		Vec3 angles = { 0, 0.4f, -0.5f };
+		// Some roll to keep, first, and some bend on the hinge — the swing row that
+		// moves, toward the end it folds to.
+		crig::JointRotationLimits table = b.joints[elbow].limits;
+		usz hinge = table.axes[0].allowed ? 0 : 2;
+		float folds = math::abs(table.axes[hinge].minimum) > math::abs(table.axes[hinge].maximum) ? -1.0f : 1.0f;
+		Vec3 angles = { 0, 0.4f, 0 };
+		angles[hinge] = 0.5f * folds;
 		b.pose.rotations[elbow] = crig::rotation_from_joint_angles(b.joints[elbow].frame, angles);
 		b.begin();
 		rig::Pose start = b.pose.copy(mem);
 		defer start.free(mem);
 		Vec3 from = b.at("wrist_L");
+		// Up and forward by half and a third of the arm, at the full swing.
+		float arm = b.reach("wrist_L");
 		crig::PointGoal[1] goals;
 		for (int k = 1; k <= 8; k++)
 		{
 			b.restore(&start);
-			goals[0] = b.grab("wrist_L", from + (Vec3){ 0, 0.15f, 0.1f } * b.height * (reach * k / 8.0f));
+			goals[0] = b.grab("wrist_L", from + (Vec3){ 0, 0.5f, 0.33f } * arm * (reach * k / 8.0f));
 			b.solve(goals[..]);
 		}
 		Vec3 now = crig::joint_angles_from_rotation(b.joints[elbow].frame, b.pose.rotations[elbow]);
 		drift[run] = math::abs(now.y - angles.y);
 		body_solve::note("  forearm roll, reach %.2f: %.5f -> %.5f rad (drift %.4f), the bend %.4f -> %.4f, hand missed by %.5f h", reach, angles.y, now.y,
-			drift[run], angles.z, now.z, b.off("wrist_L", goals[0].target));
+			drift[run], angles[hinge], now[hinge], b.off("wrist_L", goals[0].target));
 		test::@check(b.off("wrist_L", goals[0].target) < 0.002f, "the hand did not arrive");
 		b.check_limits("forearm roll");
 	}
@@ -670,7 +699,8 @@ fn void a_continuous_sweep_never_jumps() @test
 	defer b.close();
 	// Inside the arm's reach all the way round, so every step is one the arm can
 	// make: what is checked is that it makes it smoothly.
-	Circle circle = { .centre = b.at("wrist_L") + (Vec3){ -0.15f, -0.1f, 0.1f } * b.height, .radius = 0.08f * b.height };
+	Circle circle = { .centre = b.arm_point("wrist_L", body_solve::ARM_CIRCLE_CENTRE),
+		.radius = body_solve::ARM_CIRCLE_RADIUS * b.reach("wrist_L") };
 	HandSweep sweep = b.sweep_wrist(&circle, 48, 2);
 	sweep.jumps.print("hand circle");
 	body_solve::note("  hand circle: the hand fell up to %.5f h behind, feet turned up to %.2f deg, hips tilted up to %.2f, chest up to %.2f deg", sweep.behind, sweep.feet, sweep.hips, sweep.chest);
