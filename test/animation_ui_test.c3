@@ -315,19 +315,35 @@ fn void a_new_animation_auto_keys_without_toggling_the_checkbox() @test
 
 	AnimRef clip = f.app.editing;
 	usz before = f.app.clip(clip).keyframes.len;
-	test::@check(math::abs(f.app.edit_time - 1.0f) < 0.00001f,
-		"new clip left the playhead on its existing starting key");
+	test::@check(f.app.edit_time == 0.0f, "a new clip did not open with the playhead at its start");
 	RigView view = f.app.open_rig(mem)!!;
 	defer view.free(mem);
-	f.app.select(view.dot_ids[1]);
+	uint joint = view.dot_ids[1];
+	String name = f.app.doc.find(joint).name;
+	Vec3 rest = turn_keyed(f.app.clip(clip).keyframes[0], name);
+	f.app.select(joint);
 	test::@check(f.app.begin_turn(), "new clip did not become editable at the playhead");
 	f.app.turn_joint({ 0, 0, 1 }, 0.7f);
 	f.app.end_drag();
 	f.feed(VIEWPORT_CENTER);
 
-	test::eq(f.app.clip(f.app.editing).keyframes.len, (sz)before + 1);
+	// The first pose is the clip's opening one: Auto-key writes it over the starting key.
 	test::@check(!f.app.pose_edit_pending, "initial Auto-key left the changed pose unsaved");
-	test::eq(f.ui.find(Timeline)!!.widget_as(Timeline).marks.len, (sz)before + 1);
+	AnimTemplate* keyed = f.app.clip(f.app.editing);
+	test::eq(keyed.keyframes.len, (sz)before);
+	test::@check(keyed.keyframes[0].time == 0.0f, "the opening pose was not keyed at the start");
+	test::@check((turn_keyed(keyed.keyframes[0], name) - rest).length() > 0.1f,
+		"Auto-key did not write the pose over the starting key");
+}
+
+// The turn `key` gives `joint`, as axis times angle; zero when it keys none.
+fn Vec3 turn_keyed(AnimKeyframe key, String joint)
+{
+	foreach (dot : key.dots)
+	{
+		if (dot.joint_name == joint && dot.keys_rotation()) return dot.axis * dot.angle;
+	}
+	return {};
 }
 
 fn void animation_workspace_navigation_keeps_or_discards_the_draft_explicitly() @test

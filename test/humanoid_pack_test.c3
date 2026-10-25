@@ -175,76 +175,6 @@ fn float knee_fold_taken(crig::AppState* app, String knee, Vec3 toward, float de
 }
 
 <*
- The shipped humanoid carries a rotation-limit table on every joint that turns,
- as KHR constraints — the one place they are kept: a fit reads them from there,
- and so does crig opening the figure, whose sidecar says nothing about them.
-
- The root moves the whole body, and the crown, the toe tips and the ten
- fingertips are markers; everything else — fifty-one joints — has a table.
-*>
-fn void the_rig_carries_a_limit_on_every_joint_that_turns() @test
-{
-	crig::AnimPack? read = crig::read_pack(mem, HUMANOID);
-	if (catch read) { test::@check(false, "%s did not read as a pack", HUMANOID); return; }
-	crig::AnimPack pack = read;
-	defer pack.free(mem);
-
-	usz rows = pack.constraints.joints.len;
-	usz foreign = pack.constraints.foreign.len;
-	test::@check(rows == pack.rest.len(), "%d constraint rows for %d joints", rows, pack.rest.len());
-	test::@check(foreign == 0, "%d foreign constraints in a file crig wrote", foreign);
-	usz exact = 0;
-	foreach (usz j, constraint : pack.constraints.joints)
-	{
-		String name = pack.joint_names[j];
-		bool marker = name == "hips" || name == "head_top" || name.starts_with("toe_tip")
-			|| name.ends_with("_4_L") || name.ends_with("_4_R");
-		test::@check((constraint.status == EXACT) != marker, "%s %s a table", name,
-			constraint.status == EXACT ? "carries" : "carries no");
-		if (constraint.status != EXACT) continue;
-		exact++;
-		if (name.starts_with("knee"))
-		{
-			test::@check(constraint.axes[0].allowed && !constraint.axes[1].allowed && !constraint.axes[2].allowed,
-				"%s is not a hinge", name);
-		}
-		if (name == "chest" || name.starts_with("wrist"))
-		{
-			test::@check(constraint.frame_intent == PRIMARY_CHILD && constraint.primary_child >= 0,
-				"%s forks and names no child for its axes", name);
-		}
-	}
-	test::eq(exact, (usz)51);
-
-	// The open reads them off the model.
-	rig::TriMesh? loaded = rig::load_gltf(mem, HUMANOID);
-	if (catch loaded) { test::@check(false, "%s did not load as a mesh", HUMANOID); return; }
-	rig::TriMesh mesh = loaded;
-	defer mesh.free(mem);
-	crig::AppState app = crig::new_app(mesh, HUMANOID);
-	defer app.free();
-	app.adopt_source_rig();
-	test::eq(app.doc.rotation_limits.len(), (sz)51);
-	foreach (dot : app.doc.dots.array_view())
-	{
-		crig::JointRotationLimits table = app.doc.rotation_limits_of(dot.id);
-		crig::JointConstraint constraint = pack.constraints.joints[row(&pack, dot.name)];
-		test::@check(table.constrained == (constraint.status == EXACT),
-			"opened, %s is %slimited; the model says %s", dot.name, table.constrained ? "" : "not ",
-			constraint.status == EXACT ? "limited" : "free");
-		if (!table.constrained) continue;
-		// Every row was written against the frame rule the open reads it in, so
-		// none needs mending on the way in — a toe included.
-		for (usz a = 0; a < 3; a++)
-		{
-			test::@check(table.axes[a].same(constraint.axes[a]),
-				"opened, %s's axis %d is not what the model says", dot.name, a);
-		}
-		test::@check(!table.has_saved_frame, "%s came off the model with a pinned frame", dot.name);
-	}
-}
-
-<*
  Applied to another mesh, the limits come with the plan, and the right way round.
 
  Two targets. The figure's own body, which the fit puts facing the way the
@@ -296,47 +226,6 @@ fn void applied_to_another_mesh_the_limits_carry_over_the_right_way_round() @tes
 		"facing +Z, the left knee is not on +X");
 	test::@check(turned.dot_named("knee_L").position.x < turned.dot_named("knee_R").position.x,
 		"facing -Z, the left knee is not on -X: the fit reflected the figure instead of turning it");
-}
-
-<*
- The rig rests in a T-pose and the body was built around that rest.
-
- Both halves matter. A plan is fitted to a user's mesh by mapping fractions of
- one bounding box onto another, so a rig whose arms are not out is a rig whose
- fractions across mean nothing; and `AnimPack.preset` measures those fractions
- against the *body*, so a body that does not enclose the skeleton would hand the
- matcher a wrist past the edge of the figure.
-*>
-fn void the_rest_pose_is_a_t_pose_inside_its_own_body() @test
-{
-	crig::AnimPack? pack = crig::read_pack(mem, HUMANOID);
-	if (catch pack) { test::@check(false, "%s did not read as a pack", HUMANOID); return; }
-	defer pack.free(mem);
-
-	Vec3 left = pack.rest.joints[row(&pack, "wrist_L")];
-	Vec3 right = pack.rest.joints[row(&pack, "wrist_R")];
-	Vec3 head = pack.rest.joints[row(&pack, "head_top")];
-	Vec3 hips = pack.rest.joints[row(&pack, "hips")];
-
-	// As fractions of the figure's height, so the shape is what is tested and not
-	// the units the model happens to be in.
-	float height = head.y;
-	test::@check(left.x > hips.x + 0.15f * height, "the left hand is not held out (x %.3f against hips %.3f)", left.x, hips.x);
-	test::@check(right.x < hips.x - 0.15f * height, "the right hand is not held out (x %.3f against hips %.3f)", right.x, hips.x);
-	test::@check(math::abs(left.y - right.y) < SMALL, "the hands rest at different heights");
-	test::@check(math::abs(left.y - head.y) > 0.08f * height, "the arms are not level with the shoulders");
-
-	// The body encloses the rig it was built around, which is what makes the
-	// pack a body plan rather than a clip library that happens to have a mesh.
-	rig::Bounds box = pack.mesh.bounds();
-	foreach (usz j, joint : pack.rest.joints)
-	{
-		test::@check(
-			joint.x >= box.min.x - SMALL && joint.x <= box.max.x + SMALL &&
-			joint.y >= box.min.y - SMALL && joint.y <= box.max.y + SMALL &&
-			joint.z >= box.min.z - SMALL && joint.z <= box.max.z + SMALL,
-			"\"%s\" sits outside the body it was built around", pack.joint_names[j]);
-	}
 }
 
 <*

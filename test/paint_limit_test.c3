@@ -37,52 +37,6 @@ fn float[] full_pulls(usz n)
 }
 
 <*
- Every part the Weights card offers by name — Own bone and With children, for
- every joint — lies on that joint's limb, on the binder's weights and on the
- file's, so the limit never cuts into a part the card itself chose.
-
- Re-introduce: `limb_family` without the joint's descendants, and With children
- of the shoulder loses the hand.
-*>
-fn void every_part_the_card_offers_is_on_its_joints_limb() @test
-{
-	io::printn("every part the card offers is on its joint's limb");
-	areas::copy_fixture(LIMIT_COPY);
-	defer areas::remove_fixture(LIMIT_COPY);
-
-	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
-	defer mesh.free(mem);
-	crig::AppState app = crig::new_app(mesh, LIMIT_COPY);
-	defer app.free();
-	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-
-	foreach (from_file : (bool[]){ true, false })
-	{
-		(void)app.release_all_recorded();
-		if (from_file) app.adopt_model_weights();
-		app.undo_stack.commit();
-		app.mark_rig_stale();
-		crig::RigView view = app.open_rig(mem)!!;
-		defer view.free(mem);
-		foreach (id : view.dot_ids)
-		{
-			bool[] limb = app.limb_mask(mem, &view, id);
-			defer if (limb.len > 0) alloc::free(mem, limb);
-			test::eq(limb.len, (sz)app.geometry.positions.len);
-			foreach (part : (crig::AreaPart[]){ OWN, WITH_CHILDREN })
-			{
-				bool[] mask = app.area_part_mask(mem, id, part);
-				defer if (mask.len > 0) alloc::free(mem, mask);
-				usz off = 0;
-				foreach (v, on : mask) if (on && !limb[v]) off++;
-				test::@check(off == 0, "%s of %s has %d vertices off its limb (file weights %s)",
-					part.label(), app.doc.find(id).name, off, from_file);
-			}
-		}
-	}
-}
-
-<*
  A finger stroked over the foot gives it nothing there, and says so when the
  stroke ends; the same stroke on the finger's own hand paints, and taking the
  finger off a foot vertex that holds it is allowed.

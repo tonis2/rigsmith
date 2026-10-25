@@ -363,6 +363,7 @@ fn void anim_new_walk_cycle(Ui* ui)
 	AnimRef made = app.new_walk_cycle();
 	if (!made.valid()) return;
 	app.editing = made;
+	app.edit_time = 0.0f;
 	app.show_edited();
 	if (!app.path_tool) menu_path_tool(ui);
 	app.@notice("%s: drag a foot's stance end for stride, the top of its swing for lift; the strip at the top picks the gait",

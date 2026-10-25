@@ -128,7 +128,6 @@ const String ANIM_NEW_MENU_BUTTON_ID = "anim-new-menu-button";
 const String ANIM_TOOLS_MENU_ID = "anim-tools-menu";
 const String ANIM_TOOLS_BUTTON_ID = "anim-tools";
 const String ANIM_NEW_EMPTY_ID = "anim-new";
-const String ANIM_GENERATE_ID = "anim-generate";
 
 // A popup menu opened where the pointer is, the way the ⋯ menu is.
 fn void open_anim_popup(Ui* ui, String id) @private
@@ -152,12 +151,6 @@ fn void anim_new_menu_empty(Ui* ui)
 	anim_new_clip_clicked(ui);
 }
 
-fn void anim_new_menu_generate(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
-	anim_generate_clicked(ui);
-}
-
 fn void anim_new_menu_library(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
@@ -166,11 +159,9 @@ fn void anim_new_menu_library(Ui* ui)
 
 fn Element* build_anim_new_menu(Ui* ui)
 {
-	AppState* app = ui.inherit(AppState)!!;
-	String generate = app.motion_job.running ? "Generating…" : "Generate…";
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Empty animation…", "Walk cycle", generate, "From library…" })
+	foreach (label : (String[]) { "Empty animation…", "Walk cycle", "From library…" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -182,8 +173,6 @@ fn Element* build_anim_new_menu(Ui* ui)
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_EMPTY_ID);
 			@node((PopupMenuItem) { .item = { .label = "Walk cycle", .on_select = &anim_new_walk_cycle },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_WALK_ID);
-			@node((PopupMenuItem) { .item = { .label = generate, .on_select = &anim_new_menu_generate },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_GENERATE_ID);
 			@node((PopupMenuItem) { .item = { .label = "From library…", .on_select = &anim_new_menu_library },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FROM_LIBRARY_ID);
 		};
@@ -729,15 +718,11 @@ fn void anim_create_confirmed(Ui* ui)
 	AnimRef made = app.new_clip(name, duration, from_rest: true, loop: false);
 	if (!made.valid()) return;
 	anim_create_cancelled(ui);
-	// The rest pose already occupies 0.00 s. Leaving the playhead on it makes the
-	// first automatic key replace that existing pose, so the sheet still shows
-	// one marker and playback stays static — indistinguishable from Auto-key being
-	// off. Put the user at the middle of the new clip, where their first pose is a
-	// visible second key and immediately makes an animation.
-	app.edit_time = duration * 0.5f;
+	// A new clip opens at its start, on the rest pose keyed there: the first pose
+	// made is the clip's opening one.
+	app.edit_time = 0.0f;
 	app.show_edited();
-	app.@notice("Starting pose keyed at 0.00s. Pose the model at %.2fs; Auto-key will key it.",
-		app.edit_time);
+	app.@notice("Starting pose keyed at 0.00s. Pose the model, then move the playhead to key the next pose.");
 }
 
 <*

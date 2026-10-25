@@ -1263,6 +1263,49 @@ fn void a_stroke_depends_on_where_it_passed_not_how_long() @test
 }
 
 <*
+ A remove stroke takes a joint all the way off, and leaves no crumb behind.
+
+ What made eye rims unpaintable on a real model: the core reached a vertex the
+ rim had already pulled on, the owed pull rounded a hair under 1, and a crumb of
+ the joint stayed behind. On a vertex no other joint holds that crumb is the
+ joint's whole share, so the falloff view drew it orange — and every later
+ stroke skipped it, as a change too small to make.
+
+ Re-introduce: drop the `falloff >= 1` exit from `stroke_pull`, the snap to the
+ target in `nudge_column`, or the `UNUSED_TOTAL` test in `joint_share`.
+*>
+fn void a_remove_stroke_leaves_no_crumb_behind() @test
+{
+	crig::AppState app = chained();
+	defer app.free();
+
+	uint hips = dot_named(&app, "hips");
+	uint[1] one = { 0 };
+
+	// The rim first, then the core, in one stroke: all of the rest is owed.
+	app.paint_share(hips, one[..], 0.8f);
+	app.begin_stroke();
+	float[1] rim = { app.stroke_pull(0, 0.3f) };
+	app.paint_share(hips, one[..], 0.0f, rim[..]);
+	float[1] core = { app.stroke_pull(0, 1.0f) };
+	test::eq(core[0], 1.0f);
+	app.paint_share(hips, one[..], 0.0f, core[..]);
+	test::eq(weight_of(&app, 0, hips), 0.0f);
+
+	// A crumb already there goes on the next stroke, however gentle.
+	app.paint_share(hips, one[..], 3.0e-7f);
+	test::@check(weight_of(&app, 0, hips) > 0.0f, "the crumb was not set");
+	app.begin_stroke();
+	float[1] gentle = { app.stroke_pull(0, 0.5f) };
+	app.paint_share(hips, one[..], 0.0f, gentle[..]);
+	test::eq(weight_of(&app, 0, hips), 0.0f);
+
+	// And a row of nothing but a crumb is unused, not the joint's whole vertex.
+	float[2] crumb = { 3.0e-7f, 0.0f };
+	test::eq(crig::joint_share(crumb[..], 0), 0.0f);
+}
+
+<*
  A partial request moves a vertex part of the way, and repeating it goes further.
 
  The layer underneath the brush, which knows nothing about strokes: `paint_share`

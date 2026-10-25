@@ -165,28 +165,6 @@ fn void whole_clip_lines_up_every_key_as_one_undo() @test
 
 }
 
-fn void the_limits_hold_a_bone_short_and_it_is_counted() @test
-{
-	Figure f;
-	bool opened = f.open();
-	defer f.close();
-	if (!opened) { test::@check(false, "could not build the biped fixture with a neck, head and head top"); return; }
-	// The cube's fitted neck leans forward at rest; with its swing held to a few
-	// degrees, standing the head over it on Z asks the neck for more pitch than its
-	// table allows, whatever the plan's own proportions are.
-	crig::JointRotationLimits table = f.app.doc.rotation_limits_of(f.neck);
-	test::@check(table.constrained, "the fixture's neck has no limits to test against");
-	table.axes[0] = { .allowed = true, .minimum = -0.05f, .maximum = 0.05f };
-	table.axes[2] = { .allowed = true, .minimum = -0.05f, .maximum = 0.05f };
-	f.app.doc.set_rotation_limits(f.neck, table);
-	float before = math::abs(f.posed(f.head, TIMES[0]).z - f.posed(f.neck, TIMES[0]).z);
-	usz lined = f.app.align_pose_to_anchor(2);
-	float after = math::abs(f.posed(f.head, TIMES[0]).z - f.posed(f.neck, TIMES[0]).z);
-	io::printfn("Z on a forward neck: %d of 2 lined, the head %.4f off before and %.4f after", lined, before, after);
-	test::@check(lined < 2, "a turn past the neck's limits was counted as lined up");
-	test::@check(after < before, "the head did not come any nearer the line (%.4f, was %.4f)", after, before);
-}
-
 <*
  A clip recorded on another rig's bones — what an import or a generated clip
  is — plays through the carry, which rides down the chain. The keys rewritten

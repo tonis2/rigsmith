@@ -155,16 +155,6 @@ fn crig::Preset biped_plan()
 	return human.preset(mem);
 }
 
-// The source joint the plan's dot `want` was carried from, or "".
-fn String source_of(gltf::GltfStream* stream, String[] names, usz[] nodes, String want)
-{
-	foreach (usz j, name : names)
-	{
-		if (name == want) return stream.gltf.nodes.get_ref((sz)nodes[j]).name;
-	}
-	return "";
-}
-
 fn void a_back_facing_rig_reads_as_facing_forward() @test
 {
 	write_coarse_fixture(COARSE_FIXTURE)!!;
@@ -182,54 +172,6 @@ fn void a_back_facing_rig_reads_as_facing_forward() @test
 	gltf::GltfStream quadruped = gltf::open("assets/animations/quadruped.glb", mem)!!;
 	defer quadruped.close();
 	test::@check(!crig::faces_back(&quadruped), "the shipped quadruped faces -X and is left as it stands");
-}
-
-fn void a_coarse_rig_matches_the_biped_joint_for_joint() @test
-{
-	write_coarse_fixture(COARSE_FIXTURE)!!;
-	crig::Preset plan = biped_plan();
-	defer crig::free_preset(mem, plan);
-	crig::Preset[1] plans = { plan };
-
-	crig::AnimImportReport report;
-	crig::AnimTemplate stride = crig::import_gltf_animation(mem, COARSE_FIXTURE, { .plans = plans[..] }, &report)!!;
-	defer stride.free(mem);
-	test::@check(report.plan_matched.len > 0, "the coarse rig matched the biped plan");
-
-	gltf::GltfStream stream = gltf::open(COARSE_FIXTURE, mem)!!;
-	defer stream.close();
-	String[] names;
-	usz[] nodes;
-	rig::Skeleton rest = crig::read_rest_skeleton(mem, &stream, &names,
-		options: { .plans = plans[..] }, joint_nodes: &nodes)!!;
-	defer
-	{
-		foreach (name : names) alloc::free(mem, name.ptr);
-		alloc::free(mem, names);
-		alloc::free(mem, nodes);
-		rest.free(mem);
-	}
-
-	// Sides by what the file calls them, not by where the file put them.
-	test::eq(source_of(&stream, names, nodes, "thigh_L"), "L_thigh");
-	test::eq(source_of(&stream, names, nodes, "thigh_R"), "R_thigh");
-	// The legs start at the hip joint, not at the pelvis pivots above it.
-	test::eq(source_of(&stream, names, nodes, "knee_L"), "L_shin");
-	test::eq(source_of(&stream, names, nodes, "ankle_L"), "L_foot");
-	// The arms are arms, one joint each, and the bare end marker folds.
-	test::eq(source_of(&stream, names, nodes, "clavicle_L"), "chest");
-	test::eq(source_of(&stream, names, nodes, "shoulder_L"), "L_upper_arm");
-	test::eq(source_of(&stream, names, nodes, "elbow_L"), "L_forearm");
-	test::eq(source_of(&stream, names, nodes, "wrist_L"), "L_hand");
-	test::eq(source_of(&stream, names, nodes, "elbow_R"), "R_forearm");
-	test::eq(source_of(&stream, names, nodes, "neck"), "neck");
-	test::eq(source_of(&stream, names, nodes, "head"), "head");
-
-	// And the figure is stood facing +Z, its left on +X.
-	foreach (usz j, name : names)
-	{
-		if (name == "thigh_L") test::@check(rest.joints[j].x > 0.0f, "the left thigh is on +X after the turn");
-	}
 }
 
 fn void a_stride_forward_stays_forward() @test

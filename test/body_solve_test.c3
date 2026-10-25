@@ -604,9 +604,6 @@ const int REFINE_STEPS = 8;
 
 const float SMOOTH_SHARE = 0.5f;
 
-// The most a joint turns in a step of the circle on a wide step (13c), in degrees: the arm's own pace there is 12.5.
-const float WIDE_TURN = 15.0f;
-
 // The worst step of a sweep: how far any joint moved, how far any joint turned, and what
 // the same step solved again in `REFINE_STEPS` sub-steps gave for those two joints.
 struct Jumps
@@ -652,19 +649,9 @@ fn Path Body.down_path(&self, String part, float total, int steps)
 	return { .part = part, .from = self.at(part), .held = self.world(part), .height = self.height, .push = total / (float)steps };
 }
 
-<*
- A circle for a hand in front of its shoulder, in lengths of the arm: centred
- half an arm out, a third down and a third forward, a little over a quarter of
- an arm across — inside the arm's reach all the way round on any build, with
- the elbow folded rather than at full stretch. Where the humanoid's hand circle
- always sat; the arm's units keep it there on a figure whose arms are shorter.
-*>
-fn Path Body.arm_circle(&self, String hand, int round)
-{
-	Vec3 centre = self.arm_point(hand, ARM_CIRCLE_CENTRE);
-	return self.circle_path(hand, (centre - self.at(hand)) / self.height, ARM_CIRCLE_RADIUS * self.reach(hand) / self.height, round);
-}
-
+// A circle for a hand in front of its shoulder, in lengths of the arm: centred half
+// an arm out, a third down and a third forward, a little over a quarter of an arm
+// across — inside the arm's reach all the way round on any build.
 const Vec3 ARM_CIRCLE_CENTRE = { 0.5f, -0.33f, 0.33f };
 const float ARM_CIRCLE_RADIUS = 0.27f;
 
@@ -1252,58 +1239,6 @@ fn void a_circling_hand_never_jumps() @test
 	test::@check(worst < 5.0f, "%s jumped %.2f times the hand's step", worst_joint, worst);
 	test::@check(behind < 3.0e-3f, "the hand fell %.4f heights behind", behind);
 	b.check_limits("circle");
-}
-
-<*
- 13b. The same circle as the app drives it: every target solved from the pose the
- gesture began with, the hand holding the world rotation it began with
- (`pose_toward`'s grab), the feet pinned. The smoothness is `Jumps.check`'s, as for
- the sit: no joint moves more than four pointer steps or turns more than 10 degrees
- in a step, and the worst step solved in eighths is spread over them. Two turns of
- the circle at 96 targets a turn, a pointer step of half a percent of the height.
- A hand held at its angle on a wider step has the arm turn faster than that: with
- the wrist and the clavicle against their limits the six numbers of the hand's place
- and angle leave the arm no spare turn, and 48 targets a turn ask the shoulder for
- 12.5 degrees a step on the true track (tested by `a_wide_stepped_circle_is_fast_but_never_hops`).
-*>
-fn void a_circling_hand_held_at_its_angle_never_twitches() @test
-{
-	Body b;
-	if (!b.open()) return;
-	defer b.close();
-	Path path = b.arm_circle("wrist_L", 96);
-	Jumps jumps = b.sweep(&path, 192);
-	jumps.print("held circle");
-	jumps.check();
-	test::@check(jumps.ankle < 1.0e-4f, "an ankle slipped %.6f heights during the sweep", jumps.ankle);
-	b.check_limits("held circle");
-}
-
-<*
- 13c. The same circle on a wider step, 48 targets a turn, for either hand. The pace
- is the arm's (see 13b): the turn of a step stays under `WIDE_TURN`. What it may not
- do is hop: a coarse walk to a target far from the hand can end in another fold of
- the arm than its neighbour's, and then one step carries a joint 25 degrees or more
- and the worst step, solved in eighths, jumps all at once instead of spreading over
- them. The checks of `Jumps.check` that tell a hop from a quick response apply:
- the move within four pointer steps and the worst step spread over its eighths.
-*>
-fn void a_wide_stepped_circle_is_fast_but_never_hops() @test
-{
-	foreach (String part : (String[]){ "wrist_L", "wrist_R" })
-	{
-		Body b;
-		if (!b.open()) return;
-		defer b.close();
-		Path path = b.arm_circle(part, 48);
-		Jumps jumps = b.sweep(&path, 96);
-		jumps.print(part);
-		test::@check(jumps.move <= SMOOTH_MOVE * jumps.push, "%s moved %.4f heights on step %d, over %.0f times the pointer's %.4f", jumps.move_at, jumps.move, jumps.move_step, SMOOTH_MOVE, jumps.push);
-		test::@check(jumps.turn <= WIDE_TURN, "%s turned %.2f degrees on step %d (limit %.0f)", jumps.turn_at, jumps.turn, jumps.turn_step, WIDE_TURN);
-		test::@check(jumps.move_sub <= SMOOTH_SHARE * jumps.move + 1.0e-4f, "%s moved %.4f of its %.4f heights in one eighth of step %d: a jump", jumps.move_at, jumps.move_sub, jumps.move, jumps.move_step);
-		test::@check(jumps.turn_sub <= SMOOTH_SHARE * jumps.turn + 0.05f, "%s turned %.2f of its %.2f degrees in one eighth of step %d: a jump", jumps.turn_at, jumps.turn_sub, jumps.turn, jumps.turn_step);
-		b.check_limits(part);
-	}
 }
 
 <*

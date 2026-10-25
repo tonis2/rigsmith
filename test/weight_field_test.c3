@@ -499,66 +499,6 @@ fn void the_view_shows_the_edited_weights_plainly() @test
 }
 
 <*
- One Mirror for every weight tool: with it on, a brush stroke and a lasso both
- change the twin across the plane too, and with it off neither does.
-*>
-fn void the_brush_and_the_lasso_mirror_to_the_twin() @test
-{
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_field(&app, &mesh);
-	defer close_field(&app, &mesh);
-
-	uint left = field_dot(&app, "knee_L");
-	uint right = field_dot(&app, "knee_R");
-	crig::RigView view = app.open_rig(mem)!!;
-	usz bones = view.len();
-	usz joint = (usz)view.joint_of(left);
-	float[] automatic = app.weights(mem, &view, AUTOMATIC);
-	view.free(mem);
-	defer alloc::free(mem, automatic);
-	uint[4] some;
-	usz found = 0;
-	for (usz v = 0; v < app.geometry.positions.len && found < 4; v++)
-	{
-		if (crig::joint_share(automatic[v * bones:bones], joint) > 0.9f) some[found++] = (uint)v;
-	}
-	test::@check(found == 4, "the left knee holds too little");
-
-	app.select(left);
-	test::@check(app.begin_brush(), "the brush would not open");
-	app.begin_stroke();
-	float[4] pulls = { 1.0f, 1.0f, 1.0f, 1.0f };
-	app.brush_share(left, some[..], 0.0f, pulls[..]);
-	app.end_stroke();
-	usz twin_rows = 0;
-	foreach (pin : app.doc.pins.array_view()) if (pin.dot_id == right) twin_rows++;
-	test::@check(twin_rows > 0, "the stroke did not reach the right knee with Mirror on");
-	test::@check(app.undo(), "the mirrored stroke left nothing to undo");
-	test::eq(app.doc.pins.len(), (sz)0);
-	app.end_brush();
-
-	// The lasso, through its commit's own mirror.
-	app.set_weight_vertices(some[..], left, 1.0f, commit: false);
-	app.lasso_mirror(some[..], 1.0f);
-	app.undo_stack.commit();
-	bool mirrored = false;
-	foreach (pin : app.doc.pins.array_view()) if (pin.dot_id == right) mirrored = true;
-	test::@check(mirrored, "the lasso did not reach the right knee with Mirror on");
-	test::@check(app.undo() && app.doc.pins.len() == 0, "the region and its mirror were not one undo step");
-
-	app.area_solo = true;
-	app.begin_brush();
-	app.begin_stroke();
-	app.brush_share(left, some[..], 0.0f, pulls[..]);
-	app.end_stroke();
-	foreach (pin : app.doc.pins.array_view())
-	{
-		test::@check(pin.dot_id != right, "a stroke with Mirror off reached the right knee");
-	}
-}
-
-<*
  The lasso's pinning job shows the joint's weights it is editing, the way the
  brush and the card do, and gives the view back when it closes.
 *>

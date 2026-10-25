@@ -44,9 +44,8 @@ const String GENERATE_PLACEHOLDER = "A person walks forward and waves with the r
 // By `KeyReduction` ordinal.
 String[3] generate_optimize_levels = { "Off", "Light", "Strong" };
 
-// Set by the routes that open the pane for typing (the Animations pane's
-// "+ Generate", the View menu); the pane puts the caret in the prompt on its next
-// update, once it is in the tree.
+// Set by the routes that open the pane for typing (the View menu); the pane puts
+// the caret in the prompt on its next update, once it is in the tree.
 bool generate_focus_pending;
 
 fn Element* build_generate_view(Ui* ui)
@@ -81,8 +80,6 @@ fn void open_generate_panel(Ui* ui)
 	show_pane_view(ui, GENERATE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
 	generate_focus_pending = true;
 }
-
-fn void anim_generate_clicked(Ui* ui) @private => open_generate_panel(ui);
 
 fn bool generator_configured(AppState* app)
 {

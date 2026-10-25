@@ -457,12 +457,13 @@ fn usz strongest_joint(float[] row)
 }
 
 // A joint's share of a row of any scale, which is what the falloff view
-// colours it by: 0 for a row that holds nothing.
+// colours it by: 0 for a row that holds nothing — an unused one (`unused_row`),
+// whose crumb would otherwise divide out to the whole vertex.
 fn float joint_share(float[] row, usz joint)
 {
 	float sum = 0.0f;
 	foreach (weight : row) sum += weight;
-	return sum > 0.0f ? row[joint] / sum : 0.0f;
+	return sum > UNUSED_TOTAL ? row[joint] / sum : 0.0f;
 }
 
 <*

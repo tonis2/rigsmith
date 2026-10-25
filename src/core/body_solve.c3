@@ -225,11 +225,9 @@ const float POINT_POSE_PIN_SOFT_TURN = 30.0;
 // height is carried in the base sub-steps; each `POINT_POSE_RAMP_STEP` of the height past
 // it adds one, up to eight times the base. A long pull crosses limits that a hand held at
 // its angle runs into one after another, and a coarse walk to it can land in another fold
-// of the arm than the walk a neighbouring pointer position takes: the pose jumps
-// (`body_solve::a_circling_hand_held_at_its_angle_never_twitches`,
-// `a_wide_stepped_circle_is_fast_but_never_hops`). The base and the free length are
-// bound from the other side by the time of a spine sit, which they leave at three
-// (`a_solve_is_fast`, 5 ms).
+// of the arm than the walk a neighbouring pointer position takes: the pose jumps. The
+// base and the free length are bound from the other side by the time of a spine sit,
+// which they leave at three (`a_solve_is_fast`, 5 ms).
 const int POINT_POSE_RAMP = 3;
 const float POINT_POSE_RAMP_FREE = 0.2;
 const float POINT_POSE_RAMP_STEP = 0.01;

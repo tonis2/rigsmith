@@ -208,6 +208,9 @@ fn float AppState.stroke_pull(&self, uint vertex, float falloff)
 	// Everything already given, and nothing left to give: the vertex is at the
 	// target and the division below would be by zero.
 	if (seen >= 1.0f) return 0.0f;
+	// The core owes all of it, said exactly: the division rounds a hair under 1
+	// and would leave a remainder on a vertex the stroke passed straight over.
+	if (falloff >= 1.0f) return 1.0f;
 	return (falloff - seen) / (1.0f - seen);
 }
 
@@ -1003,9 +1006,13 @@ fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float 
 
 		usz at = (usz)v * bones;
 		float now = column[v];
-		// A full pull lands on the target exactly, not on its rounding.
+		// A full pull lands on the target exactly, not on its rounding, and so does
+		// a remainder too small to hold anything (`UNUSED_TOTAL`): left behind on a
+		// vertex no other joint holds, it shows as the whole of it and is below
+		// the step a later stroke would bother to take.
 		float want = pull >= 1.0f ? target : math::clamp(now + (target - now) * pull, 0.0f, 1.0f);
-		if (math::abs(want - now) < 1.0e-6f) continue;
+		if (math::abs(want - target) <= UNUSED_TOTAL) want = target;
+		if (want == now || (want != target && math::abs(want - now) < 1.0e-6f)) continue;
 		if (limb && want > now && joint_share(painted[at:bones], (usz)joint) < AREA_LEAK_FLOOR
 			&& automatic.len >= count * bones && !on_limb(automatic[at:bones], family))
 		{
