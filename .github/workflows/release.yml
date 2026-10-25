@@ -201,6 +201,6 @@ jobs:
           gh release create latest \
             dist/*.AppImage dist/*.zip dist/*.dmg \
             --target "$GITHUB_SHA" \
-            --title "Latest (v${version})" \
+            --title "latest" \
             --latest=false \
             --notes "The newest build, Rigsmith ${version}: the same files as [${GITHUB_REF_NAME}](https://github.com/${GH_REPO}/releases/tag/${GITHUB_REF_NAME}). Replaced on every release, so https://github.com/${GH_REPO}/releases/download/latest/<file> always serves the newest build."
