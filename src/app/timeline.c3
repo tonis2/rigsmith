@@ -89,18 +89,36 @@ fn bool AppState.pose_from_clip(&self, AnimRef ref, float time)
 
 fn bool AppState.discard_pose_edit(&self)
 {
-	if (!self.pose_edit_active) return false;
+	if (!self.pose_edit_active)
+	{
+		// A pending banner with no draft behind it has nothing to put back, but
+		// Revert must still be able to take the banner down.
+		if (!self.pose_edit_pending) return false;
+		self.drop_aim_draft();
+		self.drop_gesture_aim();
+		self.pose_edit_pending = false;
+		self.refresh_shown_pose();
+		return true;
+	}
 	if (self.pose_edit_draft.len > 0) alloc::free(mem, self.pose_edit_draft);
 	self.pose_edit_draft = {};
 	self.drop_aim_draft();
 	self.drop_gesture_aim();
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
-	// Put the shown body back where the draft found it, now — not on the trust
-	// that whatever called discard will redraw next. A parked clip refreshes from
-	// its own keyframes so the overlay stops showing the thrown-away pose; with no
-	// clip playing, or none with a keyframe to refresh from, drop the overlay and
-	// the mesh returns to rest. Either way the discarded pose leaves the screen.
+	self.refresh_shown_pose();
+	return true;
+}
+
+<*
+ Put the shown body back where the draft found it, now — not on the trust
+ that whatever called discard will redraw next. A parked clip refreshes from
+ its own keyframes so the overlay stops showing the thrown-away pose; with no
+ clip playing, or none with a keyframe to refresh from, drop the overlay and
+ the mesh returns to rest. Either way the discarded pose leaves the screen.
+*>
+fn void AppState.refresh_shown_pose(&self)
+{
 	if (self.animating && self.current_anim.keyframes.len > 0)
 	{
 		self.refresh_animation();
@@ -109,7 +127,6 @@ fn bool AppState.discard_pose_edit(&self)
 	{
 		self.drop_palette();
 	}
-	return true;
 }
 
 enum AnimKeyScope

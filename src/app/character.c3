@@ -254,6 +254,12 @@ struct Character
 	bool outliner_skeleton_collapsed;
 	DotIdList outliner_collapsed_joints;
 
+	// The Curves sheet's channel list: the curves taken off the plot, and the
+	// joint and channel rows folded shut (app/graph.c3). By dot id, so a joint
+	// keeps its hidden axes while it is deselected and picked again.
+	List{GraphSlot} anim_graph_hidden;
+	List{GraphFold} anim_graph_folded;
+
 	<*
 	 The rest of the selection, when more than one dot is selected.
 
@@ -1026,6 +1032,9 @@ fn Character new_character(rig::TriMesh geometry, String source_path,
 	// true of a list everything has been unticked from.
 	character.also_selected.init(mem);
 	character.outliner_collapsed_joints.init(mem);
+	// Nothing reserved: most characters never hide a curve.
+	character.anim_graph_hidden.init(mem, 0);
+	character.anim_graph_folded.init(mem, 0);
 	character.drag_mates.init(mem);
 	character.occlusion_memo.init(mem);
 	character.body_radius_memo.init(mem);

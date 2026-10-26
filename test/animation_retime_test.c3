@@ -114,11 +114,12 @@ fn void animation_stretch_dialog_scales_keys_and_undoes_once() @test
 	f.ui.flush();
 	test::@check(f.app.clip(f.app.editing).duration == 2.0f
 		&& f.app.clip(f.app.editing).keyframes[1].time == 1.0f, "Cancel changed timing");
+	test::@check(f.app.pose_from_clip(f.app.editing, f.app.edit_time), "the pose would not open");
 	f.app.pose_edit_pending = true;
 	crig::anim_retime_clicked(f.ui);
 	test::@check(!f.ui.find_id("anim-retime-dialog")!!.widget_as(Dialog).open
 		&& f.app.clip(f.app.editing).duration == 2.0f, "unsaved pose did not block retiming");
-	f.app.pose_edit_pending = false;
+	(void)f.app.discard_pose_edit();
 
 	// The ordinary duration field deliberately edits the endpoint only. Stretch
 	// is explicit because silently changing every saved time is destructive.

@@ -2061,6 +2061,9 @@ fn void AppState.end_drag(&self)
 	self.pose_mate_count = 0;
 	self.drag = { };
 	if (banked && self.is_anchored(moved)) self.refresh_lock_target(moved);
+	// A gesture whose draft has already gone has nothing left to key or revert;
+	// flagging it would leave a banner that neither button can clear.
+	if (banked && !self.pose_edit_active && self.aim_draft.len == 0) banked = false;
 	if (banked)
 	{
 		self.pose_edit_pending = true;

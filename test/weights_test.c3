@@ -1306,6 +1306,52 @@ fn void a_remove_stroke_leaves_no_crumb_behind() @test
 }
 
 <*
+ The brush takes a joint off a vertex nobody else holds in one pass, however soft.
+
+ Alone on a vertex, any weight is all of it: 0.00001 of nothing else moves the
+ vertex exactly as 1 does. So a soft ring that stopped part of the way left the
+ joint looking untouched however often it went over — the thumb that kept a
+ patch of palm. Where another joint shares the vertex the ring still fades, and
+ `paint_share`, the numeric edit, still lands where it is told.
+*>
+fn void a_brush_remove_clears_a_vertex_nobody_else_holds() @test
+{
+	crig::AppState app = chained();
+	defer app.free();
+
+	uint hips = dot_named(&app, "hips");
+	uint knee = dot_named(&app, "knee");
+	state_row(&app, 0, hips, 0.8f);
+	state_row(&app, 1, hips, 0.8f, knee);
+
+	app.begin_stroke();
+	uint[2] both = { 0, 1 };
+	float[2] soft = { app.stroke_pull(0, 0.3f), app.stroke_pull(1, 0.3f) };
+	app.brush_share(hips, both[..], 0.0f, soft[..]);
+	app.end_stroke();
+	test::eq(weight_of(&app, 0, hips), 0.0f);
+	test::@check(math::abs(weight_of(&app, 1, hips) - 0.56f) < 1.0e-5f,
+		"a soft pass on a shared vertex went %s of the way, not 0.56", weight_of(&app, 1, hips));
+
+	crig::RigView? opened = app.open_rig(mem);
+	if (catch opened) { test::@check(false, "no rig"); return; }
+	crig::RigView view = opened;
+	defer view.free(mem);
+	float[] rows = app.weights(mem, &view);
+	defer if (rows.len > 0) alloc::free(mem, rows);
+	usz bones = view.len();
+	test::@check(crig::unused_row(rows[0:bones]), "the cleared vertex still has a joint on it");
+
+	// The numeric edit keeps its word on the same lone vertex.
+	state_row(&app, 0, hips, 0.8f);
+	uint[1] one = { 0 };
+	float[1] half = { 0.5f };
+	app.paint_share(hips, one[..], 0.0f, half[..]);
+	test::@check(math::abs(weight_of(&app, 0, hips) - 0.4f) < 1.0e-5f,
+		"paint_share half way from 0.8 is 0.4, measured %s", weight_of(&app, 0, hips));
+}
+
+<*
  A partial request moves a vertex part of the way, and repeating it goes further.
 
  The layer underneath the brush, which knows nothing about strokes: `paint_share`
@@ -2996,7 +3042,7 @@ fn void a_mesh_with_no_triangles_has_no_neighbourhoods() @test
 }
 
 // Built on demand and not before: nothing on the binder's path wants it, so a
-// session that never smooths never pays for the sort.
+// session that never asks never pays for the sort.
 fn void the_adjacency_is_built_when_it_is_asked_for() @test
 {
 	crig::AppState app = chained();
@@ -3022,51 +3068,6 @@ fn void the_adjacency_is_built_when_it_is_asked_for() @test
 	test::@check(app.adjacency.class_of[0] != 4242, "the mark survived the mesh being replaced");
 }
 
-// ---------------------------------------------------------------------------
-// Harden and smooth
-//
-// Two ops over the whole mesh, both of which compute a share and then state it.
-// What these assert is the deciding — which vertices each one picks up and which
-// it leaves — since the writing itself is `pin_dabs` and is covered above.
-
-<*
- A vertex one dot nearly holds is handed over outright; one it merely leads on is
- left alone.
-
- The threshold, asserted on shares put in by hand rather than on the binder's
- opinion of a cube: 0.85 is over the line, 0.75 is under it, and a vertex already
- stated rigid is a row with nothing to harden.
-*>
-fn void harden_takes_the_nearly_rigid_and_leaves_the_rest() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint foot = dot_named(&app, "foot");
-
-	state_row(&app, 0, hips, 0.85f, foot);
-	state_row(&app, 1, hips, 0.75f, foot);
-	state_row(&app, 2, foot, 1.0f);
-
-	usz did = app.harden_weights();
-	test::@check(did > 0, "harden found nothing on a fixture built for it");
-	test::@check(app.notice().contains("rigid"), "and said nothing about it: \"%s\"", app.notice());
-
-	test::@check(app.doc.pin_of(0, hips) == 1.0f && app.doc.pin_of(0, foot) == 0.0f,
-		"the vertex at 0.85 came out at %s rather than rigid", app.doc.pin_of(0, hips));
-	test::@check(app.doc.pin_of(1, hips) == 0.75f && app.doc.pin_of(1, foot) == 0.25f,
-		"the vertex at 0.75 was moved to %s", app.doc.pin_of(1, hips));
-	test::@check(app.doc.pin_of(2, foot) == 1.0f, "an already-rigid vertex was rewritten");
-	test::@check(app.doc.pin_of(2, hips) == 0.0f, "an already-rigid vertex changed hands");
-
-	test::@check(app.undo(), "harden is one step on the ledger");
-	test::@check(app.doc.pin_of(0, hips) == 0.85f && math::abs(app.doc.pin_of(0, foot) - 0.15f) < 1.0e-6f,
-		"undo left the vertex at %s rather than the 0.85 it found", app.doc.pin_of(0, hips));
-	test::@check(app.doc.pin_of(1, hips) == 0.75f && app.doc.pin_of(2, foot) == 1.0f,
-		"undo did not put the rest back");
-}
-
 // Vertex `v`'s row stated outright: `dot` at `weight`, `other` at the rest of
 // one, and every other dot off it.
 fn void state_row(crig::AppState* app, uint v, uint dot, float weight, uint other = 0)
@@ -3080,75 +3081,8 @@ fn void state_row(crig::AppState* app, uint v, uint dot, float weight, uint othe
 }
 
 <*
- A bind that is already rigid everywhere records nothing.
-
- The `pin_dabs` rule one level up, and what keeps a menu item that was clicked
- twice off the ledger: a single-influence row is what hardening writes, so a mesh
- made of them has nothing to say.
-*>
-fn void hardening_an_already_rigid_bind_records_nothing() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-
-	// The binder's own rigid rows first, and they are the half that can go wrong
-	// quietly: an attached piece is bound to one joint outright with nothing in
-	// the pin layer to say so, so an op that read only the layer would write a
-	// pin per vertex and call it work.
-	app.select(hips);
-	app.pin_shell(0);
-	test::eq(app.doc.attachment_of(0), hips);
-
-	sz settled = app.undo_stack.edits.len();
-	test::eq(app.harden_weights(), (usz)0);
-	test::eq(app.undo_stack.edits.len(), settled);
-	test::eq(app.doc.pins.len(), (sz)0);
-	test::@check(app.notice().contains("nothing to make rigid"), "the refusal says \"%s\"", app.notice());
-
-	// And again through the pin layer, which reaches the same row by the other
-	// door.
-	uint[8] whole = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	app.set_weight_vertices(whole[..], hips, 1.0f);
-
-	settled = app.undo_stack.edits.len();
-	test::eq(app.harden_weights(), (usz)0);
-	test::eq(app.undo_stack.edits.len(), settled);
-}
-
-<*
-	Both ops refuse while an animation draft deforms the body, and say why.
-
- The lasso's rule, for the lasso's reason: they read the bind, the bind is
-	against the rest mesh, and a share computed off a draft is a share of something
- nobody was looking at.
-*>
-fn void the_cleanup_ops_refuse_during_animation_editing() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	app.pose_edit_active = true;
-	test::@check(app.rig_locked(), "the fixture did not lock the rig");
-
-	sz settled = app.undo_stack.edits.len();
-	test::eq(app.harden_weights(), (usz)0);
-	test::@check(app.notice().contains("animation editing"), "harden said \"%s\"", app.notice());
-	test::eq(app.smooth_boundaries(), (usz)0);
-	test::@check(app.notice().contains("animation editing"), "smooth said \"%s\"", app.notice());
-
-	test::eq(app.undo_stack.edits.len(), settled);
-	test::eq(app.doc.pins.len(), (sz)0);
-}
-
-<*
  A flat strip of quads running along x: two rows of `columns` points, two
- triangles per quad between them.
-
- Long and thin on purpose. A boundary between two dots at its ends falls at one
- column, so "the band" is a handful of columns around a known place and "monotone
- across it" is a claim a check can make. The caller frees the mesh with
+ triangles per quad between them. The caller frees the mesh with
  `TriMesh.free` once the AppState over it is gone.
 *>
 fn rig::TriMesh strip_mesh(usz columns)
@@ -3176,202 +3110,6 @@ fn rig::TriMesh strip_mesh(usz columns)
 		mesh.indices[q * 6 + 5] = a + 2;
 	}
 	return mesh;
-}
-
-// Every vertex's share of one dot, as the bind currently stands — pins included,
-// which is what makes a smoothed band readable as numbers. The caller frees it.
-fn float[] shares_of(crig::AppState* app, uint dot)
-{
-	crig::RigView? opened = app.open_rig(mem);
-	if (catch opened) return {};
-	crig::RigView view = opened;
-	defer view.free(mem);
-
-	sz joint = view.joint_of(dot);
-	usz bones = view.len();
-
-	float[] painted = app.weights(mem, &view);
-	defer if (painted.len > 0) alloc::free(mem, painted);
-	if (joint < 0 || painted.len == 0) return {};
-
-	usz count = app.geometry.positions.len;
-	float[] out = alloc::new_array(mem, float, (sz)count);
-	for (usz v = 0; v < count; v++)
-	{
-		float sum = 0.0f;
-		for (usz b = 0; b < bones; b++) sum += painted[v * bones + b];
-		out[v] = sum > 0.0f ? painted[v * bones + (usz)joint] / sum : 0.0f;
-	}
-	return out;
-}
-
-// How far from an even split the whole mesh is: the number that says "sharper"
-// as one figure, so a second smoothing pass can be asserted to soften without
-// naming any vertex's share.
-fn float sharpness_of(float[] shares)
-{
-	float total = 0.0f;
-	foreach (share : shares) total += math::abs(share - 0.5f);
-	return total;
-}
-
-<*
- Smoothing turns a hard step into a ramp, over a band it finds for itself.
-
- The step is stated rather than bound for, which is exactly the case the op is
- reached for: two lassos meeting down the middle of a strip leave every vertex
- rigid and the seam between them a cliff, and no amount of rebinding softens it
- because a pin is not a thing the binder has an opinion about. What the op writes
- is the ramp: every vertex it touches lands strictly between the two sides it
- lies between, and the shares fall monotonically across it.
-*>
-fn void smoothing_widens_a_hard_boundary() @test
-{
-	rig::TriMesh mesh = strip_mesh(12);
-	crig::AppState app = crig::new_app(mesh);
-	defer
-	{
-		app.free();
-		mesh.free(mem);
-	}
-
-	uint left = app.doc.add_dot({ 0.0f, 0.2f, 0.0f }, "left");
-	uint right = app.doc.add_dot({ 1.0f, 0.2f, 0.0f }, "right");
-	app.doc.connect(left, right);
-
-	// Half the strip each, rigid: the cliff, put in by hand.
-	uint[12] near;
-	uint[12] far;
-	for (usz i = 0; i < 6; i++)
-	{
-		near[i * 2] = (uint)(i * 2);
-		near[i * 2 + 1] = (uint)(i * 2 + 1);
-		far[i * 2] = (uint)((i + 6) * 2);
-		far[i * 2 + 1] = (uint)((i + 6) * 2 + 1);
-	}
-	app.set_weight_vertices(near[..], left, 1.0f);
-	app.set_weight_vertices(near[..], right, 0.0f);
-	app.set_weight_vertices(far[..], right, 1.0f);
-	app.set_weight_vertices(far[..], left, 0.0f);
-
-	float[] before = shares_of(&app, left);
-	defer alloc::free(mem, before);
-
-	// The fixture's premise: a hard step, and only one of them.
-	usz steps = 0;
-	for (usz i = 0; i + 1 < 12; i++)
-	{
-		if ((before[i * 2] > 0.5f) != (before[(i + 1) * 2] > 0.5f)) steps++;
-	}
-	test::eq(steps, (usz)1);
-
-	sz edits_before = app.undo_stack.cursor;
-
-	usz did = app.smooth_boundaries();
-	test::@check(did > 0, "smoothing found no boundary on a two-dot strip: \"%s\"", app.notice());
-	test::@check(app.notice().contains("smoothed"), "and said nothing about it: \"%s\"", app.notice());
-	test::@check(app.undo() && app.undo_stack.cursor == edits_before, "the pass was more than one undo step");
-	app.redo();
-
-	float[] after = shares_of(&app, left);
-	defer alloc::free(mem, after);
-
-	// The band, as the op decided it: the columns whose shares moved.
-	sz first = -1;
-	sz last = -1;
-	for (usz i = 0; i < 12; i++)
-	{
-		if (after[i * 2] == before[i * 2]) continue;
-		if (first < 0) first = (sz)i;
-		last = (sz)i;
-	}
-	test::@check(first > 0 && last > first && last < 11,
-		"the band runs from column %d to %d — it should be inside the strip", first, last);
-
-	// Every column between carries a share of both dots, so the band is one run
-	// rather than a scatter — a hole in it would be a dilation that skipped a ring.
-	for (usz i = (usz)first; i <= (usz)last; i++)
-	{
-		test::@check(app.doc.pin_of((uint)(i * 2), left) > 0.0f
-			&& app.doc.pin_of((uint)(i * 2), right) > 0.0f,
-			"column %d is inside the band and does not ride both dots", i);
-	}
-
-	// Strictly between the two sides, which is what "a ramp" means.
-	float above = before[(usz)(first - 1) * 2];
-	float below = before[(usz)(last + 1) * 2];
-	for (usz i = (usz)first; i <= (usz)last; i++)
-	{
-		test::@check(after[i * 2] < above && after[i * 2] > below,
-			"column %d came out at %s, outside the %s .. %s the sides left it",
-			i, after[i * 2], below, above);
-	}
-
-	// And monotone across it, per row: a blend that rose again on the way across
-	// would be a fold in the deformation rather than a transition.
-	for (usz row = 0; row < 2; row++)
-	{
-		for (usz i = (usz)first; i < (usz)last; i++)
-		{
-			test::@check(after[i * 2 + row] > after[(i + 1) * 2 + row],
-				"row %d rises across the band: column %d holds %s and %d holds %s",
-				row, i, after[i * 2 + row], i + 1, after[(i + 1) * 2 + row]);
-		}
-	}
-
-	// Running it again smooths further rather than repeating itself, which is what
-	// makes the op a knob the user turns until it looks right. Measured as one
-	// figure — how far from an even split the whole mesh is — rather than as any
-	// vertex's share, since what a further pass is worth is not a number a check
-	// should be asserting from the outside.
-	float sharp_once = sharpness_of(after);
-	test::@check(app.smooth_boundaries() > 0, "the second pass found nothing to do");
-
-	float[] twice = shares_of(&app, left);
-	defer alloc::free(mem, twice);
-	test::@check(sharpness_of(twice) < sharp_once,
-		"the second pass left the mesh at %s where the first left it at %s",
-		sharpness_of(twice), sharp_once);
-
-	// Both passes undo exactly, in the order they were made — back to the two
-	// rigid halves the fixture stated, not back to nothing.
-	test::@check(app.undo() && app.undo(), "the two passes are two steps");
-	test::eq(app.doc.pins.len(), (sz)24);
-
-	float[] back = shares_of(&app, left);
-	defer alloc::free(mem, back);
-	usz wrong = 0;
-	for (usz v = 0; v < back.len; v++)
-	{
-		if (back[v] != before[v]) wrong++;
-	}
-	test::eq(wrong, (usz)0);
-}
-
-<*
- A mesh one dot holds everywhere has no boundary, and nothing to write.
-
- The other half of "the band is found rather than drawn": with one winner there
- is nowhere two joints meet, so the op is a no-op on the ledger rather than a
- pass that quietly bakes the whole model into pins.
-*>
-fn void smoothing_a_mesh_with_one_winner_records_nothing() @test
-{
-	rig::TriMesh mesh = strip_mesh(12);
-	crig::AppState app = crig::new_app(mesh);
-	defer
-	{
-		app.free();
-		mesh.free(mem);
-	}
-
-	app.doc.add_dot({ 0.5f, 0.2f, 0.0f }, "only");
-
-	sz settled = app.undo_stack.edits.len();
-	test::eq(app.smooth_boundaries(), (usz)0);
-	test::eq(app.undo_stack.edits.len(), settled);
-	test::eq(app.doc.pins.len(), (sz)0);
-	test::@check(app.notice().contains("nothing to smooth"), "the refusal says \"%s\"", app.notice());
 }
 
 // A square grid of `side` × `side` vertices facing +Z, centred on `centre`.

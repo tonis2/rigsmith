@@ -222,7 +222,7 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
 	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
-		"Remove joint animation…", "Move joints to layer", "Prevent intersections" })
+		"Fix flips", "Smooth curves", "Simplify curves", "Flatten keys", "Match loop seam", "Remove joint animation…", "Move joints to layer", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -242,6 +242,18 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
 			@node((PopupMenuItem) { .item = { .label = "Make loop…", .on_select = &anim_tools_make_loop, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
+			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
+			// Curves: act on the picked keys, else the selected joints' whole curves.
+			@node((PopupMenuItem) { .item = { .label = "Fix flips", .on_select = &anim_tools_curve_flips, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_FLIPS_MENU_ID);
+			@node((PopupMenuItem) { .item = { .label = "Smooth curves", .on_select = &anim_tools_curve_smooth, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SMOOTH_MENU_ID);
+			@node((PopupMenuItem) { .item = { .label = "Simplify curves", .on_select = &anim_tools_curve_simplify, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SIMPLIFY_MENU_ID);
+			@node((PopupMenuItem) { .item = { .label = "Flatten keys", .on_select = &anim_tools_curve_flatten, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_FLATTEN_MENU_ID);
+			@node((PopupMenuItem) { .item = { .label = "Match loop seam", .on_select = &anim_tools_curve_seam, .disabled = none },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SEAM_MENU_ID);
 			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
 			@node((PopupMenuItem) { .item = { .label = "Remove joint animation…", .on_select = &anim_tools_remove_joints,
 				.disabled = unpicked }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_REMOVE_JOINTS_ID);
@@ -342,6 +354,30 @@ fn void anim_apply_interpolation(Ui* ui, AnimInterpolation interpolation)
 	app.show_edited();
 }
 
+const String[5] ANIM_CONTEXT_TANGENT_IDS = {
+	"anim-context-tangent-auto", "anim-context-tangent-flat", "anim-context-tangent-linear",
+	"anim-context-tangent-free", "anim-context-tangent-broken",
+};
+String[5] anim_tangent_labels = { "Auto", "Flat", "Linear", "Free", "Broken" };
+
+// One tangent mode off the key menu, which closes behind it.
+fn void anim_context_tangent(Ui* ui, AnimTangent mode)
+{
+	set_dialog_open(ui, "anim-key-context", false);
+	anim_apply_tangent_mode(ui, mode);
+}
+
+fn void anim_context_tangent_auto(Ui* ui) => anim_context_tangent(ui, AUTO);
+fn void anim_context_tangent_flat(Ui* ui) => anim_context_tangent(ui, FLAT);
+fn void anim_context_tangent_linear(Ui* ui) => anim_context_tangent(ui, LINEAR);
+fn void anim_context_tangent_free(Ui* ui) => anim_context_tangent(ui, FREE);
+fn void anim_context_tangent_broken(Ui* ui) => anim_context_tangent(ui, BROKEN);
+
+const OnClick[5] ANIM_CONTEXT_TANGENT_ACTIONS = {
+	&anim_context_tangent_auto, &anim_context_tangent_flat, &anim_context_tangent_linear,
+	&anim_context_tangent_free, &anim_context_tangent_broken,
+};
+
 const String ANIM_CONTEXT_COPY_ID = "anim-context-copy";
 const String ANIM_CONTEXT_PASTE_ID = "anim-context-paste";
 
@@ -409,7 +445,7 @@ fn Element* build_anim_key_context(Ui* ui)
 	// overruns.
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Copy selected keys", paste, "Interpolation ▸", "Preview always loops" })
+	foreach (label : (String[]) { "Copy selected keys", paste, "Interpolation ▸", "Preview always loops", "Tangent: Broken" })
 	{
 		float wanted = widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x;
 		width = math::max(width, wanted);
@@ -437,6 +473,20 @@ fn Element* build_anim_key_context(Ui* ui)
 					.item = { .label = "Interpolation ▸", .on_select = &anim_context_interpolation_menu },
 					.style = VIEW_MENU_STYLE, .width = width,
 				}).with_id(ANIM_CONTEXT_INTERP_ID);
+				// Tangents belong to the curves: the handles on the Curves sheet.
+				if (app.anim_show_curves)
+				{
+					AnimTangent now;
+					bool known = app.animation_selection_tangent_mode(app.editing, &now);
+					foreach (i, label : anim_tangent_labels)
+					{
+						@node((PopupMenuItem) {
+							.item = { .label = string::tformat("Tangent: %s", label), .on_select = ANIM_CONTEXT_TANGENT_ACTIONS[i],
+								.checked = known && (sz)now == i },
+							.style = VIEW_MENU_STYLE, .width = width,
+						}).with_id(ANIM_CONTEXT_TANGENT_IDS[i]);
+					}
+				}
 				@node((PopupMenuItem) {
 					.item = { .label = count > 1 ? "Delete selected keys" : "Delete key",
 						.on_select = &anim_context_delete },
@@ -514,6 +564,12 @@ fn bool anim_can_rewrite(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	if (!app.pose_edit_pending) return true;
+	// A banner with no draft behind it has no edit to lose.
+	if (!app.pose_edit_active && app.aim_draft.len == 0)
+	{
+		app.pose_edit_pending = false;
+		return true;
+	}
 	app.@notice("Key pose or Revert the changed pose first.");
 	return false;
 }
@@ -738,6 +794,12 @@ fn bool anim_allow_navigation(Ui* ui, int action, float at = 0, usz row = 0)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	if (!app.pose_edit_pending) return true;
+	// A banner with no draft behind it has no edit to lose.
+	if (!app.pose_edit_active && app.aim_draft.len == 0)
+	{
+		app.pose_edit_pending = false;
+		return true;
+	}
 	if (app.auto_key && app.key_pose_edit(CHANGED)) return true;
 	if (app.anim_pending_action != 0 && app.anim_pending_armed)
 	{

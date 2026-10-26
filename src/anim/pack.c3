@@ -1003,6 +1003,10 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 					if (!read_ease_field(dot, "rotation_ease", &ignored_ease)
 						|| !read_ease_field(dot, "translation_ease", &ignored_ease))
 					{ valid_sparse = false; break; }
+					AnimTangents ignored_tangents;
+					if (!read_tangent_field(dot, "rotation_tangents", &ignored_tangents)
+						|| !read_tangent_field(dot, "translation_tangents", &ignored_tangents))
+					{ valid_sparse = false; break; }
 					bool channel_exists = false;
 					foreach (keyed : imported.dots)
 					{
@@ -1044,6 +1048,8 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 						AnimInterpolation translation_interpolation;
 						AnimEase rotation_ease;
 						AnimEase translation_ease;
+						AnimTangents rotation_tangents;
+						AnimTangents translation_tangents;
 						bool found = false;
 						Object* listed = schedule ? (schedule.get("dots") ?? null) : null;
 						if (listed && listed.is_array()) for (sz d = 0; d < listed.get_len(); d++)
@@ -1063,6 +1069,8 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 							}
 							(void)read_ease_field(wanted, "rotation_ease", &rotation_ease);
 							(void)read_ease_field(wanted, "translation_ease", &translation_ease);
+							(void)read_tangent_field(wanted, "rotation_tangents", &rotation_tangents);
+							(void)read_tangent_field(wanted, "translation_tangents", &translation_tangents);
 							found = true;
 							break;
 						}
@@ -1073,6 +1081,8 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 							dot.translation_interpolation = translation_interpolation;
 							dot.rotation_ease = channels == TRANSLATION ? (AnimEase){} : rotation_ease;
 							dot.translation_ease = channels == ROTATION ? (AnimEase){} : translation_ease;
+							dot.rotation_tangents = channels == TRANSLATION ? (AnimTangents){} : rotation_tangents;
+							dot.translation_tangents = channels == ROTATION ? (AnimTangents){} : translation_tangents;
 							kept.push(dot);
 						}
 						else if (dot.joint_name.len > 0) alloc::free(allocator, dot.joint_name.ptr);

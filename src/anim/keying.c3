@@ -131,6 +131,7 @@ fn AnimKeyframe merge_key_channels(Allocator allocator, AnimKeyframe old, AnimKe
 					merged.rotation_interpolation = next.rotation_interpolation;
 				}
 				if (!next.rotation_ease.none()) merged.rotation_ease = next.rotation_ease;
+				if (next.rotation_tangents.explicit()) merged.rotation_tangents = next.rotation_tangents;
 			}
 			if (next.channels != ROTATION)
 			{
@@ -140,6 +141,7 @@ fn AnimKeyframe merge_key_channels(Allocator allocator, AnimKeyframe old, AnimKe
 					merged.translation_interpolation = next.translation_interpolation;
 				}
 				if (!next.translation_ease.none()) merged.translation_ease = next.translation_ease;
+				if (next.translation_tangents.explicit()) merged.translation_tangents = next.translation_tangents;
 			}
 			if (next.channels != dot.channels) merged.channels = BOTH;
 			break;
@@ -186,8 +188,8 @@ fn AnimKeyDot AnimKeyDot.copy(self, Allocator allocator)
 fn AnimKeyDot AnimKeyDot.narrowed(self, Allocator allocator, bool rotation, bool translation)
 {
 	AnimKeyDot out = self.copy(allocator);
-	if (!rotation) { out.rotation_interpolation = INHERIT; out.rotation_ease = {}; }
-	if (!translation) { out.translation_interpolation = INHERIT; out.translation_ease = {}; }
+	if (!rotation) { out.rotation_interpolation = INHERIT; out.rotation_ease = {}; out.rotation_tangents = {}; }
+	if (!translation) { out.translation_interpolation = INHERIT; out.translation_ease = {}; out.translation_tangents = {}; }
 	out.channels = rotation && translation ? BOTH : (rotation ? ROTATION : TRANSLATION);
 	return out;
 }
@@ -531,6 +533,8 @@ fn AnimTemplate clip_retimed(Allocator allocator, AnimTemplate source, float dur
 	foreach (usz i, frame : out.keyframes)
 	{
 		out.keyframes[i].time = frame.time * scale;
+		// Tangent rates are per second: the same shape at another speed.
+		foreach (&dot : out.keyframes[i].dots) dot.retime_tangents(scale);
 	}
 	// Ground contacts are stored as normalized cycle phases, not seconds. Their
 	// down/up values deliberately remain unchanged as the keys move.

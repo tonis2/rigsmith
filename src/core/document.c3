@@ -240,9 +240,7 @@ struct PaintColumn
 
  **Absolute, and it does not track the dot.** Move the dot afterwards and the
  pin says the same thing it said before, where a dab would re-derive underneath.
- That is the price of being able to state a value at all, and it is also what
- makes the smooth and harden ops possible — they bake a computed share, and a
- baked share that drifted with the rig would be a different answer every rebind.
+ That is the price of being able to state a value at all.
 	A pin is therefore work the user owns, like an animation key, rather than a correction
  riding on work the binder owns.
 

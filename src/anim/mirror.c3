@@ -259,12 +259,14 @@ fn void merge_flipped(AnimDotList* dots, AnimKeyDot added, Allocator allocator) 
 			held.bone = added.bone;
 			held.rotation_interpolation = added.rotation_interpolation;
 			held.rotation_ease = added.rotation_ease;
+			held.rotation_tangents = added.rotation_tangents;
 		}
 		if (added.keys_translation())
 		{
 			held.move = added.move;
 			held.translation_interpolation = added.translation_interpolation;
 			held.translation_ease = added.translation_ease;
+			held.translation_tangents = added.translation_tangents;
 		}
 		held.channels = rotation && translation ? BOTH : (rotation ? ROTATION : TRANSLATION);
 		alloc::free(allocator, added.joint_name.ptr);
@@ -282,6 +284,12 @@ fn AnimKeyDot AnimKeyDot.reflected(self)
 	out.axis = { self.axis.x, -self.axis.y, -self.axis.z };
 	out.move = { -self.move.x, self.move.y, self.move.z };
 	out.bone = { -self.bone.x, self.bone.y, self.bone.z };
+	// A rotation tangent is an angular velocity, a pseudo-vector like the axis; a
+	// translation tangent is a velocity, like the move.
+	out.rotation_tangents.incoming = { self.rotation_tangents.incoming.x, -self.rotation_tangents.incoming.y, -self.rotation_tangents.incoming.z };
+	out.rotation_tangents.outgoing = { self.rotation_tangents.outgoing.x, -self.rotation_tangents.outgoing.y, -self.rotation_tangents.outgoing.z };
+	out.translation_tangents.incoming = { -self.translation_tangents.incoming.x, self.translation_tangents.incoming.y, self.translation_tangents.incoming.z };
+	out.translation_tangents.outgoing = { -self.translation_tangents.outgoing.x, self.translation_tangents.outgoing.y, self.translation_tangents.outgoing.z };
 	return out;
 }
 

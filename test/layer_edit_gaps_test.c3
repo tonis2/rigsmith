@@ -145,13 +145,14 @@ fn void gap_curves_show_and_edit_the_active_keyed_layer() @test
 	AnimKeyDot base_before = gap_dot_at(now.keyframes, 1.0f, root);
 	float deg = 180.0f / (float)math::PI;
 
-	Graph graph = f.app.build_graph(f.app.editing, false);
+	Graph graph = f.app.build_graph(f.app.editing);
 	defer graph.free();
 	test::@check(!graph.procedural, "a keyed layer is flagged procedural");
 	GraphKey* picked = null;
 	foreach (&key : graph.keys)
 	{
-		if (graph.curves[key.curve].axis == 1 && math::abs(key.time - 1.0f) < 1.0e-4f) picked = key;
+		GraphCurve curve = graph.curves[key.curve];
+		if (curve.rotation && curve.axis == 1 && math::abs(key.time - 1.0f) < 1.0e-4f) picked = key;
 	}
 	test::@check(picked != null, "the layer's key at 1 s is not on the graph");
 	if (!picked) return;
@@ -181,7 +182,7 @@ fn void gap_a_procedural_layer_has_no_editable_curves() @test
 	f.app.select(f.app.doc.root_id);
 	test::@check(f.app.add_clip_layer(clip, PULSE, ADDITIVE) >= 0, "no pulse layer");
 
-	Graph graph = f.app.build_graph(f.app.editing, false);
+	Graph graph = f.app.build_graph(f.app.editing);
 	defer graph.free();
 	test::@check(graph.procedural, "a pulse layer is not flagged procedural");
 	test::@check(graph.curves.len == 0 && graph.keys.len == 0, "a generator layer drew editable points");
@@ -190,7 +191,7 @@ fn void gap_a_procedural_layer_has_no_editable_curves() @test
 
 	// Back on the base, the graph is the base's again.
 	f.app.set_active_layer(f.app.editing, -1);
-	Graph base = f.app.build_graph(f.app.editing, false);
+	Graph base = f.app.build_graph(f.app.editing);
 	defer base.free();
 	test::@check(!base.procedural && base.curves.len > 0, "the base graph did not come back");
 }

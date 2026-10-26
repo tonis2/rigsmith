@@ -235,6 +235,8 @@ fn bool keyframes_same(AnimKeyframe[] a, AnimKeyframe[] b) @local
 				|| dot.rotation_ease.start != them.rotation_ease.start || dot.rotation_ease.end != them.rotation_ease.end
 				|| dot.translation_ease.start != them.translation_ease.start
 				|| dot.translation_ease.end != them.translation_ease.end
+				|| !dot.rotation_tangents.same(them.rotation_tangents)
+				|| !dot.translation_tangents.same(them.translation_tangents)
 				|| dot.axis != them.axis || dot.angle != them.angle || dot.move != them.move || dot.bone != them.bone)
 			{
 				return false;
@@ -514,7 +516,9 @@ fn AnimLayer AnimLayer.copy(&self, Allocator allocator, float scale = 1.0f, floa
 	foreach (usz i, frame : self.keyframes)
 	{
 		out.keyframes[i] = keyframe_copy(allocator, frame);
-		if (!own) out.keyframes[i].time = math::max(0.0f, frame.time * scale + shift);
+		if (own) continue;
+		out.keyframes[i].time = math::max(0.0f, frame.time * scale + shift);
+		foreach (&dot : out.keyframes[i].dots) dot.retime_tangents(scale);
 	}
 	if (scale != 1.0f || shift != 0.0f)
 	{

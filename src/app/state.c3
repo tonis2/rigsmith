@@ -439,16 +439,19 @@ struct AppState
 	KeyReach key_reach;
 	bool anim_show_tracks;
 
-	// The sheet shows the selected joints' curves instead of key lanes, their
-	// position or rotation channel, and the curve view's vertical zoom and pan.
+	// The sheet shows the selected joints' curves instead of key lanes, and the
+	// curve view's vertical zoom and pan.
 	bool anim_show_curves;
 	// The sheet shows the clip's layers as strips on tracks (ui/layer_sheet.c3),
 	// and what the Pieces bin is dragging onto them.
 	bool anim_show_layers;
 	PieceDrag piece_drag;
-	bool anim_graph_position;
 	float anim_graph_y_zoom;
 	float anim_graph_y_shift;
+	// Whether the plot last drew rotation and position together (normalised), so
+	// a change of that resets the vertical view, and the channel list's scroll.
+	bool anim_graph_mixed;
+	float anim_graph_list_scroll;
 	AnimTemplate anim_key_clipboard;
 	bool anim_key_clipboard_sparse;
 
@@ -1071,10 +1074,10 @@ fn bool Character.has_mesh(&self) => self.geometry.positions.len > 0;
 
  	`rig::MeshAdjacency* around = app.adjacency_for();`
 
- **Lazy, because almost nothing wants it.** The binder measures distance through
- the voxel grid rather than along the edges, so the only caller is
- `smooth_boundaries` — building this beside the shells would make every model
- load pay for a sort most sessions never read.
+ **Lazy, because the binder never wants it.** The binder measures distance
+ through the voxel grid rather than along the edges, so only the area tools,
+ posing and collision ask — building this beside the shells would make every
+ model load pay for a sort a session that does none of those never reads.
 
  Rebuilt when the vertex count no longer matches the mesh, which is the one way
  the mesh can change under it without going through `load_mesh` or
@@ -1236,6 +1239,8 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	self.outliner_model_collapsed = false;
 	self.outliner_skeleton_collapsed = false;
 	self.outliner_collapsed_joints.clear();
+	self.anim_graph_hidden.clear();
+	self.anim_graph_folded.clear();
 
 	// A question asked about the model that just left. Whatever the answer would
 	// have been, it is not an answer about this one.
@@ -1602,6 +1607,8 @@ fn void AppState.free_character_state(&self)
 	if (self.source_path.len > 0 && self.owns_path) alloc::free(mem, self.source_path.ptr);
 	self.also_selected.free();
 	self.outliner_collapsed_joints.free();
+	self.anim_graph_hidden.free();
+	self.anim_graph_folded.free();
 	self.drag_mates.free();
 	if (self.occlusion_memo_ready)
 	{

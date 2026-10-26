@@ -697,12 +697,14 @@ fn AnimKeyframe[] keys_without_channels(Allocator allocator, AnimTemplate reduce
 				copy.channels = TRANSLATION;
 				copy.rotation_interpolation = INHERIT;
 				copy.rotation_ease = {};
+				copy.rotation_tangents = {};
 			}
 			else if (!slides)
 			{
 				copy.channels = ROTATION;
 				copy.translation_interpolation = INHERIT;
 				copy.translation_ease = {};
+				copy.translation_tangents = {};
 			}
 			dots.push(copy);
 		}

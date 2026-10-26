@@ -126,10 +126,6 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "W", .action = "area: pick exactly which part of the mesh the selected joint moves" },
 	{ .binding = "shift+W", .action = "weight brush: correct the bind by hand — on the rest mesh or a parked pose" },
 	{ .binding = "] / [", .action = "sharpen or soften every blend at once — keys instead while posing a clip" },
-	// No keys of their own: both are ops over the whole mesh whose result is
-	// written down rather than derived, so they are listed by where they live.
-	{ .binding = "Rig menu", .action = "Make rigid: give a nearly-rigid vertex wholly to the joint that holds it" },
-	{ .binding = "Rig menu", .action = "Smooth weights: widen the seams where two joints meet" },
 	{ .binding = "A", .action = "auto-connect: chain each new joint to the last" },
 	{ .binding = "M", .action = "symmetrize: line the other side up with the selection — never adds joints" },
 	{ .binding = "Rig menu", .action = "rotate the whole skeleton when a body plan faces the wrong way" },
@@ -179,11 +175,18 @@ const ControlRow[*] CONTROLS = {
 	// The key clipboard lives on the sheet itself: the menu on a key copies it,
 	// the menu on empty sheet pastes at that time. The chords do the same while
 	// the sheet has the focus.
-	{ .binding = "right-click a key", .action = "copy or delete it, or the selected keys, and set their interpolation or ease" },
+	{ .binding = "right-click a key", .action = "copy or delete keys; set their interpolation, ease or tangent" },
 	{ .binding = "Apply to", .action = "key a pose edit on this frame, on the selected keys, or across the whole clip" },
-	{ .binding = "Keys / Curves", .action = "Curves plots the selected joints' rotation or position over time" },
-	{ .binding = "drag a curve key", .action = "up/down sets that value, sideways moves the key; a handle sets its ease" },
-	{ .binding = "in Curves", .action = "ctrl+wheel zooms time, shift+wheel zooms values, middle-drag pans, F fits" },
+	{ .binding = "Keys / Curves", .action = "Curves plots the selected joints' rotation and position over time" },
+	{ .binding = "curve list", .action = "eye shows or hides a curve; click a name to solo it, shift adds, ctrl toggles" },
+	{ .binding = "drag a curve key", .action = "up/down changes the picked keys' value, sideways their time" },
+	{ .binding = "drag empty curves", .action = "box-pick keys; shift adds, ctrl toggles; click seeks" },
+	{ .binding = "drag a tangent handle", .action = "set the slope; the far handle follows, alt+drag breaks it" },
+	{ .binding = "alt+drag a picked key", .action = "scale the picked keys' values, or times sideways" },
+	{ .binding = "curve key fields", .action = "type a frame or X / Y / Z for the picked keys, Enter" },
+	{ .binding = "Curve tools", .action = "Flips, Smooth, Simplify: clean up picked keys (Clip tools too)" },
+	{ .binding = "in Curves", .action = "ctrl+wheel zooms time, shift+wheel zooms values, middle-drag pans" },
+	{ .binding = "F / A in Curves", .action = "frame the selected keys, or every shown curve" },
 	{ .binding = "right-click the sheet", .action = "paste or key at that time; snap, fit and preview settings" },
 	{ .binding = "+ Contact", .action = "plant the selected foot or hand from the playhead, as a bar" },
 	{ .binding = "a contact bar", .action = "drag it or its ends; drag an empty lane to add; right-click deletes" },

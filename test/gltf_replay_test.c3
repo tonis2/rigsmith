@@ -734,6 +734,12 @@ fn void automatic_segment_survives_save_and_game_export() @test
 	check_rigged_replay(true, true, automatic: true);
 }
 
+// Explicit tangents reach the sidecar and the game file as the viewport plays them.
+fn void explicit_tangents_survive_save_and_game_export() @test
+{
+	check_rigged_replay(true, true, tangents: true);
+}
+
 // Eased segments (a linear one and a smooth one) reach the sidecar and the
 // game file as the viewport plays them.
 fn void eased_segments_survive_save_and_game_export() @test
@@ -811,7 +817,7 @@ fn void joint_limited_model_reskin_bakes_the_constrained_viewport() @test
 
 fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 	bool channel_edit = false, bool hold = false, bool automatic = false,
-	bool constrained = false, int loop_case = 0, bool eased = false)
+	bool constrained = false, int loop_case = 0, bool eased = false, bool tangents = false)
 {
 	Bench* bench = setup();
 
@@ -834,6 +840,15 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 	{
 		clip.keyframes[0].dots[0].rotation_ease = { 1.0f, 1.0f };
 		clip.keyframes[3].dots[0].rotation_ease = { 0.6f, 0.0f };
+	}
+	if (tangents)
+	{
+		// Hand-set tangents on a curved segment's two ends: the file has to be
+		// sampled densely enough that glTF's straight lines follow them.
+		clip.keyframes[0].dots[0].rotation_interpolation = crig::AnimInterpolation.AUTO;
+		clip.keyframes[0].dots[0].rotation_tangents = { .mode = crig::AnimTangent.BROKEN, .incoming = { 0, 0, 0 }, .outgoing = { 4.0f, -14.0f, 6.0f } };
+		clip.keyframes[2].dots[0].rotation_interpolation = crig::AnimInterpolation.AUTO;
+		clip.keyframes[3].dots[0].rotation_tangents = { .mode = crig::AnimTangent.FREE, .incoming = { 8.0f, 10.0f, -12.0f }, .outgoing = { 8.0f, 10.0f, -12.0f } };
 	}
 	if (loop_case > 0)
 	{
@@ -967,7 +982,7 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 
 	float worst_joint = 0.0f;
 	float worst_vertex = 0.0f;
-	usz samples = constrained || eased ? 97 : SAMPLES;
+	usz samples = constrained || eased || tangents ? 97 : SAMPLES;
 	for (usz step = 0; step < samples; step++)
 	{
 		float time = clip.duration * (float)step / (float)(samples - 1);
@@ -1016,7 +1031,7 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 	// Auto is baked at the editor's documented four subdivisions per authored
 	// span. Its small between-sample fitting error is bounded separately from
 	// the float-roundtrip tolerance used by exact Linear/Hold curves.
-	float tolerance = automatic || constrained || eased ? 1.0e-3f : EXACT;
+	float tolerance = automatic || constrained || eased || tangents ? 1.0e-3f : EXACT;
 	test::@check(worst_joint < tolerance, "an outside reader puts the joints where crig does");
 	test::@check(worst_vertex < tolerance, "and deforms the mesh where crig does");
 

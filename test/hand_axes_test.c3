@@ -190,6 +190,45 @@ fn void a_hand_turned_off_the_world_axes_keeps_one_curl_axis() @test
 }
 
 <*
+ Hands held out with the palms down, leaning forward and back by up to thirty
+ degrees: on every one, the curl the body plan allows (negative X on the left,
+ positive on the right) bends each finger toward the palm. A lean is no reason
+ for the knuckle line to change sign — Steiner's hands lean ten degrees forward,
+ a hair past the near-axis band, and every finger of the left bent backwards.
+
+ Re-introduce: sign the knuckle line by `frame_along(hand)` alone in
+ `knuckle_line`, and the left hand leaning twelve degrees forward curls up.
+*>
+fn void a_leaning_hand_still_curls_toward_its_palm() @test
+{
+	io::printn("a leaning hand still curls toward its palm");
+	foreach (degrees : (float[]){ -30.0f, -12.0f, -5.0f, 5.0f, 12.0f, 30.0f })
+	{
+		crig::AppState app = crig::new_app({});
+		defer app.free();
+		Quaternionf lean = quaternion::from_axis_angle{float}({ 0, 1, 0 }, -degrees * (float)math::PI / 180.0f);
+		Hand left = add_hand(&app.doc, 1.0f, lean);
+		Hand right = add_hand(&app.doc, -1.0f, lean, left.chest);
+		foreach (hand : (Hand[]){ left, right })
+		{
+			for (usz d = 1; d < 5; d++)
+			{
+				for (usz k = 0; k < 3; k++)
+				{
+					// A turn of a about X takes the bone's Y toward Z * sin(a), so the
+					// plan's curl moves the tip along Z * -side; the palm is below.
+					crig::JointLimitFrame frame = frame_of(&app.doc, hand.digits[d][k]);
+					float down = -frame.axis(Z).y * -hand.side;
+					test::@check(down > 0.5f, "%s hand leaning %.0f degrees forward: %s_%d curls %s, not toward the palm",
+						hand.side > 0.0f ? "the left" : "the right", degrees, DIGIT_NAMES[d], k + 1,
+						frame.axis(Z) * -hand.side);
+				}
+			}
+		}
+	}
+}
+
+<*
  A finger the world axis already suits keeps it to the bit: the hand rolled six
  degrees about its own length moves the knuckle line, and the middle finger,
  held out along X, keeps the world-rolled frame it always had — so a table

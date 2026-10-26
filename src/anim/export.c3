@@ -568,7 +568,9 @@ fn float[] bake_key_times(
 		> template.keyframes[keys - 1].time + ANIM_EXPORT_EPSILON;
 	bool auto_curve = template.uses_interpolation(AUTO);
 	bool hold_curve = template.uses_interpolation(HOLD);
-	bool eased = template.uses_easing();
+	// Explicit tangents bend a segment as hard as an ease does, so they get the
+	// same dense resampling: glTF's linear samples then reproduce the curve.
+	bool eased = template.uses_easing() || template.uses_tangents();
 	if (!auto_curve && !hold_curve && !eased && !template.ground.solves() && !force_dense)
 	{
 		usz leading = leading_gap ? 1 : 0;
@@ -1121,6 +1123,8 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 					}
 					if (dot.keys_rotation()) append_ease_field(&out, "rotation_ease", dot.rotation_ease);
 					if (dot.keys_translation()) append_ease_field(&out, "translation_ease", dot.translation_ease);
+					if (dot.keys_rotation()) append_tangent_field(&out, "rotation_tangents", dot.rotation_tangents);
+					if (dot.keys_translation()) append_tangent_field(&out, "translation_tangents", dot.translation_tangents);
 					out.append_char('}');
 				}
 				out.append_string("]}");
@@ -1169,7 +1173,7 @@ fn List{String} keyed_joints(AnimTemplate template, List{AnimChannels}* kinds) @
 }
 
 // Whether `key` keys every one of `joints`, each once, on the channels `kinds`
-// gives it, with no interpolation or ease of its own: the key `"dots":"all"`
+// gives it, with no interpolation, ease or tangents of its own: the key `"dots":"all"`
 // stands for. A clip keyed on rotations alone is the common case — most files
 // translate the root and nothing else — and spelled out, its schedule was most
 // of the model's JSON.
@@ -1183,6 +1187,7 @@ fn bool keys_every_joint_plainly(AnimKeyframe key, String[] joints, AnimChannels
 		if (at == joints.len || dot.channels != kinds[at]) return false;
 		if (dot.rotation_interpolation != INHERIT || dot.translation_interpolation != INHERIT) return false;
 		if (!dot.rotation_ease.none() || !dot.translation_ease.none()) return false;
+		if (dot.rotation_tangents.explicit() || dot.translation_tangents.explicit()) return false;
 		for (usz e = 0; e < d; e++) if (key.dots[e].joint_name == dot.joint_name) return false;
 	}
 	return true;

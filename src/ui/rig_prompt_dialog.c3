@@ -282,8 +282,7 @@ fn void turn_offer_apply(Ui* ui)
 }
 
 <*
- `AppState.refit_turned` with its notice: the Turn offer's door and Rig > Fit
- body plan the other way round's.
+ `AppState.refit_turned` with its notice: the Turn offer's door.
 *>
 fn void refit_turned_reporting(Ui* ui)
 {

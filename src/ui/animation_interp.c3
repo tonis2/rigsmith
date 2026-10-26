@@ -2,11 +2,13 @@
  Key interpolation in one place: a single button in the key toolbar that draws the
  selected keys' curve, and the popover it opens. The popover holds the preset
  thumbnails (Smooth, Linear, Step, Ease in, Ease out, Ease in-out), the two ease
- sliders, the key's Time and Span, and a way into the Curves editor.
+ sliders, a row of tangent modes, the key's Time and Span, and a way into the
+ Curves editor.
 
- Nothing here edits the clip itself: every choice goes through `anim_apply_interpolation`
- and `anim_apply_ease`, which reach `set_selected_animation_interpolation` /
- `set_selected_animation_ease` — one undo step each, and the key under the playhead
+ Nothing here edits the clip itself: every choice goes through `anim_apply_interpolation`,
+ `anim_apply_ease` and `anim_apply_tangent_mode`, which reach
+ `set_selected_animation_interpolation` / `set_selected_animation_ease` /
+ `set_selected_tangent_mode` — one undo step each, and the key under the playhead
  when nothing is selected.
 *>
 module crig;
@@ -21,6 +23,21 @@ const String ANIM_INTERP_EASE_IN_ID = "anim-interp-ease-in";
 const String ANIM_INTERP_EASE_OUT_ID = "anim-interp-ease-out";
 const String ANIM_INTERP_CURVES_ID = "anim-interp-curves";
 const String ANIM_CONTEXT_INTERP_ID = "anim-context-interp";
+const String ANIM_INTERP_TANGENT_ID = "anim-interp-tangent";
+
+// The tangent row is tight: five short names in the popover's width.
+const SegmentedStyle ANIM_TANGENT_STYLE = {
+	.fill = BTN,
+	.hover = BTN_HOVER,
+	.selected = ACCENT,
+	.border = PANEL_BORDER,
+	.text = TEXT,
+	.selected_text = DOT_OUTLINE,
+	.border_radius = R8,
+	.text_size = 11.0,
+	.pad_x = 5.0,
+	.height = 22.0,
+};
 
 // One per preset, in INTERP_PRESETS order.
 const String[6] ANIM_INTERP_THUMB_IDS = {
@@ -214,6 +231,14 @@ fn void anim_interp_set_ease(Ui* ui, float value, bool start)
 	anim_interp_refresh(ui);
 }
 
+// The row of tangent modes: one choice for all the selected keys.
+fn void anim_interp_tangent_chosen(Ui* ui, usz index)
+{
+	if (index >= 5) return;
+	anim_apply_tangent_mode(ui, (AnimTangent)index);
+	anim_interp_refresh(ui);
+}
+
 fn void anim_interp_ease_in_committed(Ui* ui, float value) => anim_interp_set_ease(ui, value, true);
 fn void anim_interp_ease_out_committed(Ui* ui, float value) => anim_interp_set_ease(ui, value, false);
 
@@ -310,6 +335,14 @@ fn Element* build_anim_interp_body(Ui* ui)
 			@node((Slider) { .label = "Ease out", .value = ease.end, .max = 1.0, .step = 0.05, .decimals = 2,
 				.disabled = disabled, .on_commit = &anim_interp_ease_out_committed,
 				.style = PHYSICS_SLIDER_STYLE }).with_id(ANIM_INTERP_EASE_OUT_ID);
+			// The key's tangent: unlit when the selection mixes modes.
+			AnimTangent tangent;
+			bool known = app.animation_selection_tangent_mode(app.editing, &tangent);
+			@tree(widgets::tip("Tangent: Auto follows the neighbours, Flat levels out, Linear heads straight on, Free sets handles that turn together, Broken sets them apart (Alt+drag a handle)"))
+			{
+				@node((Segmented) { .options = anim_tangent_labels[..], .selected = known ? (sz)tangent : -1,
+					.on_change = &anim_interp_tangent_chosen, .style = ANIM_TANGENT_STYLE }).with_id(ANIM_INTERP_TANGENT_ID);
+			};
 			@node((AnimKeyFields) { }).with_id("anim-key-fields");
 			@node(panel_button("Open in Curves", &anim_interp_curves_clicked)).with_id(ANIM_INTERP_CURVES_ID);
 		};

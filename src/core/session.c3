@@ -872,6 +872,8 @@ fn void append_key_dots(DString* text, AnimKeyDot[] dots) @private
 		}
 		if (dot.keys_rotation()) append_ease_field(text, "rotation_ease", dot.rotation_ease);
 		if (dot.keys_translation()) append_ease_field(text, "translation_ease", dot.translation_ease);
+		if (dot.keys_rotation()) append_tangent_field(text, "rotation_tangents", dot.rotation_tangents);
+		if (dot.keys_translation()) append_tangent_field(text, "translation_tangents", dot.translation_tangents);
 		text.append_char('}');
 	}
 }
@@ -1415,12 +1417,20 @@ fn AnimKeyDot? session_key_dot(Allocator allocator, Object* dot, bool* explicit_
 	if (!read_ease_field(dot, "translation_ease", &translation_ease)) return SESSION_SHAPE~;
 	if (channels == "translation") rotation_ease = {};
 	if (channels == "rotation") translation_ease = {};
+	AnimTangents rotation_tangents;
+	AnimTangents translation_tangents;
+	if (!read_tangent_field(dot, "rotation_tangents", &rotation_tangents)) return SESSION_SHAPE~;
+	if (!read_tangent_field(dot, "translation_tangents", &translation_tangents)) return SESSION_SHAPE~;
+	if (channels == "translation") rotation_tangents = {};
+	if (channels == "rotation") translation_tangents = {};
 	return { .joint_name = joint.copy(allocator),
 		.axis = axis, .angle = angle, .move = move, .bone = bone,
 		.rotation_interpolation = rotation_interpolation,
 		.translation_interpolation = translation_interpolation,
 		.rotation_ease = rotation_ease,
 		.translation_ease = translation_ease,
+		.rotation_tangents = rotation_tangents,
+		.translation_tangents = translation_tangents,
 		.channels = channels == "rotation" ? ROTATION
 			: (channels == "translation" ? TRANSLATION : BOTH) };
 }

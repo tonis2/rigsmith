@@ -118,10 +118,11 @@ fn void animation_trim_dialog_refuses_bad_ranges_and_cancels_cleanly() @test
 	test::@check(!f.ui.find_id(crig::ANIM_TRIM_DIALOG_ID)!!.widget_as(Dialog).open, "Cancel left the dialog open");
 	test::@check(f.app.clip(f.app.editing).keyframes.len == 5, "Cancel changed the clip");
 
+	test::@check(f.app.pose_from_clip(f.app.editing, f.app.edit_time), "the pose would not open");
 	f.app.pose_edit_pending = true;
 	crig::anim_trim_clicked(f.ui);
 	test::@check(!f.ui.find_id(crig::ANIM_TRIM_DIALOG_ID)!!.widget_as(Dialog).open, "an unsaved pose did not block trimming");
-	f.app.pose_edit_pending = false;
+	(void)f.app.discard_pose_edit();
 }
 
 fn void animation_trim_dialog_opens_on_the_selected_keys() @test

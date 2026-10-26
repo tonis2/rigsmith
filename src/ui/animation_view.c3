@@ -187,7 +187,6 @@ struct AnimSnapshot
 	bool show_tracks;
 	bool show_curves;
 	bool show_layers;
-	bool graph_position;
 	bool selected_tracks_only;
 	uint selected_joint;
 	uint selected_joints_hash;
@@ -273,7 +272,6 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.show_tracks = app.anim_show_tracks,
 		.show_curves = app.anim_show_curves,
 		.show_layers = app.anim_show_layers,
-		.graph_position = app.anim_graph_position,
 		.selected_tracks_only = app.anim_tracks_selected_only,
 		.selected_joint = app.selected,
 		.selected_joints_hash = selected_hash,
@@ -324,7 +322,6 @@ fn bool AnimSnapshot.differs(self, AnimSnapshot other)
 		|| self.show_tracks != other.show_tracks
 		|| self.show_curves != other.show_curves
 		|| self.show_layers != other.show_layers
-		|| self.graph_position != other.graph_position
 		|| self.selected_tracks_only != other.selected_tracks_only
 		|| self.selected_joint != other.selected_joint
 		|| self.selected_joints_hash != other.selected_joints_hash
@@ -762,8 +759,8 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 							{
 								if (app.anim_show_curves)
 								{
-									@node((Segmented) { .options = anim_graph_channel_options[..], .selected = app.anim_graph_position ? 1 : 0,
-										.on_change = &anim_graph_channel_chosen, .style = SEGMENTED_STYLE }).with_id(ANIM_GRAPH_CHANNEL_ID);
+									build_curve_tools();
+									@node((AnimCurveKeyField) { }).with_id(ANIM_CURVE_KEY_FIELD_ID);
 								}
 								else if (!app.anim_show_layers)
 								{

@@ -154,6 +154,69 @@ fn bool AnimEase.same(self, AnimEase other)
 	return math::abs(self.start - other.start) < 1.0e-4f && math::abs(self.end - other.end) < 1.0e-4f;
 }
 
+<*
+ How a channel key's curve leaves and arrives: the tangents its two neighbouring
+ segments read at it.
+
+ `AUTO` (the zero value, and what every clip written before tangents is) is the
+ Catmull-Rom tangent the sampler works out from the neighbouring keys, paced by
+ the key's ease. The others replace it:
+
+ - `FLAT` stops dead at the key: both tangents are zero.
+ - `LINEAR` heads straight for the neighbouring keys: the tangent leaving is the
+   rate of the segment after the key, the one arriving is the rate of the segment
+   before it. The key is a corner unless the two segments happen to agree.
+ - `FREE` is the stored `incoming` and `outgoing` rates, kept pointing the same
+   way so the curve passes through the key smoothly. Editing one end is meant to
+   realign the other (see `AnimTangents.realigned`); the sampler reads what is
+   stored.
+ - `BROKEN` is the stored rates too, free to point apart: a corner by choice.
+
+ Only `FREE` and `BROKEN` read the stored rates; the other three are worked out
+ at sample time from the keys, so they follow when a neighbour moves.
+*>
+enum AnimTangent
+{
+	AUTO,
+	FLAT,
+	LINEAR,
+	FREE,
+	BROKEN,
+}
+
+<*
+ One channel key's explicit tangents, as rates per second.
+
+ A segment is a cubic Hermite from its first key to its second, so its end
+ tangents are the first key's `outgoing` and the second's `incoming` — the same
+ velocity at the key, whichever side reads it. The Hermite derivative at a key is
+ the rate, so a curve editor can draw a handle as `value + rate * dt` and a drag
+ writes the rate straight back.
+
+ **Rotation rates are angular velocity in the frame the key's `axis` is stated
+ in**, in radians per second: a key turning at `ω` moves its quaternion by
+ `q' = ½ · (ω, 0) · q`, which is the spatial convention — `R(t + dt) ≈ Rot(ω dt) · R(t)`
+ — and so the one XYZ Euler angles (`R = Rz · Ry · Rx`) differentiate in. That
+ makes the rate at the key exact: the quaternion tangent `½ ω q · span` is square
+ to `q`, so renormalizing the cubic leaves the speed through the key as `ω`. The
+ rest of the cubic is the sampler's own component-wise Hermite on the
+ quaternion, so a rotation segment is the same curve family as an Auto one.
+
+ **Translation rates are the rate of `move`**, in its own units (fractions of rig
+ height) per second.
+
+ The rates are in seconds, not in the unit interval, so retiming a clip leaves a
+ tangent describing the same pose velocity only if it is scaled with the keys.
+*>
+struct AnimTangents
+{
+	AnimTangent mode;
+	Vec3 incoming; // rate the curve arrives with; read for FREE and BROKEN
+	Vec3 outgoing; // rate the curve leaves with; read for FREE and BROKEN
+}
+
+fn bool AnimTangents.explicit(self) => self.mode != AUTO;
+
 struct AnimKeyDot
 {
 	String joint_name;
@@ -166,6 +229,11 @@ struct AnimKeyDot
 	// The outgoing segment's pacing per channel; zero = none. Hold ignores it.
 	AnimEase rotation_ease;
 	AnimEase translation_ease;
+	// Explicit tangents per channel; AUTO (zero) = the sampler's own. When either
+	// end of a segment has them, the segment's ease is ignored: the tangent is the
+	// pacing. Hold and linear segments ignore them.
+	AnimTangents rotation_tangents;
+	AnimTangents translation_tangents;
 	Vec3 axis;   // unit vector, world frame through the joint
 	float angle; // radians, right-hand rule about axis
 	Vec3 move;   // fraction of rig height, parent's posed frame; zero = stays put
@@ -175,6 +243,7 @@ struct AnimKeyDot
 fn bool AnimKeyDot.keys_rotation(self) => self.channels == BOTH || self.channels == ROTATION;
 fn bool AnimKeyDot.keys_translation(self) => self.channels == BOTH || self.channels == TRANSLATION;
 fn AnimEase AnimKeyDot.ease(self, bool rotation) => rotation ? self.rotation_ease : self.translation_ease;
+fn AnimTangents AnimKeyDot.tangents(self, bool rotation) => rotation ? self.rotation_tangents : self.translation_tangents;
 
 fn AnimInterpolation AnimKeyDot.interpolation(self, bool rotation, AnimBlend blend)
 {
@@ -631,7 +700,7 @@ const float ANIM_CLOSE_EPSILON @local = 1.0e-6f;
  `p0` may sit a whole duration before `p1` — so a tangent divides by the real
  gap rather than by one folded through the wrap.
 *>
-struct AnimSpan @local
+struct AnimSpan
 {
 	usz p0, p1, p2, p3;
 	float blend; // 0 at p1, 1 at p2
@@ -639,7 +708,9 @@ struct AnimSpan @local
 	float left;  // p2's time less p0's — the tangent at p1 divides by this
 	float right; // p3's time less p1's — the tangent at p2 divides by this
 	AnimInterpolation interpolation;
-	AnimEase ease; // p1's outgoing pacing
+	AnimEase ease; // p1's outgoing pacing; none when either end has explicit tangents
+	AnimTangents leaving;  // p1's tangents: the segment reads their `outgoing`
+	AnimTangents arriving; // p2's tangents: the segment reads their `incoming`
 }
 
 // The fraction the curve reads: `blend` through the segment's ease.
@@ -659,9 +730,19 @@ fn float AnimSpan.fraction(self) => self.ease.remap(self.blend);
 *>
 fn float AnimSpan.through(self, float v0, float v1, float v2, float v3)
 {
-	float m1 = self.left > 0.0f ? (v2 - v0) / self.left * self.span : 0.0f;
-	float m2 = self.right > 0.0f ? (v3 - v1) / self.right * self.span : 0.0f;
+	return self.hermite(v1, self.auto_out(v0, v2), v2, self.auto_in(v1, v3));
+}
 
+// The Catmull-Rom tangent leaving p1, already scaled onto the unit interval.
+fn float AnimSpan.auto_out(self, float v0, float v2) => self.left > 0.0f ? (v2 - v0) / self.left * self.span : 0.0f;
+
+// The Catmull-Rom tangent arriving at p2, already scaled onto the unit interval.
+fn float AnimSpan.auto_in(self, float v1, float v3) => self.right > 0.0f ? (v3 - v1) / self.right * self.span : 0.0f;
+
+// The cubic Hermite through `v1` and `v2` with tangents `m1` and `m2`, which are
+// per unit interval: a rate per second times `span`.
+fn float AnimSpan.hermite(self, float v1, float m1, float v2, float m2)
+{
 	float t = self.fraction();
 	float square = t * t;
 	float cube = square * t;
@@ -669,6 +750,69 @@ fn float AnimSpan.through(self, float v0, float v1, float v2, float v3)
 		+ (cube - 2 * square + t) * m1
 		+ (-2 * cube + 3 * square) * v2
 		+ (cube - square) * m2;
+}
+
+<*
+ The quaternion tangent, per unit interval, that an angular rate stands for at
+ `at`: `½ · (rate · span, 0) · at`. Square to `at`, so it turns the curve without
+ stretching it, and normalizing leaves the rate as the speed through the key.
+*>
+fn Vec4 rotation_slope(Vec3 rate, float span, Quaternionf at) @local
+{
+	Vec3 half = rate * (0.5f * span);
+	Quaternionf spin = { .v = { half.x, half.y, half.z, 0.0f } };
+	return (spin * at).v;
+}
+
+<*
+ The tangent `tangents` gives one end of a rotation segment, as a quaternion
+ slope per unit interval; `at` is the key it belongs to, sign-aligned with the
+ other end `across`, and `auto` is the Catmull-Rom slope the sampler would give
+ that end. `outgoing` says which end it is.
+
+ `FREE` and `BROKEN` replace only the part of the Catmull-Rom slope that turns
+ the quaternion, which is all a rate can say, and keep the part along `at`. That
+ part only stretches the quaternion, and normalizing hides almost all of it, but
+ not all — keeping it is what makes a key switched from Auto to Free play as it
+ did. `FLAT` and `LINEAR` are the pure turn.
+*>
+fn Vec4 AnimSpan.rotation_slope(self, AnimTangents tangents, bool outgoing, Quaternionf at, Quaternionf across, Vec4 auto)
+{
+	switch (tangents.mode)
+	{
+		case FLAT: return {};
+		case LINEAR:
+			// The turn that carries p1 onto p2, the short way round, as a rotation
+			// vector: the same for both ends of the segment.
+			Quaternionf from = outgoing ? at : across;
+			Quaternionf to = outgoing ? across : at;
+			Quaternionf carry = to * from.conjugate();
+			if (carry.v.w < 0.0f) carry = -carry;
+			Vec3 vector = carry.v.xyz;
+			float sine = vector.length();
+			Vec3 turn = sine < 1.0e-6f ? vector * 2.0f : vector / sine * (2.0f * math::atan2(sine, carry.v.w));
+			return rotation_slope(turn, 1.0f, at);
+		case FREE:
+		case BROKEN:
+			return rotation_slope(outgoing ? tangents.outgoing : tangents.incoming, self.span, at) + at.v * auto.dot(at.v);
+		default: return {};
+	}
+}
+
+<*
+ The tangent `tangents` gives one end of a slide, per unit interval. `at` is the
+ key it belongs to and `across` the other end of the segment.
+*>
+fn Vec3 AnimSpan.slide_slope(self, AnimTangents tangents, bool outgoing, Vec3 at, Vec3 across)
+{
+	switch (tangents.mode)
+	{
+		case FLAT: return {};
+		case LINEAR: return outgoing ? across - at : at - across;
+		case FREE:
+		case BROKEN: return (outgoing ? tangents.outgoing : tangents.incoming) * self.span;
+		default: return {};
+	}
 }
 
 <*
@@ -680,6 +824,10 @@ fn float AnimSpan.through(self, float v0, float v1, float v2, float v3)
  negation are the same rotation, so two adjacent keys that happen to be written
  on opposite hemispheres give a tangent pointing the long way round, and the
  clip then spins between two keys it lands on exactly.
+
+ A key with explicit tangents replaces its Catmull-Rom tangent with the one its
+ angular rate stands for (see `AnimTangents`), computed after the alignment so a
+ flipped key's tangent flips with it.
 *>
 fn Quaternionf AnimSpan.turn(self, Quaternionf q0, Quaternionf q1, Quaternionf q2, Quaternionf q3)
 {
@@ -689,6 +837,21 @@ fn Quaternionf AnimSpan.turn(self, Quaternionf q0, Quaternionf q1, Quaternionf q
 	if (q0.v.dot(q1.v) < 0.0f) q0 = -q0;
 	if (q2.v.dot(q1.v) < 0.0f) q2 = -q2;
 	if (q3.v.dot(q2.v) < 0.0f) q3 = -q3;
+
+	if (self.leaving.explicit() || self.arriving.explicit())
+	{
+		Vec4 auto1, auto2;
+		for (usz c = 0; c < 4; c++)
+		{
+			auto1[c] = self.auto_out(q0.v[c], q2.v[c]);
+			auto2[c] = self.auto_in(q1.v[c], q3.v[c]);
+		}
+		Vec4 m1 = self.leaving.explicit() ? self.rotation_slope(self.leaving, true, q1, q2, auto1) : auto1;
+		Vec4 m2 = self.arriving.explicit() ? self.rotation_slope(self.arriving, false, q2, q1, auto2) : auto2;
+		Quaternionf out;
+		for (usz c = 0; c < 4; c++) out.v[c] = self.hermite(q1.v[c], m1[c], q2.v[c], m2[c]);
+		return out.normalize();
+	}
 
 	Quaternionf out = { .v = {
 		self.through(q0.v.x, q1.v.x, q2.v.x, q3.v.x),
@@ -701,11 +864,27 @@ fn Quaternionf AnimSpan.turn(self, Quaternionf q0, Quaternionf q1, Quaternionf q
 
 // A slide across the span. Straight line when the span is linear — a
 // displacement's shortest path is the line — and the same cubic per component
-// when it is not.
+// when it is not, with explicit tangents standing in for the Catmull-Rom ones
+// at whichever end has them.
 fn Vec3 AnimSpan.slide(self, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 v3)
 {
 	if (self.interpolation == HOLD) return self.blend >= 1.0f ? v2 : v1;
 	if (self.interpolation != AUTO) return v1 + (v2 - v1) * self.fraction();
+
+	if (self.leaving.explicit() || self.arriving.explicit())
+	{
+		Vec3 m1 = self.leaving.explicit() ? self.slide_slope(self.leaving, true, v1, v2) : (Vec3){};
+		Vec3 m2 = self.arriving.explicit() ? self.slide_slope(self.arriving, false, v2, v1) : (Vec3){};
+		Vec3 out;
+		for (usz c = 0; c < 3; c++)
+		{
+			out[c] = self.hermite(v1[c],
+				self.leaving.explicit() ? m1[c] : self.auto_out(v0[c], v2[c]),
+				v2[c],
+				self.arriving.explicit() ? m2[c] : self.auto_in(v1[c], v3[c]));
+		}
+		return out;
+	}
 
 	return {
 		self.through(v0.x, v1.x, v2.x, v3.x),
@@ -753,6 +932,19 @@ fn usz AnimTemplate.channel_count(self, String joint, bool rotation)
 		if (frame.channel_dot(joint, rotation, &ignored)) count++;
 	}
 	return count;
+}
+
+// Whether any keyed, non-held segment has explicit tangents.
+fn bool AnimTemplate.uses_tangents(self)
+{
+	foreach (frame : self.keyframes) foreach (dot : frame.dots)
+	{
+		if (dot.keys_rotation() && dot.rotation_tangents.explicit()
+			&& dot.interpolation(true, self.blend) == AUTO) return true;
+		if (dot.keys_translation() && dot.translation_tangents.explicit()
+			&& dot.interpolation(false, self.blend) == AUTO) return true;
+	}
+	return false;
 }
 
 // Whether any keyed, non-held segment is paced by an ease.
@@ -906,6 +1098,12 @@ fn bool AnimTemplate.channel_span(self, String joint, bool rotation, float time,
 	self.keyframes[out.p1].channel_dot(joint, rotation, &outgoing);
 	out.interpolation = outgoing.interpolation(rotation, self.blend);
 	out.ease = outgoing.ease(rotation);
+	out.leaving = outgoing.tangents(rotation);
+	AnimKeyDot arriving;
+	self.keyframes[out.p2].channel_dot(joint, rotation, &arriving);
+	out.arriving = arriving.tangents(rotation);
+	// The tangent is the pacing, so an ease would pace it twice.
+	if (out.leaving.explicit() || out.arriving.explicit()) out.ease = {};
 	out.span = t2 - t1;
 	out.left = t2 - t0;
 	out.right = t3 - t1;

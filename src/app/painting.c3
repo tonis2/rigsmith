@@ -932,7 +932,7 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
 *>
 fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, float[] strengths)
 {
-	PaintResult did = self.nudge_column(dot_id, vertices, target, strengths, limb: true, commit: false);
+	PaintResult did = self.nudge_column(dot_id, vertices, target, strengths, limb: true, clear_alone: true, commit: false);
 	if (did.blocked > 0) self.stroke_blocked = true;
 	if (did.emptied > 0) self.stroke_emptied = true;
 	usz changed = did.changed;
@@ -942,7 +942,7 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 	{
 		uint[] across = self.mirrored_vertices(mem, &self.stroke_mirror, vertices);
 		defer alloc::free(mem, across);
-		changed += self.nudge_column(self.stroke_twin, across, target, strengths, limb: true, commit: false).changed;
+		changed += self.nudge_column(self.stroke_twin, across, target, strengths, limb: true, clear_alone: true, commit: false).changed;
 	}
 	if (changed > 0 && self.skinned()) self.refresh_pose_display();
 	return changed;
@@ -967,10 +967,11 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
  @param target : `The weight to move toward, 0 to 1.`
  @param pulls : `One per vertex: how far toward the target, 0 to 1. A vertex without one is skipped.`
  @param limb : `Refuse to give the joint vertices off its limb.`
+ @param clear_alone : `Taking the joint off a vertex no other joint holds takes all of it, whatever the pull — the brush's way, since a remainder there still moves the whole vertex.`
  @param commit : `Close the undo group — false for a stroke still in flight.`
 *>
 fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float target, float[] pulls,
-	bool limb, bool commit = true)
+	bool limb, bool clear_alone = false, bool commit = true)
 {
 	PaintResult result;
 	usz count = self.geometry.positions.len;
@@ -1012,6 +1013,14 @@ fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float 
 		// the step a later stroke would bother to take.
 		float want = pull >= 1.0f ? target : math::clamp(now + (target - now) * pull, 0.0f, 1.0f);
 		if (math::abs(want - target) <= UNUSED_TOTAL) want = target;
+		// Alone on the vertex, any weight is the whole of it: a soft pass that
+		// stops part of the way has moved nothing anybody can see.
+		if (clear_alone && target == 0.0f && want > 0.0f)
+		{
+			float others = 0.0f;
+			for (usz b = 0; b < bones; b++) if ((sz)b != joint) others += painted[at + b];
+			if (others <= UNUSED_TOTAL) want = 0.0f;
+		}
 		if (want == now || (want != target && math::abs(want - now) < 1.0e-6f)) continue;
 		if (limb && want > now && joint_share(painted[at:bones], (usz)joint) < AREA_LEAK_FLOOR
 			&& automatic.len >= count * bones && !on_limb(automatic[at:bones], family))

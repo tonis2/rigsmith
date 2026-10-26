@@ -498,7 +498,7 @@ fn void menu_area_tool(Ui* ui)
 }
 
 <*
- Rig > Sharpen blending: narrow every transition band at once (]).
+ ]: narrow every transition band at once.
 
  The one weight verb that is not about a single dot, which is why it is a plain
  item rather than a mode: there is nothing to select first and nothing to leave.
@@ -513,36 +513,7 @@ fn void menu_sharpen_blend(Ui* ui)
 	app.refresh_ui();
 }
 
-<*
- Rig > Make rigid: hand every nearly-rigid vertex to the joint that holds it.
-
- An op rather than a mode, which is why it has no key: there is nothing to enter
- and nothing to leave, and the whole mesh answers at once. `harden_weights` puts
- the count on the result line either way — the change is one influence per vertex
- disappearing, which shows on screen as almost nothing until something bends.
-*>
-fn void menu_harden_weights(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.harden_weights();
-	app.refresh_ui();
-}
-
-<*
- Rig > Smooth weights: soften the seams where two joints meet.
-
- Harden's opposite number and the other half of the pair — one makes the flat
- regions flatter, the other widens the steps between them — so the two sit
- together and neither takes a key.
-*>
-fn void menu_smooth_boundaries(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.smooth_boundaries();
-	app.refresh_ui();
-}
-
-// Rig > Soften blending ([): the same step the other way, back toward the
+// [: the same step the other way, back toward the
 // binder's own blend and no further.
 fn void menu_soften_blend(Ui* ui)
 {
@@ -1140,21 +1111,6 @@ fn MenuItemFlags query_rotate_tool(Ui* ui)
 		&& app.transform_tool == ROTATE_TOOL };
 }
 
-<*
- The two cleanup ops, which want a mesh, a rig and a body at rest.
-
- All three greyed rather than left to refuse, for `query_lasso`'s reason: they
- read the bind as the screen has it, so there is nothing to read without a mesh
- or without dots, and a bind against a posed body describes shares nobody is
- looking at. The ops say the same three things out loud — a menu is not the only
- door — but the item is where a user finds out before clicking.
-*>
-fn MenuItemFlags query_weight_ops(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	return { .disabled = !app.has_mesh() || app.doc.dots.len() == 0 || app.rig_locked() };
-}
-
 // The camera items want a 3D View to show the turn in.
 fn MenuItemFlags query_has_view(Ui* ui)
 {
@@ -1187,12 +1143,6 @@ fn MenuItemFlags query_any_dots(Ui* ui) => { .disabled = ui.inherit(AppState)!!.
 // with no mesh there is nothing to fit one to — the same reason `--preset`
 // refuses on the command line.
 fn MenuItemFlags query_any_mesh(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_mesh() };
-// A re-fit needs the plan the rig came from, in the library, and a mesh to fit it to.
-fn MenuItemFlags query_fitted_plan(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	return { .disabled = !app.has_mesh() || app.doc.dots.len() == 0 || app.plan_pack(app.doc.plan) < 0 };
-}
 fn MenuItemFlags query_undo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_undo() };
 fn MenuItemFlags query_redo(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.undo_stack.can_redo() };
 <*
@@ -1369,8 +1319,8 @@ MenuItem[6] edit_items = {
 	{ .label = "Set root", .shortcut = "Ctrl+R", .on_select = &menu_set_root, .state = &query_set_root },
 };
 
-// The Rig menu holds the modes and the previews, and — first — the one verb a
-// mesh with no skeleton needs.
+// The Rig menu holds the modes and the whole-model weight verbs, and — first —
+// the one verb a mesh with no skeleton needs.
 //
 // Body plans used to be deliberately absent here, on the grounds that they come
 // out of whichever pack the user picks in the library, because the file carrying
@@ -1381,11 +1331,8 @@ MenuItem[6] edit_items = {
 // cell in the Assets pane is the answer. So the item is here and it opens the
 // same panel a skinless import raises, which still gets its list from the packs.
 // The Assets route is unchanged.
-MenuItem[22] rig_items = {
+MenuItem[15] rig_items = {
 	{ .label = "Apply body plan…", .on_select = &menu_apply_body_plan, .state = &query_any_mesh },
-	// Under the fit it redoes: for a fit whose measured facing came out wrong and
-	// no Turn offer asked. Rotate skeleton below turns a rig edited since.
-	{ .label = "Fit body plan the other way round", .on_select = &refit_turned_reporting, .state = &query_fitted_plan },
 	{ .label = "Rotate skeleton…", .on_select = &open_skeleton_rotation_dialog, .state = &query_any_dots },
 	{ .label = "Re-apply plan limits", .on_select = &menu_reapply_plan_limits, .state = &query_any_dots },
 	{ .separator = true },
@@ -1403,23 +1350,11 @@ MenuItem[22] rig_items = {
 	{ .label = "Lasso pin", .shortcut = "shift+T", .on_select = &menu_lasso_mode, .state = &query_lasso },
 	{ .label = "Weights panel", .shortcut = "W", .on_select = &menu_weights_panel, .state = &query_weights_panel },
 	{ .label = "Weight brush", .shortcut = "shift+W", .on_select = &menu_weight_brush, .state = &query_brushing },
-	// With the two above rather than beside the weight previews below: all three
-	// change what the bind says without moving a dot, and these are the pair that
-	// says it about the whole model at once. Greyed on an empty document, since a
-	// sharpness is a power applied to weights and there are none.
 	// The whole model's weights at once, either way: every joint given the model
 	// file's own column, or every joint let go back to crig's automatic weights —
 	// the way out of weights that no longer fit joints moved since.
 	{ .label = "Use the model's own weights", .on_select = &menu_model_weights, .state = &query_model_weights },
 	{ .label = "Reset all weights to automatic", .on_select = &menu_reset_all_weights, .state = &query_reset_all_weights },
-	{ .label = "Sharpen blending", .shortcut = "]", .on_select = &menu_sharpen_blend, .state = &query_any_dots },
-	{ .label = "Soften blending", .shortcut = "[", .on_select = &menu_soften_blend, .state = &query_any_dots },
-	// Under the pair above, since all four change what the bind says without
-	// moving a dot — but these two are ops rather than settings: they read the
-	// bind once and write the answer down. No keys, because a key invites the
-	// repeat that a baked result does not want by accident.
-	{ .label = "Make rigid", .on_select = &menu_harden_weights, .state = &query_weight_ops },
-	{ .label = "Smooth weights", .on_select = &menu_smooth_boundaries, .state = &query_weight_ops },
 	{ .label = "Auto-connect", .shortcut = "A", .on_select = &menu_auto_connect, .state = &query_auto_connect },
 	{ .label = "Symmetrize selected", .shortcut = "M", .on_select = &menu_mirror_selection, .state = &query_mirror_selection },
 	// Both name joints, and they are the two halves of it: the plan names what it
@@ -1430,8 +1365,6 @@ MenuItem[22] rig_items = {
 	// No key: the name is edited on the Joint card, where the Rename button
 	// beside the title does what this does. R is the turn, and only the turn.
 	{ .label = "Rename joint", .on_select = &menu_rename_dot, .state = &query_selection },
-	{ .separator = true },
-	{ .label = "Weight preview", .on_select = &menu_weights, .state = &query_weights },
 };
 
 // Six ways to point the camera, then five ways to draw what it points at, then

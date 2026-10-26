@@ -598,11 +598,15 @@ const float HAND_FRAME_KEEP = 0.966f;
  it runs — a thumb — is left out, as it sits off the palm. The line is the
  widest pair of what is left, square to the way the hand points.
 
- It is signed once for the whole hand, along whichever of the X and Z
- `frame_along` gives the hand's own direction lies nearer it: a hand held out
- along a world axis keeps the sign its fingers always had, and a hand and its
- reflection come out reflected, up to the per-axis turn the mirror reads
- (`reflection_signs_between`).
+ It is signed once for the whole hand. A line that runs mostly front to back
+ points the way the model faces (+Z), so a hand held out with its palm down
+ keeps the sign whichever way it leans, and a hand and its reflection come
+ out reflected, up to the per-axis turn the mirror reads
+ (`reflection_signs_between`). Any other line is signed along whichever of the
+ X and Z `frame_along` gives the hand's own direction lies nearer it — which on
+ a hand leaning past the near-axis band turns, so a front-to-back line must not
+ read it: Steiner's hands lean ten degrees forward, and the left one's fingers
+ bent backwards.
 
  Name-free, like `Skeleton.digits`, so it is the hand the binder cuts at the
  knuckles.
@@ -694,6 +698,11 @@ fn bool knuckle_line(rig::Skeleton* skeleton, usz joint, Vec3* across) @private
 		}
 		if (width <= LIMIT_FRAME_EDGE_SQ) return false;
 		Vec3 line = widest.normalize();
+		if (math::abs(line.z) >= math::abs(line.x) && math::abs(line.z) >= math::abs(line.y))
+		{
+			*across = line.z < 0.0f ? -line : line;
+			return true;
+		}
 
 		JointLimitFrame held_out = frame_along(hand);
 		if (!held_out.usable()) return false;

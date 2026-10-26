@@ -41,7 +41,7 @@ import std::collections::list;
 const float WEIGHT_DEBOUNCE = 0.15;
 
 <*
- Turns the weight preview on or off (Rig menu > Weight preview; W is the Area tool).
+ Turns the weight preview on or off (the tint toggle in the view; W is the Area tool).
 
  Switching on fires the rebind immediately rather than after the debounce:
  the delay exists to swallow a *stream* of edits, and a keypress is not one.

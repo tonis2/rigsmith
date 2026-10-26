@@ -361,9 +361,9 @@ fn void fit_facing_front_fits_the_plan_again_facing_front() @test
 }
 
 <*
- Rig > Fit body plan the other way round turns a fitted rig either way, with no
- offer asking first: for a fit that came out facing Front when the model faces
- back.
+ A re-fit the other way round (`refit_turned_reporting`, the Turn offer's door)
+ turns a fitted rig either way: for a fit that came out facing Front when the
+ model faces back.
 *>
 fn void fit_the_other_way_round_turns_a_fitted_rig() @test
 {
@@ -379,17 +379,15 @@ fn void fit_the_other_way_round_turns_a_fitted_rig() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("Fit body plan the other way round turns a fitted rig");
+	io::printn("a re-fit the other way round turns a fitted rig");
 	fixture.reset();
 
-	test::@check(crig::query_fitted_plan(fixture.ui).disabled, "the item is offered with no rig to re-fit");
 	test::@check(fixture.app.apply_plan_named("biped"), "the plan would not fit");
-	test::@check(!crig::query_fitted_plan(fixture.ui).disabled, "the item is greyed on a fitted rig");
 	Vec3 facing;
 	test::@check(fixture.app.rest_facing(&facing) && facing.z > 0.7f, "the humanoid did not fit facing Front (%s)", facing);
 
 	crig::refit_turned_reporting(fixture.ui);
-	test::@check(fixture.app.rest_facing(&facing) && facing.z < -0.7f, "the item did not turn the fit to -Z (%s)", facing);
+	test::@check(fixture.app.rest_facing(&facing) && facing.z < -0.7f, "the re-fit did not turn the fit to -Z (%s)", facing);
 	crig::refit_turned_reporting(fixture.ui);
 	test::@check(fixture.app.rest_facing(&facing) && facing.z > 0.7f, "a second turn did not bring it back to Front (%s)", facing);
 }

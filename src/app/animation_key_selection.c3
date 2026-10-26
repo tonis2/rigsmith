@@ -454,7 +454,10 @@ fn bool AppState.retime_selected_animation_keys(&self, AnimRef ref, KeyRetime re
 	AnimTemplate changed = clip_copy(mem, *clip);
 	foreach (&frame : changed.keyframes)
 	{
-		if (self.animation_key_selected(ref, frame.time)) frame.time = retime.map(frame.time);
+		if (!self.animation_key_selected(ref, frame.time)) continue;
+		frame.time = retime.map(frame.time);
+		// Tangent rates are per second: a scaled key keeps its shape at its new pace.
+		foreach (&dot : frame.dots) dot.retime_tangents(retime.scale);
 	}
 	// A selected group may pass an unselected key, so restore global time order.
 	// Stable, so keys the move did not reorder keep their places.
@@ -558,6 +561,7 @@ fn bool AppState.retime_selected_animation_channels(&self, AnimRef ref, KeyRetim
 		{
 			AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
 			dots[0] = dot.narrowed(mem, selected.channel == ROTATION, selected.channel == TRANSLATION);
+			dots[0].retime_tangents(retime.scale);
 			AnimTemplate next = clip_with_key(mem, built,
 				{ .time = retime.map(selected.time), .dots = dots });
 			built.free(mem); built = next;
