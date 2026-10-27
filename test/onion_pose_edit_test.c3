@@ -59,6 +59,8 @@ fn bool Fig.open(&self, float[] times, float playhead)
 	{
 		if (!self.key(t, angles[i % 3])) return false;
 	}
+	// Linear on purpose: which ghosts a new key reaches is stated for Linear neighbours.
+	self.app.clip(self.app.editing).blend = LINEAR;
 	self.app.stop_animation();
 	self.app.undo_stack.clear();
 	self.app.anim_fps = 30;

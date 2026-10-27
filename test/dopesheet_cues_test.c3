@@ -18,6 +18,8 @@ fn void cues_workspace(Fixture* f)
 	AnimRef clip = f.app.new_clip("Cues", 2, from_rest: true);
 	clip = f.app.key_here(clip, 1);
 	f.app.editing = f.app.key_here(clip, 2);
+	// Linear on purpose: a held key is read against plain Linear ones.
+	f.app.clip(f.app.editing).blend = LINEAR;
 	f.app.edit_time = 0;
 	f.app.show_edited();
 	f.click(tab_center(f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));

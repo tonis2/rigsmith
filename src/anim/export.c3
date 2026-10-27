@@ -507,6 +507,16 @@ const usz ANIM_BAKE_STEPS @local = 4;
 // straight pieces cut visibly short; this many keeps it within the replay
 // tolerance an Auto curve is held to.
 const usz ANIM_EASE_BAKE_STEPS @local = 16;
+// An Auto curve over a long span (sparse hand keys) bends more than four
+// pieces follow, so it is also cut at least this many times a second.
+const float ANIM_AUTO_BAKE_RATE @local = 60.0f;
+
+// The pieces one span of `width` seconds is cut into.
+fn usz span_steps(usz steps, bool auto_curve, float width) @local
+{
+	if (!auto_curve) return steps;
+	return math::max(steps, (usz)math::ceil(width * ANIM_AUTO_BAKE_RATE));
+}
 
 <*
  The times to sample a template at, and whether the ground solve should run
@@ -589,28 +599,31 @@ fn float[] bake_key_times(
 	usz spans = keys - 1 + (wraps || (!template.loop && trailing_gap) ? (usz)1 : (usz)0);
 	usz steps = auto_curve || template.ground.solves() || force_dense ? ANIM_BAKE_STEPS : 1;
 	if (eased) steps = ANIM_EASE_BAKE_STEPS;
-	usz leading = leading_gap ? steps : 0;
+	usz leading = leading_gap ? span_steps(steps, auto_curve, template.keyframes[0].time) : 0;
 	usz edges;
-	if (hold_curve) for (usz s = 0; s < spans; s++)
+	usz inside;
+	for (usz s = 0; s < spans; s++)
 	{
 		float from = template.keyframes[s].time;
 		float to = s + 1 < keys ? template.keyframes[s + 1].time : template.duration;
-		if (anim_time_before(to) > from) edges++;
+		inside += span_steps(steps, auto_curve, to - from);
+		if (hold_curve && anim_time_before(to) > from) edges++;
 	}
 
-	float[] times = alloc::new_array(allocator, float, (sz)(leading + spans * steps + edges + 1));
+	float[] times = alloc::new_array(allocator, float, (sz)(leading + inside + edges + 1));
 	usz at = leading;
 	for (usz i = 0; i < leading; i++)
 	{
-		times[i] = template.keyframes[0].time * (float)i / (float)steps;
+		times[i] = template.keyframes[0].time * (float)i / (float)leading;
 	}
 	for (usz s = 0; s < spans; s++)
 	{
 		float from = template.keyframes[s].time;
 		float to = s + 1 < keys ? template.keyframes[s + 1].time : template.duration;
-		for (usz i = 0; i < steps; i++)
+		usz cut = span_steps(steps, auto_curve, to - from);
+		for (usz i = 0; i < cut; i++)
 		{
-			times[at++] = from + (to - from) * (float)i / (float)steps;
+			times[at++] = from + (to - from) * (float)i / (float)cut;
 		}
 		// glTF applies one interpolation mode to an entire sampler, while crig can
 		// mix modes per outgoing segment. A sample on the adjacent float before a

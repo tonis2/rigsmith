@@ -438,9 +438,9 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[72] tool_names @local = {
+String[73] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
-	"pin_weights", "fix_strays",
+	"pin_weights", "fix_strays", "fix_tears",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
 	"delete_clip", "apply_plan", "edit_rig", "set_secondary_motion", "build_body",
 	"undo", "redo", "play", "stop", "show_weights", "save_pack", "screenshot",
@@ -8012,4 +8012,38 @@ fn void fix_strays_answers_what_it_did() @test
 	test::@check((fixed.get_int("found") ?? -1) == 0, "the cube has strays");
 	test::@check((fixed.get_int("fixed") ?? -1) == 0, "fix_strays changed vertices on a clean cube");
 	test::@check(fixed.get("strays")!!.get_len() == 0, "fix_strays lists strays left on a clean cube");
+}
+
+<*
+ get_weights lists tears and fix_tears answers what it found and changed, and
+ the tears left — on the welded cube, none of either.
+
+ Re-introduce: leave `fix_tears` out of `install_tools`.
+*>
+fn void fix_tears_answers_what_it_did() @test
+{
+	Fixture fixture;
+	fixture.open();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	Object*? found = f.call_tool("get_weights", `{"tears":true}`);
+	if (catch found)
+	{
+		test::@check(false, "get_weights takes tears");
+		return;
+	}
+	defer found.free();
+	test::@check((found.get_int("tear_count") ?? -1) == 0 && found.get("tears")!!.get_len() == 0, "the cube has tears");
+
+	Object*? fixed = f.call_tool("fix_tears", `{}`);
+	if (catch fixed)
+	{
+		test::@check(false, "fix_tears answers");
+		return;
+	}
+	defer fixed.free();
+	test::@check((fixed.get_int("found") ?? -1) == 0, "the cube has tears");
+	test::@check((fixed.get_int("fixed") ?? -1) == 0, "fix_tears changed vertices on a clean cube");
+	test::@check((fixed.get_int("tear_count") ?? -1) == 0, "fix_tears lists tears left on a clean cube");
 }

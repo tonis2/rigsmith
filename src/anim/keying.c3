@@ -386,6 +386,36 @@ fn AnimTemplate? clip_with_joints_layered(Allocator allocator, AnimTemplate sour
 }
 
 <*
+ Hand keys start Smooth: in a linear clip, each channel `key` adds at a time the
+ clip has no key for it eases (AUTO). A channel keyed again keeps its curve.
+*>
+fn void AnimKeyframe.ease_new_channels(&self, AnimTemplate* clip)
+{
+	if (clip.blend != LINEAR) return;
+	AnimKeyframe* there = null;
+	foreach (&frame : clip.keyframes)
+	{
+		if (math::abs(frame.time - self.time) < ANIM_SAME_TIME) { there = frame; break; }
+	}
+	foreach (&dot : self.dots)
+	{
+		bool had_rotation, had_translation;
+		if (there)
+		{
+			foreach (old : there.dots)
+			{
+				if (old.joint_name != dot.joint_name) continue;
+				had_rotation = old.keys_rotation();
+				had_translation = old.keys_translation();
+				break;
+			}
+		}
+		if (dot.keys_rotation() && !had_rotation && dot.rotation_interpolation == INHERIT) dot.rotation_interpolation = AUTO;
+		if (dot.keys_translation() && !had_translation && dot.translation_interpolation == INHERIT) dot.translation_interpolation = AUTO;
+	}
+}
+
+<*
  The clip with `key` put in at its own time, merging with any key already there.
 
  	`AnimTemplate next = clip_with_key(mem, *clip, keyframe_of_pose(...));`

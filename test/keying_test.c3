@@ -498,6 +498,48 @@ fn sz key_at(AnimTemplate clip, float time)
 	return -1;
 }
 
+// In a linear clip a hand key's new channels ease; a channel keyed again keeps its curve.
+fn void a_new_hand_key_starts_smooth() @test
+{
+	io::printn("a hand key's new channels ease, and one keyed again keeps its curve");
+	AnimTemplate take = sparse_take(knee_curve: LINEAR);
+	defer take.free(mem);
+	rig::Pose pose = posed();
+	defer pose.free(mem);
+
+	AnimKeyframe fresh = crig::keyframe_of_pose(mem, pose, names[..], bones[..], 1.0f, 0.5f);
+	defer free_key(fresh);
+	fresh.ease_new_channels(&take);
+	foreach (dot : fresh.dots)
+	{
+		test::@check(dot.rotation_interpolation == AUTO && dot.translation_interpolation == AUTO,
+			"%s keyed where nothing was is not smooth", dot.joint_name);
+	}
+
+	// At 0.2 s the knee's turn is already keyed, Linear.
+	AnimKeyframe over = crig::keyframe_of_pose(mem, pose, names[..], bones[..], 1.0f, 0.2f);
+	over.ease_new_channels(&take);
+	foreach (dot : over.dots)
+	{
+		bool knee = dot.joint_name == "knee";
+		test::@check(dot.rotation_interpolation == (knee ? AnimInterpolation.INHERIT : AnimInterpolation.AUTO),
+			"%s's turn took the wrong curve", dot.joint_name);
+		test::@check(dot.translation_interpolation == AUTO, "%s's new slide is not smooth", dot.joint_name);
+	}
+	AnimTemplate keyed = crig::clip_with_key(mem, take, over);
+	defer keyed.free(mem);
+	AnimKeyDot knee;
+	test::@check(keyed.keyframes[1].channel_dot("knee", true, &knee) && knee.rotation_interpolation == LINEAR,
+		"keying the knee again lost its Linear curve");
+
+	// A smooth clip already eases: nothing is stated.
+	take.blend = SMOOTH;
+	AnimKeyframe plain = crig::keyframe_of_pose(mem, pose, names[..], bones[..], 1.0f, 0.5f);
+	defer free_key(plain);
+	plain.ease_new_channels(&take);
+	foreach (dot : plain.dots) test::@check(dot.rotation_interpolation == INHERIT, "a smooth clip's key stated a curve");
+}
+
 fn void a_crop_keeps_the_range_and_restates_its_edges_channel_by_channel() @test
 {
 	io::printn("cropping keeps the keys inside, rebased, and keys each driven channel at the edges");
@@ -727,4 +769,113 @@ fn void a_split_key_answers_for_both_channels() @test
 	test::@check(key.has_channel("hips", ROTATION), "the rotation half was missed");
 	test::@check(key.has_channel("hips", TRANSLATION), "the move half was missed behind the rotation dot");
 	test::@check(!key.has_channel("knee", ROTATION), "a joint the key does not hold was reported");
+}
+
+// Hips, chest, a clavicle, arm and hand down each side, and a neck the chest's bone points along.
+Vec3[9] carry_joints = {
+	{ 0, 1, 0 }, { 0, 1.5f, 0 },
+	{ 0.2f, 1.5f, 0 }, { 0.5f, 1.4f, 0 }, { 0.8f, 1.3f, 0 },
+	{ -0.2f, 1.5f, 0 }, { -0.5f, 1.4f, 0 }, { -0.8f, 1.3f, 0 },
+	{ 0, 1.8f, 0 },
+};
+int[9] carry_parents = { -1, 0, 1, 2, 3, 1, 5, 6, 1 };
+String[9] carry_names = { "hips", "chest", "clavicle_L", "arm_L", "hand_L", "clavicle_R", "arm_R", "hand_R", "neck" };
+
+fn float carry_gap(Quaternionf a, Quaternionf b) => crig::angle_between_turns(a, b);
+
+<*
+ A clip keyed on a rig whose bones pointed elsewhere: every joint records its bone
+ turned 0.25 rad about the figure's front, as a clip does after the rig is edited.
+*>
+fn AnimTemplate stale_clip(rig::Skeleton* skeleton)
+{
+	Vec3[] bones = skeleton.bone_directions(mem);
+	defer alloc::free(mem, bones);
+	Quaternionf stale = quaternion::from_axis_angle{float}((Vec3){ 0, 0, 1 }, 0.25f);
+	AnimKeyframe[] frames = alloc::new_array(mem, AnimKeyframe, 2);
+	foreach (usz k, time : (float[]){ 0.0f, 1.0f })
+	{
+		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, carry_names.len);
+		foreach (usz j, name : carry_names)
+		{
+			dots[j] = { .joint_name = name.copy(mem), .channels = ROTATION,
+				.axis = ((Vec3){ 1, 0.3f * (float)j, 0.2f }).normalize(), .angle = 0.1f + 0.15f * (float)k + 0.03f * (float)j,
+				.bone = stale.rotate_vec3(bones[j]) };
+		}
+		frames[k] = { .time = time, .dots = dots };
+	}
+	return { .name = "stale".copy(mem), .duration = 1, .keyframes = frames, .owned = true };
+}
+
+// A local turn keyed on a joint whose clip records another bone plays as keyed,
+// and no joint the key leaves alone moves with it.
+fn void a_key_on_a_stale_bone_plays_as_posed() @test
+{
+	io::printn("a joint keyed under a stale bone plays its pose and carries no other joint off");
+	rig::Skeleton skeleton = { .joints = carry_joints[..], .parents = carry_parents[..] };
+	AnimTemplate clip = stale_clip(&skeleton);
+	defer clip.free(mem);
+	Vec3[] bones = skeleton.bone_directions(mem);
+	defer alloc::free(mem, bones);
+	Quaternionf nudge = quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, 0.3f);
+
+	foreach (time : (float[]){ 0.5f, 1.0f })
+	{
+		rig::Pose was = clip.pose(mem, &skeleton, carry_names[..], time, false);
+		defer was.free(mem);
+		Quaternionf wanted = was.rotations[1].mul(nudge).normalize();
+
+		// The chest's local turn, as a hand key writes it: against the rig's own bone.
+		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
+		dots[0] = { .joint_name = "chest".copy(mem), .channels = ROTATION, .bone = bones[1] };
+		crig::axis_angle_of(wanted, &dots[0].axis, &dots[0].angle);
+		AnimKeyframe bare = { .time = time, .dots = dots };
+		AnimKeyframe key = crig::keyframe_copy(mem, bare);
+
+		// Keyed as it stands, the joints below the chest turn with its carry.
+		AnimTemplate naive = crig::clip_with_key(mem, clip, bare);
+		defer naive.free(mem);
+		rig::Pose off = naive.pose(mem, &skeleton, carry_names[..], time, false);
+		defer off.free(mem);
+		test::@check(carry_gap(off.rotations[5], was.rotations[5]) > 1.0e-3f, "the fixture's bones are not stale enough to show the fault");
+
+		clip.key_onto_clip(mem, &skeleton, carry_names[..], &key);
+		AnimTemplate keyed = crig::clip_with_key(mem, clip, key);
+		defer keyed.free(mem);
+		rig::Pose now = keyed.pose(mem, &skeleton, carry_names[..], time, false);
+		defer now.free(mem);
+		test::@check(carry_gap(now.rotations[1], wanted) < 1.0e-4f, "at %.2f s the chest plays %.5f rad off its pose",
+			time, carry_gap(now.rotations[1], wanted));
+		foreach (usz j, name : carry_names)
+		{
+			if (j == 1) continue;
+			test::@check(carry_gap(now.rotations[j], was.rotations[j]) < 1.0e-4f, "at %.2f s %s turned %.5f rad with the chest",
+				time, name, carry_gap(now.rotations[j], was.rotations[j]));
+		}
+
+		// Either side of the new key the arm does not jump.
+		rig::Pose before = keyed.pose(mem, &skeleton, carry_names[..], time - 1.0e-3f, false);
+		defer before.free(mem);
+		test::@check(carry_gap(before.rotations[6], now.rotations[6]) < 1.0e-2f, "the arm jumps at the key");
+	}
+}
+
+// Where the clip's bones are the rig's own, the key is written as it stands.
+fn void a_key_on_a_matching_bone_is_unchanged() @test
+{
+	io::printn("a clip keyed on this rig's bones takes a pose's turns as they are");
+	rig::Skeleton skeleton = { .joints = carry_joints[..], .parents = carry_parents[..] };
+	Vec3[] bones = skeleton.bone_directions(mem);
+	defer alloc::free(mem, bones);
+	AnimTemplate clip = stale_clip(&skeleton);
+	defer clip.free(mem);
+	foreach (&frame : clip.keyframes) foreach (usz j, &dot : frame.dots) dot.bone = bones[j];
+
+	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
+	dots[0] = { .joint_name = "arm_L".copy(mem), .channels = ROTATION, .axis = { 0, 0, 1 }, .angle = 0.4f, .bone = bones[3] };
+	AnimKeyframe key = { .time = 0.5f, .dots = dots };
+	defer free_key(key);
+	clip.key_onto_clip(mem, &skeleton, carry_names[..], &key);
+	test::@check(key.dots.len == 1, "a matching rig keyed %d joints", key.dots.len);
+	test::@check(math::abs(key.dots[0].angle - 0.4f) < 1.0e-5f && key.dots[0].axis.z > 0.9999f, "a matching rig rewrote the turn");
 }

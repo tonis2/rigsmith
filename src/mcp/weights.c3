@@ -1,6 +1,6 @@
 <*
- The weight tools: show_weights, get_weights, paint_weights, pin_weights, fix_strays and
- get_shells.
+ The weight tools: show_weights, get_weights, paint_weights, pin_weights, fix_strays,
+ fix_tears and get_shells.
 
  Weights are derived rather than authored — every rig edit rebinds from scratch —
  so nothing here owns any of it. What these do is *report* on the bind and state
@@ -155,6 +155,7 @@ fn String? tool_get_weights(Object* args, void* user_data, DString* detail) @pri
 	uint dot = 0;
 	uint[] rows = {};
 	bool strays = false;
+	bool tears = false;
 	if (args != null && args.is_keyable())
 	{
 		if (try named = args.get_string("dot")) dot = resolve_dot(app, named, detail)!;
@@ -180,9 +181,10 @@ fn String? tool_get_weights(Object* args, void* user_data, DString* detail) @pri
 			}
 		}
 		strays = args.get_bool("strays") ?? false;
+		tears = args.get_bool("tears") ?? false;
 	}
 	defer if (rows.len > 0) alloc::free(mem, rows);
-	return weights_json(app, dot, detail, rows, strays);
+	return weights_json(app, dot, detail, rows, strays, tears);
 }
 
 <*
@@ -203,9 +205,10 @@ fn String? tool_get_weights(Object* args, void* user_data, DString* detail) @pri
  @param dot : `The dot to survey, or 0 for the table alone.`
  @param rows : `Vertices whose rows to add, in range.`
  @param strays : `Add the stray islands.`
+ @param tears : `Add the tears.`
  @return? RIG_EMPTY : `No mesh or no rig; the reason is left in detail.`
 *>
-fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = {}, bool strays = false)
+fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = {}, bool strays = false, bool tears = false)
 {
 	WeightSurvey? surveyed = app.survey_weights(mem, dot);
 	if (catch surveyed)
@@ -258,6 +261,7 @@ fn String? weights_json(AppState* app, uint dot, DString* detail, uint[] rows = 
 
 	if (rows.len > 0) vertex_rows_json(app, &out, rows);
 	if (strays) strays_json(app, &out);
+	if (tears) tears_json(app, &out);
 
 	out.append_char('}');
 	return out.copy_str(mem);
@@ -341,6 +345,38 @@ fn void strays_json(AppState* app, DString* out) @private
 		out.append_string("]}");
 	}
 	out.append_char(']');
+}
+
+// How many tears, and how many links of each, `get_weights` lists.
+const usz TEARS_LISTED = 24;
+const usz TEAR_LINKS_LISTED = 8;
+
+fn void tears_json(AppState* app, DString* out) @private
+{
+	TearPatch[] tears = app.tear_patches(mem);
+	defer free_tears(mem, tears);
+	out.appendf(`,"tears":[`);
+	foreach (i, tear : tears[:math::min((usz)tears.len, TEARS_LISTED)])
+	{
+		if (i > 0) out.append_char(',');
+		out.appendf(`{"pairs":%d,"vertices":%d,"at":%s,"pull":%.3g,"joints":[`,
+			tear.links.len, tear.vertices.len, (JsonVec3)tear.centre, tear.pull);
+		for (usz k = 0; k < tear.joint_count; k++)
+		{
+			if (k > 0) out.append_char(',');
+			out.append_char('"');
+			append_dot_name(out, app, tear.joints[k]);
+			out.append_char('"');
+		}
+		out.append_string(`],"listed":[`);
+		foreach (k, link : tear.links[:math::min((usz)tear.links.len, TEAR_LINKS_LISTED)])
+		{
+			if (k > 0) out.append_char(',');
+			out.appendf("[%d,%d]", link.a, link.b);
+		}
+		out.append_string("]}");
+	}
+	out.appendf(`],"tear_count":%d`, tears.len);
 }
 
 <*
@@ -553,6 +589,23 @@ fn String? tool_fix_strays(Object* args, void* user_data, DString* detail) @priv
 	defer out.free();
 	out.appendf(`{"found":%d,"fixed":%d,"emptied":%d`, strays.len, fixed, emptied);
 	strays_json(app, &out);
+	out.append_char('}');
+	return out.copy_str(mem);
+}
+
+// fix_tears: close every tear get_weights lists, as one undo step.
+fn String? tool_fix_tears(Object* args, void* user_data, DString* detail) @private
+{
+	AppState* app = (AppState*)user_data;
+	TearPatch[] tears = app.tear_patches(mem);
+	defer free_tears(mem, tears);
+	usz fixed = app.fix_tears(tears);
+	app.refresh_ui();
+
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.appendf(`{"found":%d,"fixed":%d`, tears.len, fixed);
+	tears_json(app, &out);
 	out.append_char('}');
 	return out.copy_str(mem);
 }

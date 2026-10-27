@@ -495,6 +495,8 @@ fn AnimRef AppState.new_clip(&self, String name, float duration = 1.0f, bool fro
 		.duration = duration > 0.0f ? duration : 1.0f,
 		.keyframes = frames,
 		.loop = loop,
+		// Hand-keyed poses ease through each other by default.
+		.blend = SMOOTH,
 		.owned = true,
 	};
 
@@ -621,6 +623,17 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 			self.@notice(scope == SELECTED ? "select joints to key" : "no changed channels to key");
 		}
 	}
+	// Stated in the clip's own bone frame, with any layers taken back out, so it
+	// plays as posed and moves no joint it leaves alone.
+	if (written.dots.len > 0)
+	{
+		RigView view = self.open_rig(mem)!!;
+		defer view.free(mem);
+		String[] names = self.names_for(&view, ref);
+		LayerStack stack = clip.plays_layers() ? clip.layer_stack(mem, &view.skeleton, names, time) : {};
+		defer stack.free(mem);
+		clip.key_onto_clip(mem, &view.skeleton, names, &written, &stack);
+	}
 	return written;
 }
 
@@ -682,6 +695,7 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	self.pose_edit_draft = {};
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
+	written.ease_new_channels(clip);
 	// The pose and any moved target land as one entry, so one Ctrl+Z takes back both.
 	AnimTemplate keyed = self.with_aim_keys(clip_with_key(mem, *clip, written), time);
 	AnimRef landed = self.land_clip(ref, keyed);

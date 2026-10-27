@@ -18,7 +18,7 @@
  	rig.c3       edit_rig, as one undo step
  	body.c3      build_body
  	physics.c3   set_secondary_motion and bake_physics
- 	weights.c3   show_weights, get_weights, paint_weights, pin_weights, fix_strays, get_shells
+ 	weights.c3   show_weights, get_weights, paint_weights, pin_weights, fix_strays, fix_tears, get_shells
  	play.c3      play and stop, for the person at the screen
  	pack.c3      save_pack, the one tool that leaves a file behind
  	render.c3    render and set_camera
@@ -353,8 +353,8 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "get_weights",
-		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, how much of the mesh no dot is near, and how many vertices no dot holds at all (unused: they follow the root). Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. vertices adds each named vertex's row: the dots holding it, their shares and own weights, and whether each one's weights are edited (held) or automatic. strays adds every island of a dot's weight cut off from the rest of it and far away — the spike a pose pulls out of the body — with how far a pose can pull it (pull and gap, over the model's height) and the dots holding the mesh around it; fix_strays puts them back. Reads the binder's own weights, so it answers whether or not a view is being shown.",
-		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Dot to survey against its neighbours, by the name get_skeleton reports; bone_<id> works here, since a survey reads the bind rather than a clip. Omit for the ownership table alone."},"vertices":{"type":"array","items":{"type":"number"},"description":"Vertex indices whose rows to add: the dots holding each, strongest first, as the views show them."},"strays":{"type":"boolean","description":"Add the stray islands, farthest from their dot's region first. Default false."}}}`,
+		.description = "The weight views as numbers: how many vertices each dot owns and how many it reaches, how much of the mesh no dot is near, and how many vertices no dot holds at all (unused: they follow the root). Naming a dot adds what it takes from its neighbours — the vertices another dot owns that this one still pulls on, which is where a mesh smears when the rig moves. vertices adds each named vertex's row: the dots holding it, their shares and own weights, and whether each one's weights are edited (held) or automatic. strays adds every island of a dot's weight cut off from the rest of it and far away — the spike a pose pulls out of the body — with how far a pose can pull it (pull and gap, over the model's height) and the dots holding the mesh around it; fix_strays puts them back. tears adds the seams edits split: a point the file stores as two vertices (a UV seam or hard edge) whose copies carry different weights, which a pose opens as a hole — each run of them with its pairs, how far a pose pulls them apart (pull, over the model's height per radian) and the dots that differ across it; fix_tears closes them. Reads the binder's own weights, so it answers whether or not a view is being shown.",
+		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Dot to survey against its neighbours, by the name get_skeleton reports; bone_<id> works here, since a survey reads the bind rather than a clip. Omit for the ownership table alone."},"vertices":{"type":"array","items":{"type":"number"},"description":"Vertex indices whose rows to add: the dots holding each, strongest first, as the views show them."},"strays":{"type":"boolean","description":"Add the stray islands, farthest from their dot's region first. Default false."},"tears":{"type":"boolean","description":"Add the torn seams, the ones a pose pulls furthest apart first. Default false."}}}`,
 		.handler = &tool_get_weights,
 		.user_data = app,
 		.hidden = true,
@@ -380,6 +380,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "Take every stray get_weights lists off its dot — an island of a dot's weight cut off from the rest of it, which a pose pulls out of the body as a spike. That dot's weight on the island goes to 0 and no other dot's changes; a vertex nobody else held is left unused (emptied counts them). One call is one undo step. The Weights card's Find strays and Fix strays are the same two calls. Answers how many strays it found, how many vertices it changed, and the strays left, as get_weights lists them.",
 		.input_schema = `{"type":"object","properties":{}}`,
 		.handler = &tool_fix_strays,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "fix_tears",
+		.description = "Close every tear get_weights lists: copies of one point (a UV seam or hard edge) that edits gave different weights, so a pose opens a hole. Every copy takes the row of the one the edits moved furthest from the automatic weights, so what was painted stays. One call is one undo step. Edits keep copies together from then on: every weight edit gives all copies of a point one weight, and carries to a layer lying under the painted one. The Weights card's Find tears and Fix tears are the same two calls. Answers how many tears it found, how many vertices changed, and the tears left, as get_weights lists them.",
+		.input_schema = `{"type":"object","properties":{}}`,
+		.handler = &tool_fix_tears,
 		.user_data = app,
 		.hidden = true,
 	});

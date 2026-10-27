@@ -1354,6 +1354,8 @@ fn void AppState.swap_mesh(&self, rig::TriMesh geometry)
 	// the model arriving does not have, and nothing needs it until an op asks —
 	// see `adjacency_for`.
 	self.adjacency.free(mem);
+	self.joined.free(mem);
+	self.drop_tears();
 	self.uv_islands.free(mem);
 	self.uv_islands_read = false;
 	// With the shells, because they are keyed to them: a rider is one entry per
@@ -1631,7 +1633,9 @@ fn void AppState.free_character_state(&self)
 	self.drop_stroke_memory();
 	self.drop_area_part();
 	self.drop_strays();
+	self.drop_tears();
 	self.adjacency.free(mem);
+	self.joined.free(mem);
 	self.uv_islands.free(mem);
 	self.drop_shell_riders();
 	self.doc.free();

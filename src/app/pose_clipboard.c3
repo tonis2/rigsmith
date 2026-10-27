@@ -496,6 +496,8 @@ fn usz AppState.land_pose(&self, RigView* view, AnimKeyframe entries)
 	}
 	usz count = entries.dots.len;
 	entries.time = self.edit_time;
+	clip.key_onto_clip(mem, &view.skeleton, self.names_for(view, ref), &entries);
+	entries.ease_new_channels(clip);
 
 	// The draft belongs to this editing transaction, not to the playback restart
 	// that landing a clip performs. Parked, as `key_here` parks it.

@@ -54,3 +54,15 @@ const float STRAY_SHARE = 0.25f;
  — the Unused view marks it so the user can.
 *>
 const float UNUSED_TOTAL = 1e-6f;
+
+// Two layers within this much of the model's height are joined surfaces.
+const float JOIN_GAP = 0.015f;
+
+// Points of one surface are layers only when this many times their gap apart over it.
+const float JOIN_DETOUR = 3.0f;
+
+// Layers are joined while their automatic shares differ by at most this (half-L1).
+const float JOIN_AUTO_DIFF = 0.35f;
+
+// Two copies of one point are a tear when a pose can pull them this far apart, over the height per radian.
+const float TEAR_PULL = 0.001f;

@@ -1243,15 +1243,15 @@ fn void a_saved_model_writes_each_curve_at_its_own_keys() @test
 	Bench* bench = setup();
 	crig::AnimTemplate clip = fixture_clip(mem);
 	defer clip.free(mem);
-	// Auto on one key bakes the whole clip at four samples a span, so every curve
-	// has samples between its keys for the writer to leave out.
+	// Auto on one key bakes the whole clip at sixty samples a second (two half-second
+	// spans), so every curve has samples between its keys for the writer to leave out.
 	clip.keyframes[0].dots[0].rotation_interpolation = crig::AnimInterpolation.AUTO;
 	crig::AnimTemplate[1] source = { clip };
 
 	gltf_edit::ReskinClip[] kept = crig::reskin_clips(mem, &bench.skeleton, JOINTS[..], source[..]);
 	defer crig::free_reskin_clips(mem, kept);
-	test::@check(kept.len == 1 && kept[0].times.len == 9, "the clip was not baked at four samples a span");
-	if (kept.len != 1 || kept[0].times.len != 9) return;
+	test::@check(kept.len == 1 && kept[0].times.len == 61, "the clip was not baked at sixty samples a second");
+	if (kept.len != 1 || kept[0].times.len != 61) return;
 
 	// The hips slide in a straight line between their keys; the arm and the head
 	// are keyed on both channels and never slide.
@@ -1259,8 +1259,8 @@ fn void a_saved_model_writes_each_curve_at_its_own_keys() @test
 	{
 		if (curve.joint == 0)
 		{
-			test::@check(curve.slide_keys.len == 3 && curve.slide_keys[1] == 4,
-				"the hips' straight slide kept %s of 9 samples", curve.slide_keys);
+			test::@check(curve.slide_keys.len == 3 && curve.slide_keys[1] == 30,
+				"the hips' straight slide kept %s of 61 samples", curve.slide_keys);
 		}
 		if (curve.joint == 2 || curve.joint == 3)
 		{

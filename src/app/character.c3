@@ -195,6 +195,10 @@ struct Character
 	*>
 	rig::MeshAdjacency adjacency;
 
+	// Layers that lie close over each other, and the gap they were found at — see `joined_layers`.
+	rig::JoinedLayers joined;
+	float joined_gap;
+
 	<*
 	 The mesh's UV islands, for the Area tool's UV islands part. Read from the
 	 source file on first ask, like `adjacency`, and only kept while
@@ -415,6 +419,11 @@ struct Character
 	bool strays_checked;
 	uint strays_revision;
 	uint strays_generation;
+	// The Weights card's tear survey, likewise — see `find_tears`.
+	TearPatch[] tears;
+	bool tears_checked;
+	uint tears_revision;
+	uint tears_generation;
 	UndoStack undo_stack;
 	bool weights_stale;
 	float weights_due;

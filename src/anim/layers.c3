@@ -1072,6 +1072,34 @@ fn void LayerStack.apply(&self, usz joint, Quaternionf* turn, Vec3* slide, bool*
 }
 
 <*
+ The turn under the layers that `apply` takes to `turn`: each layer taken back
+ out, the top first. False when an override hides the joint, so nothing under
+ it shows.
+*>
+fn bool LayerStack.taken_out(&self, usz joint, Quaternionf turn, Quaternionf* under)
+{
+	for (sz l = (sz)self.layers.len - 1; l >= 0; l--)
+	{
+		ActiveLayer* layer = &self.layers[(usz)l];
+		if (joint >= layer.samples.len || !layer.samples[joint].rot) continue;
+		Quaternionf s = layer.samples[joint].turn;
+		if (layer.mode == ADDITIVE)
+		{
+			turn = turn.mul(slerp_short(quaternion::IDENTITY, s, layer.gain).invert()).normalize();
+			continue;
+		}
+		if (layer.gain >= OVERRIDE_COVERS) return false;
+		// slerp(turn, s, g) is s · (s⁻¹ · turn)^(1 − g).
+		Vec3 axis;
+		float angle;
+		if (!axis_angle_of(s.invert().mul(turn), &axis, &angle)) continue;
+		turn = s.mul(quaternion::from_axis_angle{float}(axis, angle / (1.0f - layer.gain))).normalize();
+	}
+	*under = turn;
+	return true;
+}
+
+<*
  The bone a joint's layered turn is carried from when the base does not key it:
  the first playing layer, from the bottom, that turns the joint and records one.
  Zero when none does. See `AnimTemplate.pose`.

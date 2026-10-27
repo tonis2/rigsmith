@@ -828,28 +828,58 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 		}
 	}
 
-	// What the layer has to hold for the stack to reach `wanted`.
+	// What the layer has to hold for the stack to reach `wanted`. A layer turns a
+	// joint before the limits hold it and before it is carried onto the rig's
+	// bones, so the gap is read against the stack below as keyed, and stated in
+	// the bone frame the joint is carried from (see `AnimTemplate.pose`).
+	rig::Pose below_raw = below_clip.pose(mem, &view.skeleton, names, time, false);
+	defer below_raw.free(mem);
+	LayerStack under = below_clip.layer_stack(mem, &view.skeleton, names, time);
+	defer under.free(mem);
+	Vec3[] bones = view.skeleton.bone_directions(mem);
+	defer if (bones.len > 0) alloc::free(mem, bones);
+	Vec3[] sources = alloc::new_array(mem, Vec3, (sz)view.len());
+	defer alloc::free(mem, sources);
+	// Whether the joint differs on screen from the stack below: what decides it is keyed.
+	bool[] differs = alloc::new_array(mem, bool, (sz)view.len());
+	defer alloc::free(mem, differs);
 	rig::Pose delta = rig::rest_pose(mem, view.len());
 	defer delta.free(mem);
 	float inverse_gain = 1.0f / gain;
 	foreach (usz j, turn : delta.rotations)
 	{
-		Quaternionf gap = below.rotations[j].invert().mul(wanted.rotations[j]).normalize();
+		String name = j < names.len ? names[j] : "";
+		Vec3 target = j < bones.len ? bones[j] : (Vec3){};
+		Vec3 source;
+		Quaternionf kept_turn = name.len > 0 ? clip.rotation_and_bone_at(name, time, &source) : quaternion::IDENTITY;
+		Vec3 kept_slide;
+		bool rotates, translates;
+		under.apply(j, &kept_turn, &kept_slide, &rotates, &translates);
+		if (source.length_sq() < 1.0e-12f) source = under.bone(j);
+		if (source.length_sq() < 1.0e-12f) source = target;
+		sources[j] = source;
+		Quaternionf onto = bone_carry(source, target);
+		differs[j] = angle_between_turns(below.rotations[j], wanted.rotations[j]) > 1.0e-5f;
+		Quaternionf gap = below_raw.rotations[j].invert().mul(wanted.rotations[j]).normalize();
+		Quaternionf step = onto.invert().mul(scaled_turn(gap, inverse_gain)).mul(onto).normalize();
 		Vec3 slide = (wanted.offsets[j] - below.offsets[j]) * inverse_gain;
 		if (layer.mode == ADDITIVE)
 		{
-			delta.rotations[j] = scaled_turn(gap, inverse_gain);
+			delta.rotations[j] = step;
 			delta.offsets[j] = slide;
 		}
 		else
 		{
-			delta.rotations[j] = below.rotations[j].mul(scaled_turn(gap, inverse_gain)).normalize();
+			delta.rotations[j] = kept_turn.mul(step).normalize();
 			delta.offsets[j] = below.offsets[j] + slide;
 		}
 	}
-	Vec3[] bones = view.skeleton.bone_directions(mem);
-	defer if (bones.len > 0) alloc::free(mem, bones);
 	AnimKeyframe key = keyframe_of_pose(mem, delta, names, bones, view.skeleton.height(), time);
+	foreach (&dot : key.dots)
+	{
+		sz j = array::index_of(names, dot.joint_name) ?? -1;
+		if (j >= 0) dot.bone = sources[(usz)j];
+	}
 
 	// Which joints and channels are written. A sparse layer stays sparse: a
 	// joint enters it by differing from the stack below, and stays in once keyed.
@@ -866,7 +896,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 		bool rotation, translation;
 		if (j >= 0 && (usz)j < view.dot_ids.len && inside[(usz)j])
 		{
-			bool moved_rotation = dot.angle > 1.0e-5f;
+			bool moved_rotation = differs[(usz)j];
 			bool moved_translation = dot.move.length_sq() > 1.0e-12f;
 			switch (scope)
 			{
@@ -903,6 +933,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	// them, and a kept layer grows to hold one past its end.
 	key.time = layer.key_time(clip, time);
 	AnimTemplate keys = layer.keys_view(clip);
+	key.ease_new_channels(&keys);
 	AnimTemplate grown = clip_with_key(mem, keys, key);
 	AnimTemplate full_clip = clip_copy(mem, *clip);
 	AnimLayer* target = &full_clip.layers[(usz)at];
@@ -959,8 +990,8 @@ const float OVERRIDE_COVERS = 0.999f;
    through nowhere, so there is nothing to recover. That channel is left out of
    the key — the base keeps whatever it had — and named in a notice.
 
- The stack is undone in the clip's own frame, which is the screen's when the
- clip's bones agree with the rig's (the ordinary case for a clip authored on it).
+ The turns are left as on screen here: `draft_key` takes the layers back out of
+ them in the clip's own bone frame (`AnimTemplate.key_onto_clip`).
 
  @param sampled : `Take the pose from the clip at the time (a parked, unedited frame) instead of the open draft.`
  @return? RIG_EMPTY : `There is no rig to read a pose off.`
@@ -994,22 +1025,7 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 			ActiveLayer* layer = &stack.layers[(usz)l];
 			if (j >= layer.samples.len) continue;
 			LayerSample s = layer.samples[j];
-			if (s.rot && !lost_rotation[j])
-			{
-				if (layer.mode == ADDITIVE)
-				{
-					base.rotations[j] = base.rotations[j].mul(scaled_turn(s.turn, layer.gain).invert()).normalize();
-				}
-				else if (layer.gain >= OVERRIDE_COVERS)
-				{
-					lost_rotation[j] = true;
-				}
-				else
-				{
-					Quaternionf gap = s.turn.invert().mul(base.rotations[j]).normalize();
-					base.rotations[j] = s.turn.mul(scaled_turn(gap, 1.0f / (1.0f - layer.gain))).normalize();
-				}
-			}
+			if (s.rot && layer.mode == OVERRIDE && layer.gain >= OVERRIDE_COVERS) lost_rotation[j] = true;
 			if (s.move && !lost_slide[j])
 			{
 				Vec3 slide = s.offset * height;

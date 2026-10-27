@@ -3667,3 +3667,147 @@ fn void an_island_a_pose_cannot_pull_out_is_not_a_stray() @test
 	defer crig::free_strays(mem, strays);
 	test::@check(strays.len == 0, "%d strays where K's island turns in place", strays.len);
 }
+
+// A 9×9 grid with its centre vertex (40) stored twice: the triangles right of it use the copy, returned.
+fn uint seamed_grid(List{Vec3}* positions, List{uint}* indices)
+{
+	grid_into(positions, indices, { 0, 0, 0 }, 2.0f, 9);
+	uint twin = (uint)positions.len();
+	Vec3 centre = (*positions)[40];
+	positions.push(centre);
+	for (sz t = 0; t + 2 < indices.len(); t += 3)
+	{
+		float x = ((*positions)[(*indices)[t]].x + (*positions)[(*indices)[t + 1]].x + (*positions)[(*indices)[t + 2]].x) / 3.0f;
+		if (x <= centre.x) continue;
+		for (sz k = t; k < t + 3; k++) if ((*indices)[k] == 40) (*indices)[k] = twin;
+	}
+	return twin;
+}
+
+<*
+ A point stored as two vertices takes one weight: painting one copy, by the
+ lasso's verb or the brush's, writes both, and one undo puts both back.
+
+ Re-introduce: drop the copy pass from `AppState.join_column`, and the twin
+ keeps its old weight.
+*>
+fn void painting_one_copy_of_a_point_paints_both() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	uint twin = seamed_grid(&positions, &indices);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	app.doc.connect(b, k);
+	float was = weight_of(&app, 40, k);
+	test::@check(weight_of(&app, twin, k) == was, "the copies start apart");
+
+	uint[1] one = { 40 };
+	app.set_weight_vertices(one[..], k, 0.25f);
+	test::@check(weight_of(&app, 40, k) == 0.25f && weight_of(&app, twin, k) == 0.25f,
+		"the lasso gave the copies %f and %f", weight_of(&app, 40, k), weight_of(&app, twin, k));
+
+	uint[1] other = { twin };
+	float[1] pull = { 1.0f };
+	app.nudge_column(k, other[..], 0.75f, pull[..], limb: false);
+	test::@check(weight_of(&app, 40, k) == 0.75f && weight_of(&app, twin, k) == 0.75f,
+		"the brush gave the copies %f and %f", weight_of(&app, 40, k), weight_of(&app, twin, k));
+
+	test::@check(app.undo() && app.undo(), "nothing to undo");
+	test::@check(weight_of(&app, 40, k) == was && weight_of(&app, twin, k) == was, "undo did not put both copies back");
+}
+
+<*
+ Paint on a layer carries to the layer under it, never up: two sheets a hair
+ apart, both facing +z. Painting the front one paints the one behind it;
+ painting the back one leaves the front as it was.
+
+ Re-introduce: drop the cover test in `carries_to`, and the front sheet takes
+ the back one's paint.
+*>
+fn void paint_carries_to_the_layer_under_it() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);    // the body
+	grid_into(&positions, &indices, { 0, 0, 0.01f }, 2.0f, 9); // a cloth over it
+	Vec3[] normals = alloc::new_array(mem, Vec3, positions.len());
+	defer alloc::free(mem, normals);
+	normals[..] = (Vec3){ 0, 0, 1 };
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .normals = normals, .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.005f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.005f }, "K");
+	app.doc.connect(b, k);
+	uint body = 40;
+	uint cloth = 81 + 40;
+	float body_was = weight_of(&app, body, k);
+	float cloth_was = weight_of(&app, cloth, k);
+
+	uint[1] front = { cloth };
+	app.set_weight_vertices(front[..], k, 0.9f);
+	test::@check(weight_of(&app, body, k) == 0.9f, "the body under the cloth holds %f, not the cloth's 0.9", weight_of(&app, body, k));
+	test::@check(app.undo(), "nothing to undo");
+	test::@check(weight_of(&app, body, k) == body_was, "undo left the body painted");
+
+	uint[1] back = { body };
+	app.set_weight_vertices(back[..], k, 0.1f);
+	test::@check(weight_of(&app, cloth, k) == cloth_was, "painting the body moved the cloth over it to %f", weight_of(&app, cloth, k));
+}
+
+<*
+ Find tears finds copies of a point that edits split, and Fix tears gives both
+ the painted copy's row: one undo step, and a second survey finds nothing.
+
+ Re-introduce: in `AppState.fix_tears`, take the copy nearest its automatic
+ row, and the paint is lost from both.
+*>
+fn void fixing_a_tear_keeps_the_painted_copy() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	uint twin = seamed_grid(&positions, &indices);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	app.doc.connect(b, k);
+	test::eq(app.find_tears(), (usz)0);
+
+	// A tear as older sessions hold one: one copy written past the guard.
+	crig::RigView view = app.open_rig(mem)!!;
+	float[] column = app.column_of(mem, &view, k);
+	view.free(mem);
+	defer alloc::free(mem, column);
+	float was = column[40];
+	column[twin] = 1.0f;
+	app.store_column(k, column);
+	test::eq(app.find_tears(), (usz)1);
+	test::@check(app.tears[0].links.len == 1, "the tear has %d pairs, not one", app.tears[0].links.len);
+
+	test::@check(app.fix_found_tears() > 0, "the fix changed nothing");
+	test::@check(weight_of(&app, 40, k) == 1.0f && weight_of(&app, twin, k) == 1.0f,
+		"the copies hold %f and %f, not the painted 1", weight_of(&app, 40, k), weight_of(&app, twin, k));
+	test::@check(app.tears_current() && app.tears.len == 0, "the survey after the fix still finds tears");
+
+	test::@check(app.undo(), "nothing to undo");
+	test::@check(weight_of(&app, 40, k) == was && weight_of(&app, twin, k) == 1.0f, "undo did not bring the tear back");
+	test::@check(!app.tears_current(), "the survey outlived the undo");
+}

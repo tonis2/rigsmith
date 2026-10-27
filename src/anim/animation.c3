@@ -308,6 +308,32 @@ fn Quaternionf figure_heading(Quaternionf turn)
 }
 
 <*
+ A clip's world turn `authored`, recorded against `source`, carried onto a rig
+ whose bone is `target` (see `AnimTemplate.pose`).
+
+ The carry rides the figure's `heading`, the root's turn about the vertical, so
+ a clip of a figure facing a quarter turn round plays as it does facing forward,
+ turned. An arm raised or lowered at rest (`rest_pose_differs`) is the source's
+ pose: the target's bone is turned to point where the source's does.
+*>
+fn Quaternionf carried_turn(Quaternionf authored, Vec3 source, Vec3 target, Quaternionf heading)
+{
+	Quaternionf onto = bone_carry(source, target);
+	if (rest_pose_differs(source, target)) return authored.mul(onto.invert()).normalize();
+	Quaternionf ridden = heading.mul(onto).mul(heading.invert()).normalize();
+	return ridden.mul(authored).mul(onto.invert()).normalize();
+}
+
+// The world turn `carried_turn` takes to `carried`: its exact inverse.
+fn Quaternionf authored_turn(Quaternionf carried, Vec3 source, Vec3 target, Quaternionf heading)
+{
+	Quaternionf onto = bone_carry(source, target);
+	if (rest_pose_differs(source, target)) return carried.mul(onto).normalize();
+	Quaternionf ridden = heading.mul(onto).mul(heading.invert()).normalize();
+	return ridden.invert().mul(carried).mul(onto).normalize();
+}
+
+<*
  Whether a clip's bone and the target's differ at rest by an arm held at another
  height — the A-pose against the T-pose — rather than by how the two rigs are
  built.
@@ -1308,20 +1334,8 @@ fn rig::Pose AnimTemplate.pose(
 		{
 			Vec3 source = base_rotates ? self.span_bone(name, rotation_span) : stack.bone(joint);
 			Vec3 target = joint < bones.len ? bones[joint] : (Vec3){ 0, 0, 0 };
-			Quaternionf onto = bone_carry(source, target);
-			// The carry is between two rigs standing at rest facing +z, so it
-			// rides the figure's heading — the root's turn about the vertical —
-			// rather than the world's axes: a clip of a figure facing a quarter
-			// turn round (a capture from a side camera) plays as it does facing
-			// forward, turned. Facing forward, this is the carry as it always was.
 			if (parent < 0) heading = figure_heading(authored[joint]);
-			Quaternionf ridden = heading.mul(onto).mul(heading.invert()).normalize();
-			// An arm raised or lowered at rest is the source's pose, not a fact
-			// about the target: the target's bone is turned to point where the
-			// source's does, and the clip's motion carried from there.
-			carried[joint] = rest_pose_differs(source, target)
-				? authored[joint].mul(onto.invert()).normalize()
-				: ridden.mul(authored[joint]).mul(onto.invert()).normalize();
+			carried[joint] = carried_turn(authored[joint], source, target, heading);
 			pose.rotations[joint] = onto_parent.invert().mul(carried[joint]).normalize();
 		}
 		else
@@ -1334,6 +1348,162 @@ fn rig::Pose AnimTemplate.pose(
 
 	if (grounded) ground_pose(allocator, skeleton, names, self.ground, &pose, self.phase_at(time));
 	return pose;
+}
+
+// How far a joint left alone by a key may turn with its keyed parent before it is keyed too.
+const float KEY_CARRY_DRIFT @local = 1.0e-5f;
+
+// The angle between two turns; atan2, since acos loses small angles in float.
+fn float angle_between_turns(Quaternionf a, Quaternionf b)
+{
+	Quaternionf q = a.invert().mul(b);
+	return 2.0f * math::atan2(math::sqrt(q.v.x * q.v.x + q.v.y * q.v.y + q.v.z * q.v.z), math::abs(q.v.w));
+}
+
+<*
+ A pose's local turns, as `keyframe_of_pose` writes them, made into keys this
+ clip plays back as that pose.
+
+ 	`clip.key_onto_clip(mem, &view.skeleton, names, &key);`
+
+ `pose` carries each joint from the bone its keys record onto the rig's, so a
+ local turn keyed as it stands plays turned by the carry, and so does every
+ joint below it. Each keyed joint keeps its track's bone and takes the turn that
+ carries back to its local one; a joint the key leaves alone that would still
+ turn with a keyed parent is keyed where it was. With `stack`, the layers are
+ taken back out of each keyed turn. Where the bones match, nothing changes.
+*>
+fn void AnimTemplate.key_onto_clip(&self, Allocator allocator, rig::Skeleton* skeleton, String[] names,
+	AnimKeyframe* key, LayerStack* stack = null)
+{
+	usz count = skeleton.len();
+	if (count == 0 || key.dots.len == 0) return;
+	LayerStack none;
+	if (!stack) stack = &none;
+	Vec3[] bones = skeleton.bone_directions(allocator);
+	Quaternionf[] was_authored = alloc::new_array(allocator, Quaternionf, (sz)count);
+	Quaternionf[] was_carried = alloc::new_array(allocator, Quaternionf, (sz)count);
+	Quaternionf[] authored = alloc::new_array(allocator, Quaternionf, (sz)count);
+	Quaternionf[] carried = alloc::new_array(allocator, Quaternionf, (sz)count);
+	AnimDotList added;
+	added.init(allocator);
+	defer
+	{
+		if (bones.len > 0) alloc::free(allocator, bones);
+		alloc::free(allocator, was_authored);
+		alloc::free(allocator, was_carried);
+		alloc::free(allocator, authored);
+		alloc::free(allocator, carried);
+		added.free();
+	}
+	// Two walks side by side: the clip as it plays now, and with the key in.
+	Quaternionf was_heading = quaternion::IDENTITY;
+	Quaternionf heading = quaternion::IDENTITY;
+	for (usz joint = 0; joint < count; joint++)
+	{
+		int parent = skeleton.parents[joint];
+		Quaternionf was_above = parent >= 0 ? was_authored[(usz)parent] : quaternion::IDENTITY;
+		Quaternionf was_onto = parent >= 0 ? was_carried[(usz)parent] : quaternion::IDENTITY;
+		Quaternionf above = parent >= 0 ? authored[(usz)parent] : quaternion::IDENTITY;
+		Quaternionf onto = parent >= 0 ? carried[(usz)parent] : quaternion::IDENTITY;
+		String name = joint < names.len ? names[joint] : "";
+		Vec3 target = joint < bones.len ? bones[joint] : (Vec3){ 0, 0, 0 };
+
+		// The joint as `pose` reads it.
+		AnimSpan span;
+		bool base_rotates = name.len > 0 && self.channel_span(name, true, key.time, &span);
+		Quaternionf turn = base_rotates
+			? span.turn(self.keyframes[span.p0].rotation_of(name), self.keyframes[span.p1].rotation_of(name),
+				self.keyframes[span.p2].rotation_of(name), self.keyframes[span.p3].rotation_of(name))
+			: quaternion::IDENTITY;
+		Vec3 slide;
+		bool rotates = base_rotates;
+		bool translates;
+		stack.apply(joint, &turn, &slide, &rotates, &translates);
+		Vec3 source = base_rotates ? self.span_bone(name, span) : stack.bone(joint);
+		if (rotates)
+		{
+			was_authored[joint] = was_above.mul(turn).normalize();
+			if (parent < 0) was_heading = figure_heading(was_authored[joint]);
+			was_carried[joint] = carried_turn(was_authored[joint], source, target, was_heading);
+		}
+		else
+		{
+			was_authored[joint] = was_above;
+			was_carried[joint] = was_onto;
+		}
+
+		// Which local turn it has to play: the key's, or where it was when it would drift.
+		sz at = -1;
+		if (name.len > 0) foreach (usz d, dot : key.dots) if (dot.joint_name == name && dot.keys_rotation()) at = (sz)d;
+		Quaternionf local;
+		if (at >= 0)
+		{
+			local = quaternion::from_axis_angle{float}(key.dots[(usz)at].axis, key.dots[(usz)at].angle);
+		}
+		else if (!rotates)
+		{
+			authored[joint] = above;
+			carried[joint] = onto;
+			continue;
+		}
+		else
+		{
+			Quaternionf left = above.mul(turn).normalize();
+			Quaternionf turned_by = parent < 0 ? figure_heading(left) : heading;
+			Quaternionf left_carried = carried_turn(left, source, target, turned_by);
+			local = was_onto.invert().mul(was_carried[joint]).normalize();
+			if (angle_between_turns(local, onto.invert().mul(left_carried).normalize()) <= KEY_CARRY_DRIFT)
+			{
+				authored[joint] = left;
+				carried[joint] = left_carried;
+				if (parent < 0) heading = turned_by;
+				continue;
+			}
+		}
+
+		// The authored turn that carries back to `local` under the parents as keyed.
+		Vec3 from = source.length_sq() >= 1.0e-12f ? source : target;
+		Quaternionf wanted = onto.mul(local).normalize();
+		Quaternionf turned_by = heading;
+		if (parent < 0) turned_by = rotates ? was_heading : figure_heading(wanted);
+		Quaternionf world = authored_turn(wanted, from, target, turned_by);
+		if (parent < 0)
+		{
+			turned_by = figure_heading(world);
+			world = authored_turn(wanted, from, target, turned_by);
+		}
+		Quaternionf under;
+		if (!stack.taken_out(joint, above.invert().mul(world).normalize(), &under))
+		{
+			// An override hides the joint: its own turn plays, whatever is keyed under it.
+			authored[joint] = rotates ? above.mul(turn).normalize() : above;
+			carried[joint] = rotates ? carried_turn(authored[joint], source, target, parent < 0 ? figure_heading(authored[joint]) : heading) : onto;
+			continue;
+		}
+		authored[joint] = world;
+		carried[joint] = wanted;
+		if (parent < 0) heading = turned_by;
+		AnimKeyDot* dot;
+		if (at >= 0)
+		{
+			dot = &key.dots[(usz)at];
+		}
+		else
+		{
+			added.push({ .joint_name = name.copy(allocator), .channels = ROTATION });
+			dot = &added[added.len() - 1];
+		}
+		axis_angle_of(under, &dot.axis, &dot.angle);
+		dot.bone = from;
+	}
+	if (added.len() == 0) return;
+	AnimKeyDot[] grown = alloc::new_array(allocator, AnimKeyDot, (sz)(key.dots.len + added.len()));
+	foreach (usz i, dot : key.dots) grown[i] = dot;
+	foreach (usz i, dot : added) grown[key.dots.len + i] = dot;
+	if (key.dots.len > 0) alloc::free(allocator, key.dots);
+	key.dots = grown;
+	added.clear();
 }
 
 <*

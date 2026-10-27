@@ -155,6 +155,7 @@ fn bool AppState.onion_drafted_clip(&self, AnimTemplate* clip, AnimTemplate* out
 		*out = self.with_aim_keys(clip_copy(mem, *clip), time);
 		return true;
 	}
+	key.ease_new_channels(clip);
 	*out = self.with_aim_keys(clip_with_key(mem, *clip, key), time);
 	return true;
 }

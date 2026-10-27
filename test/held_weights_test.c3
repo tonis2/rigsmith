@@ -84,7 +84,7 @@ fn usz moved_outside(float[] before, float[] after, usz bones, usz except)
 
 <*
  The first edit to a joint holds it, starting from the column it showed, so
- the one vertex edited is the only number that moves anywhere.
+ the one point edited (every copy of it) is the only number that moves anywhere.
 
  *Re-introduce:* hold the joint without copying its automatic column, and every
  vertex it held drops to nothing.
@@ -113,8 +113,14 @@ fn void the_first_edit_holds_a_joint_and_moves_only_what_it_edits() @test
 
 	float[] after = held_matrix(&app, &bones);
 	defer alloc::free(mem, after);
+	test::@check(moved_outside(before, after, bones, k) == 0, "editing the knee moved another joint's weights");
+	// In the knee's column: the vertex edited, and the other copies of its point.
+	Vec3 at = app.geometry.positions[one[0]];
 	usz moved = 0;
-	foreach (usz i, w : before) if (after[i] != w && i != (usz)one[0] * bones + k) moved++;
+	for (usz v = 0; v < app.geometry.positions.len; v++)
+	{
+		if (after[v * bones + k] != before[v * bones + k] && app.geometry.positions[v] != at) moved++;
+	}
 	test::@check(moved == 0, "editing one vertex of the knee moved %d other weights", moved);
 	test::@check(after[(usz)one[0] * bones + k] == 0.25f, "the edit did not land");
 

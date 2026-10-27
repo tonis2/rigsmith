@@ -166,7 +166,8 @@ fn void the_uv_islands_part_takes_whole_islands() @test
 	test::eq(app.commit_area(), (usz)0);
 	test::@check(app.notice().contains("island"), "an empty part was refused without saying why: %s", app.notice());
 
-	// Applied, the hip moves its islands and nothing past the seam.
+	// Applied, the hip moves its islands and their seam — the copies of a seam
+	// point move as one — and nothing past it.
 	app.doc.set_band(hip, 1.0e-4f);
 	test::@check(app.set_area_part(ISLANDS), "could not pick the islands again");
 	test::@check(app.commit_area() > 0, "applying the islands wrote nothing");
@@ -180,7 +181,12 @@ fn void the_uv_islands_part_takes_whole_islands() @test
 	{
 		sz owner = crig::row_owner(painted[v * bones:bones]);
 		bool mine = owner == (sz)joint;
-		test::@check(mine == (island_of_vertex((sz)v) < 2), "vertex %d (island %d) applied to the wrong joint", v, island_of_vertex((sz)v));
+		bool applied = island_of_vertex((sz)v) < 2;
+		for (usz u = 0; u < app.geometry.positions.len && !applied; u++)
+		{
+			if (app.geometry.positions[u] == app.geometry.positions[v] && island_of_vertex((sz)u) < 2) applied = true;
+		}
+		test::@check(mine == applied, "vertex %d (island %d) applied to the wrong joint", v, island_of_vertex((sz)v));
 	}
 }
 

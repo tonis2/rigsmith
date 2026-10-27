@@ -398,11 +398,13 @@ fn float[] AppState.column_of(&self, Allocator allocator, RigView* view, uint do
 
  No other column is read or written: a vertex taken off this joint keeps
  whatever the others hold of it, and holds nothing if they hold nothing.
+ Copies of one point, and a layer under a painted one, get one weight
+ (`join_column`).
 
  The view's `held` and `pins` are stale afterwards; reopen the rig to read the
  weights again.
 
- @param column : `One weight per vertex, 0 to 1; clamped.`
+ @param column : `One weight per vertex, 0 to 1; clamped; joined copies are evened out in place.`
  @param commit : `Close the undo group — false for a stroke still in flight, or a twin to follow.`
  @return `How many vertices changed; 0 when the column was already the joint's.`
 *>
@@ -417,12 +419,11 @@ fn usz AppState.replace_column(&self, RigView* view, uint dot_id, float[] column
 	defer if (shown.len > 0) alloc::free(mem, shown);
 	if (shown.len != count) return 0;
 
+	foreach (&weight : column) *weight = math::clamp(*weight, 0.0f, 1.0f);
+	// Copies of one point, and layers lying over each other, keep one weight.
+	self.join_column(view, column, shown);
 	usz moved = 0;
-	foreach (v, &weight : column)
-	{
-		*weight = math::clamp(*weight, 0.0f, 1.0f);
-		if (*weight != shown[v]) moved++;
-	}
+	foreach (v, weight : column) if (weight != shown[v]) moved++;
 	if (moved == 0) return 0;
 	self.store_column(dot_id, column, commit);
 	return moved;

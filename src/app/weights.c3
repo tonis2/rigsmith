@@ -606,6 +606,7 @@ fn void AppState.rebind_tints(&self)
 	self.overlay_limb_tints(&view, painted);
 	self.overlay_unused_tints(view.len(), painted);
 	self.overlay_stray_tints();
+	self.overlay_tear_tints();
 }
 
 <*
@@ -924,7 +925,8 @@ fn float pull_apart(rig::Skeleton* skeleton, float[] row, float[] other, Vec3 po
  Every stray in the bind as shown, the ones a pose pulls furthest first.
 
  Per joint, the mesh it holds at least `STRAY_SHARE` of, split into connected
- islands over the welded surface. The largest is its region; a smaller island
+ islands over the welded surface and the layers lying on it (`joined_layers`).
+ The largest is its region; a smaller island
  is a stray when the mesh around it is someone else's — not a whole piece of
  its own — it sits at least `STRAY_GAP` of the model's height from the region
  at rest, and a pose can pull it at least `STRAY_PULL` off the mesh around it
@@ -952,6 +954,7 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 
 	// One row per weld, as shares, and where it is at rest.
 	usz classes = around.classes();
+	rig::JoinedLayers* layers = self.joined_layers();
 	float[] share = alloc::new_array(mem, float, (sz)(classes * bones));
 	defer alloc::free(mem, share);
 	Vec3[] point = alloc::new_array(mem, Vec3, (sz)classes);
@@ -1001,6 +1004,13 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
 			for (sz next = 0; next < flood.len(); next++)
 			{
 				foreach (n : around.around(flood[next]))
+				{
+					if (island[n] >= 0 || share[(usz)n * bones + b] < STRAY_SHARE) continue;
+					island[n] = islands;
+					flood.push(n);
+				}
+				// Layers lying on each other touch, so weight carried across them is one piece.
+				foreach (n : layers.around(flood[next]))
 				{
 					if (island[n] >= 0 || share[(usz)n * bones + b] < STRAY_SHARE) continue;
 					island[n] = islands;

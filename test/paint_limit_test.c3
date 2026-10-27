@@ -210,7 +210,9 @@ fn void the_weight_view_greys_out_what_the_joint_cannot_take() @test
 	uint grey = crig::off_limb_tint();
 	test::eq(app.tints.len, (sz)app.geometry.positions.len);
 	test::@check(app.tints[foot[0]] != grey, "the stray hold on the foot was greyed out");
-	foreach (v : foot[1..]) test::@check(app.tints[v] == grey, "foot vertex %d is not greyed out", v);
+	// Every copy of that point was painted with it.
+	Vec3 held_at = app.geometry.positions[foot[0]];
+	foreach (v : foot[1..]) test::@check(app.tints[v] == grey || app.geometry.positions[v] == held_at, "foot vertex %d is not greyed out", v);
 	foreach (v : finger) test::@check(app.tints[v] != grey, "finger vertex %d is greyed out", v);
 
 	app.end_brush();

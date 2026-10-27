@@ -40,6 +40,8 @@ fn void multi_pose_workspace(Fixture* f)
 	AnimRef clip = f.app.new_clip("Multiple poses", 4);
 	clip = f.app.key_here(clip, 1);
 	f.app.editing = f.app.key_here(clip, 2);
+	// Linear on purpose: the curve tests start from plain Linear keys.
+	f.app.clip(f.app.editing).blend = LINEAR;
 	f.app.show_edited();
 	f.click(tab_center(f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();

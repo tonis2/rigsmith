@@ -253,6 +253,37 @@ fn void layer_ui_keying_into_an_additive_layer_stores_a_delta() @test
 	test::eq(f.app.clip(f.app.editing).layers[0].keyframes.len, (sz)1);
 }
 
+// A new clip eases its poses; in a linear one, a key new to a layer starts Smooth.
+fn void layer_ui_new_keys_start_smooth() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	AnimRef clip = lyr_workspace(&f);
+	test::@check(f.app.clip(clip).blend == SMOOTH, "a new clip does not ease");
+	f.app.clip(clip).blend = LINEAR;
+	lyr_add(&f, crig::ANIM_LAYER_KEYED_ID);
+
+	Quaternionf turn = quaternion::from_axis_angle{float}((Vec3){ 0, 1, 0 }, 0.45f);
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not open a pose draft");
+	test::@check(f.app.set_working_pose(f.app.doc.root_id, turn, {}), "could not pose the root");
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(ALL), "keying into the layer failed");
+	usz turns = 0;
+	foreach (frame : f.app.clip(f.app.editing).layers[0].keyframes)
+	{
+		if (math::abs(frame.time - 1.0f) > 1.0e-4f) continue;
+		foreach (dot : frame.dots)
+		{
+			if (!dot.keys_rotation()) continue;
+			turns++;
+			test::@check(dot.rotation_interpolation == AUTO, "%s's new layer key is not smooth", dot.joint_name);
+		}
+	}
+	test::@check(turns > 0, "the layer has no turn keyed at 1s");
+}
+
 fn void layer_ui_keying_ignores_layers_above_the_active_one() @test
 {
 	Fixture f;
@@ -517,4 +548,112 @@ fn void layer_ui_remove_joint_animation_asks_first() @test
 
 	test::@check(f.app.undo(), "undo failed");
 	test::@check(lyr_base_keys(&f, "thigh_L"), "undo did not bring the keys back");
+}
+
+// Where `dot` stands in `pose`.
+fn Vec3 stale_world(RigView* view, rig::Pose pose, uint dot)
+{
+	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!!;
+	defer alloc::free(mem, palette);
+	foreach (usz j, id : view.dot_ids) if (id == dot) return view.skeleton.joints[j].transform(palette[j]);
+	return {};
+}
+
+// Where the open draft shows `dot`: what the person saw when they let go.
+fn Vec3 stale_drafted(Fixture* f, uint dot)
+{
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = f.app.draft_pose(mem, &view);
+	defer pose.free(mem);
+	return stale_world(&view, pose, dot);
+}
+
+// Where the clip keys `dot` at `time`, before the limits hold it: a test pose set
+// by hand may pass a limit, which a dragged one never does.
+fn Vec3 stale_played(Fixture* f, uint dot, float time)
+{
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = f.app.clip(f.app.editing).pose(mem, &view.skeleton, f.app.names_for(&view, f.app.editing), time, false);
+	defer pose.free(mem);
+	return stale_world(&view, pose, dot);
+}
+
+// The local turn the clip keys `dot` to at `time`, before the limits hold it.
+fn Quaternionf stale_turn(Fixture* f, uint dot, float time)
+{
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	rig::Pose pose = f.app.clip(f.app.editing).pose(mem, &view.skeleton, f.app.names_for(&view, f.app.editing), time, false);
+	defer pose.free(mem);
+	foreach (usz j, id : view.dot_ids) if (id == dot) return pose.rotations[j];
+	return quaternion::IDENTITY;
+}
+
+// A clip keyed before the rig's joints moved: its keys record the old bones.
+fn AnimRef stale_workspace(Fixture* f)
+{
+	AnimRef clip = lyr_workspace(f);
+	f.app.stop_animation();
+	foreach (name : (String[]){ "neck", "shoulder_L" })
+	{
+		uint dot = named_dot(f, name);
+		Vec3 from = f.app.doc.find(dot).position;
+		test::@check(f.app.move_recorded(dot, from, from + (Vec3){ 0.12f, -0.1f, 0.05f }), "%s did not move", name);
+	}
+	f.app.undo_stack.commit();
+	return clip;
+}
+
+// Keying a joint whose clip records an old bone plays it as posed, and the arm
+// below it stays where it was shown.
+fn void layer_ui_a_key_on_a_stale_rig_plays_as_posed() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	stale_workspace(&f);
+	uint clavicle = named_dot(&f, "clavicle_L");
+	uint wrist = named_dot(&f, "wrist_L");
+	RigView sized = f.app.open_rig(mem)!!;
+	float height = sized.skeleton.height();
+	sized.free(mem);
+
+	foreach (usz n, time : (float[]){ 1.0f, 1.5f })
+	{
+		f.app.edit_time = time;
+		test::@check(f.app.pose_from_clip(f.app.editing, time), "could not open a pose draft");
+		Quaternionf posed = f.app.working_pose(clavicle).rotation.mul(
+			quaternion::from_axis_angle{float}((Vec3){ 0, 0, 1 }, n == 0 ? 0.1f : -0.1f)).normalize();
+		test::@check(f.app.set_working_pose(clavicle, posed, {}), "could not pose the clavicle");
+		Vec3 wrist_shown = stale_drafted(&f, wrist);
+		f.app.pose_edit_pending = true;
+		test::@check(f.app.key_pose_edit(CHANGED), "keying the clavicle failed");
+		test::@check(lyr_angle_between(stale_turn(&f, clavicle, time), posed) < 1.0e-3f,
+			"at %.1f s the clavicle plays %.4f rad off its pose", time, lyr_angle_between(stale_turn(&f, clavicle, time), posed));
+		float moved = (stale_played(&f, wrist, time) - wrist_shown).length();
+		test::@check(moved < 1.0e-4f * height, "at %.1f s the hand plays %.5f from where it was shown", time, moved);
+	}
+}
+
+// The same through a keyed layer: a joint the clip carries from an old bone lands where it was posed.
+fn void layer_ui_a_layer_key_on_a_stale_rig_plays_as_posed() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	stale_workspace(&f);
+	lyr_add(&f, crig::ANIM_LAYER_KEYED_ID);
+	uint clavicle = named_dot(&f, "clavicle_L");
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not open a pose draft");
+	Quaternionf posed = f.app.working_pose(clavicle).rotation.mul(
+		quaternion::from_axis_angle{float}((Vec3){ 0, 0, 1 }, 0.3f)).normalize();
+	test::@check(f.app.set_working_pose(clavicle, posed, {}), "could not pose the clavicle");
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(CHANGED), "keying into the layer failed");
+	test::@check(f.app.clip(f.app.editing).layers[0].keyframes.len == 2, "the layer did not take the key");
+	test::@check(lyr_angle_between(stale_turn(&f, clavicle, 1.0f), posed) < 1.0e-3f,
+		"the clavicle plays %.4f rad off its pose", lyr_angle_between(stale_turn(&f, clavicle, 1.0f), posed));
 }

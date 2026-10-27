@@ -47,6 +47,8 @@ enum CardGlyph
 	INVERT_GLYPH,
 	FIND_STRAYS_GLYPH,
 	FIX_STRAYS_GLYPH,
+	FIND_TEARS_GLYPH,
+	FIX_TEARS_GLYPH,
 	LASSO_GLYPH,
 	// The Path toolbar's.
 	PEN_GLYPH,
@@ -197,6 +199,24 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			float tick = arm * 0.55f;
 			painter.line(spark + (Vec2){ -tick, -tick }, spark + (Vec2){ tick, tick }, 1.0f, ink);
 			painter.line(spark + (Vec2){ -tick, tick }, spark + (Vec2){ tick, -tick }, 1.0f, ink);
+		case FIND_TEARS_GLYPH:
+			// A seam split open: two edges parting along a zigzag.
+			float step = r * 0.5f;
+			for (int i = 0; i < 4; i++)
+			{
+				float y0 = -r + step * (float)i;
+				float x0 = (i % 2 == 0) ? -r * 0.15f : r * 0.15f;
+				painter.line(c + (Vec2){ x0 - r * 0.35f, y0 }, c + (Vec2){ -x0 - r * 0.35f, y0 + step }, w, ink);
+				painter.line(c + (Vec2){ x0 + r * 0.35f, y0 }, c + (Vec2){ -x0 + r * 0.35f, y0 + step }, w, ink);
+			}
+		case FIX_TEARS_GLYPH:
+			// The seam stitched shut: one line with stitches across it.
+			painter.line(c + (Vec2){ 0, -r }, c + (Vec2){ 0, r }, w, ink);
+			for (int i = -1; i <= 1; i++)
+			{
+				float y = (float)i * r * 0.6f;
+				painter.line(c + (Vec2){ -r * 0.5f, y - r * 0.15f }, c + (Vec2){ r * 0.5f, y + r * 0.15f }, w, ink);
+			}
 		case LASSO_GLYPH:
 			// A loop drawn round something, its rope trailing off below.
 			Vec2 loop = c + (Vec2){ 0, -r * 0.2f };

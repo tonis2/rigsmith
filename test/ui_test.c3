@@ -17208,3 +17208,66 @@ fn void the_card_finds_and_fixes_strays() @test
 	test::@check(said.starts_with("No strays"), "after the fix the card reads \"%s\"", said);
 	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card still offers a fix");
 }
+
+<*
+ The Weights card finds tears and fixes them: a clean cube has none and no fix
+ is offered; with one copy of a corner given to the chest past the guard, the
+ card counts the tear, Fix tears closes it, and the card says none are left.
+
+ Re-introduce: in `AppState.fix_found_tears`, skip the survey after the fix.
+*>
+fn void the_card_finds_and_fixes_tears() @test
+{
+	// The cube with corner 0 stored twice: its first triangle uses the copy, 8.
+	rig::TriMesh shared = cube();
+	Vec3[] positions = alloc::new_array(mem, Vec3, shared.positions.len + 1);
+	defer alloc::free(mem, positions);
+	positions[:shared.positions.len] = shared.positions[..];
+	positions[shared.positions.len] = shared.positions[0];
+	uint[] indices = alloc::new_array(mem, uint, shared.indices.len);
+	defer alloc::free(mem, indices);
+	indices[..] = shared.indices[..];
+	for (usz t = 0; t < indices.len; t += 3)
+	{
+		if (indices[t] != 0 && indices[t + 1] != 0 && indices[t + 2] != 0) continue;
+		for (usz k = t; k < t + 3; k++) if (indices[k] == 0) indices[k] = (uint)shared.positions.len;
+		break;
+	}
+
+	Fixture harness;
+	if (catch fault error = harness.open({ .positions = positions, .indices = indices }))
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("the Weights card finds tears and fixes them");
+	fixture.reset();
+	uint chest = fixture.two_dots();
+	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card offered a fix before looking");
+
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_TEARS_ID)!!);
+	String said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No tears"), "a clean cube reads \"%s\"", said);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card offered to fix nothing");
+
+	// One copy given to the chest and the other taken off it, past the guard.
+	crig::RigView view = fixture.app.open_rig(mem)!!;
+	float[] column = fixture.app.column_of(mem, &view, chest);
+	view.free(mem);
+	defer alloc::free(mem, column);
+	column[0] = 1.0f;
+	column[shared.positions.len] = 0.0f;
+	fixture.app.store_column(chest, column);
+
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_TEARS_ID)!!);
+	said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("1 tear"), "the split corner reads \"%s\"", said);
+
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_TEARS_ID)!!);
+	said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No tears"), "after the fix the card reads \"%s\"", said);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card still offers a fix");
+}
