@@ -2550,7 +2550,7 @@ fn void Viewport.drag_pose(&self, Element* elem, AppState* app, Vec2 pixel)
 		elem.request_paint();
 		return;
 	}
-	// A hand turns with its forearm and a foot stays flat; Alt swaps the two.
+	// A hand and a foot keep their world angle, an elbow rides its parent; Alt swaps them.
 	app.drag.flip_angle = elem.ui.input.alt_down();
 	app.pose_toward(target - app.drag.grab);
 	elem.request_paint();

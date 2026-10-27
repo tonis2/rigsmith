@@ -830,7 +830,10 @@ fn bool Timeline.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				{
 					self.on_mark_range(elem.ui, self.marks[(usz)(hit - 1)]);
 				}
-				else if (self.on_mark) self.on_mark(elem.ui, self.marks[(usz)(hit - 1)], shift);
+				else if (self.on_mark)
+				{
+					self.on_mark(elem.ui, self.marks[(usz)(hit - 1)], shift);
+				}
 				return true;
 			}
 

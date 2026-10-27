@@ -220,9 +220,11 @@ fn AnimTemplate striding_take()
 }
 
 <*
- Make loop, from Clip tools, asks before it replaces the clip; declining leaves
- the take, and accepting turns it into its cycle under its own name, with no
- second clip, as one undo step.
+ Make loop, from Clip tools, asks before it replaces the clip, with two ways
+ ahead as buttons of their own. Declining leaves the take. Whole take keeps all
+ of it but the crossfade and loops it; One cycle turns it into its stride. Either
+ closes the question, keeps the clip's name with no second clip, and is one undo
+ step.
 
  Re-introduce: land the cut as a clip of its own (`in_place` false) and the take
  is still four seconds long, beside a "Take loop".
@@ -239,23 +241,42 @@ fn void make_loop_asks_then_replaces_the_clip() @test
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
 	Element* panel = f.ui.find_id(crig::ANIM_MAKE_LOOP_CONFIRM_ID)!!;
-	ConfirmDialog* ask = panel.widget_as(ConfirmDialog);
+	ChoiceDialog* ask = panel.widget_as(ChoiceDialog);
 	sz bound = f.app.doc.animations.len();
 	sz history = f.app.undo_stack.cursor;
 
 	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MAKE_LOOP_ID);
 	test::@check(ask.asking(panel), "Make loop did not ask first");
 	test::@check(ask.message.str_view().contains("Take"), "the question does not name the clip");
+	test::@check(@ok(f.ui.find_id(crig::ANIM_MAKE_LOOP_CYCLE_ID)) && @ok(f.ui.find_id(crig::ANIM_MAKE_LOOP_WHOLE_ID)),
+		"Make loop does not offer both Whole take and One cycle");
 	f.close_menu();
 	test::@check(!ask.asking(panel), "Escape did not decline");
 	AnimTemplate* take = f.app.clip(f.app.editing);
 	test::@check(take.duration == 4.0f && !take.loop, "declining changed the take");
 	test::eq(f.app.undo_stack.cursor, history);
 
+	// Whole take: all of it but the crossfade, looping.
 	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MAKE_LOOP_ID);
-	ask.withdraw(panel);
-	crig::anim_make_loop_confirmed(f.ui);
+	f.click(centre_of(f.ui.find_id(crig::ANIM_MAKE_LOOP_WHOLE_ID)!!));
 	f.ui.flush();
+	test::@check(!ask.asking(panel), "Whole take left the question up");
+	AnimTemplate* whole = f.app.clip(f.app.editing);
+	test::eq(whole.name, "Take");
+	float kept = 4.0f - crig::whole_loop_crossfade(4.0f);
+	test::@check(whole.loop && math::abs(whole.duration - kept) < 0.05f, "the whole take is %.3f s, not %.3f", whole.duration, kept);
+	test::eq(f.app.doc.animations.len(), bound);
+	test::eq(f.app.undo_stack.cursor, history + 1);
+	test::@check(f.app.undo(), "the whole-take loop did not undo");
+	take = f.app.clip(f.app.clip_named_in_authored("Take"));
+	test::@check(take.duration == 4.0f && !take.loop, "undo did not bring the take back");
+
+	// One cycle: the stride.
+	f.app.editing = f.app.clip_named_in_authored("Take");
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MAKE_LOOP_ID);
+	f.click(centre_of(f.ui.find_id(crig::ANIM_MAKE_LOOP_CYCLE_ID)!!));
+	f.ui.flush();
+	test::@check(!ask.asking(panel), "One cycle left the question up");
 	AnimTemplate* cycle = f.app.clip(f.app.editing);
 	test::eq(cycle.name, "Take");
 	test::@check(cycle.loop && math::abs(cycle.duration - 1.1f) < 0.05f, "the take is not its 1.1 s cycle: %.3f s", cycle.duration);

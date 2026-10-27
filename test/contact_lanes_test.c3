@@ -186,8 +186,9 @@ fn Vec2 contact_point(Element* elem, Timeline* sheet, usz lane, float at)
 	return elem.absolute + (Vec2){ sheet.x_of(elem, at), sheet.lane_y(lane) };
 }
 
-// The sheet: + Contact adds a lane under Poses for the selected foot; its bar's
-// end and body drag, an empty lane drag adds, right-click deletes. One undo each.
+// The sheet: + Contact adds a lane under Poses for the selected foot over its
+// step; its bar's end and body drag, an empty lane drag adds, right-click
+// deletes. One undo each.
 fn void contact_lanes_show_and_edit_on_the_sheet() @test
 {
 	Fixture f;
@@ -216,8 +217,13 @@ fn void contact_lanes_show_and_edit_on_the_sheet() @test
 	test::eq(sheet.lanes.len, (sz)2);
 	test::@check(sheet.lanes[1].contact && sheet.lanes[1].joint == foot, "the contact lane is not under Poses");
 	test::eq(sheet.bars.len, (sz)1);
-	test::@check(near_phase(contact_ground(&f).feet[0].down, 0.0f) && near_phase(contact_ground(&f).feet[0].up, 0.25f),
-		"+ Contact did not plant a quarter from the playhead");
+	// The swaying clip never lifts a foot, so its step is the whole cycle.
+	test::@check(near_phase(contact_ground(&f).feet[0].down, 0.0f) && near_phase(contact_ground(&f).feet[0].up, 1.0f),
+		"+ Contact did not plant the foot's step, the whole cycle");
+	test::@check(f.app.set_contact_window(f.app.editing, 0, 0.0f, 0.25f), "the window did not shrink to a quarter");
+	f.feed({ 0, 0 });
+	f.feed({ 0, 0 });
+	sheet = contact_sheet(&f, &elem);
 
 	// Drag the bar's end from 0.25 s to 0.4 s.
 	history = f.app.undo_stack.cursor;

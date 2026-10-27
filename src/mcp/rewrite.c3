@@ -63,7 +63,8 @@ const String MAKE_LOOP_SCHEMA = `{"type":"object","properties":{
 	"name":{"type":"string","description":"The new clip's name. Default: the take's name with \" loop\"."},
 	"period":{"type":"array","items":{"type":"number"},"description":"[shortest, longest] seconds one cycle may last. A walk's cycle is two steps, about 0.9 to 1.3 s; a run's 0.6 to 0.9 s. Default: a fifth of the take to half of it."},
 	"from":{"type":"array","items":{"type":"number"},"description":"[earliest, latest] seconds the cycle may start in. Default: leave out the first and last tenth of the take, where a generated motion starts and stops."},
-	"crossfade":{"type":"number","description":"Seconds before the seam blended into the motion that led into the start, so the seam matches in speed as well as pose. Default a quarter of the period."}
+	"crossfade":{"type":"number","description":"Seconds before the seam blended into the motion that led into the start, so the seam matches in speed as well as pose. Default a quarter of the period; with whole, a tenth of the take from 0.15 to 0.5 s."},
+	"whole":{"type":"boolean","description":"Loop the whole take instead of cutting a cycle out of it: its end blends into its start over crossfade, and only the first crossfade seconds are folded into the seam. For an idle, or any take that should keep its length. period and from are not used."}
 }}`;
 
 const String REMOVE_KEYS_SCHEMA = `{"type":"object","properties":{
@@ -471,7 +472,7 @@ fn String? tool_smooth_clip(Object* args, void* user_data, DString* detail) @pri
 fn String? tool_make_loop(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
-	if (args != null && !takes_object(args, detail, `make_loop takes {"clip": name, "name": new name, "period": [shortest, longest]}`)) return REWRITE_REFUSED~;
+	if (args != null && !takes_object(args, detail, `make_loop takes {"clip": name, "name": new name, "period": [shortest, longest]} or {"clip": name, "whole": true}`)) return REWRITE_REFUSED~;
 	AnimRef ref = rewrite_target(app, args, detail)!;
 	AnimTemplate* take = app.clip(ref);
 	float length = take.duration;
@@ -483,23 +484,25 @@ fn String? tool_make_loop(Object* args, void* user_data, DString* detail) @priva
 	float from_min;
 	float from_max;
 	cycle_defaults(length, &period_min, &period_max, &from_min, &from_max);
+	bool whole = args.get_bool("whole") ?? false;
 	if (member(args, "period") != null && !seconds_pair(args, "period", &period_min, &period_max, detail)) return REWRITE_REFUSED~;
 	if (member(args, "from") != null && !seconds_pair(args, "from", &from_min, &from_max, detail)) return REWRITE_REFUSED~;
-	float crossfade = (float)(args.get_float("crossfade") ?? (double)(period_min * 0.25f));
+	float crossfade = (float)(args.get_float("crossfade") ?? (double)(whole ? whole_loop_crossfade(length) : period_min * 0.25f));
 	if (!(crossfade >= 0.0f))
 	{
 		detail.append_string(`"crossfade" must be 0 or more seconds.`);
 		return REWRITE_REFUSED~;
 	}
-	if (from_min + period_min > length)
+	if (!whole && from_min + period_min > length)
 	{
 		detail.appendf(`a cycle of at least %.4g s starting at %.4g s does not fit in a take %.4g s long.`, period_min, from_min, length);
 		return REWRITE_REFUSED~;
 	}
 
 	CycleCut cut;
-	AnimRef landed = app.cut_cycle(ref, period_min, period_max, from_min, from_max, crossfade,
-		args.get_string("name") ?? "", &cut, detail);
+	String called = args.get_string("name") ?? "";
+	AnimRef landed = whole ? app.loop_whole_take(ref, crossfade, called, &cut, detail)
+		: app.cut_cycle(ref, period_min, period_max, from_min, from_max, crossfade, called, &cut, detail);
 	if (!landed.valid()) return REWRITE_REFUSED~;
 
 	String answer = rewrite_answer(app, landed, "looped", detail)!;

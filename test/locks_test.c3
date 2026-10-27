@@ -462,13 +462,14 @@ fn void an_unreachable_anchor_reports_the_gap() @test
 	crig::AppState* app = &fixture.app;
 
 	app.lock_position(fixture.ankle_l);
-	// Held a leg and a half below the floor: nothing the leg does can reach it.
-	// The pin is the clip's while a clip is edited, so it is moved there and the
-	// gesture pins follow (`sync_clip_pins`).
+	// Held a leg and a half out to the side: nothing the leg does can reach it.
+	// (Below the floor the shown body would sink onto it, as it does in playback:
+	// `pin_lower_hips`.) The pin is the clip's while a clip is edited, so it is
+	// moved there and the gesture pins follow (`sync_clip_pins`).
 	crig::RigView view = app.open_rig(mem)!!;
 	float height = view.skeleton.height();
 	view.free(mem);
-	app.clip(app.editing).pins[0].at.y -= 1.5f / height;
+	app.clip(app.editing).pins[0].at.x += 1.5f / height;
 	app.sync_clip_pins();
 
 	app.select(fixture.hips);

@@ -63,7 +63,7 @@ const String APPLY_CLIP_SCHEMA = `{"type":"object","properties":{
 	"duration":{"type":"number","description":"Seconds. Defaults to the last keyframe's time; must not be shorter than it."},
 	"loop":{"type":"boolean","description":"Whether playback wraps. Default false."},
 	"blend":{"type":"string","enum":["linear","smooth"],"description":"How the clip moves between keyframes. linear (default) goes straight between them; smooth fits a cubic through them and, on a looping clip, through the loop point too — so a cycle can be written as the eight poses it passes through rather than as a resampling of them."},
-	"ground":{"type":"object","description":"Which joints touch the floor and when. Rigsmith then solves the root's height against the rig actually loaded, so the same clip plants correctly on figures with different leg lengths. While any contact is down the solve sets the root's height outright: an authored root Y, keyed or from a layer, is cancelled then, so stance height comes from how the legs bend. It adds on top only while every foot is off the floor, which is where a flight arc goes. A joint may appear once for each window it is down. Left out, a clip of this name already authored keeps its own spec; null clears it.","properties":{
+	"ground":{"type":"object","description":"Which joints touch the floor and when. Rigsmith then solves the root's height against the rig actually loaded, so the same clip plants correctly on figures with different leg lengths. While any contact is down the solve sets the root's height outright: an authored root Y, keyed or from a layer, is cancelled then, so stance height comes from how the legs bend. It adds on top only while every foot is off the floor, which is where a flight arc goes. Name a foot by its ankle and the whole foot counts; every foot of the rig is kept out of the floor, named or not. A joint may appear once for each window it is down. Left out, a clip of this name already authored keeps its own spec; null clears it.","properties":{
 		"feet":{"type":"array","items":{"type":"object","properties":{
 			"joint":{"type":"string","description":"A dot name from get_skeleton."},
 			"down":{"type":"number","description":"Cycle phase the foot plants, 0 to 1 — a fraction of the duration, not seconds."},
@@ -697,7 +697,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "make_loop",
-		.description = "Cut a seamless cycle out of a take — a generated walk, run or climb — as a new looping clip: it finds the start and period whose two poses match best (in pose and in speed), crossfades the last stretch into what led into the start so the seam flows, closes it, takes the root's sideways drift off and thins the keys. Give period as the range a cycle may last (a walk's two steps are about 0.9 to 1.3 s). Answers with where it cut, how far apart the seam's poses were, and measure_clip's numbers for the cycle.",
+		.description = "Cut a seamless cycle out of a take — a generated walk, run or climb — as a new looping clip: it finds the start and period whose two poses match best (in pose and in speed), crossfades the last stretch into what led into the start so the seam flows, closes it, takes the root's sideways drift off and thins the keys. Give period as the range a cycle may last (a walk's two steps are about 0.9 to 1.3 s). With whole it keeps the take instead — an idle, or anything that should keep its length — blending its end into its start. Answers with where it cut, how far apart the seam's poses were, and measure_clip's numbers for the cycle.",
 		.input_schema = MAKE_LOOP_SCHEMA,
 		.handler = &tool_make_loop,
 		.user_data = app,
@@ -708,6 +708,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "Hold feet on the floor while a clip plays: each window a foot is down becomes a live clip pin that bends the leg to keep the foot in place — on the floor, flat, and still (or sliding back at travel, the treadmill speed of an in-place cycle). The pins stay editable (get_pins, set_pins, the pin lanes on the sheet) and bake into keys only on export, so nothing is lost if they are wrong; clear takes them off. windows \"auto\" (the default) reads them from the clip's ground spec, or, for a foot it does not name, off the motion itself — every time the foot comes down, so a jump's takeoff and landing are two windows. One undo step. Answers with each pin written and the worst distance its foot strayed from it inside the window (a fraction of rig height): a large one means the leg cannot reach — a limit, or a window that runs into the swing.",
 		.input_schema = PIN_FEET_SCHEMA,
 		.handler = &tool_pin_feet,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "find_contacts",
+		.description = "Read when each foot is down off the clip's motion and write it as the clip's ground spec — Clip tools › Find contacts. Every foot of the rig gets a window for each step it takes (a foot is down while it is within a small height of the lowest it reaches, measured as the clip plays before the floor solve moves the body, so a generated clip whose feet sink through the floor still shows its steps), named by the foot's top joint (the ankle) so the whole foot counts. The windows replace the ones the feet had; off_floor contacts and the floor height stay. One undo step. Answers with the ground spec written and measure_clip's numbers for the clip as it now plays.",
+		.input_schema = FIND_CONTACTS_SCHEMA,
+		.handler = &tool_find_contacts,
 		.user_data = app,
 		.hidden = true,
 	});

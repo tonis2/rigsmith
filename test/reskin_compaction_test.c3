@@ -440,6 +440,106 @@ fn void delete_model_animation_removes_it_from_the_file() @test
 	}
 }
 
+// The Current file animations the browser shows under `name`.
+fn usz shown_current(crig::AppState* app, String name)
+{
+	crig::AssetFilter current = { .kind = crig::AssetKind.ANIMATION, .any_plan = true, .library = -1, .current_file = true };
+	app.set_asset_filter(current);
+	app.refresh_visible_assets();
+	usz shown = 0;
+	foreach (which : app.visible_assets) if (app.assets.entries[which].name == name) shown++;
+	return shown;
+}
+
+<*
+ A clip of the model's file that was edited is an authored clip the character is
+ bound to, and the file holds the copy a save wrote. Renaming it from the
+ Current file group renames the authored clip with its binding, as the
+ Animations pane would. Renaming only the file left the pane on the old name, and
+ the browser then listed the authored clip beside the renamed one as a clone.
+*>
+fn void renaming_an_edited_model_clip_in_the_browser_renames_the_clip_it_plays() @test
+{
+	String source = "assets/animations/humanoid.glb";
+	String path = "build/rename-model-anim.glb";
+	char[] original = file::load(mem, source)!!;
+	defer alloc::free(mem, original);
+	file::save(path, original)!!;
+	defer (void)file::delete(path);
+	defer (void)file::delete("build/rename-model-anim.rigsmith.json");
+
+	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, path);
+	defer app.free();
+	app.saves_in_place = true;
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.reindex_current_model();
+
+	String victim = first_current_animation(&app).copy(mem);
+	defer victim.free(mem);
+	sz bound = app.doc.bound_index(path, victim);
+	test::@check(bound >= 0, "the model's clip should be auto-bound");
+	crig::AnimRef ref = app.resolve_bound(bound);
+	test::@check(ref.valid(), "the bound clip did not resolve");
+	// An edit forks it into the authored pack, which the character then holds.
+	app.editing = app.land_clip(ref, crig::clip_copy(mem, *app.clip(ref)));
+	test::@check(app.doc.bound_index("", victim) >= 0, "the edit did not bind the authored copy");
+	test::eq(shown_current(&app, victim), (usz)1);
+
+	sz which = current_animation_index(&app, victim);
+	test::@check(which >= 0, "the Current file group should list the clip");
+	test::@check(app.retag_asset((usz)which, "Renamed", "", ""), "the rename was refused");
+
+	test::@check(app.doc.bound_index("", "Renamed") >= 0, "the character does not hold the renamed clip");
+	test::eq(app.doc.bound_index("", victim), (sz)-1);
+	test::@check(app.editing.valid() && app.clip(app.editing).name == "Renamed",
+		"the clip open in the timeline let go of the rename");
+	test::eq(shown_current(&app, "Renamed"), (usz)1);
+	test::eq(shown_current(&app, victim), (usz)0);
+
+	// One undo step brings the old name back, listed once.
+	test::@check(app.undo(), "the rename did not undo");
+	app.refresh_ui();
+	test::@check(app.doc.bound_index("", victim) >= 0, "the undo did not bind the old name back");
+	test::eq(shown_current(&app, victim), (usz)1);
+	test::eq(shown_current(&app, "Renamed"), (usz)0);
+}
+
+<*
+ A clip only in the project, not saved into the model yet, can be renamed from
+ the browser too: it has a name if not a file.
+*>
+fn void renaming_an_authored_clip_in_the_browser_renames_its_binding() @test
+{
+	String source = "assets/animations/humanoid.glb";
+	String path = "build/rename-authored-anim.glb";
+	char[] original = file::load(mem, source)!!;
+	defer alloc::free(mem, original);
+	file::save(path, original)!!;
+	defer (void)file::delete(path);
+	defer (void)file::delete("build/rename-authored-anim.rigsmith.json");
+
+	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, path);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.reindex_current_model();
+
+	app.editing = app.new_clip("Fresh", 1.0f, from_rest: true, loop: false);
+	test::@check(app.editing.valid(), "the new clip did not land");
+	app.refresh_ui();
+	sz which = current_animation_index(&app, "Fresh");
+	test::@check(which >= 0 && app.assets.entries[which].authored(), "the browser does not list the new clip");
+
+	test::@check(app.retag_asset((usz)which, "Fresher", "", ""), "the rename was refused");
+	test::@check(app.doc.bound_index("", "Fresher") >= 0, "the binding did not follow the rename");
+	test::eq(app.doc.bound_index("", "Fresh"), (sz)-1);
+	test::eq(shown_current(&app, "Fresher"), (usz)1);
+	test::eq(shown_current(&app, "Fresh"), (usz)0);
+}
+
 // The number of animations a glb on disk carries.
 fn sz file_count(String path)
 {

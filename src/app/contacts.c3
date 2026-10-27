@@ -15,11 +15,15 @@ import std::math::matrix;
 // The most feet `derived_contacts` reads off one clip.
 const usz CONTACT_FEET_MOST = 8;
 
+// Even instants a clip's feet are read at to find their steps.
+const usz CONTACT_SAMPLES = 48;
+// A foot is down within this fraction of the rig's height of the lowest foot.
+const float CONTACT_DOWN_BAND = 0.02f;
+// A foot this fraction of the rig's height over the lowest it gets is up,
+// whatever the other feet do: both off the floor in a run's flight.
+const float CONTACT_LIFT_MOST = 0.05f;
 // A new contact covers this much of the cycle.
 const float CONTACT_NEW_SPAN = 0.25f;
-// A joint resting higher than this fraction of the rig's height over the
-// lowest joint is not on the floor, like a hand.
-const float CONTACT_FLOOR_BAND = 0.12f;
 
 fn float phase_wrapped(float phase) => phase - math::floor(phase);
 
@@ -170,7 +174,7 @@ fn bool AppState.joint_rests_on_floor(&self, AnimRef ref, String joint)
 	foreach (usz i, name : names)
 	{
 		if (name != joint || i >= view.skeleton.len()) continue;
-		return view.skeleton.joints[i].y <= floor + CONTACT_FLOOR_BAND * height;
+		return view.skeleton.joints[i].y <= floor + GROUND_FOOT_BAND * height;
 	}
 	return true;
 }
@@ -262,8 +266,11 @@ fn String AppState.selected_clip_joint(&self, AnimRef ref)
 }
 
 <*
- + Contact: a window for the selected joint from the playhead, a quarter of
- the cycle long or up to its next window. One undo step.
+ + Contact: a window for the selected joint's foot over the step the playhead is
+ in, read off the motion (`contact_runs`). A joint of a foot names the foot's top
+ (the ankle over a toe), so the floor solve reads the whole foot. With no step
+ under the playhead the window runs from it, a quarter of the cycle long or up to
+ the joint's next window. One undo step.
 *>
 fn bool AppState.add_contact_for_selected(&self, AnimRef ref)
 {
@@ -275,24 +282,211 @@ fn bool AppState.add_contact_for_selected(&self, AnimRef ref)
 		self.@notice("Select the joint that touches the ground (a foot, or a hand) first.");
 		return false;
 	}
-	float down = clip.duration > 0.0f ? math::clamp(self.edit_time / clip.duration, 0.0f, 1.0f) : 0.0f;
-	if (!clip.loop && down >= 1.0f) down = 0.0f;
+	float at = clip.duration > 0.0f ? math::clamp(self.edit_time / clip.duration, 0.0f, 1.0f) : 0.0f;
+	if (!clip.loop && at >= 1.0f) at = 0.0f;
+	AnimFoot step;
+	bool matched = self.contact_step_at(ref, &joint, at, &step);
+	float down = at;
 	float span = CONTACT_NEW_SPAN;
 	if (!clip.loop) span = math::min(span, 1.0f - down);
+	if (matched)
+	{
+		down = step.down;
+		span = step.span();
+	}
 	foreach (foot : clip.ground.feet)
 	{
 		if (foot.joint != joint) continue;
-		if (foot.planted(down))
+		if (foot.planted(at))
 		{
 			self.@notice("%s is already in contact here.", joint);
 			return false;
 		}
+		// A step that runs into a window this foot already has starts at the
+		// playhead instead, and still ends where the step does.
+		if (matched && cyclic_overlap(down, span, foot.down, foot.span()))
+		{
+			span = clip.loop ? phase_wrapped(step.up - at) : step.up - at;
+			if (step.up >= 1.0f && !clip.loop) span = 1.0f - at;
+			down = at;
+		}
+	}
+	foreach (foot : clip.ground.feet)
+	{
+		if (foot.joint != joint) continue;
 		float ahead = clip.loop ? phase_wrapped(foot.down - down) : foot.down - down;
 		if (ahead > 0.0f) span = math::min(span, ahead);
 	}
 	if (!self.add_contact_window(ref, joint, down, span)) return false;
-	self.@notice("%s is planted from here · drag the bar's ends on the timeline to adjust", joint);
+	if (matched)
+	{
+		self.@notice("%s is planted for its step here · drag the bar's ends on the timeline to adjust", joint);
+	}
+	else
+	{
+		self.@notice("%s is planted from here · drag the bar's ends on the timeline to adjust", joint);
+	}
 	return true;
+}
+
+<*
+ The step a foot is taking at `phase`, for the joint `*joint` names: when that
+ joint rests on the floor it is renamed to its foot's top, and `step` is the run
+ of `contact_runs` holding the phase. False, with the name as it was, for a joint
+ off the floor or a phase in no step.
+*>
+fn bool AppState.contact_step_at(&self, AnimRef ref, String* joint, float phase, AnimFoot* step)
+{
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	String[] names = self.names_for(&view, ref);
+	GroundFloor level = floor_of_solve(&view.skeleton, {}, 0.0f, false);
+	sz found = -1;
+	foreach (usz i, name : names) if (i < view.skeleton.len() && name == *joint) { found = (sz)i; break; }
+	if (found < 0 || !level.rests_low(&view.skeleton, (usz)found)) return false;
+	usz top = level.foot_of(&view.skeleton, (usz)found);
+	if (names[top].len == 0) return false;
+	*joint = names[top].tcopy();
+
+	String[1] asked = { *joint };
+	AnimGround runs = self.contact_runs(ref, &view, asked[..]);
+	defer runs.free(mem);
+	foreach (run : runs.feet)
+	{
+		if (!run.planted(phase)) continue;
+		*step = { .down = run.down, .up = run.up };
+		return true;
+	}
+	return false;
+}
+
+<*
+ Find contacts: every foot of the rig gets a window for each step it takes, read
+ off the motion (`contact_runs`), in place of the windows the clip's feet had.
+ Contacts off the floor (a hand on a wall) and the floor height stay. One undo
+ step.
+*>
+fn bool AppState.find_contacts(&self, AnimRef ref)
+{
+	AnimTemplate* clip = self.contact_clip(ref);
+	if (!clip) return false;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	String[] names = self.names_for(&view, ref);
+	GroundFloor level = floor_of_solve(&view.skeleton, {}, 0.0f, false);
+	List{String} tops;
+	tops.init(tmem);
+	foreach (usz j, name : names)
+	{
+		if (j < view.skeleton.len() && name.len > 0 && level.foot_top(&view.skeleton, j)) tops.push(name);
+	}
+	AnimGround runs = self.contact_runs(ref, &view, tops.array_view());
+	if (runs.feet.len == 0)
+	{
+		runs.free(mem);
+		self.@notice("No steps found: the feet never come to rest near the lowest they reach.");
+		return false;
+	}
+	usz kept = 0;
+	foreach (foot : clip.ground.feet) if (foot.off_floor) kept++;
+	AnimFoot[] feet = alloc::new_array(mem, AnimFoot, (sz)(runs.feet.len + kept));
+	usz at = 0;
+	foreach (foot : runs.feet) feet[at++] = foot;
+	foreach (foot : clip.ground.feet)
+	{
+		if (!foot.off_floor) continue;
+		feet[at] = foot;
+		feet[at++].joint = foot.joint.copy(mem);
+	}
+	usz lanes = contact_lane_count({ .feet = runs.feet });
+	usz steps = runs.feet.len;
+	// The runs' names moved into `feet`; only the array is left to free.
+	alloc::free(mem, runs.feet);
+	if (!self.land_contacts(ref, { .feet = feet, .floor = clip.ground.floor, .floor_set = clip.ground.floor_set })) return false;
+	self.@notice("Found %d steps on %d feet · drag the bars on the timeline to adjust", steps, lanes);
+	return true;
+}
+
+<*
+ The steps a clip's feet take, one window apiece, for each joint of `joints` that
+ rests on the floor, named as given. A foot is read by its top joint, the ankle:
+ the toes under it point and roll, and a clip may push them through the floor
+ mid-swing. It is down while its ankle is within a small height of the lowest
+ ankle of the rig at that instant — so a body the keys bob up and down, which lifts
+ every foot together, does not hide a stance — and not far above the lowest it
+ ever gets, so both feet off the floor in a run's flight are up. Read off the keys
+ as they play but before the floor solve moves the body. A run shorter than three
+ samples is not a step.
+
+ @return `Owned; free with AnimGround.free. Windows of one joint are in order.`
+*>
+fn AnimGround AppState.contact_runs(&self, AnimRef ref, RigView* view, String[] joints)
+{
+	AnimTemplate* clip = self.contact_clip(ref);
+	if (!clip || clip.duration <= 0.0f || joints.len == 0) return {};
+	String[] names = self.names_for(view, ref);
+	float height = view.skeleton.height();
+	if (height <= 0.0f) return {};
+	GroundFloor level = floor_of_solve(&view.skeleton, {}, 0.0f, false);
+
+	// Every foot of the rig, so each is read against the others.
+	List{usz} tops;
+	tops.init(tmem);
+	for (usz j = 0; j < view.skeleton.len() && j < names.len; j++)
+	{
+		if (level.foot_top(&view.skeleton, j)) tops.push(j);
+	}
+	if (tops.len() == 0) return {};
+	usz feet = (usz)tops.len();
+
+	float[] lift = alloc::new_array(tmem, float, (sz)(CONTACT_SAMPLES * feet));
+	for (usz s = 0; s < CONTACT_SAMPLES; s++)
+	{
+		float t = clip.loop ? (float)s / (float)CONTACT_SAMPLES * clip.duration
+			: (float)s / (float)(CONTACT_SAMPLES - 1) * clip.duration;
+		rig::Pose pose = self.evaluated_clip_pose(mem, view, *clip, ref, t, grounded: false);
+		defer pose.free(mem);
+		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
+		if (catch built) return {};
+		defer alloc::free(mem, built);
+		foreach (usz f, j : tops)
+		{
+			lift[f * CONTACT_SAMPLES + s] = view.skeleton.joints[j].transform(built[j]).y - view.skeleton.joints[j].y;
+		}
+	}
+
+	AnimFootList out;
+	out.init(mem);
+	defer out.free();
+	bool[] down = alloc::new_array(tmem, bool, (sz)CONTACT_SAMPLES);
+	foreach (joint : joints)
+	{
+		sz f = -1;
+		foreach (usz j, name : names)
+		{
+			if (j >= view.skeleton.len() || name != joint || !level.rests_low(&view.skeleton, j)) continue;
+			usz top = level.foot_of(&view.skeleton, j);
+			foreach (usz k, t : tops) if (t == top) f = (sz)k;
+			break;
+		}
+		if (f < 0) continue;
+		float[] own = lift[(usz)f * CONTACT_SAMPLES : CONTACT_SAMPLES];
+		float low = own[0];
+		foreach (h : own) low = math::min(low, h);
+		for (usz s = 0; s < CONTACT_SAMPLES; s++)
+		{
+			float lowest = own[s];
+			for (usz k = 0; k < feet; k++) lowest = math::min(lowest, lift[k * CONTACT_SAMPLES + s]);
+			down[s] = own[s] <= lowest + CONTACT_DOWN_BAND * height && own[s] <= low + CONTACT_LIFT_MOST * height;
+		}
+		push_runs(&out, joint, down, clip.loop, true);
+	}
+	if (out.len() == 0) return {};
+	return { .feet = out.to_array(mem) };
 }
 
 <*
@@ -318,9 +512,8 @@ fn AnimGround derived_contacts(rig::Skeleton* skeleton, String[] names, AnimTemp
 	float floor = skeleton.joints[0].y;
 	foreach (joint : skeleton.joints) floor = math::min(floor, joint.y);
 
-	const float NEAR_FLOOR = 0.12f;
-	const float DOWN_BAND = 0.02f;
-	const usz SAMPLES = 48;
+	const float NEAR_FLOOR = GROUND_FOOT_BAND;
+	const usz SAMPLES = CONTACT_SAMPLES;
 
 	usz[CONTACT_FEET_MOST] feet;
 	usz count = 0;
@@ -351,46 +544,67 @@ fn AnimGround derived_contacts(rig::Skeleton* skeleton, String[] names, AnimTemp
 	defer out.free();
 	for (usz f = 0; f < count; f++)
 	{
-		float low = heights[f * SAMPLES];
-		for (usz s = 1; s < SAMPLES; s++) low = math::min(low, heights[f * SAMPLES + s]);
-		bool[SAMPLES] down;
-		usz total = 0;
-		for (usz s = 0; s < SAMPLES; s++)
-		{
-			down[s] = heights[f * SAMPLES + s] <= low + DOWN_BAND * height;
-			if (down[s]) total++;
-		}
-		if (total == SAMPLES)
-		{
-			out.push({ .joint = names[feet[f]].copy(mem), .down = 0.0f, .up = 1.0f });
-			continue;
-		}
-		float span = clip.loop ? (float)SAMPLES : (float)(SAMPLES - 1);
-		usz best = 0;
-		usz best_start = 0;
-		for (usz start = 0; start < SAMPLES; start++)
-		{
-			if (!down[start]) continue;
-			usz before = (start + SAMPLES - 1) % SAMPLES;
-			if (clip.loop ? down[before] : (start > 0 && down[start - 1])) continue;
-			usz length = 0;
-			while (length < SAMPLES && down[(start + length) % SAMPLES]
-				&& (clip.loop || start + length < SAMPLES)) length++;
-			if (length < 3) continue;
-			if (every_run)
-			{
-				out.push({ .joint = names[feet[f]].copy(mem) });
-				contact_window_of(out.get_ref(out.len() - 1), start, length, span, clip.loop);
-				continue;
-			}
-			if (length > best) { best = length; best_start = start; }
-		}
-		if (every_run || best < 3) continue;
-		out.push({ .joint = names[feet[f]].copy(mem) });
-		contact_window_of(out.get_ref(out.len() - 1), best_start, best, span, clip.loop);
+		push_down_runs(&out, names[feet[f]], heights[f * SAMPLES : SAMPLES], height, clip.loop, every_run);
 	}
 	if (out.len() == 0) return {};
 	return { .feet = out.to_array(mem) };
+}
+
+<*
+ The windows one joint spends down, read off its height at even samples: down
+ while within CONTACT_DOWN_BAND of the rig's height over the lowest it gets.
+ Pushed onto `out` under `joint`, copied, as `push_runs` does.
+*>
+fn void push_down_runs(AnimFootList* out, String joint, float[] heights, float height, bool loop, bool every_run) @local
+{
+	usz samples = heights.len;
+	if (samples == 0) return;
+	float low = heights[0];
+	foreach (h : heights) low = math::min(low, h);
+	bool[] down = alloc::new_array(tmem, bool, (sz)samples);
+	foreach (usz s, h : heights) down[s] = h <= low + CONTACT_DOWN_BAND * height;
+	push_runs(out, joint, down, loop, every_run);
+}
+
+<*
+ The runs of even samples a joint is down, as windows: every run of three
+ samples or more with `every_run`, else the longest; down the whole time is one
+ window over all of it. Pushed onto `out` under `joint`, copied.
+*>
+fn void push_runs(AnimFootList* out, String joint, bool[] down, bool loop, bool every_run) @local
+{
+	usz samples = down.len;
+	if (samples == 0) return;
+	usz total = 0;
+	foreach (d : down) if (d) total++;
+	if (total == samples)
+	{
+		out.push({ .joint = joint.copy(mem), .down = 0.0f, .up = 1.0f });
+		return;
+	}
+	float span = loop ? (float)samples : (float)(samples - 1);
+	usz best = 0;
+	usz best_start = 0;
+	for (usz start = 0; start < samples; start++)
+	{
+		if (!down[start]) continue;
+		usz before = (start + samples - 1) % samples;
+		if (loop ? down[before] : (start > 0 && down[start - 1])) continue;
+		usz length = 0;
+		while (length < samples && down[(start + length) % samples]
+			&& (loop || start + length < samples)) length++;
+		if (length < 3) continue;
+		if (every_run)
+		{
+			out.push({ .joint = joint.copy(mem) });
+			contact_window_of(out.get_ref(out.len() - 1), start, length, span, loop);
+			continue;
+		}
+		if (length > best) { best = length; best_start = start; }
+	}
+	if (every_run || best < 3) return;
+	out.push({ .joint = joint.copy(mem) });
+	contact_window_of(out.get_ref(out.len() - 1), best_start, best, span, loop);
 }
 
 // A run of `length` samples from `start` as a window in cycle phase.

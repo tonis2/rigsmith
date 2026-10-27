@@ -612,36 +612,40 @@ fn void a_pinned_hand_holds_while_the_chest_moves() @test
 }
 
 <*
- A wrist pulled up bends the arm, and the hand turns with the forearm: it keeps its
- angle to its parent, not the way it faced in the world. Alt (`flip_angle`) is the
- other answer — the hand arrives as it faced.
+ A wrist pulled up bends the arm, and the hand arrives as it faced: it keeps its
+ world angle, the way a foot stays flat. Alt (`flip_angle`) is the other answer —
+ the hand turns with the forearm. The elbow above it and the fingers below keep
+ their angle to their parent.
 *>
-fn void a_dragged_wrist_turns_the_hand_with_the_forearm() @test
+fn void a_dragged_wrist_keeps_the_hand_as_it_faced() @test
 {
 	io::printn("humanoid: pull a wrist up, with and without Alt");
-	foreach (bool keep : { false, true })
+	foreach (bool flip : { false, true })
 	{
 		Model m;
 		if (!m.open(PERSON, false)) return;
 		defer m.close();
+		test::@check(m.app.pose_keeps_angle(m.id("wrist_L")), "a wrist did not start keeping its world angle");
+		test::@check(!m.app.pose_keeps_angle(m.id("elbow_L")), "an elbow started keeping its world angle");
+		test::@check(!m.app.pose_keeps_angle(m.id("index_1_L")), "a finger started keeping its world angle");
 		Vec3 hand = m.at("wrist_L");
 		Quaternionf world = m.world("wrist_L");
 		Quaternionf local = m.to_parent("wrist_L");
 		Vec3 by = { 0, 0.12f * m.height, 0.04f * m.height };
-		m.pull("wrist_L", by, flip_angle: keep);
+		m.pull("wrist_L", by, flip_angle: flip);
 		float turned = m.turned("wrist_L", world);
 		float bent = angle_of(m.to_parent("wrist_L").mul(local.invert()));
-		io::printfn("  keep=%s hand turned %.2f deg in the world, %.2f against the forearm, missed by %.4f",
-			keep, turned, bent, m.off("wrist_L", hand + by));
+		io::printfn("  alt=%s hand turned %.2f deg in the world, %.2f against the forearm, missed by %.4f",
+			flip, turned, bent, m.off("wrist_L", hand + by));
 		test::@check(m.off("wrist_L", hand + by) < 0.005f, "the wrist missed the pointer by %.4f heights", m.off("wrist_L", hand + by));
-		if (keep)
+		if (flip)
 		{
-			test::@check(turned < 3.0f, "with Alt the hand turned %.2f degrees in the world", turned);
+			test::@check(bent < 0.5f, "with Alt the hand turned %.2f degrees against its forearm", bent);
+			test::@check(turned > 10.0f, "with Alt the hand kept its world facing (turned %.2f degrees)", turned);
 		}
 		else
 		{
-			test::@check(bent < 0.5f, "the hand turned %.2f degrees against its forearm", bent);
-			test::@check(turned > 10.0f, "the hand kept its world facing (turned %.2f degrees)", turned);
+			test::@check(turned < 3.0f, "the hand turned %.2f degrees in the world", turned);
 		}
 	}
 }
@@ -682,8 +686,8 @@ fn void a_dragged_ankle_keeps_the_foot_flat() @test
 
 <*
  The Joint card's Keep angle cell swaps a joint's own way for every drag: a hand
- set to keep arrives as it faced, a foot set the other way tilts with its shin,
- and Alt swaps each back for one drag.
+ set the other way turns with its forearm, a foot set the other way tilts with its
+ shin, and Alt swaps each back for one drag.
 *>
 fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
 {
@@ -718,12 +722,12 @@ fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
 			alt, hand_turned, hand_bent, foot_turned, foot_bent);
 		if (alt)
 		{
-			test::@check(hand_bent < 0.5f, "with the cell and Alt the hand turned %.2f against its forearm", hand_bent);
+			test::@check(hand_turned < 3.0f, "with the cell and Alt the hand turned %.2f in the world", hand_turned);
 			test::@check(foot_turned < 3.0f, "with the cell and Alt the foot turned %.2f in the world", foot_turned);
 		}
 		else
 		{
-			test::@check(hand_turned < 3.0f, "with the cell the hand turned %.2f in the world", hand_turned);
+			test::@check(hand_bent < 0.5f, "with the cell the hand turned %.2f against its forearm", hand_bent);
 			test::@check(foot_bent < 0.5f, "with the cell the foot turned %.2f against its shin", foot_bent);
 		}
 	}
@@ -996,4 +1000,3 @@ fn void four_pinned_hooves_crouch_on_the_midline() @test
 		test::@check(off < 0.005f, "%s left its pin by %.4f", n, off);
 	}
 }
-

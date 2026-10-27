@@ -72,7 +72,8 @@ fn Element* build_asset_settings_body(Ui* ui)
 	// clips not saved into it yet: a library file is not this model's to rewrite, and
 	// a model that cannot take a skin in place cannot be re-saved without the clip.
 	AssetEntry* entry = app.settings_entry();
-	// An authored clip is in no file, so there is no name, plan or tags to write.
+	// An authored clip is in no file, so it has a name to change but no plan or
+	// tags to write.
 	bool authored = entry != null && entry.authored();
 	bool can_delete = entry != null && entry.kind == AssetKind.ANIMATION
 		&& (authored || (app.source_path.len > 0 && entry.file == app.source_path && app.has_mesh()));
@@ -83,15 +84,15 @@ fn Element* build_asset_settings_body(Ui* ui)
 		{
 			@node((AssetSettingsHead) { });
 
+			@node((Label) { .text = "Name", .size = ASSET_SETTINGS_TEXT, .color = TEXT_DIM });
+			@node((TextField) {
+				.placeholder = authored ? "a name" : "unnamed",
+				.style = TEXT_FIELD_STYLE,
+				.width = ASSET_SETTINGS_W,
+			}).with_id(ASSET_SETTINGS_NAME_ID);
+
 			if (!authored)
 			{
-				@node((Label) { .text = "Name", .size = ASSET_SETTINGS_TEXT, .color = TEXT_DIM });
-				@node((TextField) {
-					.placeholder = "unnamed",
-					.style = TEXT_FIELD_STYLE,
-					.width = ASSET_SETTINGS_W,
-				}).with_id(ASSET_SETTINGS_NAME_ID);
-
 				@node((Label) {
 					.text = "Body plan — the whole file's. Blank leaves it untagged.",
 					.size = ASSET_SETTINGS_TEXT,
@@ -133,7 +134,7 @@ fn Element* build_asset_settings_body(Ui* ui)
 					@node(danger_button("Delete", &asset_settings_delete)).with_id(ASSET_SETTINGS_DELETE_ID);
 				}
 				@node(panel_button("Cancel", &asset_settings_cancelled));
-				if (!authored) @node(accent_button("Save", &asset_settings_saved));
+				@node(accent_button("Save", &asset_settings_saved));
 			};
 		};
 	};
@@ -221,7 +222,7 @@ fn void asset_settings_saved(Ui* ui) @private
 	if (app.settings_asset < 0) return;
 	usz which = (usz)app.settings_asset;
 	AssetEntry* entry = app.settings_entry();
-	if (!entry || entry.authored())
+	if (!entry)
 	{
 		close_asset_settings(ui);
 		return;

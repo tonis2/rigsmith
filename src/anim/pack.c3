@@ -1085,7 +1085,10 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 							dot.translation_tangents = channels == ROTATION ? (AnimTangents){} : translation_tangents;
 							kept.push(dot);
 						}
-						else if (dot.joint_name.len > 0) alloc::free(allocator, dot.joint_name.ptr);
+						else if (dot.joint_name.len > 0)
+						{
+							alloc::free(allocator, dot.joint_name.ptr);
+						}
 					}
 					if (frame.dots.len > 0) alloc::free(allocator, frame.dots);
 					frame.dots = kept.to_array(allocator);

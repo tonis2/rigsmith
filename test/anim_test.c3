@@ -691,7 +691,9 @@ fn void a_planted_foot_lands_on_the_floor() @test
 	feet[0] = { .joint = "foot_L", .down = 0.0f, .up = 1.0f };
 	defer alloc::free(mem, feet);
 
-	AnimTemplate clip = stance_clip(0.8f, 0.0f, { .feet = feet });
+	// The right leg raised higher than the left, so the floor that keeps every
+	// foot out holds nothing up and the plant alone sets the height.
+	AnimTemplate clip = stance_clip(0.8f, 1.2f, { .feet = feet });
 	defer free_swing(clip);
 
 	float[2] legs = { 1.0f, 1.6f };
@@ -753,6 +755,69 @@ fn void nothing_ends_up_below_the_floor() @test
 	}
 }
 
+<*
+ A foot the spec leaves out is kept out of the floor too. Planting one foot must
+ not drive the other through the ground — the bounce a single Add contact left on
+ a generated run, the body pulled down to a lifted foot and the other leg buried.
+*>
+fn void an_undeclared_foot_stays_out_of_the_floor() @test
+{
+	AnimFoot[] feet = alloc::new_array(mem, AnimFoot, 1);
+	feet[0] = { .joint = "foot_L", .down = 0.0f, .up = 1.0f };
+	defer alloc::free(mem, feet);
+
+	AnimTemplate clip = stance_clip(0.8f, 0.0f, { .feet = feet });
+	defer free_swing(clip);
+
+	rig::Skeleton skeleton = legged_skeleton(mem, 1.0f);
+	defer skeleton.free(mem);
+
+	rig::Pose pose = clip.pose(mem, &skeleton, BIPED_NAMES, 0.0f);
+	defer pose.free(mem);
+
+	float floor = skeleton.joints[FOOT_L].y;
+	float right = landed_at(&skeleton, pose, 4).y;
+	test::@check(math::abs(right - floor) < 1.0e-5f, "the undeclared foot ended %.5f off the floor", right - floor);
+	test::@check(landed_at(&skeleton, pose, FOOT_L).y > floor + 0.1f, "the planted foot was pulled down into the other");
+}
+
+<*
+ Toes the clip points through the floor are turned up at the ankle, not the body
+ raised for them. Planted on the ankle with the foot pointed steeply down — a
+ generated swing, or a foot landing toes first — the ankle stays on its floor and
+ the foot turns until the toe is back where it stood at rest; turned the other
+ way, toes up, the foot is left alone.
+*>
+fn void toes_through_the_floor_are_turned_up() @test
+{
+	Vec3[] joints = alloc::new_array(mem, Vec3, 4);
+	int[] parents = alloc::new_array(mem, int, 4);
+	joints[0] = { 0, 0, 0 };            parents[0] = -1;
+	joints[1] = { 0, -1.0f, 0 };        parents[1] = 0;
+	joints[2] = { 0, -1.9f, 0 };        parents[2] = 1;
+	joints[3] = { 0, -1.95f, 0.2f };    parents[3] = 2;
+	rig::Skeleton skeleton = { .joints = joints, .parents = parents };
+	defer skeleton.free(mem);
+	String[4] names = { "pelvis", "knee", "ankle", "toe" };
+	AnimFoot[1] feet = { { .joint = "ankle", .down = 0.0f, .up = 1.0f } };
+
+	rig::Pose pose = rig::rest_pose(mem, 4);
+	defer pose.free(mem);
+	pose.rotations[2] = quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, 0.5f);
+	crig::ground_pose(mem, &skeleton, names[..], { .feet = feet[..] }, &pose, 0.5f);
+	float toe = landed_at(&skeleton, pose, 3).y;
+	float ankle = landed_at(&skeleton, pose, 2).y;
+	test::@check(math::abs(toe - joints[3].y) < 1.0e-4f, "the toe rests %.5f off where it stood", toe - joints[3].y);
+	test::@check(math::abs(ankle - joints[2].y) < 1.0e-5f, "the body was raised %.5f for the toe", ankle - joints[2].y);
+
+	rig::Pose up = rig::rest_pose(mem, 4);
+	defer up.free(mem);
+	Quaternionf lifted = quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, -0.3f);
+	up.rotations[2] = lifted;
+	crig::ground_pose(mem, &skeleton, names[..], { .feet = feet[..] }, &up, 0.5f);
+	test::@check(math::abs(up.rotations[2].v.dot(lifted.v)) > 1.0f - 1.0e-6f, "a foot with its toes up was turned");
+}
+
 // An authored root slide adds to the solve rather than being overwritten by it,
 // which is where a flight arc goes.
 fn void an_authored_root_slide_survives_the_solve() @test
@@ -762,9 +827,11 @@ fn void an_authored_root_slide_survives_the_solve() @test
 	defer alloc::free(mem, feet);
 
 	AnimKeyframe[] frames = alloc::new_array(mem, AnimKeyframe, 1);
-	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 2);
+	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 3);
 	dots[0] = { .joint_name = "hip_L", .axis = { 1, 0, 0 }, .angle = 0.8f };
 	dots[1] = { .joint_name = "pelvis", .move = { 0, 0.25f, 0 } };
+	// The right foot lifted clear, so only the plant sets the height.
+	dots[2] = { .joint_name = "hip_R", .axis = { 1, 0, 0 }, .angle = 1.2f };
 	frames[0] = { .time = 0.0f, .dots = dots };
 	AnimTemplate clip = {
 		.name = "Hop", .duration = 1.0f, .keyframes = frames, .loop = true,
@@ -809,6 +876,16 @@ fn void a_saved_pack_keeps_its_blend_and_ground() @test
 	AnimTemplate clip = swing_clip("hip_L", SWING, 1.0f, true, SMOOTH, false);
 	clip.name = "Stride";
 	clip.ground = { .feet = feet };
+	// The right foot lifted clear on every key, so only the left one's plant sets
+	// the height: the floor keeps an undeclared foot out too.
+	foreach (&frame : clip.keyframes)
+	{
+		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 2);
+		dots[0] = frame.dots[0];
+		dots[1] = { .joint_name = "hip_R", .axis = { 1, 0, 0 }, .angle = 1.2f };
+		alloc::free(mem, frame.dots);
+		frame.dots = dots;
+	}
 	defer free_swing(clip);
 
 	rig::Skeleton source = legged_skeleton(mem, 1.0f);

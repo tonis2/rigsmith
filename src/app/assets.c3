@@ -351,8 +351,9 @@ fn void AppState.refresh_visible_assets(&self)
  the next save, which writes the bound clips and so drops the old name; until
  then the browser would list one clip twice.
 
- By name and only while nothing binds the file's clip by it, so Undo of the
- rename, which binds it back, brings the row back with it.
+ By name and only while nothing binds the clip by it, the file's or the authored
+ copy a save wrote there, so Undo of the rename, which binds it back, brings the
+ row back with it.
 
  @param name : `The clip's name in the file. Borrowed; copied in.`
 *>
@@ -369,7 +370,8 @@ fn bool AppState.renamed_away(&self, AssetEntry* entry)
 	if (entry.kind != AssetKind.ANIMATION || self.source_path.len == 0 || entry.file != self.source_path) return false;
 	foreach (held : self.renamed_file_clips)
 	{
-		if (held == entry.name) return self.doc.bound_index(self.source_path, entry.name) < 0;
+		if (held != entry.name) continue;
+		return self.doc.bound_index(self.source_path, entry.name) < 0 && self.doc.bound_index("", entry.name) < 0;
 	}
 	return false;
 }
@@ -456,6 +458,25 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 	bool clip = entry.kind == AssetKind.ANIMATION;
 	String was = clip ? entry.name.copy(mem) : "";
 	defer if (was.len > 0) alloc::free(mem, was.ptr);
+	bool authored = entry.authored();
+
+	// The project's own clip under this name, which the character is bound to:
+	// every authored clip, and a clip of the model's file once a save put it
+	// there. Renamed as the clip it is (`rename_animation`), not in the file.
+	bool project_clip = clip && (authored || (self.source_path.len > 0 && file == self.source_path))
+		&& self.clip_named_in_authored(was).valid();
+	if (project_clip && name.trim() != was)
+	{
+		DString why = dstring::temp();
+		if (!self.rename_animation(was, name, &why))
+		{
+			self.@notice("could not rename %s: %s", was, why.str_view());
+			return false;
+		}
+		if (authored) self.@notice("%s renamed to %s", was, name.trim());
+	}
+	// An authored clip is in no file: there is nothing else to write.
+	if (authored) return project_clip;
 
 	gltf_edit::JsonStep[2] plan_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_PLAN } };
 	gltf_edit::JsonStep[2] tags_path = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = PACK_KEY_TAGS } };
@@ -468,8 +489,9 @@ fn bool AppState.retag_asset(&self, usz which, String name, String plan, String 
 	};
 
 	// A file that animates its nodes without binding a mesh has no item to
-	// rename — the cell's name is the file stem. Its tags still go in.
-	usz count = collection.len > 0 ? 3 : 2;
+	// rename — the cell's name is the file stem. Its tags still go in. A project
+	// clip keeps its old name in the file until the next save writes the new one.
+	usz count = collection.len > 0 && !project_clip ? 3 : 2;
 
 	if (catch fault error = gltf_edit::patch_gltf(mem, file, edits[:count]))
 	{

@@ -929,6 +929,70 @@ fn bool AppState.delete_animation(&self, String name, DString* why = null)
 }
 
 <*
+ Rename an authored clip from the asset browser, the way the Animations pane's
+ Properties renames it: one undo step that moves its binding along.
+
+ 	`if (!app.rename_animation("walk2", "walk", &why)) app.@notice("%s", why.str_view());`
+
+ A clip of the model's own file is an authored clip too once a save has put it
+ there: the character is bound to the authored copy, and the file holds what the
+ last save wrote. So the authored clip is what gets renamed. Renaming only the
+ file left the binding on the old name, and the browser then listed the authored
+ clip beside the renamed one as a second clip. The file keeps the old name until
+ the next save; the browser hides it meanwhile (`hide_renamed_file_clip`).
+
+ @param from : `The clip's name now. Borrowed; it may point into an index this moves.`
+ @param to : `Its new name.`
+ @param why : `Receives the reason on refusal, if given.`
+ @return `False when no authored clip has that name, the new name is taken, or an edit is in flight.`
+*>
+fn bool AppState.rename_animation(&self, String from, String to, DString* why = null)
+{
+	if (self.pose_edit_pending)
+	{
+		if (why) why.append_string("a pose is being edited — key it or cancel it first");
+		return false;
+	}
+	String was = from.copy(mem);
+	defer was.free(mem);
+	String named = to.trim().copy(mem);
+	defer named.free(mem);
+	if (named.len == 0)
+	{
+		if (why) why.append_string("give the animation a name");
+		return false;
+	}
+	AnimRef ref = self.clip_named_in_authored(was);
+	AnimTemplate* clip = self.clip(ref);
+	if (!clip)
+	{
+		if (why) why.appendf("no animation called %s is in the project", was)!!;
+		return false;
+	}
+	if (named == was) return true;
+	// A clip of the file bound by name is a clip in its own right; an unbound one is
+	// only what the last save wrote, and the next one drops it.
+	if (self.clip_named_in_authored(named).valid()
+		|| (self.source_path.len > 0 && self.doc.bound_index(self.source_path, named) >= 0))
+	{
+		if (why) why.appendf("an animation is already called %s", named)!!;
+		return false;
+	}
+
+	AnimRef landed = self.land_clip_recorded(ref, clip_copy(mem, *clip, named));
+	if (!landed.valid())
+	{
+		if (why) why.append_string("the renamed clip could not be stored");
+		return false;
+	}
+	self.undo_stack.commit();
+	self.sync_clip_pins();
+	self.refresh_bound_rows();
+	self.refresh_ui();
+	return true;
+}
+
+<*
  The authored clips a sidecar keeps: the ones the character still holds.
 
  	`AnimTemplate[] kept = app.kept_authored_clips(mem);`

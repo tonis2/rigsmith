@@ -884,8 +884,10 @@ fn usz claim_joint(uint[] buf, usz count, uint joint) @local
  by how much. Read off `pose` as the screen will show it: a grounded clip is
  shown after the ground solve has lifted or dropped it whole, and a foot that
  could not stay flat is exactly what makes that solve move the pins, so the miss
- it causes is reported rather than hidden. The grabbed joint's own pin reads zero
- while it is carried on purpose.
+ it causes is reported rather than hidden; then the clip's pins are laid over it,
+ as they are on screen and in playback, so two pins that disagree read what the
+ screen shows of each. The grabbed joint's own pin reads zero while it is carried
+ on purpose.
 *>
 fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, uint moving_dot)
 {
@@ -895,10 +897,11 @@ fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, ui
 	if (self.pose_edit_active)
 	{
 		AnimTemplate* clip = self.clip(self.editing);
-		if (clip && clip.ground.solves())
+		if (clip)
 		{
 			ground_pose(mem, &view.skeleton, self.names_for(view, self.editing), clip.ground, &shown,
 				clip.phase_at(self.edit_time));
+			self.apply_clip_pins(view, *clip, self.editing, self.edit_time, &shown);
 		}
 	}
 	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, shown);
@@ -1550,12 +1553,13 @@ fn void AppState.restore_body_start(&self, RigView* view, rig::Pose* pose, usz r
  the world rotation it began with (`POINT_POSE_GRAB_HOLD`): a pulled waist drops
  the body with the chest still upright. So is a foot, which stays flat as it
  stood: one that rode its shin would take the shin's roll too, which the reach
- leaves free, and land turned out. Any other limb's joint keeps its angle to its
- parent — it holds no world rotation, so the solve leaves it as it was and it
- rides the limb: a wrist pulled up turns the hand with the forearm. A joint's
- Keep angle cell on the Joint card (`angle_flips`) swaps the two for that limb
- joint, and Alt (`DragState.flip_angle`) swaps them again for one drag
- (`pose_holds`): the hand arrives as it faced, the foot tilts with the shin. The
+ leaves free, and land turned out. So is a wrist: a hand moved arrives as it
+ faced. Any other limb's joint keeps its angle to its parent — it holds no world
+ rotation, so the solve leaves it as it was and it rides the limb: an elbow
+ pulled turns the forearm with the upper arm. A joint's Keep angle cell on the
+ Joint card (`angle_flips`) swaps the two for that limb joint, and Alt
+ (`DragState.flip_angle`) swaps them again for one drag (`pose_holds`): the hand
+ turns with the forearm, the foot tilts with the shin. The
  hold is light, so a limb that has to turn to reach turns.
 
  Each move is solved from the pose the gesture began with, not from the last
@@ -1591,7 +1595,7 @@ fn float AppState.pose_toward(&self, Vec3 target)
 	self.last_block = { .fraction = 1.0f };
 	float height = view.skeleton.height();
 	float tolerance = height > 0.0f ? height * IK_TOLERANCE : 0.0f;
-	Vec3 shift = self.gesture_shift(&view, palette, (usz)found);
+	Vec3 shift = self.gesture_shift(&view, (usz)found);
 	float gap;
 	if (digit_chain(&view, chain))
 	{
@@ -1656,27 +1660,38 @@ fn float AppState.pose_toward(&self, Vec3 target)
 <*
  The ground correction between the frame a gesture solves in — the draft — and
  the one the screen shows: a clip shown grounded is shifted whole by the ground
- solve. Read off `joint`, whose shown position and drafted one differ by exactly
- that. Zero when nothing is being edited.
+ solve, which moves the root of `joint`'s figure by it. The ground solve's alone:
+ the pins laid over the screen bend limbs and sink the hips (`pin_lower_hips`),
+ and read as a shift they would carry every pin's target off its point. Zero when
+ nothing is being edited.
 *>
-fn Vec3 AppState.gesture_shift(&self, RigView* view, Matrix4f[] palette, usz joint)
+fn Vec3 AppState.gesture_shift(&self, RigView* view, usz joint)
 {
 	if (!self.pose_edit_active) return {};
-	Dot* dot = self.doc.find(view.dot_ids[joint]);
-	if (!dot) return {};
-	return self.dot_position(*dot) - view.skeleton.joints[joint].transform(palette[joint]);
+	AnimTemplate* clip = self.clip(self.editing);
+	if (!clip || !clip.ground.solves()) return {};
+	rig::Pose grounded = self.draft_pose(mem, view);
+	defer grounded.free(mem);
+	usz root = tree_root_of(&view.skeleton, joint);
+	Vec3 drafted = grounded.offsets[root];
+	ground_pose(mem, &view.skeleton, self.names_for(view, self.editing), clip.ground, &grounded, clip.phase_at(self.edit_time));
+	return grounded.offsets[root] - drafted;
 }
 
 // What a grabbed joint keeps of its angle while it is posed.
 enum PoseHold : char
 {
-	FOLLOW, // a limb's joint: its angle to its parent, so a hand turns with the forearm
+	FOLLOW, // a limb's joint: its angle to its parent, so a forearm turns with the upper arm
 	FOOT,   // a foot: its world angle, so it stays flat as it stood
+	WRIST,  // a wrist: its world angle, so the hand arrives as it faced
 	TRUNK,  // the root and the spine: their world angle, Alt or not
 }
 
 // Whether the grab holds its world rotation, with Alt (`flip`) swapping a limb's.
-fn bool PoseHold.keeps_world(self, bool flip) => self == TRUNK || (self == FOOT) != flip;
+fn bool PoseHold.keeps_world(self, bool flip) => self == TRUNK || (self == FOOT || self == WRIST) != flip;
+
+// Whether a joint's name reads as a wrist: `wrist_L`, `hand.R`, `mixamorig:LeftHand`.
+fn bool names_wrist(String name) @local => name_has(name, "wrist") || name_has(name, "hand");
 
 // How far above the joint a gait plants a foot by its ankle may still stand, as a
 // share of the figure's height: a man's ankle over the ball of his foot, not his knee.
@@ -1686,7 +1701,9 @@ const float POSE_FOOT_SHARE @local = 0.12f;
  Each joint's `PoseHold`: the trunk by the same reading `pose_body` gives the
  solve, the feet by the one a gait finds them by (`gait_find_feet`). That is the
  joint the floor meets — the ball of a foot with toes — so the leg's joints just
- above it, near the floor still, are the foot too: the ankle a hand grabs.
+ above it, near the floor still, are the foot too: the ankle a hand grabs. A
+ wrist is read off its name, the way a gait reads an arm: the first joint down an
+ arm named for a wrist or a hand, and not a digit, so `LeftHandThumb1` is a finger.
 *>
 fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height) @local
 {
@@ -1711,6 +1728,15 @@ fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height) @loca
 			if (view.skeleton.joints[j].y - floor > POSE_FOOT_SHARE * height) break;
 			holds[j] = FOOT;
 		}
+	}
+	bool[] digit = view.skeleton.digits(mem);
+	defer alloc::free(mem, digit);
+	foreach (usz j, name : view.names)
+	{
+		if (j >= n || digit[j] || holds[j] != FOLLOW || !names_wrist(name)) continue;
+		int parent = view.skeleton.parents[j];
+		if (parent >= 0 && names_wrist(view.names[(usz)parent])) continue;
+		holds[j] = WRIST;
 	}
 	foreach (j, is_trunk : trunk) if (is_trunk) holds[j] = TRUNK;
 	return holds;
@@ -1742,8 +1768,8 @@ fn bool AppState.angle_flipped(&self, uint dot)
 
 <*
  Whether a grab on `dot` keeps its world angle with Alt up — what its Keep angle
- cell shows. A foot or the trunk does and any other limb's joint turns with its
- parent, unless the cell was set the other way.
+ cell shows. A foot, a wrist or the trunk does and any other limb's joint turns
+ with its parent, unless the cell was set the other way.
 *>
 fn bool AppState.pose_keeps_angle(&self, uint dot)
 	=> self.pose_hold(dot).keeps_world(self.angle_flipped(dot));
@@ -2227,12 +2253,10 @@ fn void AppState.land_turn(
 	self.judge_collision_cost();
 	if (self.turn_carries_a_hold(view, joint))
 	{
-		// The shift is that of the pose on screen; the point and the parent's
-		// angle are the start's.
+		// The point and the parent's angle are the start's.
 		rig::Pose began = pose.copy(mem);
 		defer began.free(mem);
 		self.restore_body_start(view, &began, tree_root_of(&view.skeleton, joint));
-		Matrix4f[]? shown = rig::joint_palette(mem, &view.skeleton, *pose);
 		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, began);
 		Quaternionf[]? spun = began.world_rotations(mem, &view.skeleton);
 		if (try palette = built)
@@ -2241,21 +2265,17 @@ fn void AppState.land_turn(
 			if (try world = spun)
 			{
 				defer alloc::free(mem, world);
-				if (try on_screen = shown)
-				{
-					defer alloc::free(mem, on_screen);
-					int parent = view.skeleton.parents[joint];
-					Quaternionf above = parent >= 0 ? world[(usz)parent] : quaternion::IDENTITY;
-					PointGoal[1] gesture = {{
-						.joint = joint,
-						.position = true,
-						.soft = true,
-						.target = view.skeleton.joints[joint].transform(palette[joint]),
-						.rotation = true,
-						.orient = above.mul(pose.rotations[joint]).normalize(),
-					}};
-					(void)self.pose_body(view, pose, gesture[..], self.gesture_shift(view, on_screen, joint), false);
-				}
+				int parent = view.skeleton.parents[joint];
+				Quaternionf above = parent >= 0 ? world[(usz)parent] : quaternion::IDENTITY;
+				PointGoal[1] gesture = {{
+					.joint = joint,
+					.position = true,
+					.soft = true,
+					.target = view.skeleton.joints[joint].transform(palette[joint]),
+					.rotation = true,
+					.orient = above.mul(pose.rotations[joint]).normalize(),
+				}};
+				(void)self.pose_body(view, pose, gesture[..], self.gesture_shift(view, joint), false);
 			}
 		}
 	}

@@ -55,7 +55,10 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 	{
 		name = args.get_string("name") ?? layer_name;
 	}
-	else if (!required_string(args, "name", &name, detail, `apply_clip needs "name": a string, and the handle every later call uses for this clip. A clip of that name in the authored pack is replaced.`)) return CLIP_INVALID~;
+	else if (!required_string(args, "name", &name, detail, `apply_clip needs "name": a string, and the handle every later call uses for this clip. A clip of that name in the authored pack is replaced.`))
+	{
+		return CLIP_INVALID~;
+	}
 	if (name.len == 0)
 	{
 		detail.append_string(`"name" is empty. A clip is addressed by name, so it needs one that is not.`);

@@ -18,6 +18,9 @@
  4. **It closes**: a key at the end restates the first, and the root's sideways
     drift is taken off the middle so the figure stays where it stands.
 
+ An idle is not a stride repeated: the whole take is the motion. `clip_whole_loop`
+ keeps all of it, folding its first moments into the seam steps 3 and 4 make.
+
  The cycle is written as plain keys every `CYCLE_STEP` seconds, looping and
  linear; the caller thins them (`clip_keys_reduced`).
 *>
@@ -118,9 +121,70 @@ fn AnimTemplate? clip_cycle(Allocator allocator, AnimTemplate source, float peri
 	usz fade = (usz)math::round(math::max(crossfade, 0.0f) / CYCLE_STEP);
 	fade = math::min(fade, best_period / 2);
 	fade = math::min(fade, best_start);
+	return cycle_clip_cut(allocator, source, best_start, best_period, fade, root, name);
+}
 
-	usz count = best_period;
-	AnimKeyframe[] frames = cycle_frames(allocator, source, best_start, count, fade, root);
+<*
+ The whole take as a loop: its end crossfaded into its start, so nothing is cut
+ away but the first `crossfade` seconds, which become the lead-in the end blends
+ toward. What an idle wants — the take is already the motion, it only has to
+ come back round.
+
+ 	`AnimTemplate? idle = clip_whole_loop(mem, take, 0.5f, "hips", "Idle", &cut);`
+
+ @param crossfade : `Seconds the end blends into the start over; clamped to a third of the take.`
+ @param root : `The joint whose sideways drift is taken off the middle; "" for none.`
+ @param name : `The loop's name.`
+ @return? CYCLE_TOO_SHORT : `The take is too short to fold its start into its end.`
+*>
+fn AnimTemplate? clip_whole_loop(Allocator allocator, AnimTemplate source, float crossfade, String root, String name, CycleCut* cut)
+{
+	if (source.duration <= 0.0f || source.keyframes.len < 2) return CYCLE_TOO_SHORT~;
+	usz last = (usz)math::floor(source.duration / CYCLE_STEP);
+	usz fade = (usz)math::round(math::clamp(crossfade, CYCLE_STEP, source.duration / 3.0f) / CYCLE_STEP);
+	fade = math::max(fade, (usz)1);
+	if (last < 2 * fade + 2) return CYCLE_TOO_SHORT~;
+
+	// How far apart the poses the blend joins were: the take's last and the loop's first.
+	AnimTemplate probe = source;
+	probe.owned = false;
+	probe.tracks = {};
+	probe.tracks_compiled = false;
+	probe.compile_tracks(mem);
+	defer free_tracks(probe);
+	usz tracks = probe.tracks.len;
+	Quaternionf[] turns = alloc::new_array(mem, Quaternionf, (sz)(tracks * 2));
+	defer alloc::free(mem, turns);
+	usz rotating = 0;
+	foreach (usz t, track : probe.tracks)
+	{
+		if (track.rotations.len == 0) continue;
+		rotating++;
+		turns[t * 2] = probe.rotation_at(track.joint_name, (float)fade * CYCLE_STEP);
+		turns[t * 2 + 1] = probe.rotation_at(track.joint_name, source.duration);
+	}
+	float seam = (float)math::sqrt(cycle_distance(turns, probe.tracks, 2, 0, 1) / (float)math::max(rotating, (usz)1));
+
+	usz count = last - fade;
+	*cut = { (float)fade * CYCLE_STEP, (float)count * CYCLE_STEP, seam };
+	return cycle_clip_cut(allocator, source, fade, count, fade, root, name);
+}
+
+<*
+ The crossfade `clip_whole_loop` uses when nobody says: a tenth of the take, from
+ 0.15 to 0.5 s — long enough that an idle's end eases into its start, short
+ enough to keep nearly all of it.
+*>
+fn float whole_loop_crossfade(float duration) => math::clamp(duration * 0.1f, 0.15f, 0.5f);
+
+<*
+ The looping clip of `count` steps of `source` from sample `start`, its last
+ `fade` blended into what led into the start (`cycle_frames`), with its keyed
+ layers cut the same way and the take's timed extras left behind.
+*>
+fn AnimTemplate cycle_clip_cut(Allocator allocator, AnimTemplate source, usz start, usz count, usz fade, String root, String name) @local
+{
+	AnimKeyframe[] frames = cycle_frames(allocator, source, start, count, fade, root);
 
 	float period = (float)count * CYCLE_STEP;
 	AnimTemplate out = clip_with_frames(allocator, source, frames, period, name);
@@ -128,13 +192,13 @@ fn AnimTemplate? clip_cycle(Allocator allocator, AnimTemplate source, float peri
 	// into one still moves with the stride it came from. Its range and fades move
 	// with the start; generators are stated per cycle and need nothing.
 	free_layers(allocator, out.layers);
-	out.layers = layers_copy(allocator, source.layers, 1.0f, -cut.start);
+	out.layers = layers_copy(allocator, source.layers, 1.0f, -(float)start * CYCLE_STEP);
 	foreach (usz i, &layer : out.layers)
 	{
 		if (layer.kind != KEYED || layer.own_clock()) continue;
 		AnimTemplate keys = { .duration = source.duration, .loop = source.loop, .blend = source.blend,
 			.keyframes = source.layers[i].keyframes };
-		AnimKeyframe[] cycled = cycle_frames(allocator, keys, best_start, count, fade, "");
+		AnimKeyframe[] cycled = cycle_frames(allocator, keys, start, count, fade, "");
 		foreach (&frame : layer.keyframes) frame.free(allocator);
 		if (layer.keyframes.len > 0) alloc::free(allocator, layer.keyframes);
 		layer.keyframes = cycled;

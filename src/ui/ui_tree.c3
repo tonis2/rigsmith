@@ -2521,12 +2521,15 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.style = DIALOG_STYLE,
 				.buttons = CONFIRM_BUTTONS,
 			}).with_id(CONFIRM_DIALOG_ID);
-			@node((ConfirmDialog) {
-				.title = "Make loop",
-				.confirm_label = "Replace animation",
-				.style = DIALOG_STYLE,
-				.buttons = CONFIRM_BUTTONS,
-			}).with_id(ANIM_MAKE_LOOP_CONFIRM_ID);
+			// Two ways ahead and a way out: its answers are its own buttons, and
+			// each closes the panel itself.
+			Element* make_loop = @tree((ChoiceDialog) { .title = "Make loop", .style = DIALOG_STYLE })
+			{
+				@node(panel_button("Cancel", &anim_make_loop_cancel));
+				@node(panel_button("One cycle", &anim_make_loop_cycle)).with_id(ANIM_MAKE_LOOP_CYCLE_ID);
+				@node(accent_button("Whole take", &anim_make_loop_whole)).with_id(ANIM_MAKE_LOOP_WHOLE_ID);
+			};
+			make_loop.with_id(ANIM_MAKE_LOOP_CONFIRM_ID);
 			@node((ConfirmDialog) {
 				.title = "Remove joint animation",
 				.confirm_label = "Remove keys",

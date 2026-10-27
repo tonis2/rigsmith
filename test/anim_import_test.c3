@@ -1836,7 +1836,10 @@ fn void an_exported_clip_holds_what_the_preview_showed() @test
 		{
 			float gap = (shown_at[j] - stored_at[j]).length();
 			if (on_key) { if (gap > at_keys) at_keys = gap; }
-			else if (gap > between) between = gap;
+			else if (gap > between)
+			{
+				between = gap;
+			}
 		}
 	}
 

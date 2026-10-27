@@ -1158,7 +1158,10 @@ fn float[] motion_sample_times(Allocator allocator, AnimTemplate template) @loca
 			at = at - math::floor(at / duration) * duration;
 			if (at >= duration - MOTION_EDGE * 0.1f) continue;
 		}
-		else if (at < 0.0f || at > duration) continue;
+		else if (at < 0.0f || at > duration)
+		{
+			continue;
+		}
 		raw[kept++] = at;
 	}
 	if (kept == 0) return {};

@@ -193,6 +193,12 @@ fn void anim_tools_contact(Ui* ui)
 	anim_add_contact_clicked(ui);
 }
 
+fn void anim_tools_find_contacts(Ui* ui)
+{
+	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
+	anim_find_contacts_clicked(ui);
+}
+
 fn void anim_tools_trim(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
@@ -221,7 +227,7 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	bool unpicked = none || app.selection_count() == 0;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Add contact", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
+	foreach (label : (String[]) { "Check", "Add contact", "Find contacts", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
 		"Fix flips", "Smooth curves", "Simplify curves", "Flatten keys", "Match loop seam", "Remove joint animation…", "Move joints to layer", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
@@ -234,6 +240,8 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CHECK_ID);
 			@node((PopupMenuItem) { .item = { .label = "Add contact", .on_select = &anim_tools_contact,
 				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_ADD_CONTACT_ID);
+			@node((PopupMenuItem) { .item = { .label = "Find contacts", .on_select = &anim_tools_find_contacts,
+				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FIND_CONTACTS_ID);
 			@node((PopupMenuItem) { .item = { .label = "Optimize keys…", .on_select = &anim_tools_optimize, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_OPTIMIZE_ID);
 			@node((PopupMenuItem) { .item = { .label = "Trim…", .on_select = &anim_tools_trim, .disabled = none },

@@ -144,7 +144,10 @@ fn String? tool_save_pose(Object* args, void* user_data, DString* detail) @priva
 				if (entry.is_string() && entry.s == dot.joint_name) keep = true;
 			}
 			if (keep) { kept.push(dot); }
-			else if (dot.joint_name.len > 0) alloc::free(mem, dot.joint_name.ptr);
+			else if (dot.joint_name.len > 0)
+			{
+				alloc::free(mem, dot.joint_name.ptr);
+			}
 		}
 		if (every.dots.len > 0) alloc::free(mem, every.dots);
 		dots = kept.to_array(mem);

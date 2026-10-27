@@ -182,8 +182,9 @@ struct DragState
 
 	<*
 	 POSE: Alt held — the grabbed limb does the other thing with its angle. A
-	 hand turns with its forearm and a foot keeps the world angle it stood at, so
-	 with Alt the hand arrives as it faced and the foot tilts with the shin. The
+	 hand and a foot keep the world angle they stood at and an elbow turns the
+	 forearm with the upper arm, so with Alt the hand turns with the forearm and
+	 the foot tilts with the shin. The
 	 trunk keeps its world angle either way. Read on every move; each move solves
 	 from the gesture's start, so it can change mid-drag.
 	*>

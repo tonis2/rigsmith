@@ -139,6 +139,55 @@ fn void a_cycle_is_cut_out_of_a_take() @test
 	test::@check(math::abs(mean / 60.0f) < 1e-3f, "the hips drift %.4f to the side", mean / 60.0f);
 }
 
+// An idle that drifts: a slow sway on a lean that grows, so its end is far from its start.
+fn float swaying(usz joint, float t)
+{
+	return 0.2f * t + 0.1f * (float)math::sin(t * 2.3f + (float)joint);
+}
+
+<*
+ Make loop's Whole take: a four-second take that ends far from where it started
+ loops over all of it but the crossfade. The middle is the take as it was, only
+ moved up by the crossfade; the end blends into the start without a jump in pose
+ or in speed; the root's drift is taken off.
+*>
+fn void a_whole_take_loops_keeping_all_but_the_crossfade() @test
+{
+	String[2] joints = { "hips", "arm" };
+	crig::AnimTemplate take = dense_take("idle", 4.0f, joints[..], &swaying, slides: true);
+	defer take.free(mem);
+
+	crig::CycleCut cut;
+	crig::AnimTemplate loop = crig::clip_whole_loop(mem, take, 0.4f, "hips", "idle", &cut)!!;
+	defer loop.free(mem);
+	loop.compile_tracks(mem);
+
+	test::@check(loop.loop && math::abs(loop.duration - 3.6f) < 0.02f, "the loop is %.3f s, not the take less its crossfade", loop.duration);
+	test::@check(math::abs(cut.start - 0.4f) < 0.02f && math::abs(cut.period - loop.duration) < 1e-4f,
+		"the cut is from %.3f s for %.3f s", cut.start, cut.period);
+	test::@check(cut.seam > 0.3f, "the seam's poses are %.4f rad apart before the blend; the take's end is far from its start", cut.seam);
+
+	// Before the blend the loop is the take, a crossfade later.
+	float moved = 0.0f;
+	for (float t = 0.0f; t < 3.0f; t += 0.05f)
+	{
+		moved = math::max(moved, math::abs(angle_at(&loop, "arm", t) - angle_at(&take, "arm", t + cut.start)));
+	}
+	test::@check(moved < 0.01f, "the loop's middle is %.4f off the take", moved);
+
+	float step = 1.0f / 60.0f;
+	float p = loop.duration;
+	float jump = math::abs(angle_at(&loop, "arm", 0.0f) - angle_at(&loop, "arm", p - 1e-4f));
+	test::@check(jump < 0.02f, "the pose jumps %.4f at the seam", jump);
+	float before = angle_at(&loop, "arm", p - step) - angle_at(&loop, "arm", p - 2.0f * step);
+	float across = angle_at(&loop, "arm", step) - angle_at(&loop, "arm", 0.0f);
+	test::@check(math::abs(across - before) < 0.01f, "the speed jumps at the seam (%.4f against %.4f)", across, before);
+
+	float mean;
+	for (usz k = 0; k < 60; k++) mean += loop.translation_at("hips", p * (float)k / 60.0f).x;
+	test::@check(math::abs(mean / 60.0f) < 1e-3f, "the hips drift %.4f to the side", mean / 60.0f);
+}
+
 fn void a_take_too_short_for_the_cycle_is_refused() @test
 {
 	String[1] joints = { "leg" };

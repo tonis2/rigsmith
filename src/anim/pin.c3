@@ -317,13 +317,16 @@ fn AnimTemplate clip_copy_without_pins(Allocator allocator, AnimTemplate source)
  How much of the pin applies at `time`, 0 to 1: 0 outside `from`..`to`, a
  smoothstep over `blend` seconds at either edge, 1 between. On a looping clip a
  window that runs past either end of the clip also covers the matching time on
- the other side, so a plant that straddles the loop point holds through it.
+ the other side, so a plant that straddles the loop point holds through it, and
+ one held from the clip's start to its end holds right round, its blend unused:
+ the loop point is no edge of it, so the foot is not let go there.
 *>
 fn float AnimPin.weight_at(&self, float time, float duration, bool loop)
 {
 	float best = pin_window_weight(self, time);
 	if (loop && duration > 0.0f)
 	{
+		if (pin_holds_round(self, duration)) return 1.0f;
 		best = math::max(best, pin_window_weight(self, time + duration));
 		best = math::max(best, pin_window_weight(self, time - duration));
 	}
@@ -338,6 +341,13 @@ fn float pin_window_weight(AnimPin* pin, float time) @local
 	float fall = (pin.to - time) / pin.blend;
 	float x = math::clamp(math::min(rise, fall), 0.0f, 1.0f);
 	return x * x * (3.0f - 2.0f * x);
+}
+
+// Whether a looping clip's pin covers it end to end, still: its window has no
+// edge anywhere in the loop. A sliding one does, where its held point jumps back.
+fn bool pin_holds_round(AnimPin* pin, float duration) @local
+{
+	return pin.travel.length_sq() == 0.0f && pin.from <= ANIM_SAME_TIME && pin.to >= duration - ANIM_SAME_TIME;
 }
 
 // Whether the pin would hold anything: unmuted, with something to hold and a
@@ -666,10 +676,11 @@ fn void pin_hold_rotation(
  Each pin finds its joint by `names` (the clip's vocabulary), takes its weight
  from the window (`AnimPin.weight_at`) times `gain`, solves the joint's limb to
  `at * scale` and holds its orientation, then slerps every joint it touched from
- where it was to where it landed by that weight. Pins run in clip order, each on
- what the last left. A pin whose joint the rig lacks, that is muted, outside its
- window, or whose limb is empty (a root, a joint under a fork) is skipped for
- position; its rotation hold still runs.
+ where it was to where it landed by that weight. Pins run in the rig's joint
+ order, parents first, each on what the last left, so two that disagree settle
+ the same way whichever was set first. A pin whose joint the rig lacks, that is
+ muted, outside its window, or whose limb is empty (a root, a joint under a fork)
+ is skipped for position; its rotation hold still runs.
 
  @param scale : `The rig's height; positions are fractions of it.`
  @param gain : `Multiplies every weight, how a crossfade weights a clip's pins.`
@@ -690,15 +701,20 @@ fn void pin_pose(
 {
 	if (pins.len == 0 || pose.rotations.len != skeleton.len()) return;
 	pin_lower_hips(allocator, skeleton, names, pins, time, duration, loop, pose, scale, gain);
-	foreach (&pin : pins)
+	// In the rig's order, parents first, as the body solve takes them: two pins
+	// that disagree settle the same way whichever was set first.
+	sz[] joint_of = alloc::new_array(allocator, sz, (sz)pins.len);
+	defer alloc::free(allocator, joint_of);
+	foreach (usz i, &pin : pins)
 	{
-		if (!pin_plays(pin)) continue;
+		joint_of[i] = -1;
+		foreach (usz j, name : names) if (j < skeleton.len() && name == pin.joint) { joint_of[i] = (sz)j; break; }
+	}
+	for (usz joint = 0; joint < skeleton.len(); joint++) foreach (usz i, &pin : pins)
+	{
+		if (joint_of[i] != (sz)joint || !pin_plays(pin)) continue;
 		float weight = pin.weight_at(time, duration, loop) * math::clamp(gain, 0.0f, 1.0f);
 		if (!(weight > 0.0f)) continue;
-		sz found = -1;
-		foreach (usz j, name : names) if (j < skeleton.len() && name == pin.joint) { found = (sz)j; break; }
-		if (found < 0) continue;
-		usz joint = (usz)found;
 
 		usz[IK_RUN_MAX] run;
 		usz count = pin.position ? pin_run(skeleton, joint, run[..]) : 0;
@@ -758,9 +774,11 @@ const float PIN_REACH_COMFORT = 0.97f;
  hip than the leg is long stays short of its pin however the leg swings — the
  foot hovers, or the leg locks straight and the knee pops. A body standing on
  that foot sinks onto it instead. So the root drops by the most any pinned limb
- needs to reach comfortably (PIN_REACH_COMFORT of its length), each pin's need
- scaled by how far into its window it is, so the drop eases in and out with the
- pin. The root is never raised: a target above the hip is a reach, not a stance.
+ needs to reach comfortably (PIN_REACH_COMFORT of its length, or as straight as
+ the pose already holds it, whichever is more), each pin's need scaled by how far
+ into its window it is, so the drop eases in and out with the pin. A straight leg
+ pinned where it stands sinks nothing. The root is never raised: a target above
+ the hip is a reach, not a stance.
 *>
 fn void pin_lower_hips(
 	Allocator allocator,
@@ -799,10 +817,13 @@ fn void pin_lower_hips(
 		// The limb's length from its top pivot to the pinned joint, at rest.
 		float length = (skeleton.joints[joint] - skeleton.joints[run[0]]).length();
 		for (usz k = 0; k + 1 < count; k++) length += (skeleton.joints[run[k]] - skeleton.joints[run[k + 1]]).length();
-		float reach = PIN_REACH_COMFORT * length;
-
 		usz top = run[count - 1];
 		Vec3 pivot = skeleton.joints[top].transform(palette[top]);
+		// As straight as the pose already stands it is comfortable enough: a leg
+		// standing straight on its pin is not a reach, and sinking it would only
+		// take the foot off the point it stands on.
+		float extent = (skeleton.joints[joint].transform(palette[joint]) - pivot).length();
+		float reach = math::max(PIN_REACH_COMFORT * length, math::min(extent, length));
 		if (pivot.y <= target.y) continue;
 		float dx = target.x - pivot.x;
 		float dz = target.z - pivot.z;

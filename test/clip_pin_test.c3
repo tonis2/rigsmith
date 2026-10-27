@@ -177,6 +177,68 @@ fn void a_pin_that_straddles_the_loop_point_holds_through_it() @test
 	test::@check(math::abs(pin.weight_at(0.125f, 1.0f, false) - 0.5f) < 1.0e-5f, "a smoothstep is half way at half");
 }
 
+fn void a_pin_over_a_whole_loop_never_lets_go_at_the_seam() @test
+{
+	crig::AnimPin pin = { .joint = "x", .position = true, .from = 0.0f, .to = 4.0f, .blend = 0.1f };
+	foreach (t : (float[]){ 0.0f, 0.02f, 0.05f, 2.0f, 3.95f, 3.99f, 4.0f })
+	{
+		test::@check(pin.weight_at(t, 4.0f, true) == 1.0f, "the pin eased at %.2f s of a loop it covers", t);
+	}
+	test::@check(pin.weight_at(0.05f, 4.0f, false) < 1.0f, "a clip that does not loop lost its ease in");
+	// A window that stops short of the end still lands and lifts.
+	pin.to = 3.5f;
+	test::@check(pin.weight_at(0.05f, 4.0f, true) < 1.0f && pin.weight_at(3.45f, 4.0f, true) < 1.0f,
+		"a window inside the loop lost its blend");
+	// A sliding pin jumps back at the seam, so it keeps easing there.
+	pin.to = 4.0f;
+	pin.travel = { 0.1f, 0.0f, 0.0f };
+	test::@check(pin.weight_at(3.99f, 4.0f, true) < 1.0f, "a sliding pin held through its jump back");
+}
+
+<*
+ An idle held still on its feet: one key, both ankles pinned where they stand over
+ the whole loop. The figure stands the same at every instant — no sinking while
+ the pins hold, no hop at the seam where they once let go.
+*>
+fn void feet_pinned_through_a_still_loop_never_move() @test
+{
+	rig::TriMesh mesh = rig::load_gltf(mem, PERSON)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, PERSON);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid must import its rig");
+	crig::RigView view = app.open_rig(mem)!!;
+	defer view.free(mem);
+	float height = view.skeleton.height();
+	crig::AnimRef ref = app.new_clip("Idle", 4.0f, from_rest: true, loop: true);
+	String[] names = app.names_for(&view, ref);
+	// The one key has the hips low and aside, so the feet stand where the pins
+	// put them, not where the key does.
+	crig::AnimKeyDot[] dots = alloc::new_array(mem, crig::AnimKeyDot, 1);
+	dots[0] = { .joint_name = names[0].copy(mem), .channels = TRANSLATION, .move = { 0.02f, -0.04f, 0.0f } };
+	ref = app.land_clip(ref, crig::clip_with_key(mem, *app.clip(ref), { .time = 0.0f, .dots = dots }));
+	foreach (foot : (String[]){ "ankle_L", "ankle_R" })
+	{
+		crig::AnimPin pin = crig::pin_defaults(mem, foot, view.skeleton.joints[joint_named(names, foot)] / height, 0.0f, 4.0f);
+		pin.blend = 0.1f;
+		ref = app.land_clip(ref, crig::clip_with_pin(mem, *app.clip(ref), pin));
+	}
+	usz[3] watched = { 0, joint_named(names, "ankle_L"), joint_named(names, "ankle_R") };
+	Vec3[3] still;
+	foreach (usz i, t : (float[]){ 0.0f, 0.02f, 0.05f, 1.0f, 2.0f, 3.95f, 3.99f })
+	{
+		rig::Pose pose = app.evaluated_clip_pose(mem, &view, *app.clip(ref), ref, t, false, true);
+		defer pose.free(mem);
+		foreach (usz k, j : watched)
+		{
+			Vec3 at = joint_position(&view.skeleton, pose, j);
+			if (i == 0) still[k] = at;
+			float moved = (at - still[k]).length() / height;
+			test::@check(moved < 1.0e-4f, "%s moved %.4f heights by %.2f s", names[j], moved, t);
+		}
+	}
+}
+
 // How far the left ankle's world orientation is from the rest pose's, in radians.
 fn float Person.foot_tilt(&self, float time)
 {

@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[71] tool_names @local = {
+String[72] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights", "fix_strays",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -449,7 +449,7 @@ String[71] tool_names @local = {
 	"close_loop", "smooth_clip", "make_loop", "remove_keys", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "get_paths", "set_path", "merge_layers",
-	"get_pins", "set_pins", "pin_feet", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
+	"get_pins", "set_pins", "pin_feet", "find_contacts", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
 	"import_clip", "render_poses", "duplicate_clip", "blend_in",
 };
@@ -6914,7 +6914,7 @@ fn String dense_take_json(String name)
  The clip tools an agent repairs a take with, over the wire: trim and retime
  reshape it, close_loop refuses a clip that does not loop, smooth_clip keeps the
  keys and calms the tremble, and make_loop cuts a looping stride out of it as a
- clip of its own. Each answers with the clip and its measurements.
+ clip of its own, or loops the whole of it. Each answers with the clip and its measurements.
 *>
 fn void the_repair_tools_reshape_a_take() @test
 {
@@ -6937,6 +6937,14 @@ fn void the_repair_tools_reshape_a_take() @test
 	Object* cycle = looped.get("cycle")!!;
 	test::@check(cycle.get_string("clip")!! == "stride" && (cycle.get_bool("loop") ?? false), "the cycle is not a looping clip called stride");
 	test::@check(held_clip(f, "take") != null, "make_loop consumed the take");
+
+	// An idle keeps its length: the whole take loops, less the crossfade.
+	Object*? whole = f.call_tool("make_loop", `{"clip":"take","name":"kept","whole":true,"crossfade":0.2}`);
+	if (catch whole) { test::@check(false, "make_loop refused to loop the whole take"); return; }
+	defer whole.free();
+	double looped_over = whole.get("cut")!!.get_float("period")!!;
+	test::@check(math::abs(looped_over - 2.8) < 0.03, "the whole take loops over %.3f s, not 2.8", looped_over);
+	test::@check(whole.get("cycle")!!.get_bool("loop") ?? false, "the whole take does not loop");
 
 	Object*? smoothed = f.call_tool("smooth_clip", `{"clip":"take","window":0.1}`);
 	if (catch smoothed) { test::@check(false, "smooth_clip refused"); return; }

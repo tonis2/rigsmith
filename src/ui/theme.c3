@@ -661,6 +661,13 @@ fn void set_dialog_open(Ui* ui, String id, bool open)
 	}
 }
 
+// Take down the question on the ChoiceDialog with this id — what each of its
+// buttons does once it has done its work.
+fn void withdraw_choice(Ui* ui, String id)
+{
+	if (try Element* panel = ui.find_id(id)) panel.widget_as(ChoiceDialog).withdraw(panel);
+}
+
 <*
  What the text field with this id holds, trimmed — or empty when there is no such
  field, which reads as "nothing typed" to every caller.
