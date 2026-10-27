@@ -151,3 +151,30 @@ fn void the_asset_browser_deletes_an_authored_clip() @test
 	test::@check(f.app.editing.same(back), "undo did not open the clip again");
 	test::@check(f.app.doc.bound_index("", "Multiple poses") >= 0, "undo did not bring the row back");
 }
+
+// File › New scene over unsaved work asks "Unsaved changes" with Yes / No, not
+// the body plan's question, and No keeps the scene.
+fn void a_new_scene_over_unsaved_work_asks_yes_or_no() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
+	test::@check(f.app.any_character_unsaved(), "fitting a rig is unsaved work");
+	Element* panel = f.ui.find_id(crig::UNSAVED_DIALOG_ID)!!;
+	ConfirmDialog* ask = panel.widget_as(ConfirmDialog);
+	Element* rig = f.ui.find_id(crig::CONFIRM_DIALOG_ID)!!;
+
+	crig::menu_new_scene(f.ui);
+	f.ui.flush();
+	test::@check(ask.asking(panel), "New scene did not ask");
+	test::@check(!rig.widget_as(ConfirmDialog).asking(rig), "New scene asked through the body plan dialog");
+	test::eq(ask.title, "Unsaved changes");
+	test::eq(ask.confirm_text(), "Yes");
+	test::eq(ask.decline_text(), "No");
+	test::@check(ask.message.str_view().contains("unsaved changes"), "the question does not say why it asks");
+
+	f.close_menu();
+	test::@check(!ask.asking(panel), "Escape did not answer No");
+	test::@check(f.app.has_mesh() && f.app.doc.dots.len() > 0, "answering No emptied the scene");
+}

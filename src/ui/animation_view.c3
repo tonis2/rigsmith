@@ -3,7 +3,7 @@
  right (layer_strip.c3), a draggable divider between them.
 
  The clip manager is for choosing, creating, timing and seeing keys: a header
- (clip, + New menu, ⋯ clip menu), the transport, a key row, a strip of sheet
+ (clip, + New, ⋯ clip menu), the transport, a key row, a strip of sheet
  options, the sheet itself — which fills what the dock's height leaves — and a
  slim status bar. The default sheet summarizes whole poses; joint tracks are
  opt-in. Posing tools (rest pose, mirror, copy/paste, balance, pins, the pose
@@ -38,7 +38,6 @@ const String ANIM_TIME_ID = "anim-time-readout";
 const String ANIM_SAVE_STATUS_ID = "anim-save-status";
 const String ANIM_MORE_ID = "anim-more";
 const String ANIM_CLIP_MENU_ID = "anim-clip-menu";
-const String ANIM_FROM_LIBRARY_ID = "anim-from-library";
 const String ANIM_RATE_ID = "anim-rate";
 const String ANIM_SPEED_ID = "anim-speed";
 const String ANIM_PENDING_BANNER_ID = "anim-pending-banner";
@@ -670,8 +669,8 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 						@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = ANIM_GAP, .cross_align = CENTER })
 						{
 							@node((AnimChooser) { });
-							@node(panel_button("+ New ▾", &anim_new_menu_clicked)).with_id(ANIM_NEW_MENU_BUTTON_ID);
-							@tree(widgets::tip("More — rename, duplicate, trim, mirror, un-bind or delete this animation"))
+							@node(panel_button("+ New", &anim_new_clip_clicked)).with_id(ANIM_NEW_ID);
+							@tree(widgets::tip("More — rename, duplicate or mirror this animation, or start a walk cycle"))
 							{
 								@node(panel_button("⋯", &anim_clip_menu_clicked)).with_id(ANIM_MORE_ID);
 							};

@@ -1268,6 +1268,8 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	// Same call the command line makes — see `adopt_source_rig` for the order and
 	// why it is one decision rather than two.
 	self.adopt_source_rig();
+	// A rig imported from the file is where its history starts, not unsaved work.
+	self.mark_saved();
 
 	// After the rig, because the session carries the model's placement: framed
 	// before it, a model saved away from the origin opens with the camera on the

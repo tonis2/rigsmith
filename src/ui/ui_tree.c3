@@ -2476,9 +2476,6 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 			@node((Dialog) { .body = &build_anim_strip_menu,
 				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_STRIP_MENU_ID);
-			@node((Dialog) { .body = &build_anim_new_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_NEW_MENU_ID);
 			@node((Dialog) { .body = &build_anim_tools_menu,
 				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_TOOLS_MENU_ID);
@@ -2521,6 +2518,14 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.style = DIALOG_STYLE,
 				.buttons = CONFIRM_BUTTONS,
 			}).with_id(CONFIRM_DIALOG_ID);
+			// Before unsaved work is dropped: a new scene, an open, a removed character.
+			@node((ConfirmDialog) {
+				.title = "Unsaved changes",
+				.confirm_label = "Yes",
+				.decline_label = "No",
+				.style = DIALOG_STYLE,
+				.buttons = CONFIRM_BUTTONS,
+			}).with_id(UNSAVED_DIALOG_ID);
 			// Two ways ahead and a way out: its answers are its own buttons, and
 			// each closes the panel itself.
 			Element* make_loop = @tree((ChoiceDialog) { .title = "Make loop", .style = DIALOG_STYLE })

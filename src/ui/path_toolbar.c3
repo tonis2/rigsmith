@@ -353,12 +353,12 @@ fn void path_gait_stride_committed(Ui* ui, float value) => path_gait_number(ui, 
 fn void path_gait_lift_committed(Ui* ui, float value) => path_gait_number(ui, 2, value);
 
 <*
- "+ New › Walk cycle": a walk written on the rig's feet, open with the Path tool
+ "⋯ › New walk cycle": a walk written on the rig's feet, open with the Path tool
  so its feet's paths are there to drag.
 *>
 fn void anim_new_walk_cycle(Ui* ui)
 {
-	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
+	anim_clip_menu_closed(ui);
 	AppState* app = ui.inherit(AppState)!!;
 	AnimRef made = app.new_walk_cycle();
 	if (!made.valid()) return;

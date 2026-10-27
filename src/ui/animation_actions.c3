@@ -123,11 +123,9 @@ fn void anim_clip_menu_clicked(Ui* ui)
 
 fn void anim_clip_menu_closed(Ui* ui) => set_dialog_open(ui, ANIM_CLIP_MENU_ID, false);
 
-const String ANIM_NEW_MENU_ID = "anim-new-menu";
-const String ANIM_NEW_MENU_BUTTON_ID = "anim-new-menu-button";
+const String ANIM_NEW_ID = "anim-new";
 const String ANIM_TOOLS_MENU_ID = "anim-tools-menu";
 const String ANIM_TOOLS_BUTTON_ID = "anim-tools";
-const String ANIM_NEW_EMPTY_ID = "anim-new";
 
 // A popup menu opened where the pointer is, the way the ⋯ menu is.
 fn void open_anim_popup(Ui* ui, String id) @private
@@ -140,44 +138,7 @@ fn void open_anim_popup(Ui* ui, String id) @private
 	menu.set_open(elem, true);
 }
 
-fn void anim_new_menu_clicked(Ui* ui) => open_anim_popup(ui, ANIM_NEW_MENU_ID);
 fn void anim_tools_menu_clicked(Ui* ui) => open_anim_popup(ui, ANIM_TOOLS_MENU_ID);
-
-// The + New menu: where a clip comes from. Each row closes the menu before it
-// acts, as the ⋯ menu's do, so the dialog it opens is not stacked under a popup.
-fn void anim_new_menu_empty(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
-	anim_new_clip_clicked(ui);
-}
-
-fn void anim_new_menu_library(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
-	anim_from_library_clicked(ui);
-}
-
-fn Element* build_anim_new_menu(Ui* ui)
-{
-	MenuStyle style = VIEW_MENU_STYLE.resolved();
-	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Empty animation…", "Walk cycle", "From library…" })
-	{
-		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
-	}
-	return @subtree(ui)
-	{
-		@tree((Column) { })
-		{
-			@node((PopupMenuItem) { .item = { .label = "Empty animation…", .on_select = &anim_new_menu_empty },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_EMPTY_ID);
-			@node((PopupMenuItem) { .item = { .label = "Walk cycle", .on_select = &anim_new_walk_cycle },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_WALK_ID);
-			@node((PopupMenuItem) { .item = { .label = "From library…", .on_select = &anim_new_menu_library },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FROM_LIBRARY_ID);
-		};
-	};
-}
 
 // The Clip tools menu: what is done to the clip as a whole, apart from its keys.
 // Taking out travel, turn and jitter is the pane's Optimize button instead.
@@ -664,6 +625,8 @@ fn Element* build_anim_clip_menu(Ui* ui)
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-properties");
 			@node((PopupMenuItem) { .item = { .label = "Duplicate", .on_select = &anim_duplicate_clicked,
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-duplicate");
+			@node((PopupMenuItem) { .item = { .label = "New walk cycle", .on_select = &anim_new_walk_cycle },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_WALK_ID);
 			@node((PopupMenuItem) { .item = { .label = "Stretch timing…", .on_select = &anim_retime_clicked,
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-retime");
 			@node((PopupMenuItem) { .item = { .label = "Mirror animation", .on_select = &anim_menu_mirror,
@@ -873,7 +836,8 @@ fn void anim_pending_continue(Ui* ui)
 }
 
 <*
- + From library: the Assets tab, narrowed to animations.
+ The Assets tab, narrowed to animations: where the guide bar sends a character
+ that has none.
 
  An Assets pane already open is used; otherwise the pane beside this one that is
  neither the model nor the animations, and only as a last resort this pane.

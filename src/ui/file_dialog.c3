@@ -46,6 +46,9 @@ const String FILE_DIALOG_ID = "file-dialog";
 // are there at all, which is half of what there is to assert about them.
 const String RECENT_LIST_ID = "recent-list";
 
+// Asks "Yes / No" before unsaved work is thrown away.
+const String UNSAVED_DIALOG_ID = "unsaved-dialog";
+
 <*
  What the dialog is called and what its confirming button says, for the purpose
  it was opened with.
@@ -67,7 +70,7 @@ struct FileDialogWords
 fn void ask_before_replacing_scene(Ui* ui, String path, bool scene) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	Element*? panel = ui.find_id(UNSAVED_DIALOG_ID);
 	if (catch panel)
 	{
 		app.@notice("save the scene first — opening replaces it");
@@ -77,7 +80,7 @@ fn void ask_before_replacing_scene(Ui* ui, String path, bool scene) @private
 	app.open_waiting = path.copy(mem);
 	app.open_waiting_scene = scene;
 	panel.widget_as(ConfirmDialog).ask(panel,
-		"The scene has unsaved changes. Opening replaces it — continue without saving them?",
+		"Your scene has unsaved changes. Opening replaces it. Do you want to continue?",
 		&replace_scene_confirmed, &replace_scene_declined);
 }
 
@@ -104,14 +107,14 @@ fn void replace_scene_declined(Ui* ui) @private
 fn void ask_before_new_scene(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	Element*? panel = ui.find_id(UNSAVED_DIALOG_ID);
 	if (catch panel)
 	{
 		app.@notice("save the scene first — a new one replaces it");
 		return;
 	}
 	panel.widget_as(ConfirmDialog).ask(panel,
-		"The scene has unsaved changes. Start a new one without saving them?",
+		"Your scene has unsaved changes. Do you want to continue?",
 		&new_scene_confirmed, null);
 }
 

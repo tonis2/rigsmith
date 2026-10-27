@@ -360,6 +360,25 @@ fn void adding_with_nothing_open_opens_it() @test
 	test::@check(app.doc.dots.len() > 0, "the rig came with it");
 }
 
+// A model just added is not unsaved work: removing it asks nothing.
+fn void a_model_just_added_has_nothing_to_save() @test
+{
+	crig::AppState app = crig::new_app({}, "");
+	defer app.free();
+	String folder = library::ready();
+	String person = string::format(mem, "%s/humanoid.glb", folder);
+	defer person.free(mem);
+	String animal = string::format(mem, "%s/quadruped.glb", folder);
+	defer animal.free(mem);
+	app.request_add_character(person);
+	app.service_pending_add();
+	app.request_add_character(animal);
+	app.service_pending_add();
+	test::eq((int)app.character_count(), 2);
+	test::@check(!app.unsaved(), "the model just added reads as unsaved");
+	test::@check(!app.any_character_unsaved(), "a model just added reads as unsaved");
+}
+
 // File › New scene: nobody on stage, no scene file, and an import after it is
 // the first character again rather than one beside a ghost.
 fn void a_new_scene_is_empty() @test

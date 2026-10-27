@@ -138,7 +138,7 @@ fn String guide_next_line(AppState* app)
 				return format_into(guide_next_buffer[..], "Next: %d animation%s can't be found — remove or re-add them in Animations",
 					g.clips - g.clips_found, plural(g.clips - g.clips_found));
 			}
-			return "Next: create or add an animation — + New or + From library in Animations";
+			return "Next: create or add an animation — + New in Animations, or pick one in Assets";
 		case EXPORT:
 			return state == ATTENTION ? "Next: save your changes — Ctrl+S, or File › Export .glb"
 				: "Next: export — File › Export .glb";

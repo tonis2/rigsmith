@@ -135,7 +135,7 @@ fn void dock_splits_into_clips_and_layers() @test
 	{
 		test::@check(!f.in_tree(id), "the dock still shows %s", id);
 	}
-	foreach (id : (String[]) { crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_MORE_ID, crig::ANIM_TOOLS_BUTTON_ID,
+	foreach (id : (String[]) { crig::ANIM_NEW_ID, crig::ANIM_MORE_ID, crig::ANIM_TOOLS_BUTTON_ID,
 		crig::ANIM_CLEANUP_ID, crig::ANIM_INTERP_ID })
 	{
 		test::@check(f.in_tree(id), "the dock has no %s", id);

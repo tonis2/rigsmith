@@ -1,5 +1,5 @@
 <*
- Gaits as paths in the UI: "+ New › Walk cycle" in the Animations pane and the
+ Gaits as paths in the UI: "⋯ › New walk cycle" in the Animations pane and the
  Path strip's gait row, through the real tree.
 
  `c3c test --trust=full --test-filter crig_tests::ui::gait_strip`
@@ -43,7 +43,7 @@ fn void gait_show_view(Fixture* f)
 
 fn void gait_new_walk(Fixture* f)
 {
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_WALK_ID);
+	f.pick_menu_item(crig::ANIM_MORE_ID, crig::ANIM_NEW_WALK_ID);
 	f.feed({ 0, 0 });
 	f.ui.flush();
 }

@@ -139,7 +139,7 @@ fn void a_new_animation_holds_its_last_pose_by_default() @test
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
 
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_EMPTY_ID);
+	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
 	f.click(f.center_of("anim-create")!!);
 	f.ui.flush();
@@ -159,7 +159,7 @@ fn void the_loop_toggle_makes_the_current_clip_cycle() @test
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
 
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_EMPTY_ID);
+	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
 	f.click(f.center_of("anim-create")!!);
 	f.ui.flush();
@@ -190,7 +190,7 @@ fn void animation_workspace_new_starts_at_rest_and_old_clip_still_plays() @test
 	test::@check(f.app.key_pose_edit(), "could not save old final pose");
 	crig::build_ui(f.ui, &f.app);
 	f.ui.flush();
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_EMPTY_ID);
+	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
 	Element* name = f.ui.find_id("anim-new-name")!!;
 	name.widget_as(TextField).set_text(name, "New");
@@ -259,7 +259,7 @@ fn void animation_workspace_creates_a_named_clip_and_wraps() @test
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
 	test::@check(f.app.auto_key, "automatic pose keying should be the default");
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_EMPTY_ID);
+	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
 	Element* name = f.ui.find_id("anim-new-name")!!;
 	name.widget_as(TextField).set_text(name, "Wave");
@@ -278,7 +278,7 @@ fn void animation_workspace_creates_a_named_clip_and_wraps() @test
 	test::@check(f.ui.find_id(crig::ANIM_KEY_ID)!!.widget_as(Button).label == "Key pose", "primary action is unclear");
 	f.ui.resize({ 420, 650 });
 	f.ui.flush();
-	foreach (id : (String[]) { crig::ANIM_NEW_MENU_BUTTON_ID, "anim-more", crig::ANIM_KEY_ID, crig::ANIM_AUTO_KEY_ID })
+	foreach (id : (String[]) { crig::ANIM_NEW_ID, "anim-more", crig::ANIM_KEY_ID, crig::ANIM_AUTO_KEY_ID })
 	{
 		Element* control = f.ui.find_id(id)!!;
 		test::@check(control.size.x > 0 && control.absolute.x + control.size.x <= 420,
@@ -305,7 +305,7 @@ fn void a_new_animation_auto_keys_without_toggling_the_checkbox() @test
 	// Create through the same dialog as the user. The initial checked state must
 	// be the working state; clicking the checkbox once or twice must not be the
 	// operation that arms automatic keying.
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_NEW_EMPTY_ID);
+	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
 	f.ui.find_id("anim-new-name")!!.widget_as(TextField).set_text(
 		f.ui.find_id("anim-new-name")!!, "Untoggled auto key");
@@ -741,7 +741,7 @@ fn void the_interpolation_popover_sets_the_selected_keys() @test
 }
 
 // The ⋯ clip menu holds the clip-wide actions, Clip tools the trim and loop
-// tools, and + From library opens the Assets tab narrowed to animations.
+// tools, and the library is the Assets tab narrowed to animations.
 fn void the_clip_menu_and_from_library() @test
 {
 	Fixture f;
@@ -751,7 +751,7 @@ fn void the_clip_menu_and_from_library() @test
 
 	f.click(f.center_of(crig::ANIM_MORE_ID)!!);
 	f.ui.flush();
-	foreach (id : (String[]) { "anim-properties", "anim-duplicate", "anim-retime",
+	foreach (id : (String[]) { "anim-properties", "anim-duplicate", crig::ANIM_NEW_WALK_ID, "anim-retime",
 		"anim-mirror-clip", "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID })
 	{
 		test::@check(f.in_tree(id), "the clip menu has no %s", id);
@@ -766,7 +766,8 @@ fn void the_clip_menu_and_from_library() @test
 	foreach (id : tools) test::@check(f.in_tree(id), "Clip tools has no %s", id);
 	f.close_menu();
 
-	f.pick_menu_item(crig::ANIM_NEW_MENU_BUTTON_ID, crig::ANIM_FROM_LIBRARY_ID);
+	crig::anim_from_library_clicked(f.ui);
+	f.ui.flush();
 	test::@check(!f.app.asset_filter.any_kind && f.app.asset_filter.kind == ANIMATION,
 		"From library did not narrow the assets to animations");
 	test::eq(crig::area_layout.root.active, crig::LIBRARY_VIEW);

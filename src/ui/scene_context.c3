@@ -623,10 +623,10 @@ fn void scene_context_remove_character(Ui* ui) @private
 		remove_focused_character(ui);
 		return;
 	}
-	Element*? panel = ui.find_id(CONFIRM_DIALOG_ID);
+	Element*? panel = ui.find_id(UNSAVED_DIALOG_ID);
 	if (catch panel) return;
 	panel.widget_as(ConfirmDialog).ask(panel,
-		string::tformat("%s has unsaved changes. Remove it from the scene anyway?", app.label()),
+		string::tformat("%s has unsaved changes. Do you want to remove it from the scene?", app.label()),
 		&remove_focused_character, &keep_focused_character);
 }
 

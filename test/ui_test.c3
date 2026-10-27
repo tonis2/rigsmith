@@ -763,7 +763,7 @@ fn Vec2? Fixture.center_of(&self, String id)
 }
 
 <*
- Open a dock popup menu (+ New, Clip tools) with its button, and click one of its
+ Open a dock popup menu (⋯, Clip tools) with its button, and click one of its
  rows. The rows are built when the menu opens, so they are found by id only then.
 *>
 fn void Fixture.pick_menu_item(&self, String button_id, String item_id)
