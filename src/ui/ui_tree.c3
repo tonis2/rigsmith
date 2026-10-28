@@ -1643,10 +1643,15 @@ fn Element* build_3d_view(Ui* ui)
 				// gizmo rather than replacing Assets on the right or narrowing the
 				// animation dock below. Its Blender-style category rail remains at the
 				// edge when the panel body is closed, so either category can reopen it.
-				@tree((Anchored) { .h = END, .v = START,
-					.margin = { GIZMO_MARGIN, GIZMO_MARGIN + GIZMO_SIZE + 6.0f } })
+				// Padding rather than a margin: it takes the inset off the height, so
+				// a long card scrolls inside the view instead of running off its foot.
+				@tree((Anchored) { .h = END, .v = START })
 				{
-					@node((JointPanel) { }).with_id(JOINT_PANEL_ID);
+					@tree((Padding) { .insets = { .top = GIZMO_MARGIN + GIZMO_SIZE + 6.0f,
+						.right = GIZMO_MARGIN, .bottom = GIZMO_MARGIN } })
+					{
+						@node((JointPanel) { }).with_id(JOINT_PANEL_ID);
+					};
 				};
 
 				// Unlike a Label it *handles* clicks, and as a child whatever the
@@ -2245,7 +2250,8 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 			{
 				app.end_area();
 			}
-			else
+			// Picked keys go before the joint, so one Esc doesn't lose both.
+			else if (!animation_escape_keys(elem.ui))
 			{
 				app.select(0);
 			}

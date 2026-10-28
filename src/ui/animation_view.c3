@@ -1985,6 +1985,18 @@ fn void anim_delete_selection(Ui* ui) @private
 	if (app.delete_selected_animation_keys(app.editing)) app.show_edited();
 }
 
+// Esc lets go of every picked key; false when none was picked.
+fn bool animation_escape_keys(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.animation_key_selection_count(app.editing) == 0
+		&& app.animation_channel_key_selection_count(app.editing) == 0
+		&& app.animation_aim_key_selection_count(app.editing) == 0) return false;
+	app.clear_animation_key_selection();
+	refresh_animations_view(ui);
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // The buttons under the sheet
 

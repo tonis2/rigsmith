@@ -612,12 +612,11 @@ fn void a_pinned_hand_holds_while_the_chest_moves() @test
 }
 
 <*
- A wrist pulled up bends the arm, and the hand arrives as it faced: it keeps its
- world angle, the way a foot stays flat. Alt (`flip_angle`) is the other answer —
- the hand turns with the forearm. The elbow above it and the fingers below keep
- their angle to their parent.
+ A wrist pulled up bends the arm, and the hand stays in line with its forearm
+ like any other limb joint. Alt (`flip_angle`) is the other answer — the hand
+ keeps its world facing. An elbow pulled carries the hand the same way.
 *>
-fn void a_dragged_wrist_keeps_the_hand_as_it_faced() @test
+fn void a_dragged_wrist_turns_the_hand_with_its_forearm() @test
 {
 	io::printn("humanoid: pull a wrist up, with and without Alt");
 	foreach (bool flip : { false, true })
@@ -625,9 +624,10 @@ fn void a_dragged_wrist_keeps_the_hand_as_it_faced() @test
 		Model m;
 		if (!m.open(PERSON, false)) return;
 		defer m.close();
-		test::@check(m.app.pose_keeps_angle(m.id("wrist_L")), "a wrist did not start keeping its world angle");
-		test::@check(!m.app.pose_keeps_angle(m.id("elbow_L")), "an elbow started keeping its world angle");
-		test::@check(!m.app.pose_keeps_angle(m.id("index_1_L")), "a finger started keeping its world angle");
+		test::@check(m.app.pose_keeps_angle(m.id("wrist_L")), "a wrist's Keep angle started off");
+		test::@check(m.app.pose_keeps_angle(m.id("elbow_L")), "an elbow's Keep angle started off");
+		test::@check(m.app.pose_keeps_angle(m.id("index_1_L")), "a finger's Keep angle started off");
+		test::@check(!m.app.pose_keeps_angle(m.id("ankle_L")), "an ankle's Keep angle started on");
 		Vec3 hand = m.at("wrist_L");
 		Quaternionf world = m.world("wrist_L");
 		Quaternionf local = m.to_parent("wrist_L");
@@ -640,14 +640,24 @@ fn void a_dragged_wrist_keeps_the_hand_as_it_faced() @test
 		test::@check(m.off("wrist_L", hand + by) < 0.005f, "the wrist missed the pointer by %.4f heights", m.off("wrist_L", hand + by));
 		if (flip)
 		{
-			test::@check(bent < 0.5f, "with Alt the hand turned %.2f degrees against its forearm", bent);
-			test::@check(turned > 10.0f, "with Alt the hand kept its world facing (turned %.2f degrees)", turned);
+			test::@check(turned < 3.0f, "with Alt the hand turned %.2f degrees in the world", turned);
 		}
 		else
 		{
-			test::@check(turned < 3.0f, "the hand turned %.2f degrees in the world", turned);
+			test::@check(bent < 0.5f, "the hand turned %.2f degrees against its forearm", bent);
+			test::@check(turned > 10.0f, "the hand kept its world facing (turned %.2f degrees)", turned);
 		}
 	}
+
+	// The arm posed from the elbow carries the hand as it sat on the forearm.
+	Model m;
+	if (!m.open(PERSON, false)) return;
+	defer m.close();
+	Quaternionf local = m.to_parent("wrist_L");
+	m.pull("elbow_L", { 0, 0.08f * m.height, 0.06f * m.height });
+	float bent = angle_of(m.to_parent("wrist_L").mul(local.invert()));
+	io::printfn("  elbow pulled: hand turned %.2f deg against the forearm", bent);
+	test::@check(bent < 0.5f, "an elbow pull turned the hand %.2f degrees against its forearm", bent);
 }
 
 <*
@@ -686,7 +696,7 @@ fn void a_dragged_ankle_keeps_the_foot_flat() @test
 
 <*
  The Joint card's Keep angle cell swaps a joint's own way for every drag: a hand
- set the other way turns with its forearm, a foot set the other way tilts with its
+ set the other way keeps its world facing, a foot set the other way tilts with its
  shin, and Alt swaps each back for one drag.
 *>
 fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
@@ -722,12 +732,12 @@ fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
 			alt, hand_turned, hand_bent, foot_turned, foot_bent);
 		if (alt)
 		{
-			test::@check(hand_turned < 3.0f, "with the cell and Alt the hand turned %.2f in the world", hand_turned);
+			test::@check(hand_bent < 0.5f, "with the cell and Alt the hand turned %.2f against its forearm", hand_bent);
 			test::@check(foot_turned < 3.0f, "with the cell and Alt the foot turned %.2f in the world", foot_turned);
 		}
 		else
 		{
-			test::@check(hand_bent < 0.5f, "with the cell the hand turned %.2f against its forearm", hand_bent);
+			test::@check(hand_turned < 3.0f, "with the cell the hand turned %.2f in the world", hand_turned);
 			test::@check(foot_bent < 0.5f, "with the cell the foot turned %.2f against its shin", foot_bent);
 		}
 	}
@@ -885,9 +895,9 @@ fn void pose_joint_turns_a_joint() @test
 
 <*
  pose_joint's keep_angle says outright what the Alt-drag swaps: a paw is a foot, so
- left out it stays flat as it stood, and false turns it with its leg.
+ left out it stays flat as it stood, and true turns it with its leg.
 *>
-fn void pose_joint_keep_angle_holds_a_limbs_world_angle() @test
+fn void pose_joint_keep_angle_says_which_angle_a_limb_keeps() @test
 {
 	io::printn("pose_joint keep_angle: a lifted fore paw, left out, false and true");
 	float[3] turned;
@@ -908,8 +918,8 @@ fn void pose_joint_keep_angle_holds_a_limbs_world_angle() @test
 	}
 	io::printfn("  paw turned %.2f degrees left out, %.2f with false, %.2f with true", turned[0], turned[1], turned[2]);
 	test::@check(turned[0] < 3.0f, "left out the paw turned %.2f degrees", turned[0]);
-	test::@check(turned[2] < 3.0f, "with keep_angle true the paw turned %.2f degrees", turned[2]);
-	test::@check(turned[1] > turned[2] + 5.0f, "with keep_angle false the paw did not turn with its leg (%.2f against %.2f)", turned[1], turned[2]);
+	test::@check(turned[1] < 3.0f, "with keep_angle false the paw turned %.2f degrees", turned[1]);
+	test::@check(turned[2] > turned[1] + 5.0f, "with keep_angle true the paw did not turn with its leg (%.2f against %.2f)", turned[2], turned[1]);
 }
 
 // The dock's Apply to switch is the person's: an agent's key lands at its time alone.

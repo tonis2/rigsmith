@@ -160,3 +160,29 @@ fn void animation_multikey_ui_box_move_and_escape_preserve_history() @test
 	test::@check(f.app.undo() && f.app.clip(f.app.editing).keyframes[1].time == 1
 		&& f.app.clip(f.app.editing).keyframes[2].time == 2, "group move did not undo together");
 }
+
+fn void animation_multikey_ui_escape_drops_the_keys() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	multi_pose_workspace(&f);
+	sz history = f.app.undo_stack.cursor;
+	f.click(multi_pose_point(&f, 0));
+	f.shift_click(multi_pose_point(&f, 1));
+	test::eq(multi_selected_marks(&f), (usz)2);
+	uint joint = f.app.doc.dots[0].id;
+	f.app.select(joint);
+	f.app.refresh_ui();
+	// The first Esc lets go of the keys and keeps the joint; the second lets go of the joint.
+	Vec2 point = multi_pose_point(&f, 1);
+	f.feed(point, keys: { Key.ESCAPE });
+	f.feed(point);
+	test::eq(multi_selected_marks(&f), (usz)0);
+	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)0);
+	test::eq(f.app.selected, joint);
+	test::eq(f.app.undo_stack.cursor, history);
+	f.feed(point, keys: { Key.ESCAPE });
+	f.feed(point);
+	test::eq(f.app.selected, (uint)0);
+}

@@ -14219,7 +14219,7 @@ fn void the_joint_card_anchors_the_selected_joint() @test
 
 <*
  The Keep angle cell sits under the pins for a limb joint: lit when a drag keeps
- the joint's world angle, and a click sets it the other way. The trunk always
+ the joint's angle to its parent, and a click sets it the other way. The trunk always
  keeps its world angle, so its card has no cell.
 *>
 fn void the_joint_card_keep_angle_cell_flips_a_limb() @test
@@ -14246,14 +14246,14 @@ fn void the_joint_card_keep_angle_cell_flips_a_limb() @test
 	fixture.app.select(limb.ankle);
 	fixture.feed(fixture.ui.input.mouse);
 	test::@check(fixture.in_tree(crig::JOINT_KEEP_ANGLE_ID), "the limb's card has no Keep angle cell");
-	test::@check(!fixture.app.pose_keeps_angle(limb.ankle), "a joint with no twin came up keeping its world angle");
+	test::@check(fixture.app.pose_keeps_angle(limb.ankle), "a joint with no twin came up keeping its world angle");
 
 	fixture.click(fixture.center_of(crig::JOINT_KEEP_ANGLE_ID)!!);
 	fixture.feed(fixture.ui.input.mouse);
-	test::@check(fixture.app.pose_keeps_angle(limb.ankle), "the click did not set Keep angle");
+	test::@check(!fixture.app.pose_keeps_angle(limb.ankle), "the click did not turn Keep angle off");
 	fixture.click(fixture.center_of(crig::JOINT_KEEP_ANGLE_ID)!!);
 	fixture.feed(fixture.ui.input.mouse);
-	test::@check(!fixture.app.pose_keeps_angle(limb.ankle), "a second click did not put it back");
+	test::@check(fixture.app.pose_keeps_angle(limb.ankle), "a second click did not put it back");
 	test::@check(fixture.app.angle_flips.len() == 0, "putting it back left %d flips", fixture.app.angle_flips.len());
 
 	fixture.app.select(limb.hips);

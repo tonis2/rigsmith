@@ -1553,13 +1553,13 @@ fn void AppState.restore_body_start(&self, RigView* view, rig::Pose* pose, usz r
  the world rotation it began with (`POINT_POSE_GRAB_HOLD`): a pulled waist drops
  the body with the chest still upright. So is a foot, which stays flat as it
  stood: one that rode its shin would take the shin's roll too, which the reach
- leaves free, and land turned out. So is a wrist: a hand moved arrives as it
- faced. Any other limb's joint keeps its angle to its parent — it holds no world
- rotation, so the solve leaves it as it was and it rides the limb: an elbow
- pulled turns the forearm with the upper arm. A joint's Keep angle cell on the
- Joint card (`angle_flips`) swaps the two for that limb joint, and Alt
- (`DragState.flip_angle`) swaps them again for one drag (`pose_holds`): the hand
- turns with the forearm, the foot tilts with the shin. The
+ leaves free, and land turned out. Any other limb's joint keeps its angle to
+ its parent — it holds no world rotation, so the solve leaves it as it was and it
+ rides the limb: an elbow pulled turns the forearm with the upper arm, a hand
+ moved stays in line with its forearm. A joint's Keep angle cell on the
+ Joint card (`angle_flips`) is lit when it keeps its angle to its parent, and
+ setting it swaps the two for that limb joint; Alt (`DragState.flip_angle`)
+ swaps them again for one drag (`pose_holds`). The
  hold is light, so a limb that has to turn to reach turns.
 
  Each move is solved from the pose the gesture began with, not from the last
@@ -1683,15 +1683,11 @@ enum PoseHold : char
 {
 	FOLLOW, // a limb's joint: its angle to its parent, so a forearm turns with the upper arm
 	FOOT,   // a foot: its world angle, so it stays flat as it stood
-	WRIST,  // a wrist: its world angle, so the hand arrives as it faced
 	TRUNK,  // the root and the spine: their world angle, Alt or not
 }
 
 // Whether the grab holds its world rotation, with Alt (`flip`) swapping a limb's.
-fn bool PoseHold.keeps_world(self, bool flip) => self == TRUNK || (self == FOOT || self == WRIST) != flip;
-
-// Whether a joint's name reads as a wrist: `wrist_L`, `hand.R`, `mixamorig:LeftHand`.
-fn bool names_wrist(String name) @local => name_has(name, "wrist") || name_has(name, "hand");
+fn bool PoseHold.keeps_world(self, bool flip) => self == TRUNK || (self == FOOT) != flip;
 
 // How far above the joint a gait plants a foot by its ankle may still stand, as a
 // share of the figure's height: a man's ankle over the ball of his foot, not his knee.
@@ -1702,8 +1698,7 @@ const float POSE_FOOT_SHARE @local = 0.12f;
  solve, the feet by the one a gait finds them by (`gait_find_feet`). That is the
  joint the floor meets — the ball of a foot with toes — so the leg's joints just
  above it, near the floor still, are the foot too: the ankle a hand grabs. A
- wrist is read off its name, the way a gait reads an arm: the first joint down an
- arm named for a wrist or a hand, and not a digit, so `LeftHandThumb1` is a finger.
+ wrist is a limb joint like any other, so a dragged hand turns with its forearm.
 *>
 fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height) @local
 {
@@ -1728,15 +1723,6 @@ fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height) @loca
 			if (view.skeleton.joints[j].y - floor > POSE_FOOT_SHARE * height) break;
 			holds[j] = FOOT;
 		}
-	}
-	bool[] digit = view.skeleton.digits(mem);
-	defer alloc::free(mem, digit);
-	foreach (usz j, name : view.names)
-	{
-		if (j >= n || digit[j] || holds[j] != FOLLOW || !names_wrist(name)) continue;
-		int parent = view.skeleton.parents[j];
-		if (parent >= 0 && names_wrist(view.names[(usz)parent])) continue;
-		holds[j] = WRIST;
 	}
 	foreach (j, is_trunk : trunk) if (is_trunk) holds[j] = TRUNK;
 	return holds;
@@ -1767,16 +1753,17 @@ fn bool AppState.angle_flipped(&self, uint dot)
 }
 
 <*
- Whether a grab on `dot` keeps its world angle with Alt up — what its Keep angle
- cell shows. A foot, a wrist or the trunk does and any other limb's joint turns
- with its parent, unless the cell was set the other way.
+ Whether a grab on `dot` keeps its angle to its parent with Alt up, as its bone
+ local rotation reads — what its Keep angle cell shows. Any limb's joint does,
+ a foot or the trunk keeps its world angle instead, unless the cell was set the
+ other way.
 *>
 fn bool AppState.pose_keeps_angle(&self, uint dot)
-	=> self.pose_hold(dot).keeps_world(self.angle_flipped(dot));
+	=> !self.pose_hold(dot).keeps_world(self.angle_flipped(dot));
 
 <*
- Set the Keep angle cell across the selection: each limb joint keeps its world
- angle when dragged (`keep`) or turns with its parent. The trunk keeps its world
+ Set the Keep angle cell across the selection: each limb joint keeps its angle
+ to its parent when dragged (`keep`) or its world angle. The trunk keeps its world
  angle whatever the cell says, so it is left out. Session state, no undo step,
  as the pins are.
 
@@ -1798,7 +1785,7 @@ fn usz AppState.set_selection_keeps_angle(&self, bool keep)
 		uint dot = i == 0 ? self.selected : self.also_selected[i - 1];
 		sz joint = view.joint_of(dot);
 		if (dot == 0 || joint < 0 || holds[(usz)joint] == TRUNK) continue;
-		bool flip = holds[(usz)joint].keeps_world(false) != keep;
+		bool flip = holds[(usz)joint].keeps_world(false) == keep;
 		sz n = self.angle_flips.len();
 		for (sz k = 0; k < n; k++)
 		{

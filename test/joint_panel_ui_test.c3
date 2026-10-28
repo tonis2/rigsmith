@@ -415,3 +415,54 @@ fn void temporary_plane_and_bone_shortcuts_do_not_author_joint_limits() @test
 		"a temporary gesture lock authored a persistent joint limit");
 	f.app.cancel_drag();
 }
+
+fn Element* joint_panel_scroll(Element* elem)
+{
+	if (elem.is_widget(Scroll)) return elem;
+	foreach (child : elem.children)
+	{
+		Element* found = joint_panel_scroll(child);
+		if (found) return found;
+	}
+	return null;
+}
+
+<*
+ A long card scrolls inside the view: the panel's viewport ends above the
+ view's foot, so the rows below the fold are reached by the wheel.
+*>
+fn void a_long_joint_card_scrolls_inside_the_view() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	// The card in the report: a posed ankle with its limits table on.
+	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
+	f.app.editing = f.app.new_clip("Walk", 1);
+	f.app.stop_animation();
+	f.app.stage = POSE_STAGE;
+	Dot* ankle = f.app.dot_named("ankle_L");
+	test::@check(ankle != null, "the biped has no ankle_L");
+	uint joint = ankle.id;
+	f.app.select(joint);
+	crig::JointRotationLimits limits = crig::unconstrained_rotation(joint);
+	limits.constrained = true;
+	test::@check(f.app.set_rotation_limits_recorded(joint, limits), "the table was refused");
+	test::@check(f.app.toggle_position_anchor(joint), "the ankle would not pin");
+	f.app.undo_stack.commit();
+	f.app.refresh_ui();
+	crig::refresh_joint_panel(f.ui);
+	f.feed({ 0, 0 });
+
+	Element* scroller = joint_panel_scroll(f.ui.find_id(crig::JOINT_PANEL_ID)!!);
+	test::@check(scroller != null, "the card is not inside a scroll");
+	float foot = scroller.absolute.y + scroller.size.y;
+	float view_foot = f.viewport.absolute.y + f.viewport.size.y;
+	test::@check(foot <= view_foot, "the scroll runs past the view (%f below %f)", foot, view_foot);
+
+	Scroll* scroll = scroller.widget_as(Scroll);
+	test::@check(scroll.content_extent > scroller.size.y,
+		"the card fits (%f into %f): nothing to scroll", scroll.content_extent, scroller.size.y);
+	f.scroll(scroller.absolute + (Vec2){ scroller.size.x * 0.5f, 40.0f }, { 0.0, -3.0 }, precise: false);
+	test::@check(scroll.scroll_offset > 0, "the wheel did not reach the rows below the fold");
+}

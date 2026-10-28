@@ -176,6 +176,7 @@ const ControlRow[*] CONTROLS = {
 	// the menu on empty sheet pastes at that time. The chords do the same while
 	// the sheet has the focus.
 	{ .binding = "right-click a key", .action = "copy or delete keys; set their interpolation, ease or tangent" },
+	{ .binding = "esc", .action = "let go of the selected keys — again clears the joint selection" },
 	{ .binding = "Apply to", .action = "key a pose edit on this frame, on the selected keys, or across the whole clip" },
 	{ .binding = "Keys / Curves", .action = "Curves plots the selected joints' rotation and position over time" },
 	{ .binding = "curve list", .action = "eye shows or hides a curve; click a name to solo it, shift adds, ctrl toggles" },

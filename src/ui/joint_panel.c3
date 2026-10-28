@@ -737,8 +737,8 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 													@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 													{
 														@card_icon(KEEP_ANGLE_GLYPH, keeps
-															? "Keep angle is on — dragged, this joint keeps the way it faces in the world, as a foot stays flat. Click to turn it with its parent instead; Alt-drag swaps it for one drag"
-															: "Keep angle is off — dragged, this joint turns with its parent, as a hand with its forearm. Click to keep its world angle instead; Alt-drag swaps it for one drag",
+															? "Keep angle is on — dragged, this joint keeps its angle to its parent, as a hand stays in line with its forearm. Click to keep its world facing instead; Alt-drag swaps it for one drag"
+															: "Keep angle is off — dragged, this joint keeps the way it faces in the world, as a foot stays flat. Click to keep its angle to its parent instead; Alt-drag swaps it for one drag",
 															&joint_keep_angle_pressed, keeps ? LIT : PLAIN).with_id(JOINT_KEEP_ANGLE_ID);
 													};
 												}
@@ -1890,7 +1890,7 @@ fn void joint_keep_angle_pressed(Ui* ui) @private
 	if (app.selected == 0) return;
 	bool keep = !app.pose_keeps_angle(app.selected);
 	usz set = app.set_selection_keeps_angle(keep);
-	String what = keep ? "keeps its world angle" : "turns with its parent";
+	String what = keep ? "keeps its angle to its parent" : "keeps its world angle";
 	if (set > 1)
 	{
 		app.@notice("%d joints · each %s when dragged", (int)set, what);
