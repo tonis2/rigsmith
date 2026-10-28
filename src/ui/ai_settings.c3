@@ -41,6 +41,12 @@ MotionPathRow[3] motion_path_rows = {
 };
 const usz MOTION_REQUIRED_PATHS = 2;
 
+// Video capture's one file: the DINOv3 backbone the Capture pane runs.
+MotionPathRow[1] capture_path_rows = {
+	{ "creature_model", "settings-capture-backbone", "Backbone", "SAM 3D Body's model.ckpt (DINOv3), or its folder" },
+};
+const String AI_CAPTURE_STATUS_ID = "settings-capture-status";
+
 <*
  Open Settings on its AI page: from the Generate pane, when text to motion is
  not set up yet.
@@ -61,6 +67,7 @@ fn void set_motion_path(Ui* ui, String key, String path)
 	app.config.set_motion_path(key, path);
 	refresh_settings_dialog(ui);
 	refresh_generate_view(ui);
+	refresh_capture_view(ui);
 }
 
 fn void motion_path_typed(Ui* ui, String key, String text) @private
@@ -89,6 +96,8 @@ fn void motion_tokenizer_changed(Ui* ui, String text) @private => motion_path_ty
 fn void motion_text_model_browse(Ui* ui) @private => motion_path_browse(ui, "text_model");
 fn void motion_model_browse(Ui* ui) @private => motion_path_browse(ui, "model");
 fn void motion_tokenizer_browse(Ui* ui) @private => motion_path_browse(ui, "tokenizer");
+fn void capture_backbone_changed(Ui* ui, String text) @private => motion_path_typed(ui, "creature_model", text);
+fn void capture_backbone_browse(Ui* ui) @private => motion_path_browse(ui, "creature_model");
 
 fn OnChange motion_path_changed_fn(String key) @private
 {
@@ -96,6 +105,7 @@ fn OnChange motion_path_changed_fn(String key) @private
 	{
 		case "text_model": return &motion_text_model_changed;
 		case "model": return &motion_model_changed;
+		case "creature_model": return &capture_backbone_changed;
 		default: return &motion_tokenizer_changed;
 	}
 }
@@ -106,6 +116,7 @@ fn OnClick motion_path_browse_fn(String key) @private
 	{
 		case "text_model": return &motion_text_model_browse;
 		case "model": return &motion_model_browse;
+		case "creature_model": return &capture_backbone_browse;
 		default: return &motion_tokenizer_browse;
 	}
 }
@@ -134,4 +145,19 @@ fn String motion_setup_status(Element* elem)
 	String gap = motion_checkpoint_gap(g.model);
 	if (gap.len > 0) return string::format(mem, "Motion model not found: %s", gap);
 	return "Ready — the Generate tab can make clips.".copy(mem);
+}
+
+<*
+ The line under the backbone: what is missing, or that the Capture pane is
+ ready, and whether videos can be read straight (ffmpeg) or need their frames
+ given. Live, so it follows typing. Owned.
+*>
+fn String capture_setup_status(Element* elem)
+{
+	String backbone = elem.inherit(AppState)!!.config.motion_generator.creature_model;
+	String ffmpeg = find_program("ffmpeg");
+	String videos = ffmpeg.len > 0 ? string::tformat("videos read with %s", ffmpeg) : "ffmpeg not found: give the Capture pane folders of frames";
+	if (backbone.len == 0) return string::format(mem, "Still needed: the backbone · %s.", videos);
+	if (!path::exists((Path)backbone)) return string::format(mem, "Backbone not found: %s", backbone);
+	return string::format(mem, "Ready — the Capture pane can train and read · %s.", videos);
 }

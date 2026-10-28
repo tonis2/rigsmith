@@ -503,7 +503,10 @@ String[2] mesh_mask = { "*.glb", "*.gltf" };
 String[1] scene_mask = { "*.rigsmith-scene.json" };
 // Kimodo's weights: the text encoder's .gguf files, and the motion model as a
 // .gguf or as NVIDIA's model.safetensors (its folder is what is read).
-String[2] motion_file_mask = { "*.gguf", "*.safetensors" };
+String[3] motion_file_mask = { "*.gguf", "*.safetensors", "*.ckpt" };
+// The Capture pane's choosers: a video, and a joint finder trained before.
+String[5] capture_video_mask = { "*.mp4", "*.mov", "*.webm", "*.mkv", "*.avi" };
+String[1] capture_finder_mask = { "*.safetensors" };
 
 // The asset browser's category sidebar, in the listing's colours — it is the
 // same kind of thing as the file browser beside a path, and a second palette for

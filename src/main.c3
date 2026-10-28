@@ -497,6 +497,9 @@ fn int run_loop(
 		if (app.pending_open.len > 0) service_open(&app);
 		if (app.pending_add.len > 0) app.service_pending_add();
 		if (app.pending_scene.len > 0) app.service_pending_scene();
+		// A chunk of a capture's training set, or its reference picture: drawn
+		// with the stage renderer, so between frames as the MCP renders are.
+		app.service_capture();
 
 		// A compare on all but the handful of frames where the display's density
 		// actually changed under the window. `ui/ui_scale.c3` has the two cases

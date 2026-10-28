@@ -132,6 +132,8 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case EXPORT_TARGET: return { "Export to", "Select" }; // picks the path; the panel exports
 		case ASSET_LIBRARY: return { "Add asset library", "Add" };
 		case MOTION_FILE: return { "Choose a model file", "Select" };
+		case CAPTURE_VIDEO: return { "Choose the video", "Select" };
+		case CAPTURE_FINDER: return { "Choose a joint finder", "Use" };
 		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
 		case OPEN_SCENE: return { "Open scene", "Open" };
 		case SAVE_SCENE: return { "Save scene as", "Save" };
@@ -225,6 +227,8 @@ fn String[] file_dialog_mask(AppState* app) @private
 	switch (app.file_purpose)
 	{
 		case MOTION_FILE: return motion_file_mask[..];
+		case CAPTURE_VIDEO: return capture_video_mask[..];
+		case CAPTURE_FINDER: return capture_finder_mask[..];
 		case OPEN_SCENE:
 		case SAVE_SCENE: return scene_mask[..];
 		default: return mesh_mask[..];
@@ -412,6 +416,10 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			add_asset_library(ui, path);
 		case MOTION_FILE:
 			set_motion_path(ui, app.motion_path_key, path);
+		case CAPTURE_VIDEO:
+			set_capture_video(ui, path);
+		case CAPTURE_FINDER:
+			use_capture_finder_chosen(ui, path);
 	}
 	app.refresh_ui();
 }

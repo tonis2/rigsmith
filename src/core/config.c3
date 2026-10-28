@@ -191,6 +191,8 @@ struct MotionGenerator
 	String text_model; // Llama-3-Kimodo-*.gguf
 	String tokenizer;  // Kimodo's tokenizer.gguf, when it is not beside the text model
 	String model;      // the motion checkpoint: kimodo-*.gguf, or NVIDIA's release folder (or its model.safetensors)
+	// Video capture's backbone: SAM 3D Body's DINOv3 (its model.ckpt, or the folder).
+	String creature_model;
 }
 alias RecentPaths = List{String};
 
@@ -602,7 +604,7 @@ fn void CrigConfig.adopt_motion_generator(&self, Object* parsed)
 	if (catch found) return;
 	if (!found.is_keyable()) return;
 
-	foreach (key : (String[]){ "text_model", "tokenizer", "model" })
+	foreach (key : (String[]){ "text_model", "tokenizer", "model", "creature_model" })
 	{
 		String? value = found.get_string(key);
 		if (catch value) continue;
@@ -621,6 +623,7 @@ fn String* MotionGenerator.path_of(&self, String key)
 		case "text_model": return &self.text_model;
 		case "tokenizer": return &self.tokenizer;
 		case "model": return &self.model;
+		case "creature_model": return &self.creature_model;
 		default: return null;
 	}
 }
@@ -911,7 +914,7 @@ fn void CrigConfig.free(&self)
 	self.libraries.free();
 	if (self.browse_directory.len > 0) alloc::free(mem, self.browse_directory.ptr);
 	MotionGenerator* g = &self.motion_generator;
-	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model })
+	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model, g.creature_model })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}

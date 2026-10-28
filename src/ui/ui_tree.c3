@@ -859,6 +859,11 @@ fn void menu_generate_motion(Ui* ui) => open_generate_panel(ui);
 
 fn MenuItemFlags query_generate_motion(Ui* ui) => { .checked = find_leaf_showing(area_layout.root, GENERATE_VIEW) != null };
 
+// The Capture pane on screen.
+fn void menu_video_capture(Ui* ui) => open_capture_panel(ui);
+
+fn MenuItemFlags query_video_capture(Ui* ui) => { .checked = find_leaf_showing(area_layout.root, CAPTURE_VIEW) != null };
+
 <*
  The floor grid under the model on or off, remembered in the config.
 *>
@@ -1376,7 +1381,7 @@ MenuItem[15] rig_items = {
 //
 // B for the mesh because M is already the mirror. S is free and is the letter
 // the item starts with, which is as much as either key can claim.
-MenuItem[28] view_items = {
+MenuItem[29] view_items = {
 	{ .label = "Front", .shortcut = "1", .on_select = &menu_view_front, .state = &query_has_view },
 	{ .label = "Back", .shortcut = "Ctrl+1", .on_select = &menu_view_back, .state = &query_has_view },
 	{ .label = "Right", .shortcut = "3", .on_select = &menu_view_right, .state = &query_has_view },
@@ -1405,6 +1410,7 @@ MenuItem[28] view_items = {
 	{ .label = "Joint names", .on_select = &menu_joint_names, .state = &query_joint_names },
 	{ .label = "Workflow guide", .on_select = &menu_workflow_guide, .state = &query_workflow_guide },
 	{ .label = "Generate motion", .on_select = &menu_generate_motion, .state = &query_generate_motion },
+	{ .label = "Video capture", .on_select = &menu_video_capture, .state = &query_video_capture },
 	{ .separator = true },
 	{ .label = "Show sketches", .on_select = &menu_show_sketches, .state = &query_show_sketches },
 	{ .label = "Clear sketches", .on_select = &menu_clear_sketches, .state = &query_has_sketches },
@@ -1430,7 +1436,7 @@ Menu[5] menus;
 
 AreaLayout area_layout;
 
-AreaView[6] area_views = {
+AreaView[7] area_views = {
 	{ .name = "3D View", .build = &build_3d_view },
 	{ .name = "Assets", .build = &build_assets_view },
 	// Last, because it is the pane a user goes to and comes back from: the rig
@@ -1456,6 +1462,8 @@ AreaView[6] area_views = {
 	// the middle, and why whatever comes back goes here too.
 	// Text to motion: the prompt, its progress and the session's takes.
 	{ .name = "Generate", .build = &build_generate_view },
+	// Video capture: a joint finder, the reference picture, a clip from a video.
+	{ .name = "Capture", .build = &build_capture_view },
 };
 
 // Registry positions stay stable when new pane types are appended.
@@ -1463,6 +1471,7 @@ const usz LIBRARY_VIEW = 1;
 const usz ANIMATION_VIEW = 3;
 const usz SCENE_VIEW = 4;
 const usz GENERATE_VIEW = 5;
+const usz CAPTURE_VIEW = 6;
 
 // Enough space for the timeline, pose controls and status at the startup size.
 // Split ratios remain user-adjustable and scale with subsequent window resizing.

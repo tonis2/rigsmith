@@ -762,7 +762,7 @@ fn OrbitCamera pose_camera(AppState* app, PoseCamera cam, PoseDraw* draw, Vec3[]
 }
 
 // Where the posed joints are, in model space. The caller frees it.
-fn Vec3[] posed_joints(RigView* view, Matrix4f[] palette) @local
+fn Vec3[] posed_joints(RigView* view, Matrix4f[] palette) @private
 {
 	Vec3[] at = alloc::new_array(mem, Vec3, (sz)view.skeleton.len());
 	foreach (usz i, joint : view.skeleton.joints) at[i] = joint.transform(palette[i]);
@@ -805,7 +805,7 @@ fn three::Camera pose_scene_camera(OrbitCamera* from)
  it: the pose put in the palette, the scene brought up to date, then the view
  set to the whole (square) target and the interface left out of the capture.
 *>
-fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitCamera* camera, float[4] clear) @local
+fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitCamera* camera, float[4] clear) @private
 {
 	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!;
 	Matrix4f[] held = app.pose_palette;
@@ -843,7 +843,7 @@ fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitC
  pixel): the frame over black is the colour times alpha, and white shows
  through it by one minus alpha.
 *>
-fn void? add_matted(AppState* app, RigView* view, rig::Pose pose, OrbitCamera* camera, float[] sum) @local
+fn void? add_matted(AppState* app, RigView* view, rig::Pose pose, OrbitCamera* camera, float[] sum) @private
 {
 	image::Image dark = pose_frame(app, view, pose, camera, { 0, 0, 0, 1 })!;
 	defer dark.free();
@@ -1102,9 +1102,22 @@ fn bool read_pose_shoot(Object* args, PoseShoot* shoot, DString* detail) @local
 
 fn String? tool_render_poses(Object* args, void* user_data, DString* detail) @private
 {
-	AppState* app = (AppState*)user_data;
 	PoseShoot shoot;
 	if (!read_pose_shoot(args, &shoot, detail)) return RENDER_POSES_REFUSED~;
+	return ((AppState*)user_data).render_pose_set(&shoot, detail);
+}
+
+<*
+ The set `given` asks for, drawn and written (the pictures and
+ poses_<first>.json), as render_poses draws it: its answer, or a fault with
+ why in `detail`. The window stands still while it draws; a set drawn a few
+ poses a call (`count`, `first`) lets it repaint between them — the Capture
+ pane draws its training set so.
+*>
+fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
+{
+	AppState* app = self;
+	PoseShoot shoot = *given;
 	if (!hosted() || stage_renderer() == null)
 	{
 		detail.append_string("there is no renderer: this Rigsmith is running headless.");

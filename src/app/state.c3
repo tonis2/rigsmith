@@ -863,6 +863,9 @@ struct AppState
 	// Text to motion: the llm-runner job generating a clip, if one runs. See
 	// `app/generate.c3`.
 	MotionJob motion_job;
+	// A video capture step (`app/capture.c3`): one pipeline job at a time,
+	// shared with text to motion.
+	CaptureJob capture_job;
 
 	// The renderer the pipeline runs its kernels on: the window's, set by `main`.
 	// Null in a headless AppState, which cannot generate.
@@ -870,6 +873,7 @@ struct AppState
 
 	// The Generate panel: what is typed in it.
 	MotionDraft motion_draft;
+	CaptureDraft capture_draft;
 }
 
 <*
@@ -1429,6 +1433,10 @@ enum FilePurpose
 	// One of the model files on Settings › AI, named by
 	// `AppState.motion_path_key`: a .gguf or .safetensors.
 	MOTION_FILE,
+
+	// The Capture pane's video, and a joint finder trained before.
+	CAPTURE_VIDEO,
+	CAPTURE_FINDER,
 }
 
 <*
@@ -1555,6 +1563,9 @@ fn void AppState.free(&self)
 	(void)self.stop_motion_generation();
 	self.motion_job.clear();
 	self.motion_draft.free();
+	(void)self.stop_capture();
+	self.capture_job.clear();
+	self.capture_draft.free();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
 

@@ -275,7 +275,9 @@ fn bool AppState.ticking(&self)
 		|| self.edge_pending
 		|| (self.skin_stale && self.skinned())
 		// A text-to-motion job is polled a frame at a time; see `tick_motion_job`.
-		|| self.motion_job.running;
+		|| self.motion_job.running
+		// So is a video capture step, and its reference picture waits for a frame.
+		|| self.capture_job.running || self.capture_job.reference_pending;
 }
 
 <*

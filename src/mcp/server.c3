@@ -530,6 +530,25 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	// Hidden with render_poses: the studio picture a video model animates for the
+	// same joint finder.
+	server.add_tool({
+		.name = "render_studio",
+		.description = "Draw the character in a two-camera studio for a video model to animate into a clip llm-runner's creature finder reads well: one picture (reference.png), the front view on the left and the right side on the right, the same moment from level, (all but) orthographic cameras sharing one scale and floor row, over a grey wall, a lighter floor band and a dark divider. studio.json beside it says where a point of the model lands in each view; prompt.txt and the answer carry a prompt for the video model, its action left to fill in. The pose is the rest pose, or a clip's moment on the spot. The document is not touched.",
+		.input_schema = RENDER_STUDIO_SCHEMA,
+		.handler = &tool_render_studio,
+		.user_data = app,
+		.hidden = true,
+	});
+	// Hidden with them: the Capture pane's steps, for an agent.
+	server.add_tool({
+		.name = "capture",
+		.description = "The Capture pane's steps (video to animation through llm-runner's creature plugin, in-process): status (the character's capture folder, finder, reference picture and the running step), train (draw a training set of `poses` and train a joint finder, ~30 min), use_finder (a .safetensors trained before), reference (draw the two-camera studio picture from `clip` at `time`, or the rest pose), animate (read `video` — the picture animated by a video model — into a clip named `name`), stop. Started steps answer at once; poll status.",
+		.input_schema = CAPTURE_SCHEMA,
+		.handler = &tool_capture,
+		.user_data = app,
+		.hidden = true,
+	});
 	// --- clip management tools ---
 	server.add_tool({
 		.name = "unbind_clip",

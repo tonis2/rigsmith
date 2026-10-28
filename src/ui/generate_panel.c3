@@ -428,6 +428,21 @@ fn void tick_generation(Ui* ui, AppState* app)
 		}
 	}
 	if (was != app.motion_job.running) refresh_animations_view(ui);
+
+	// A video capture step, and the clip it lands (`app/capture.c3`).
+	bool capturing = app.capture_job.running;
+	app.tick_capture();
+	if (app.take_captured_clip(&landed))
+	{
+		foreach (sz i, bound : app.doc.animations.array_view())
+		{
+			if (!app.resolve_bound(i).same(landed)) continue;
+			app.anim_selected = (usz)i;
+			anim_edit_selected(ui);
+			break;
+		}
+	}
+	if (capturing != app.capture_job.running) refresh_animations_view(ui);
 }
 
 // ---------------------------------------------------------------------------
@@ -495,9 +510,13 @@ fn void generate_guide_chosen(Ui* ui, usz row) @private
  The running job's progress as a bar, full width. Repaints itself as the step
  count moves; never rebuilds.
 *>
+alias ProgressOf = fn float(Element*);
+
 struct GenerateProgress (Widget)
 {
 	float shown;
+	// Whose progress, 0 to 1: the text-to-motion job's when unset.
+	ProgressOf of;
 }
 
 fn Vec2 GenerateProgress.layout(&self, Element* elem, Constraints constraints) @dynamic
@@ -505,7 +524,7 @@ fn Vec2 GenerateProgress.layout(&self, Element* elem, Constraints constraints) @
 
 fn void GenerateProgress.update(&self, Element* elem, float dt) @dynamic
 {
-	float now = elem.inherit(AppState)!!.motion_job.progress();
+	float now = self.of ? self.of(elem) : elem.inherit(AppState)!!.motion_job.progress();
 	if (now == self.shown) return;
 	self.shown = now;
 	elem.request_paint();

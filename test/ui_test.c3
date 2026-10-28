@@ -11333,6 +11333,65 @@ fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
 	test::@check(optimize.selected == crig::KeyReduction.STRONG.ordinal, "a rebuild lost Strong: row %d", optimize.selected);
 }
 
+<*
+ Video capture has a pane of its own (View › Video capture): with no model
+ file it says the capture folder needs one; given a file and a skeleton it
+ offers the three steps, the pose chooser starting from the rest pose, and
+ what is typed survives a rebuild.
+*>
+fn void the_capture_pane_offers_its_steps_once_the_model_has_a_file() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	fixture.reset();
+	crig::build_ui(fixture.ui, &fixture.app);
+	fixture.ui.flush();
+	crig::show_pane_view(fixture.ui, crig::CAPTURE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	test::@check(@ok(fixture.ui.find_id(crig::CAPTURE_PANEL_ID)), "Capture did not open");
+	test::@check(crig::query_video_capture(fixture.ui).checked, "the menu does not tick Video capture while it shows");
+
+	String held = fixture.app.source_path;
+	fixture.app.source_path = "";
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	test::@check(!@ok(fixture.ui.find_id("capture-train")), "Train is offered for a model with no file");
+
+	fixture.app.source_path = "/nowhere/hero.glb";
+	defer fixture.app.source_path = held;
+	(void)fixture.app.doc.add_dot({ 0, 1, 0 }, "hips");
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	if (!fixture.app.has_mesh())
+	{
+		test::@check(false, "the fixture has no mesh to capture");
+		return;
+	}
+	test::@check(@ok(fixture.ui.find_id("capture-train")), "no Train once the model has a file and a skeleton");
+	test::@check(@ok(fixture.ui.find_id("capture-reference")), "no Make reference");
+	test::@check(@ok(fixture.ui.find_id("capture-animate")), "no Animate");
+	test::@check(!@ok(fixture.ui.find_id("capture-copy-prompt")), "a prompt is offered before there is a picture");
+
+	Select* pose = fixture.ui.find_id(crig::CAPTURE_POSE_ID)!!.widget_as(Select);
+	test::@check(pose.options.len >= 1 && pose.options[0] == "Rest pose", "the pose chooser does not start with the rest pose: %s", pose.options);
+
+	Element* poses = fixture.ui.find_id(crig::CAPTURE_POSES_ID)!!;
+	test::@check(poses.widget_as(TextField).value() == "1500", "the training set does not start at 1500 poses: '%s'", poses.widget_as(TextField).value());
+	Element* video = fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!;
+	fixture.type_into(video, "/clips/wave.mp4");
+	test::@check(fixture.app.capture_draft.video == "/clips/wave.mp4", "the draft's video reads '%s'", fixture.app.capture_draft.video);
+	crig::refresh_capture_view(fixture.ui);
+	fixture.ui.flush();
+	test::@check(fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!.widget_as(TextField).value() == "/clips/wave.mp4", "a rebuild lost the video");
+}
+
 // The Generate pane's Name field: typed, it names the clip; left empty, the clip
 // is "Generated N", the lowest number the character does not already have — and
 // the field shows that name as its placeholder.

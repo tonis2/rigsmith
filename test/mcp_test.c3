@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[73] tool_names @local = {
+String[75] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights", "fix_strays", "fix_tears",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -451,7 +451,7 @@ String[73] tool_names @local = {
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "get_paths", "set_path", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "find_contacts", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
-	"import_clip", "render_poses", "duplicate_clip", "blend_in",
+	"import_clip", "render_poses", "render_studio", "capture", "duplicate_clip", "blend_in",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and
@@ -5283,6 +5283,45 @@ fn void render_poses_names_a_bad_argument_and_a_missing_window() @test
 		"a framing whose least is past its most is refused");
 	test::@check(f.refuses_tool("render_poses", `{"out":"set"}`, "headless"),
 		"with no renderer it says so");
+}
+
+// render_studio, like render_poses, reads its arguments before it looks for a
+// renderer.
+fn void render_studio_names_a_bad_argument_and_a_missing_window() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	test::@check(f.refuses_tool("render_studio", `{}`, "out"),
+		"a picture with nowhere to go is refused, naming out");
+	test::@check(f.refuses_tool("render_studio", `{"out":"studio","width":1281}`, "1281", "even"),
+		"an odd width, which video encoders refuse, is refused");
+	test::@check(f.refuses_tool("render_studio", `{"out":"studio","ground_row":100}`, "ground_row", "360"),
+		"a floor above the middle of the picture is refused against the range");
+	test::@check(f.refuses_tool("render_studio", `{"out":"studio","front_width":1250}`, "front_width"),
+		"a front view that leaves the side no room is refused");
+	test::@check(f.refuses_tool("render_studio", `{"out":"studio","clip":3}`, "clip"),
+		"a clip that is not a name is refused");
+	test::@check(f.refuses_tool("render_studio", `{"out":"studio"}`, "headless"),
+		"with no renderer it says so");
+}
+
+// capture's steps refuse what they cannot do, saying why.
+fn void capture_names_what_it_cannot_do() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	test::@check(f.refuses_tool("capture", `{}`, "action"), "no action is refused, naming the actions");
+	test::@check(f.refuses_tool("capture", `{"action":"dance"}`, "dance", "status"), "an unknown action is named");
+	test::@check(f.refuses_tool("capture", `{"action":"train","poses":5}`, "poses", "50"), "a tiny training set is refused");
+	test::@check(f.refuses_tool("capture", `{"action":"train"}`, "save it"), "a model with no file has no capture folder");
+	test::@check(f.refuses_tool("capture", `{"action":"use_finder","finder":"/no/such.safetensors"}`, "not there"), "a missing finder is refused");
+	test::@check(f.refuses_tool("capture", `{"action":"animate"}`, "video"), "animate needs a video");
 }
 
 // `keys` photographs the poses a clip was written as, which is the question an

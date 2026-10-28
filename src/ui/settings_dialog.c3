@@ -217,6 +217,32 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 				}
 				@node((LiveLabel) { .text_of = &motion_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
 					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_MOTION_STATUS_ID);
+
+				// Video capture: the DINOv3 backbone creature runs on (built in too).
+				@node((Label) {
+					.text = "Video capture (DINOv3) — the backbone the Capture pane trains and reads with.",
+					.size = FILE_HEADING_SIZE,
+					.color = TEXT_DIM,
+				});
+				foreach (row : capture_path_rows)
+				{
+					@tree((Row) { .gap = SETTINGS_GAP, .cross_align = CENTER })
+					{
+						@tree((Row) { .size = { AI_PATH_LABEL_W, 0 } })
+						{
+							@node((Label) { .text = row.label, .size = FILE_HEADING_SIZE, .color = TEXT });
+						};
+						@node((TextField) {
+							.placeholder = row.placeholder,
+							.style = TEXT_FIELD_STYLE,
+							.width = AI_PATH_FIELD_W,
+							.on_change = motion_path_changed_fn(row.key),
+						}).with_id(row.id);
+						@node(panel_button("Browse…", motion_path_browse_fn(row.key)));
+					};
+				}
+				@node((LiveLabel) { .text_of = &capture_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
+					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_CAPTURE_STATUS_ID);
 			}
 			else
 			{
@@ -345,7 +371,7 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 	};
 
 	// What is configured, into fields that do not hold state of their own.
-	foreach (row : motion_path_rows)
+	foreach (row : (MotionPathRow[]){ ...motion_path_rows, ...capture_path_rows })
 	{
 		if (try Element* field = body.find_id(row.id))
 		{
