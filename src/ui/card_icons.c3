@@ -60,6 +60,12 @@ enum CardGlyph
 	FOLLOW_GLYPH,
 	// The Joint card's.
 	KEEP_ANGLE_GLYPH,
+	// The Capture graph's cards.
+	RUN_GLYPH,
+	STOP_GLYPH,
+	BROWSE_GLYPH,
+	COPY_GLYPH,
+	FOLDER_GLYPH,
 }
 
 <*
@@ -270,6 +276,24 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			painter.line(corner, corner + (Vec2){ r * 1.8f, 0 }, w, ink);
 			painter.line(corner, corner + arm * (r * 1.9f), w, ink);
 			painter.arc(corner, r * 1.0f, -(float)math::PI * 0.25f, (float)math::PI * 0.25f, w, ink);
+		case RUN_GLYPH:
+			// Play: a triangle pointing right.
+			Vec2[4] play = { c + (Vec2){ -r * 0.55f, -r * 0.8f }, c + (Vec2){ r * 0.8f, 0 }, c + (Vec2){ -r * 0.55f, r * 0.8f }, c + (Vec2){ -r * 0.55f, -r * 0.8f } };
+			painter.polyline(play[..], w, ink);
+		case STOP_GLYPH:
+			painter.rect(c - (Vec2){ r * 0.6f, r * 0.6f }, { r * 1.2f, r * 1.2f }, { .color = ink, .border_radius = { 1, 1, 1, 1 } });
+		case BROWSE_GLYPH:
+			// The ellipsis of a file chooser.
+			for (int i = -1; i <= 1; i++) painter.circle(c + (Vec2){ (float)i * r * 0.65f, 0 }, 1.6f, { .color = ink });
+		case COPY_GLYPH:
+			// Two sheets, one over the other.
+			painter.rect(c + (Vec2){ -r * 0.8f, -r * 0.8f }, { r * 1.1f, r * 1.3f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+			painter.rect(c + (Vec2){ -r * 0.3f, -r * 0.4f }, { r * 1.1f, r * 1.3f }, { .color = BTN, .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+		case FOLDER_GLYPH:
+			// A folder: its tab, then its body.
+			Vec2[4] tab = { c + (Vec2){ -r * 0.9f, -r * 0.35f }, c + (Vec2){ -r * 0.9f, -r * 0.7f }, c + (Vec2){ -r * 0.2f, -r * 0.7f }, c + (Vec2){ 0, -r * 0.45f } };
+			painter.polyline(tab[..], w, ink);
+			painter.rect(c + (Vec2){ -r * 0.9f, -r * 0.45f }, { r * 1.8f, r * 1.2f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
 		case MUTE_GLYPH:
 			// An eye shut: the path is still there and does nothing.
 			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);

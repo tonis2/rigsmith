@@ -877,7 +877,7 @@ struct AppState
 
 	// The Generate panel: what is typed in it.
 	MotionDraft motion_draft;
-	CaptureDraft capture_draft;
+	CaptureGraph capture_graph;
 }
 
 <*
@@ -1573,8 +1573,8 @@ fn void AppState.free(&self)
 	self.motion_job.clear();
 	self.motion_draft.free();
 	(void)self.stop_capture();
-	self.capture_job.clear();
-	self.capture_draft.free();
+	self.capture_job.free();
+	self.capture_graph.free();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
 

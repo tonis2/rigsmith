@@ -1,8 +1,8 @@
 <*
  Video capture: an animation of the character out of a video of it, through
  llm-runner's `creature` plugin (DINOv3 and a rig fit), run in-process like
- Kimodo (`app/generate.c3`). The Capture pane (`ui/capture_panel.c3`) drives
- three steps, each of which can be done again on its own:
+ Kimodo (`app/generate.c3`). The Capture pane's graph (`app/capture_graph.c3`)
+ runs three steps, each of which can be done again on its own:
 
  1. **A joint finder** for this character: a training set drawn the way
     render_poses draws it (poses inside the rig's limits and frames of its
@@ -20,9 +20,10 @@
  Everything goes in a folder beside the model, `<model>.capture/`: the
  training set (`renders/`), the finder (`finder.safetensors`), the picture
  (`studio/`), each clip's frames and the points found on them
- (`clips/<name>/frames/`, `clips/<name>/tracks.json`), and
- `capture.json`, which remembers a finder chosen from elsewhere. The model
- file itself is never written.
+ (`clips/<name>/frames/`, `clips/<name>/tracks.json`), the pane's graph
+ (`graph.json`; a second Train or Reference node keeps its own under
+ `<node>/`), and `capture.json`, which remembers a finder chosen from
+ elsewhere. The model file itself is never written.
 
  One pipeline job runs at a time in the process, so a capture step and a text
  to motion job wait for each other.
@@ -80,41 +81,28 @@ struct CaptureJob
 	// The training set: the next pose to draw, and how many.
 	usz render_next;
 	usz render_total;
-	// The clip being made: its name, its frames' folder, their rate and count.
+	// The clip being made: its name, its frames' folder (the training set's,
+	// while training), their rate and count.
 	String name;
 	String frames;
 	float fps;
 	usz frames_expected;
 	uint polls;
-	// Asked for by the pane; drawn between frames, where the renderer is free.
+	// The clip's finder and picture layout, for the animate task.
+	String finder;
+	String studio;
+	// Asked for by the pane; drawn between frames, where the renderer is free:
+	// its folder, its clip ("" = the rest pose) and moment, and how it went.
 	bool reference_pending;
+	bool reference_ok;
+	String reference_studio;
+	String reference_clip;
+	float reference_time;
 	// Bumped whenever a step ends, so the pane rebuilds its statuses.
 	uint finished;
 	// Set when a clip has landed, for the interface to select; taken once.
 	AnimRef landed;
 	bool landed_pending;
-}
-
-<*
- The Capture pane's fields as typed, owned, so a rebuild keeps them.
-*>
-struct CaptureDraft
-{
-	String poses;     // the training set's size, as typed
-	String pose_clip; // the reference picture's clip, "pack/clip"; "" = the rest pose
-	String pose_time;
-	String action;    // the movement, for the prompt
-	String video;     // a video file, or a folder of frames
-	String name;      // the clip's name; "" = the video's file name
-}
-
-fn void CaptureDraft.free(&self)
-{
-	foreach (held : (String[]) { self.poses, self.pose_clip, self.pose_time, self.action, self.video, self.name })
-	{
-		if (held.len > 0) alloc::free(mem, held.ptr);
-	}
-	*self = { };
 }
 
 fn String CaptureJob.last(&self) => (String)self.last_line[:self.last_length];
@@ -149,16 +137,26 @@ fn void CaptureJob.clear(&self)
 {
 	self.close_engine();
 	self.stop_ffmpeg();
-	foreach (held : (String[]) { self.name, self.frames })
+	foreach (held : (String[]) { self.name, self.frames, self.finder, self.studio })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.name = self.frames = "";
+	self.name = self.frames = self.finder = self.studio = "";
 	self.running = false;
 	self.stage = IDLE;
 	self.failed = false;
 	self.step = self.steps = 0;
 	self.last_length = 0;
+}
+
+fn void CaptureJob.free(&self)
+{
+	self.clear();
+	foreach (held : (String[]) { self.reference_studio, self.reference_clip })
+	{
+		if (held.len > 0) alloc::free(mem, held.ptr);
+	}
+	self.reference_studio = self.reference_clip = "";
 }
 
 <*
@@ -360,6 +358,8 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_REFERENCE: return "make the reference picture first: the video is read by its layout";
 		case CAPTURE_NO_VIDEO: return "choose a video, or a folder of its frames";
 		case CAPTURE_NO_FFMPEG: return "ffmpeg is not on the PATH — give a folder of the video's frames instead";
+		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
+		case CAPTURE_BAD_POSES: return "Poses is a whole number from 50 to 20000";
 		case CAPTURE_NO_PLUGIN: return "the creature plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
 		default: return "the pipeline would not start";
 	}
@@ -369,17 +369,18 @@ fn String capture_fault_text(fault err)
 // 1. The joint finder.
 
 <*
- Start drawing the training set (`poses` poses, from where a stopped set left
- off) and then training the finder on it.
+ Start drawing the training set (`poses` poses into `renders`, from where a
+ stopped set left off) and then training the finder at `finder` on it.
 *>
-fn void? AppState.start_capture_training(&self, usz poses)
+fn void? AppState.start_capture_training(&self, usz poses, String renders, String finder)
 {
 	self.capture_ready()!;
-	String renders = self.capture_path("renders");
 	(void)path::mkdir(renders, true);
 	if (!path::is_dir((Path)renders)) return CAPTURE_NOT_STARTED~;
 	CaptureJob* job = &self.capture_job;
 	job.clear();
+	job.frames = renders.copy(mem);
+	job.finder = finder.copy(mem);
 	job.running = true;
 	job.stage = RENDERING;
 	job.render_total = math::max(poses, CAPTURE_CHUNK);
@@ -400,7 +401,7 @@ fn void AppState.draw_capture_chunk(&self)
 {
 	CaptureJob* job = &self.capture_job;
 	PoseShoot shoot = pose_shoot_defaults();
-	shoot.out = self.capture_path("renders");
+	shoot.out = job.frames;
 	shoot.first = job.render_next;
 	shoot.count = math::min(CAPTURE_CHUNK, job.render_total - job.render_next);
 	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
@@ -421,7 +422,7 @@ fn void AppState.draw_capture_chunk(&self)
 	job.render_next += shoot.count;
 	job.step = (uint)job.render_next;
 	if (job.render_next < job.render_total) return;
-	self.start_capture_engine(TRAINING, capture_train_json(self.config.motion_generator.creature_model, self.capture_path("renders"), self.capture_path("finder.safetensors")));
+	self.start_capture_engine(TRAINING, capture_train_json(self.config.motion_generator.creature_model, job.frames, job.finder));
 }
 
 // The train task's settings, as JSON. Owned.
@@ -443,41 +444,49 @@ fn String capture_train_json(String backbone, String renders, String finder)
 // 2. The reference picture.
 
 <*
- Draw the reference picture next time the renderer is free: render_studio's
- two cameras on the pose the draft names.
+ Draw the reference picture into `studio` next time the renderer is free:
+ render_studio's two cameras on `clip` ("pack/clip"; "" or CAPTURE_REST is the
+ rest pose) at `time` seconds.
 *>
-fn void? AppState.request_capture_reference(&self)
+fn void? AppState.request_capture_reference(&self, String studio, String clip, float time)
 {
 	if (self.source_path.len == 0) return CAPTURE_NO_MODEL_FILE~;
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
-	self.capture_job.reference_pending = true;
+	CaptureJob* job = &self.capture_job;
+	replace_owned(&job.reference_studio, studio);
+	replace_owned(&job.reference_clip, clip == CAPTURE_REST ? "" : clip);
+	job.reference_time = math::max(time, 0.0f);
+	job.reference_ok = false;
+	job.reference_pending = true;
 }
 
 fn void AppState.draw_capture_reference(&self)
 {
-	self.capture_job.reference_pending = false;
-	String studio = self.capture_path("studio");
+	CaptureJob* job = &self.capture_job;
+	job.reference_pending = false;
+	String studio = job.reference_studio;
 	(void)path::mkdir(studio, true);
 	StudioAsk ask = studio_ask_defaults(studio);
-	ask.clip = self.capture_draft.pose_clip == CAPTURE_REST ? "" : self.capture_draft.pose_clip;
-	if (try float time = self.capture_draft.pose_time.trim().to_float()) ask.time = math::max(time, 0.0f);
+	ask.clip = job.reference_clip;
+	ask.time = job.reference_time;
 	DString detail = dstring::new(mem);
 	defer detail.free();
 	String? answer = self.render_studio_picture(&ask, &detail);
+	job.finished++;
 	if (catch answer)
 	{
 		self.@notice("The reference picture could not be drawn: %s", detail.str_view());
 		return;
 	}
 	alloc::free(mem, answer.ptr);
-	self.capture_job.finished++;
+	job.reference_ok = true;
 	self.@notice("Reference picture written to %s · give it to the video model with the prompt", studio);
 }
 
-// The prompt render_studio wrote, the movement filled in. Temporary.
-fn String AppState.capture_prompt(&self)
+// The prompt render_studio wrote, `action` filled in. Temporary.
+fn String capture_prompt(String action)
 {
-	String action = self.capture_draft.action.trim();
+	action = action.trim();
 	if (action.len == 0) return STUDIO_PROMPT;
 	if (action[^1] == '.') action = action[:action.len - 1];
 	return STUDIO_PROMPT.treplace("<describe the movement here>", action);
@@ -487,25 +496,27 @@ fn String AppState.capture_prompt(&self)
 // 3. The clip.
 
 <*
- Start turning the draft's video into a clip: its frames taken out with
- ffmpeg (or a folder of frames used as it is), then the animate task.
+ Start turning `video` into the clip `name` ("" = the video's file name) with
+ `finder` and the picture in `studio`: its frames taken out with ffmpeg (or a
+ folder of frames used as it is), then the animate task.
 *>
-fn void? AppState.start_capture_animation(&self)
+fn void? AppState.start_capture_animation(&self, String finder, String studio, String video, String name)
 {
 	self.capture_ready()!;
-	String finder = self.capture_finder();
-	if (finder.len == 0) return CAPTURE_NO_FINDER~;
-	if (!file::exists(self.capture_path("studio/studio.json"))) return CAPTURE_NO_REFERENCE~;
-	String video = self.capture_draft.video.trim();
+	if (finder.len == 0 || !file::exists(finder)) return CAPTURE_NO_FINDER~;
+	if (studio.len == 0 || !file::exists(string::tformat("%s/studio.json", studio))) return CAPTURE_NO_REFERENCE~;
+	video = video.trim();
 	if (video.len == 0 || !path::exists((Path)video)) return CAPTURE_NO_VIDEO~;
 	bool folder = path::is_dir((Path)video);
 	if (!folder && find_program("ffmpeg").len == 0) return CAPTURE_NO_FFMPEG~;
 
-	String name = self.capture_draft.name.trim();
+	name = name.trim();
 	if (name.len == 0) name = capture_clip_name(video);
 	CaptureJob* job = &self.capture_job;
 	job.clear();
 	job.name = name.copy(mem);
+	job.finder = finder.copy(mem);
+	job.studio = studio.copy(mem);
 	job.fps = 24;
 	if (folder)
 	{
@@ -573,9 +584,9 @@ fn String AppState.capture_animate_json(&self)
 	out.append_string(",\n  \"rig\": ");
 	out.append_string(rig);
 	out.append_string(",\n  \"finder\": ");
-	gltf_edit::escape_json_string(&out, self.capture_finder());
+	gltf_edit::escape_json_string(&out, job.finder);
 	out.append_string(",\n  \"studio\": ");
-	gltf_edit::escape_json_string(&out, self.capture_path("studio/studio.json"));
+	gltf_edit::escape_json_string(&out, string::tformat("%s/studio.json", job.studio));
 	out.append_string(",\n  \"frames\": ");
 	gltf_edit::escape_json_string(&out, job.frames);
 	out.append_string(",\n  \"name\": ");
@@ -640,6 +651,7 @@ fn void AppState.service_capture(&self)
 fn void AppState.tick_capture(&self)
 {
 	CaptureJob* job = &self.capture_job;
+	self.advance_capture_graph();
 	if (!job.running) return;
 	switch (job.stage)
 	{
@@ -680,8 +692,9 @@ fn void AppState.tick_capture(&self)
 				job.running = false;
 				job.stage = IDLE;
 				job.finished++;
-				(void)self.use_capture_finder(self.capture_path("finder.safetensors"));
-				self.@notice("Joint finder trained: %s", finder_summary(self.capture_finder()));
+				// The folder's own finder is the one the agent's tools use from now on.
+				if (job.finder == self.capture_path("finder.safetensors")) (void)self.use_capture_finder(job.finder);
+				self.@notice("Joint finder trained: %s", finder_summary(job.finder));
 				return;
 			}
 			self.save_capture_tracks(job.engine.output("tracks.json"));
@@ -754,6 +767,7 @@ fn String capture_result_summary(String result)
 fn bool AppState.stop_capture(&self)
 {
 	CaptureJob* job = &self.capture_job;
+	self.capture_graph.stop_run();
 	if (!job.running) return false;
 	job.close_engine();
 	job.stop_ffmpeg();

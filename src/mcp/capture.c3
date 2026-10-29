@@ -45,7 +45,7 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 				detail.appendf(`capture's "poses" is %s; it is from 50 to 20000.`, (JsonFloat)poses);
 				return CAPTURE_REFUSED~;
 			}
-			if (catch err = app.start_capture_training((usz)poses)) return capture_refused(detail, err);
+			if (catch err = app.start_capture_training((usz)poses, app.capture_path("renders"), app.capture_path("finder.safetensors"))) return capture_refused(detail, err);
 		case "use_finder":
 			String finder;
 			if (!required_string(args, "finder", &finder, detail, `capture's use_finder needs "finder": a .safetensors trained before.`)) return CAPTURE_REFUSED~;
@@ -59,11 +59,9 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 		case "reference":
 			String clip = "";
 			if (member(args, "clip") != null && !required_string(args, "clip", &clip, detail, `capture's "clip" is a clip's name`)) return CAPTURE_REFUSED~;
-			replace_owned(&app.capture_draft.pose_clip, clip.len > 0 ? clip : CAPTURE_REST);
 			double time = 0;
 			if (try given = args.get_float("time")) time = given;
-			replace_owned(&app.capture_draft.pose_time, string::tformat("%s", (JsonFloat)time));
-			if (catch err = app.request_capture_reference()) return capture_refused(detail, err);
+			if (catch err = app.request_capture_reference(app.capture_path("studio"), clip, (float)time)) return capture_refused(detail, err);
 			// MCP calls are answered between frames, where the renderer is free.
 			app.draw_capture_reference();
 			if (!file::exists(app.capture_path("studio/studio.json")))
@@ -74,17 +72,15 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 		case "animate":
 			String video;
 			if (!required_string(args, "video", &video, detail, `capture's animate needs "video": the video, or a folder of its frames.`)) return CAPTURE_REFUSED~;
-			replace_owned(&app.capture_draft.video, video);
 			String name = "";
 			if (member(args, "name") != null && !required_string(args, "name", &name, detail, `capture's "name" is the clip's name`)) return CAPTURE_REFUSED~;
-			replace_owned(&app.capture_draft.name, name);
 			String named = name.len > 0 ? name : capture_clip_name(video);
 			if (app.has_bound_clip_named(named))
 			{
 				detail.appendf(`the character already has a clip called "%s"; give "name".`, named);
 				return CAPTURE_REFUSED~;
 			}
-			if (catch err = app.start_capture_animation()) return capture_refused(detail, err);
+			if (catch err = app.start_capture_animation(app.capture_finder(), app.capture_path("studio"), video, name)) return capture_refused(detail, err);
 		case "stop":
 			(void)app.stop_capture();
 		default:

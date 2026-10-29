@@ -11335,9 +11335,9 @@ fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
 
 <*
  Video capture has a pane of its own (View › Video capture): with no model
- file it says the capture folder needs one; given a file and a skeleton it
- offers the three steps, the pose chooser starting from the rest pose, and
- what is typed survives a rebuild.
+ file it says the capture folder needs one; given a file and a skeleton its
+ graph offers the steps' cards, the pose chooser starting from the rest pose,
+ and what is typed goes into the node and survives a rebuild.
 *>
 fn void the_capture_pane_offers_its_steps_once_the_model_has_a_file() @test
 {
@@ -11386,7 +11386,9 @@ fn void the_capture_pane_offers_its_steps_once_the_model_has_a_file() @test
 	test::@check(poses.widget_as(TextField).value() == "1500", "the training set does not start at 1500 poses: '%s'", poses.widget_as(TextField).value());
 	Element* video = fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!;
 	fixture.type_into(video, "/clips/wave.mp4");
-	test::@check(fixture.app.capture_draft.video == "/clips/wave.mp4", "the draft's video reads '%s'", fixture.app.capture_draft.video);
+	crig::CaptureGraph* graph = &fixture.app.capture_graph;
+	String typed = graph.at(graph.find("video")).params[0];
+	test::@check(typed == "/clips/wave.mp4", "the video node's path reads '%s'", typed);
 	crig::refresh_capture_view(fixture.ui);
 	fixture.ui.flush();
 	test::@check(fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!.widget_as(TextField).value() == "/clips/wave.mp4", "a rebuild lost the video");
