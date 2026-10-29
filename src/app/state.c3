@@ -57,6 +57,7 @@ import std::math::quaternion;
 
 import std::collections::list;
 import std::collections::map;
+import llm::pipeline;
 
 // Named for what it holds rather than for its element type: `rig` exports a
 // `UintList` of its own, and an unqualified name that resolves to either is a
@@ -577,6 +578,9 @@ struct AppState
 	*>
 	TreeRow[] category_rows;
 	TreeRow[] library_rows;
+	// Settings › AI › Plugins: the llm folder's plugins, and their rows.
+	llm::pipeline::PluginInfo[] plugin_list;
+	TreeRow[] plugin_rows;
 
 	<*
 	 The Motion & Physics pane's menus and lines. Owned.
@@ -1437,6 +1441,11 @@ enum FilePurpose
 	// The Capture pane's video, and a joint finder trained before.
 	CAPTURE_VIDEO,
 	CAPTURE_FINDER,
+
+	// Folders, like ASSET_LIBRARY: the llm folder, and a plugin's folder
+	// to link into it (Settings › AI › Plugins).
+	PLUGINS_FOLDER,
+	PLUGIN_LINK,
 }
 
 <*
@@ -1601,6 +1610,7 @@ fn void AppState.free(&self)
 	self.free_reference_plans();
 	self.free_category_rows();
 	self.free_library_rows();
+	self.free_plugin_rows();
 	self.free_physics_menus();
 	self.free_plan_rows();
 	*self = {};

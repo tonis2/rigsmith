@@ -438,7 +438,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[75] tool_names @local = {
+String[76] tool_names @local = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights", "fix_strays", "fix_tears",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -451,7 +451,7 @@ String[75] tool_names @local = {
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "get_paths", "set_path", "merge_layers",
 	"get_pins", "set_pins", "pin_feet", "find_contacts", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
 	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
-	"import_clip", "render_poses", "render_studio", "capture", "duplicate_clip", "blend_in",
+	"import_clip", "render_poses", "render_studio", "capture", "plugins", "duplicate_clip", "blend_in",
 };
 
 // The server the app boots with holds three's own tools and all of crig's, and
@@ -5322,6 +5322,29 @@ fn void capture_names_what_it_cannot_do() @test
 	test::@check(f.refuses_tool("capture", `{"action":"train"}`, "save it"), "a model with no file has no capture folder");
 	test::@check(f.refuses_tool("capture", `{"action":"use_finder","finder":"/no/such.safetensors"}`, "not there"), "a missing finder is refused");
 	test::@check(f.refuses_tool("capture", `{"action":"animate"}`, "video"), "animate needs a video");
+}
+
+// plugins lists the folder the pipelines run from, and refuses to link what is
+// not a plugin or to unlink a real folder.
+fn void plugins_lists_the_folder_and_refuses_what_it_should() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	String? listed = f.call_tool_text("plugins", `{"action":"list"}`);
+	test::@check(@ok(listed), "list answers");
+	if (try listed)
+	{
+		defer alloc::free(mem, listed);
+		test::@check(listed.contains(`"name":"kimodo"`) && listed.contains(`"name":"creature"`) && listed.contains(`"core":1`),
+			"the carried folder's core and plugins: %s", listed);
+	}
+	test::@check(f.refuses_tool("plugins", `{}`, "action"), "no action is refused");
+	test::@check(f.refuses_tool("plugins", `{"action":"link"}`, "folder"), "link needs a folder");
+	test::@check(f.refuses_tool("plugins", `{"action":"link","folder":"src"}`, "not a plugin"), "a folder without plugin.json");
+	test::@check(f.refuses_tool("plugins", `{"action":"unlink","name":"kimodo"}`, "only a linked plugin"), "a real plugin folder is not unlinked");
 }
 
 // `keys` photographs the poses a clip was written as, which is the question an

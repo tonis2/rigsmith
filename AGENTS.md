@@ -9,9 +9,7 @@ Use AppState* app = ui.inherit(AppState)!!; instead of passing AppState to widge
 
 # Testing
 run c3c test --test-noleak mostly when developing,
-and then c3c test in the end when all features are in, so it detects memory leaks.
-Running c3c test with full leak detection is slow and should not be done after every change, but when full plan is done.
-Version managing of configs is not important in current crig state, cause there's no users yet
+Only run c3c test full leak checks when told directly.
 
 
 The tests should only use .glb files in the assets folder, no fixtures
@@ -30,7 +28,7 @@ rigsmith is an executable again and links three's engine sources:
 rigsmith compiles three's sources into its binary and resolves every library — cui,
 gltf, collision, mcp, quickjs, vk, shady — from `libs/three/lib`, so both name
 one copy by construction. A cui or engine change is made inside the submodule,
-committed and pushed there, and then the pin is moved here.
+committed and pushed there, and then the pin is moved here.                                # here, after a repack
 
 After a fresh clone:
 

@@ -338,20 +338,31 @@ fn void a_failed_generation_says_why_and_binds_nothing() @test
 }
 
 <*
- The pipeline travels inside the binary: extracting it writes the Kimodo plugin
- and the kernels it dispatches, and a second extraction finds them unchanged.
+ The pipeline is not inside the binary: it runs from an llm folder, by
+ default the one `libs/llm.c3l` carries, read where c3c unpacked it, and the
+ setting wins.
+ That folder has Kimodo, the kernels it dispatches, and a core this build's
+ host verbs can run.
 *>
-fn void the_built_in_pipeline_extracts_its_plugin() @test
+fn void the_pipeline_runs_from_the_plugins_folder() @test
 {
-	String directory = GENERATION_DIR +++ "/llm";
-	(void)path::rmtree((Path)directory);
-	test::@check(llm::pipeline::bundled("kimodo"), "the library does not carry kimodo");
-	test::@check(@ok(llm::pipeline::extract(directory)), "the plugin files could not be written");
-	foreach (name : (String[]){ "kimodo/main.js", "lib/llm.js", "lib/gpu.js", "lib/kernels/common.shady" })
+	crig::AppState app;
+	String plugins = app.llm_plugins_directory();
+	defer plugins.free(mem);
+	test::@check(plugins.ends_with("build/unpacked_c3l/llm.c3l/llm"), "a checkout runs from the folder c3c unpacked (%s)", plugins);
+	foreach (name : (String[]){ "plugins/kimodo/main.js", "plugins/creature/main.js", "core/llm.js", "core/gpu.js", "core/kernels/common.shady", "core/core.json", crig::MOTION_GUIDE_SKELETON })
 	{
-		test::@check(file::exists(string::tformat("%s/%s", directory, name)), "%s was not extracted", name);
+		test::@check(file::exists(string::tformat("%s/%s", plugins, name)), "%s is not in %s", name, plugins);
 	}
-	test::@check(@ok(llm::pipeline::extract(directory)), "a second extraction failed");
+	test::@check(app.llm_plugin_problem("kimodo") == "", "kimodo would not run: %s", app.llm_plugin_problem("kimodo"));
+	test::@check(app.llm_plugin_problem("creature") == "", "creature would not run: %s", app.llm_plugin_problem("creature"));
+	test::@check(app.llm_plugin_problem("nosuch").contains("not in"), "a missing plugin is named");
+
+	app.config.motion_generator.plugins = "build/no_such_plugins";
+	String chosen = app.llm_plugins_directory();
+	defer chosen.free(mem);
+	test::@check(chosen == "build/no_such_plugins", "the setting wins (%s)", chosen);
+	test::@check(app.llm_plugin_problem("kimodo").contains("not an llm folder"), "and a folder without core says so");
 }
 
 <*
@@ -403,8 +414,8 @@ fn void a_guide_clips_keys_become_the_pipelines_poses() @test
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 	test::@check(author_guide(&app).valid(), "the guide clip was not authored");
 
-	String plugins = GENERATION_DIR +++ "/guide-llm";
-	test::@check(@ok(llm::pipeline::extract(plugins)), "the pipeline's files were not written");
+	String plugins = app.llm_plugins_directory();
+	defer plugins.free(mem);
 	String skeleton = string::tformat("%s/%s", plugins, crig::MOTION_GUIDE_SKELETON);
 	test::@check(file::exists(skeleton), "the library carries no rest skeleton at %s", skeleton);
 
@@ -474,8 +485,8 @@ fn void a_turned_rig_sends_its_guide_facing_forward() @test
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 	test::@check(author_guide(&app).valid(), "the guide clip was not authored");
-	String plugins = GENERATION_DIR +++ "/turned-llm";
-	test::@check(@ok(llm::pipeline::extract(plugins)), "the pipeline's files were not written");
+	String plugins = app.llm_plugins_directory();
+	defer plugins.free(mem);
 	String skeleton = string::tformat("%s/%s", plugins, crig::MOTION_GUIDE_SKELETON);
 
 	usz keyed;

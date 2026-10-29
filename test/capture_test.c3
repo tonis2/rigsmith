@@ -2,7 +2,8 @@
  Video capture's plumbing, without a GPU: where its files go, what ffprobe's
  answer means, the clip's name from the video's, where a stopped training set
  carries on, the train task's settings, what a finder file says of itself, and
- the refusal of a model with no file to put a capture folder beside.
+ the refusal of a model with no file to put a capture folder beside, and of a
+ plugins folder without the creature plugin.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::capture`
 *>
@@ -17,6 +18,8 @@ import std::io::file;
 import std::io::path;
 import std::math;
 import gltf_edit;
+import rig;
+import crig_tests::trust_fixes;
 
 fn void the_capture_folder_sits_beside_the_model() @test
 {
@@ -110,4 +113,50 @@ fn void a_model_with_no_file_has_no_capture() @test
 	test::@check(@catch(app.start_capture_animation()) == crig::CAPTURE_NO_MODEL_FILE, "so is reading a video");
 	test::@check(@catch(app.request_capture_reference()) == crig::CAPTURE_NO_MODEL_FILE, "and the reference picture");
 	test::@check(!app.capture_job.running && !app.capture_job.reference_pending, "nothing was started");
+}
+
+fn void a_plugins_folder_without_creature_is_refused_before_the_gpu() @test
+{
+	String dir = "build/test_capture_plugins";
+	(void)path::mkdir(dir, true);
+	defer (void)path::rmtree((Path)dir);
+	String source = string::tformat("%s/humanoid.glb", dir);
+	trust_fixes::copy_humanoid(source);
+	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, source);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.config.motion_generator.creature_model = "/models/model.ckpt".copy(mem);
+	app.config.motion_generator.plugins = string::format(mem, "%s/no_plugins", dir);
+	test::@check(@catch(app.start_capture_training(100)) == crig::CAPTURE_NO_PLUGIN, "training needs the creature plugin");
+	test::@check(@catch(app.start_capture_animation()) == crig::CAPTURE_NO_PLUGIN, "so does reading a video");
+	test::@check(@catch(app.request_capture_reference()) != crig::CAPTURE_NO_PLUGIN, "the reference picture is Rigsmith's own drawing");
+	test::@check(crig::capture_fault_text(crig::CAPTURE_NO_PLUGIN).contains("Plugins"), "the notice says where to fix it");
+}
+
+fn void the_animate_task_asks_for_the_tracks_too() @test
+{
+	String dir = "build/test_capture_animate";
+	(void)path::mkdir(dir, true);
+	defer (void)path::rmtree((Path)dir);
+	String source = string::tformat("%s/humanoid.glb", dir);
+	trust_fixes::copy_humanoid(source);
+	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, source);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	String text = app.capture_animate_json();
+	defer text.free(mem);
+	Object*? parsed = json::parse(mem, text);
+	if (catch parsed)
+	{
+		test::@check(false, "the animate settings parse as JSON: %s", text);
+		return;
+	}
+	defer parsed.free();
+	Object*? outputs = parsed.get("outputs");
+	test::@check(@ok(outputs) && outputs!!.get_len() == 2, "the clip and its tracks");
+	test::@check((outputs!!.get_string_at(1) ?? "") == "tracks", "the tracks, to fit again without the GPU");
 }

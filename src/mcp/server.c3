@@ -549,6 +549,15 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	// And the llm folder those pipelines run from.
+	server.add_tool({
+		.name = "plugins",
+		.description = "The llm folder Rigsmith's pipelines (Kimodo, creature) run from, read when a job starts: list (the folder, its core version, each plugin with its version, whether it is linked and to where, and why it would not run), link (make a plugin's `folder` one of them by a symlink in the folder's plugins/, so its files as they are on disk are what jobs run), unlink (take a linked plugin `name` out; never deletes a folder).",
+		.input_schema = PLUGINS_SCHEMA,
+		.handler = &tool_plugins,
+		.user_data = app,
+		.hidden = true,
+	});
 	// --- clip management tools ---
 	server.add_tool({
 		.name = "unbind_clip",

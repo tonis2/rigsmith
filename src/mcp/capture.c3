@@ -110,6 +110,10 @@ fn String capture_status_json(AppState* app) @private
 	String finder = app.capture_finder();
 	out.append_string(`{"backbone":"`);
 	json_escape_into(&out, app.config.motion_generator.creature_model);
+	String plugins = app.llm_plugins_directory();
+	defer alloc::free(mem, plugins.ptr);
+	out.append_string(`","plugins_root":"`);
+	json_escape_into(&out, plugins);
 	out.append_string(`","folder":"`);
 	json_escape_into(&out, app.capture_folder());
 	out.append_string(`","finder":"`);

@@ -181,6 +181,15 @@ fn Element* GeneratePanel.build(&self, Element* elem) @dynamic
 			}
 			else
 			{
+				// Read when the pane is built, not each frame: the plugins
+				// folder changes from Settings, which rebuilds this.
+				String unfit = app.llm_plugin_problem("kimodo");
+				if (unfit.len > 0)
+				{
+					@node((GenerateNote) { .text = string::tformat("The Kimodo plugin cannot run: %s. Choose the plugins folder, or link kimodo into it, under File › Settings › AI › Plugins.", unfit),
+						.size = ANIM_TEXT_SIZE, .color = ACCENT });
+					@node(accent_button("Plugins…", &open_ai_settings)).with_id("generate-open-plugins");
+				}
 				if (!self.shown.skeleton)
 				{
 					@node((GenerateNote) { .text = "This model has no skeleton yet. Rig it first; a generated clip is put on the rig.",
@@ -386,6 +395,7 @@ fn String motion_fault_text(fault err)
 	switch (err)
 	{
 		case MOTION_NO_GENERATOR: return "choose the Kimodo model files in File › Settings › AI";
+		case MOTION_NO_PLUGIN: return "the kimodo plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
 		case MOTION_NO_GPU: return "there is no GPU to run it on";
 		case MOTION_BUSY: return "a generation is already running";
 		case MOTION_NO_PROMPT: return "the prompt is empty";

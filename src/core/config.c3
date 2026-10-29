@@ -193,6 +193,9 @@ struct MotionGenerator
 	String model;      // the motion checkpoint: kimodo-*.gguf, or NVIDIA's release folder (or its model.safetensors)
 	// Video capture's backbone: SAM 3D Body's DINOv3 (its model.ckpt, or the folder).
 	String creature_model;
+	// The llm folder (core/, plugins/kimodo, plugins/creature ...); unset: `llm`
+	// beside the executable, else the one libs/llm.c3l carries. See `llm_plugins_directory`.
+	String plugins;
 }
 alias RecentPaths = List{String};
 
@@ -604,7 +607,7 @@ fn void CrigConfig.adopt_motion_generator(&self, Object* parsed)
 	if (catch found) return;
 	if (!found.is_keyable()) return;
 
-	foreach (key : (String[]){ "text_model", "tokenizer", "model", "creature_model" })
+	foreach (key : (String[]){ "text_model", "tokenizer", "model", "creature_model", "plugins" })
 	{
 		String? value = found.get_string(key);
 		if (catch value) continue;
@@ -624,6 +627,7 @@ fn String* MotionGenerator.path_of(&self, String key)
 		case "tokenizer": return &self.tokenizer;
 		case "model": return &self.model;
 		case "creature_model": return &self.creature_model;
+		case "plugins": return &self.plugins;
 		default: return null;
 	}
 }
@@ -914,7 +918,7 @@ fn void CrigConfig.free(&self)
 	self.libraries.free();
 	if (self.browse_directory.len > 0) alloc::free(mem, self.browse_directory.ptr);
 	MotionGenerator* g = &self.motion_generator;
-	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model, g.creature_model })
+	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model, g.creature_model, g.plugins })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}

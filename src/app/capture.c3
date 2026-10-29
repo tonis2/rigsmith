@@ -19,7 +19,8 @@
 
  Everything goes in a folder beside the model, `<model>.capture/`: the
  training set (`renders/`), the finder (`finder.safetensors`), the picture
- (`studio/`), each clip's frames (`clips/<name>/frames/`), and
+ (`studio/`), each clip's frames and the points found on them
+ (`clips/<name>/frames/`, `clips/<name>/tracks.json`), and
  `capture.json`, which remembers a finder chosen from elsewhere. The model
  file itself is never written.
 
@@ -41,7 +42,7 @@ import gltf_edit;
 import llm::pipeline;
 
 faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
-	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_FFMPEG, CAPTURE_NOT_STARTED;
+	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_FFMPEG, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED;
 
 // The training set's size by default, and how many poses one frame draws.
 const usz CAPTURE_DEFAULT_POSES = 1500;
@@ -342,6 +343,7 @@ fn void? AppState.capture_ready(&self, bool needs_backbone = true)
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
 	if (self.capture_engine_busy()) return CAPTURE_BUSY~;
 	if (needs_backbone && self.config.motion_generator.creature_model.len == 0) return CAPTURE_NO_BACKBONE~;
+	if (needs_backbone && self.llm_plugin_problem("creature").len > 0) return CAPTURE_NO_PLUGIN~;
 	if (needs_backbone && !self.motion_gpu) return CAPTURE_NO_GPU~;
 }
 
@@ -358,6 +360,7 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_REFERENCE: return "make the reference picture first: the video is read by its layout";
 		case CAPTURE_NO_VIDEO: return "choose a video, or a folder of its frames";
 		case CAPTURE_NO_FFMPEG: return "ffmpeg is not on the PATH — give a folder of the video's frames instead";
+		case CAPTURE_NO_PLUGIN: return "the creature plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
 		default: return "the pipeline would not start";
 	}
 }
@@ -556,7 +559,8 @@ fn String capture_clip_name(String video)
 	return base.len > 0 ? base.tcopy() : "Captured";
 }
 
-// The animate task's settings, as JSON: the rig as it is now, limits and all. Owned.
+// The animate task's settings, as JSON: the rig as it is now, limits and all,
+// asking for the tracks too so a clip can be fitted again without the GPU. Owned.
 fn String AppState.capture_animate_json(&self)
 {
 	CaptureJob* job = &self.capture_job;
@@ -576,7 +580,7 @@ fn String AppState.capture_animate_json(&self)
 	gltf_edit::escape_json_string(&out, job.frames);
 	out.append_string(",\n  \"name\": ");
 	gltf_edit::escape_json_string(&out, job.name);
-	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\"]\n}\n", job.fps);
+	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\", \"tracks\"]\n}\n", job.fps);
 	return out.copy_str(mem);
 }
 
@@ -590,13 +594,8 @@ fn void AppState.start_capture_engine(&self, CaptureStage stage, String json)
 {
 	defer alloc::free(mem, json.ptr);
 	CaptureJob* job = &self.capture_job;
-	String plugins = self.motion_plugins_directory();
+	String plugins = self.llm_plugins_directory();
 	defer alloc::free(mem, plugins.ptr);
-	if (catch llm::pipeline::extract(plugins))
-	{
-		self.fail_capture(string::tformat("could not write the pipeline's files to %s", plugins));
-		return;
-	}
 	llm::pipeline::Job* engine = mem::new(llm::pipeline::Job);
 	job.engine = engine;
 	job.stage = stage;
@@ -685,6 +684,7 @@ fn void AppState.tick_capture(&self)
 				self.@notice("Joint finder trained: %s", finder_summary(self.capture_finder()));
 				return;
 			}
+			self.save_capture_tracks(job.engine.output("tracks.json"));
 			char[] handed = job.engine.output("glb");
 			char[] glb = handed.len > 0 ? alloc::new_array(mem, char, handed.len) : { };
 			if (handed.len > 0) glb[..] = handed[..];
@@ -715,6 +715,15 @@ fn void AppState.tick_capture(&self)
 		default:
 			return;
 	}
+}
+
+// The points the fit was made from, kept beside the clip's frames.
+fn void AppState.save_capture_tracks(&self, char[] tracks)
+{
+	if (tracks.len == 0) return;
+	String clip = self.capture_path(string::tformat("clips/%s", self.capture_job.name));
+	(void)path::mkdir(clip, true);
+	(void)file::save(string::tformat("%s/tracks.json", clip), tracks);
 }
 
 <*

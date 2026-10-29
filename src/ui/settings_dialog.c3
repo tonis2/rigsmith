@@ -177,6 +177,7 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	app.refresh_library_rows();
+	app.refresh_plugin_rows();
 
 	Element* body = @subtree(elem.ui)
 	{
@@ -191,8 +192,8 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 
 			if (app.settings_tab == SETTINGS_TAB_AI)
 			{
-				// Text to motion: the Kimodo pipeline is built in (llm.c3l);
-				// what it needs from the user is the weights. Saved as typed.
+				// Text to motion: the Kimodo plugin runs through llm.c3l; what it
+				// needs from the user is the weights. Saved as typed.
 				@node((Label) {
 					.text = "Text to motion (Kimodo) — the weights the Generate tab runs.",
 					.size = FILE_HEADING_SIZE,
@@ -218,7 +219,7 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 				@node((LiveLabel) { .text_of = &motion_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
 					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_MOTION_STATUS_ID);
 
-				// Video capture: the DINOv3 backbone creature runs on (built in too).
+				// Video capture: the DINOv3 backbone the creature plugin runs on.
 				@node((Label) {
 					.text = "Video capture (DINOv3) — the backbone the Capture pane trains and reads with.",
 					.size = FILE_HEADING_SIZE,
@@ -243,6 +244,40 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 				}
 				@node((LiveLabel) { .text_of = &capture_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
 					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_CAPTURE_STATUS_ID);
+
+				// Plugins: the folder Kimodo and creature are read from when a
+				// job starts. Empty: beside Rigsmith, else the copy it carries.
+				@node((Label) {
+					.text = "Plugins — the llm folder the pipelines run from: core/, and plugins/ with a folder per plugin.",
+					.size = FILE_HEADING_SIZE,
+					.color = TEXT_DIM,
+				});
+				@tree((Row) { .gap = SETTINGS_GAP, .cross_align = CENTER })
+				{
+					@tree((Row) { .size = { AI_PATH_LABEL_W, 0 } })
+					{
+						@node((Label) { .text = "Folder", .size = FILE_HEADING_SIZE, .color = TEXT });
+					};
+					@node((TextField) {
+						.placeholder = "empty: beside Rigsmith, else the copy it carries",
+						.style = TEXT_FIELD_STYLE,
+						.width = AI_PATH_FIELD_W,
+						.on_change = &plugins_folder_typed,
+					}).with_id(SETTINGS_PLUGINS_FOLDER_ID);
+					@node(panel_button("Browse…", &plugins_folder_browse));
+				};
+				@tree((Scroll) { .size = { SETTINGS_DIALOG_W, SETTINGS_PLUGINS_H } })
+				{
+					@node((EmptyStateTree) { .rows_of = &settings_plugin_rows, .empty = SETTINGS_NO_PLUGINS,
+						.empty_color = TEXT_DIM, .style = TREE_STYLE, .tree_id = SETTINGS_PLUGINS_ID });
+				};
+				@node(
+					(Row) { .gap = SETTINGS_GAP },
+					panel_button("Link plugin folder…", &settings_link_plugin),
+					panel_button("Unlink selected", &settings_unlink_plugin)
+				);
+				@node((LiveLabel) { .text_of = &plugins_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
+					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_PLUGINS_STATUS_ID);
 			}
 			else
 			{
@@ -377,6 +412,10 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 		{
 			field.widget_as(TextField).set_text(field, *app.config.motion_generator.path_of(row.key));
 		}
+	}
+	if (try Element* field = body.find_id(SETTINGS_PLUGINS_FOLDER_ID))
+	{
+		field.widget_as(TextField).set_text(field, app.config.motion_generator.plugins);
 	}
 	if (try Element* field = body.find_id(SETTINGS_PORT_ID))
 	{

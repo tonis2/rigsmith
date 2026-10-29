@@ -134,6 +134,8 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case MOTION_FILE: return { "Choose a model file", "Select" };
 		case CAPTURE_VIDEO: return { "Choose the video", "Select" };
 		case CAPTURE_FINDER: return { "Choose a joint finder", "Use" };
+		case PLUGINS_FOLDER: return { "Choose the llm folder", "Use" };
+		case PLUGIN_LINK: return { "Link a plugin's folder", "Link" };
 		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
 		case OPEN_SCENE: return { "Open scene", "Open" };
 		case SAVE_SCENE: return { "Save scene as", "Save" };
@@ -229,6 +231,8 @@ fn String[] file_dialog_mask(AppState* app) @private
 		case MOTION_FILE: return motion_file_mask[..];
 		case CAPTURE_VIDEO: return capture_video_mask[..];
 		case CAPTURE_FINDER: return capture_finder_mask[..];
+		case PLUGINS_FOLDER:
+		case PLUGIN_LINK: return plugin_mask[..];
 		case OPEN_SCENE:
 		case SAVE_SCENE: return scene_mask[..];
 		default: return mesh_mask[..];
@@ -345,6 +349,9 @@ fn void file_path_submitted(Ui* ui, String text) @private
  which is what makes typing a path work: the field takes you there, and the next
  confirmation takes the file.
 *>
+// The purposes whose answer is a folder, which confirming takes rather than opens.
+fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK;
+
 fn void file_dialog_confirmed(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -355,7 +362,7 @@ fn void file_dialog_confirmed(Ui* ui) @private
 	// Walking there rather than opening it. A trailing separator means the same
 	// thing, and is what `file_directory_changed` leaves behind.
 	String bare = typed.len > 1 && typed[^1] == '/' ? typed[:typed.len - 1] : typed;
-	if (path::is_dir((Path)bare) && app.file_purpose != FilePurpose.ASSET_LIBRARY)
+	if (path::is_dir((Path)bare) && !picks_folder(app.file_purpose))
 	{
 		if (try Element* elem = ui.find_id(FILE_BROWSER_ID))
 		{
@@ -368,7 +375,7 @@ fn void file_dialog_confirmed(Ui* ui) @private
 	// nothing to navigate into. Which also means it is the one purpose here that
 	// must refuse a *file*: adding one as a library would make a browser that lists
 	// nothing and says nothing about why.
-	if (app.file_purpose == FilePurpose.ASSET_LIBRARY && !path::is_dir((Path)bare))
+	if (picks_folder(app.file_purpose) && !path::is_dir((Path)bare))
 	{
 		app.@notice("%s is not a folder", bare);
 		app.refresh_ui();
@@ -420,6 +427,10 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			set_capture_video(ui, path);
 		case CAPTURE_FINDER:
 			use_capture_finder_chosen(ui, path);
+		case PLUGINS_FOLDER:
+			set_motion_path(ui, "plugins", path);
+		case PLUGIN_LINK:
+			link_plugin_chosen(ui, path);
 	}
 	app.refresh_ui();
 }

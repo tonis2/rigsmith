@@ -19,6 +19,16 @@ stage_assets() {
 	mkdir -p "$dest/animations"
 	cp assets/DejaVuSans.ttf assets/DejaVuSans-LICENSE "$dest/"
 	cp assets/animations/*.glb "$dest/animations/"
+	# The llm folder the pipelines run from (core/ and plugins/), carried in
+	# libs/llm.c3l and unpacked by c3c when it built: read at run time from
+	# <dir>/llm, nothing of it is compiled in.
+	local llm=build/unpacked_c3l/llm.c3l/llm
+	if [ ! -f "$llm/core/llm.js" ]; then
+		echo "::error::$llm is missing - build first, with a libs/llm.c3l packed with its llm folder" >&2
+		exit 1
+	fi
+	rm -rf "$1/llm"
+	cp -R "$llm" "$1/llm"
 	local f
 	for f in "$dest"/animations/*.glb; do
 		if head -c 40 "$f" | grep -q 'git-lfs'; then

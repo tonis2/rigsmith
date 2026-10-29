@@ -165,6 +165,14 @@ fn Element* CapturePanel.build(&self, Element* elem) @dynamic
 						.size = ANIM_TEXT_SIZE, .color = ACCENT });
 					@node(accent_button("Open AI settings", &open_ai_settings)).with_id("capture-open-settings");
 				}
+				// Read when the pane is built, not each frame: Settings rebuilds it.
+				String unfit = app.llm_plugin_problem("creature");
+				if (unfit.len > 0)
+				{
+					@node((GenerateNote) { .text = string::tformat("The creature plugin cannot run: %s. Choose the plugins folder, or link creature into it, under File › Settings › AI › Plugins.", unfit),
+						.size = ANIM_TEXT_SIZE, .color = ACCENT });
+					@node(accent_button("Plugins…", &open_ai_settings)).with_id("capture-open-plugins");
+				}
 
 				// 1. The joint finder.
 				@node((Label) { .text = "1 · Joint finder", .size = 14, .color = TEXT });

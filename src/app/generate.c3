@@ -65,6 +65,7 @@ faultdef
 	MOTION_BUSY,
 	MOTION_NO_PROMPT,
 	MOTION_NOT_STARTED,
+	MOTION_NO_PLUGIN,
 	MOTION_CLIP_MISSING,
 	MOTION_GUIDE_MISSING,
 	MOTION_GUIDE_UNMATCHED,
@@ -97,10 +98,13 @@ const float MOTION_MAX_SECONDS     = 10.0f;
 const float MOTION_DEFAULT_SECONDS = 5.0f;
 const uint MOTION_DEFAULT_STEPS    = 100;
 const uint MOTION_MAX_STEPS        = 1000;
-// The rest skeleton guide poses are matched against, under the plugins folder.
+// The rest skeleton guide poses are matched against, under the llm folder.
 // The SOMA models are the human ones; their joint names are what the pipeline
 // reads a guide pose's names as.
-const String MOTION_GUIDE_SKELETON = "kimodo/skeletons/soma30.glb";
+const String MOTION_GUIDE_SKELETON = "plugins/kimodo/skeletons/soma30.glb";
+// Where packaging puts the llm folder libs/llm.c3l carries, in a release's
+// bundle (see `llm_plugins_directory`).
+const String LLM_SHIPPED = "llm";
 
 <*
  One request. Zero fields take the defaults: 5 seconds, 100 diffusion steps,
@@ -328,13 +332,28 @@ fn bool parse_motion_step(String line, uint* step, uint* steps)
 }
 
 <*
- Where the library's plugin files are written out for the pipeline to run
- from: `llm` in crig's config directory. Owned.
+ The llm folder the pipeline runs from: `core/` (what llm-runner provides) and
+ `plugins/` (one folder per plugin), read when a job starts — nothing of it is
+ compiled in. The setting (File › Settings › AI › Plugins) when there is one;
+ else `llm` beside the executable; else the folder `libs/llm.c3l` carries
+ (llm-runner's `tools/pack_library.py <out> kimodo creature` packs it in): in a
+ release's bundle, where packaging copies it, or in a checkout where c3c
+ unpacked the library to build it - the library finds that one itself. Owned.
 *>
-fn String AppState.motion_plugins_directory(&self)
+fn String AppState.llm_plugins_directory(&self)
 {
-	if (self.config.directory.len > 0) return string::format(mem, "%s/llm", self.config.directory);
-	return "build/llm".copy(mem);
+	return llm::pipeline::plugins_root(mem, self.config.motion_generator.plugins, bundled(LLM_SHIPPED));
+}
+
+<*
+ Why `plugin` would not run from the llm folder, as a sentence; "" when it
+ would. Temporary.
+*>
+fn String AppState.llm_plugin_problem(&self, String plugin)
+{
+	String root = self.llm_plugins_directory();
+	defer alloc::free(mem, root.ptr);
+	return llm::pipeline::check_plugin(root, plugin);
 }
 
 <*
@@ -691,7 +710,8 @@ fn String? AppState.motion_guide_json(
  @return? MOTION_NO_GPU : `There is no renderer to run on — a headless AppState.`
  @return? MOTION_BUSY : `A job is already running.`
  @return? MOTION_NO_PROMPT : `The prompt is empty.`
- @return? MOTION_NOT_STARTED : `The folders could not be made or the pipeline would not load; last() says why.`
+ @return? MOTION_NO_PLUGIN : `The llm folder has no usable kimodo; last() says why.`
+ @return? MOTION_NOT_STARTED : `The pipeline would not load; last() says why.`
  @return? MOTION_GUIDE_MISSING : `The guide names no clip of the character.`
  @return? MOTION_GUIDE_UNMATCHED : `The rig does not match Kimodo's skeleton, so a guide cannot be sent.`
  @return? MOTION_GUIDE_EMPTY : `The guide clip has no key inside the generated length.`
@@ -711,14 +731,15 @@ fn void? AppState.start_motion_generation(&self, MotionRequest request)
 	uint frames = (uint)(seconds * MOTION_FPS + 0.5f);
 	if (request.steps > MOTION_MAX_STEPS) request.steps = MOTION_MAX_STEPS;
 
-	// First, so the guide's rest skeleton is on disk to be matched against.
-	String plugins = self.motion_plugins_directory();
+	// First, so the guide's rest skeleton is known to be there to match against.
+	String plugins = self.llm_plugins_directory();
 	defer alloc::free(mem, plugins.ptr);
-	if (catch llm::pipeline::extract(plugins))
+	String unfit = llm::pipeline::check_plugin(plugins, "kimodo");
+	if (unfit.len > 0)
 	{
 		self.motion_job.failed = true;
-		self.motion_job.set_last(string::tformat("could not write the pipeline's files to %s", plugins));
-		return MOTION_NOT_STARTED~;
+		self.motion_job.set_last(unfit);
+		return MOTION_NO_PLUGIN~;
 	}
 
 	String poses = "";

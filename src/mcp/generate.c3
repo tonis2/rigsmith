@@ -82,6 +82,8 @@ fn String? tool_generate_motion(Object* args, void* user_data, DString* detail) 
 				detail.append_string(`Text-to-motion is not set up: the Kimodo weights are not chosen. The user picks the text model and the motion model (.gguf files) in File › Settings › AI (config.json's "motion_generator": "text_model", "model", optional "tokenizer").`);
 			case MOTION_NO_GPU:
 				detail.append_string("This Rigsmith has no GPU to run the pipeline on.");
+			case MOTION_NO_PLUGIN:
+				detail.appendf("Text-to-motion's plugin is missing: %s. The user links the kimodo folder in File › Settings › AI › Plugins (or the plugins tool's link).", app.motion_job.last());
 			case MOTION_GUIDE_MISSING:
 				detail.appendf(`"poses_from" names "%s", which is not a clip bound to this character. get_scene lists the bound clips.`, request.guide);
 			case MOTION_GUIDE_UNMATCHED:
