@@ -11266,6 +11266,14 @@ fn Element*? node_field(Fixture* fixture, String id, usz slot) @local
 }
 
 // A card's chooser, with the pointer on it so its choice finds the card.
+// A card's icon pressed, from over its card.
+fn void node_press(Fixture* fixture, String button_id) @local
+{
+	Element* found = fixture.ui.find_id(button_id)!!;
+	fixture.ui.hovered = found;
+	found.widget_as(Button).on_click(fixture.ui);
+}
+
 fn Select*? node_select(Fixture* fixture, String select_id) @local
 {
 	Element* found = fixture.ui.find_id(select_id)!;
@@ -11379,6 +11387,15 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	test::@check(pose.options.len >= 1 && pose.options[0] == "Rest pose", "the pose chooser does not start with the rest pose: %s", pose.options);
 	fixture.type_into(node_field(fixture, "video", 0)!!, "/clips/wave.mp4");
 	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
+	// Animate's mirror check starts on; a click turns it off, another back on.
+	usz animate = (usz)g.find("animate");
+	test::@check(g.at(animate).params[1] == "1", "Animate does not start with the mirror check on (%s)", g.at(animate).params[1]);
+	node_press(fixture, crig::NODE_MIRROR_ID);
+	test::@check(g.at(animate).params[1] == "0", "a click did not turn the mirror check off (%s)", g.at(animate).params[1]);
+	crig::refresh_nodes_view(fixture.ui);
+	fixture.ui.flush();
+	node_press(fixture, crig::NODE_MIRROR_ID);
+	test::@check(g.at(animate).params[1] == "1", "after a rebuild a click did not turn it back on (%s)", g.at(animate).params[1]);
 }
 
 // Text to motion's Name field: typed, it names the clip; left empty, the clip

@@ -596,7 +596,6 @@ fn void JiggleSim.probe_surface(&self, JiggleChain* chain)
 		chain.body.collision_constraints.push({
 			.particle = i,
 			.normal = contact.normal,
-			.depth = radius - (at - contact.point).dot(contact.normal),
 			.contact_point = contact.point + contact.normal * radius,
 			.rigidbody_id = 0,
 			.friction = 0.0f,

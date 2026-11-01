@@ -111,10 +111,10 @@ fn TriangleGap triangle_gap(collision::TriangleVerts a, collision::TriangleVerts
 	TriangleGap gap = { .distance = float::max };
 	for (usz i = 0; i < 3; i++)
 	{
-		Vec3 on_b = collision::closest_point_on_triangle(a[i], b[0], b[1], b[2]);
+		Vec3 on_b = b.closest_point(a[i]);
 		float to_b = (a[i] - on_b).length_sq();
 		if (to_b < gap.distance) gap = { .distance = to_b, .on_a = a[i], .on_b = on_b };
-		Vec3 on_a = collision::closest_point_on_triangle(b[i], a[0], a[1], a[2]);
+		Vec3 on_a = a.closest_point(b[i]);
 		float to_a = (b[i] - on_a).length_sq();
 		if (to_a < gap.distance) gap = { .distance = to_a, .on_a = on_a, .on_b = b[i] };
 	}

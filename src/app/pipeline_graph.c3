@@ -86,7 +86,7 @@ const String[NODE_PARAMS][NODE_KINDS] NODE_PARAM_NAMES = {
 	{ "poses", "size", "", "", "" },
 	{ "pose", "time", "action", "", "" },
 	{ "path", "", "", "", "" },
-	{ "name", "", "", "", "" },
+	{ "name", "mirror", "", "", "" },
 	{ "text", "", "", "", "" },
 };
 const NodeInput[NODE_INPUTS][NODE_KINDS] NODE_INPUT_TABLE = {
@@ -157,6 +157,7 @@ fn String node_default(NodeKind kind, usz slot)
 			}
 		case TRAIN: if (slot == 0) return "1500"; if (slot == 1) return "448";
 		case REFERENCE: if (slot == 1) return "0";
+		case ANIMATE: if (slot == 1) return "1";
 		default: break;
 	}
 	return "";
@@ -842,7 +843,7 @@ fn void? AppState.start_node(&self, PipelineGraph* g, usz node)
 		case ANIMATE:
 			String finder = self.capture_node_finder(g.at(n.input[0]));
 			String studio = self.capture_node_path(g.at(n.input[1]), "studio");
-			self.start_capture_animation(g.fed(node, 3), finder, studio, g.fed(node, 2), g.clip_name(node))!;
+			self.start_capture_animation(g.fed(node, 3), finder, studio, g.fed(node, 2), g.clip_name(node), n.params[1].trim() != "0")!;
 		default:
 			return CAPTURE_NOT_STARTED~;
 	}

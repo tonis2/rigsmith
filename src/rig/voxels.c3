@@ -56,7 +56,7 @@ fn MeshVoxels build_voxels(
 	alloc::Allocator allocator,
 	TriMesh geometry,
 	uint resolution = 0,
-	collision::TriBVHNode* bvh = null,
+	collision::TriBVH* bvh = null,
 	MeshShells* pieces = null)
 {
 	if (geometry.positions.len == 0 || geometry.triangle_count() == 0) return {};

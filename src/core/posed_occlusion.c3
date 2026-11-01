@@ -43,7 +43,9 @@ struct PosedInfluenceBound @local
 
 struct DeformedSurfaceNode @local
 {
-	collision::TriBVHNode* source;
+	// The picker's BVH node this mirrors, and the tree it is a node of.
+	collision::BvhNode* source;
+	collision::TriBVH* tree;
 	DeformedSurfaceNode* parent;
 	DeformedSurfaceNode* left;
 	DeformedSurfaceNode* right;
@@ -152,12 +154,9 @@ fn void add_influence_box(List{PosedInfluenceBound}* out, PosedInfluenceBound in
 	out.push(incoming);
 }
 
-fn usz source_triangle_count(collision::TriBVHNode* node) @local
-{
-	if (!node) return 0;
-	if (node.is_leaf()) return (usz)node.count;
-	return source_triangle_count(node.left) + source_triangle_count(node.right);
-}
+// A BVH node's children: stored depth first, the left one next, the right at `first`.
+macro collision::BvhNode* bvh_left(collision::BvhNode* node) @local => node.is_leaf() ? null : node + 1;
+macro collision::BvhNode* bvh_right(collision::TriBVH* tree, collision::BvhNode* node) @local => node.is_leaf() ? null : &tree.nodes.entries[node.first];
 
 fn void assign_triangle_leaves(DeformedSurfaceNode* node, DeformedSurfaceNode*[] leaves) @local
 {
@@ -166,7 +165,7 @@ fn void assign_triangle_leaves(DeformedSurfaceNode* node, DeformedSurfaceNode*[]
 	{
 		for (sz i = 0; i < node.source.count; i++)
 		{
-			usz triangle = (usz)node.source.sorted_indices[node.source.start + i];
+			usz triangle = (usz)node.tree.order[node.source.first + i];
 			if (triangle < leaves.len) leaves[triangle] = node;
 		}
 		return;
@@ -195,7 +194,7 @@ fn void build_joint_maps(DeformedCollisionSurface* out, gltf::SkinBinding bindin
 	for (usz triangle = 0; triangle < out.triangles; triangle++)
 	{
 		uint stamp = (uint)triangle + 1;
-		collision::Triangle indices = out.root.source.triangles[triangle];
+		collision::Triangle indices = out.root.tree.triangles[triangle];
 		uint[3] corners = { indices.x, indices.y, indices.z };
 		foreach (corner : corners)
 		{
@@ -221,7 +220,7 @@ fn void build_joint_maps(DeformedCollisionSurface* out, gltf::SkinBinding bindin
 	for (usz triangle = 0; triangle < out.triangles; triangle++)
 	{
 		uint stamp = (uint)triangle + 1;
-		collision::Triangle indices = out.root.source.triangles[triangle];
+		collision::Triangle indices = out.root.tree.triangles[triangle];
 		uint[3] corners = { indices.x, indices.y, indices.z };
 		foreach (corner : corners)
 		{
@@ -268,7 +267,7 @@ fn void build_regions(DeformedCollisionSurface* out, gltf::SkinBinding binding) 
 		uint stamp = (uint)triangle + 1;
 		uint region = uint::max;
 		float strongest = 0.0f;
-		collision::Triangle indices = out.root.source.triangles[triangle];
+		collision::Triangle indices = out.root.tree.triangles[triangle];
 		uint[3] corners = { indices.x, indices.y, indices.z };
 		foreach (corner : corners)
 		{
@@ -301,8 +300,8 @@ fn void build_regions(DeformedCollisionSurface* out, gltf::SkinBinding binding) 
 
 fn uint shared_triangle_vertices(DeformedCollisionSurface* out, usz triangle, uint candidate) @local
 {
-	collision::Triangle a = out.root.source.triangles[triangle];
-	collision::Triangle b = out.root.source.triangles[candidate];
+	collision::Triangle a = out.root.tree.triangles[triangle];
+	collision::Triangle b = out.root.tree.triangles[candidate];
 	uint[3] ac = { a.x, a.y, a.z };
 	uint[3] bc = { b.x, b.y, b.z };
 	uint shared = 0;
@@ -311,12 +310,13 @@ fn uint shared_triangle_vertices(DeformedCollisionSurface* out, usz triangle, ui
 }
 
 fn DeformedSurfaceNode* build_posed_node(
-	collision::TriBVHNode* source,
+	collision::BvhNode* source,
+	collision::TriBVH* tree,
 	gltf::SkinBinding binding,
 	uint joint_count,
 	DeformedSurfaceNode* parent = null) @local
 {
-	DeformedSurfaceNode* node = mem::new(DeformedSurfaceNode, { .source = source, .parent = parent });
+	DeformedSurfaceNode* node = mem::new(DeformedSurfaceNode, { .source = source, .tree = tree, .parent = parent });
 	List{PosedInfluenceBound} influences;
 	influences.init(mem);
 	defer influences.free();
@@ -326,8 +326,8 @@ fn DeformedSurfaceNode* build_posed_node(
 		node.triangle_count = (uint)source.count;
 		for (sz i = 0; i < source.count; i++)
 		{
-			sz triangle_index = source.sorted_indices[source.start + i];
-			collision::Triangle triangle = source.triangles[triangle_index];
+			uint triangle_index = tree.order[source.first + i];
+			collision::Triangle triangle = tree.triangles[triangle_index];
 			uint[3] corners = { triangle.x, triangle.y, triangle.z };
 
 			foreach (corner : corners)
@@ -340,22 +340,22 @@ fn DeformedSurfaceNode* build_posed_node(
 					if (binding.weights[base + slot] <= 0.0f) continue;
 					uint joint = (uint)binding.joints[base + slot];
 					if (joint >= joint_count) continue;
-					add_influence_point(&influences, joint, source.vertices[corner]);
+					add_influence_point(&influences, joint, tree.vertices[corner]);
 				}
 			}
 		}
 	}
 	else
 	{
-		if (source.left)
+		if (collision::BvhNode* left = bvh_left(source))
 		{
-			node.left = build_posed_node(source.left, binding, joint_count, node);
+			node.left = build_posed_node(left, tree, binding, joint_count, node);
 			foreach (influence : node.left.influences) add_influence_box(&influences, influence);
 			node.triangle_count += node.left.triangle_count;
 		}
-		if (source.right)
+		if (collision::BvhNode* right = bvh_right(tree, source))
 		{
-			node.right = build_posed_node(source.right, binding, joint_count, node);
+			node.right = build_posed_node(right, tree, binding, joint_count, node);
 			foreach (influence : node.right.influences) add_influence_box(&influences, influence);
 			node.triangle_count += node.right.triangle_count;
 		}
@@ -379,7 +379,7 @@ fn DeformedSurfaceNode* build_posed_node(
 fn DeformedCollisionSurface build_deformed_collision_surface(Picker* picker, gltf::SkinBinding binding, uint joints)
 {
 	usz needed = binding.vertices * (usz)binding.slots;
-	usz triangles = picker.bvh ? source_triangle_count(picker.bvh) : 0;
+	usz triangles = picker.bvh ? (usz)picker.bvh.tri_count : 0;
 	if (!picker.bvh || joints == 0 || binding.vertices == 0 || binding.slots == 0
 		|| binding.joints.len < needed || binding.weights.len < needed
 		|| triangles == 0 || triangles >= (usz)uint::max)
@@ -388,7 +388,7 @@ fn DeformedCollisionSurface build_deformed_collision_surface(Picker* picker, glt
 	}
 
 	DeformedCollisionSurface out = {
-		.root = build_posed_node(picker.bvh, binding, joints),
+		.root = build_posed_node(&picker.bvh.nodes.entries[0], picker.bvh, binding, joints),
 		.scale = picker.scale,
 		.vertices = binding.vertices,
 		.triangles = triangles,
@@ -424,7 +424,7 @@ fn void assign_node_regions(DeformedCollisionSurface* owner, DeformedSurfaceNode
 	{
 		for (sz i = 0; i < node.source.count; i++)
 		{
-			usz triangle = (usz)node.source.sorted_indices[node.source.start + i];
+			usz triangle = (usz)node.tree.order[node.source.first + i];
 			if (triangle < owner.triangles) merged.push(owner.triangle_regions[triangle]);
 		}
 	}
@@ -582,7 +582,7 @@ fn Vec3 DeformedCollisionSurface.posed_vertex(
 {
 	if (self.vertex_generations[vertex] == generation) return self.posed_vertices[vertex];
 
-	Vec3 rest = self.root.source.vertices[vertex];
+	Vec3 rest = self.root.tree.vertices[vertex];
 	Vec3 moved = { 0, 0, 0 };
 	usz base = vertex * (usz)binding.slots;
 	for (uint slot = 0; slot < binding.slots; slot++)
@@ -607,7 +607,7 @@ fn collision::TriangleVerts DeformedCollisionSurface.deformed_triangle(
 	uint generation)
 {
 	if ((usz)triangle >= self.triangles || !self.matches(binding, palette, generation)) return {};
-	collision::Triangle indices = self.root.source.triangles[triangle];
+	collision::Triangle indices = self.root.tree.triangles[triangle];
 	return {
 		self.posed_vertex((usz)indices.x, binding, palette, generation),
 		self.posed_vertex((usz)indices.y, binding, palette, generation),
@@ -651,7 +651,7 @@ fn collision::Aabb3 refit_surface(
 	{
 		for (sz i = 0; i < node.source.count; i++)
 		{
-			usz triangle = (usz)node.source.sorted_indices[node.source.start + i];
+			usz triangle = (usz)node.tree.order[node.source.first + i];
 			bound.expand_by_aabb(triangle_bounds[triangle]);
 		}
 	}
@@ -676,7 +676,7 @@ fn DeformedRefitStats DeformedCollisionSurface.refit_all(
 	uint stamp = self.next_mark();
 	for (usz triangle = 0; triangle < self.triangles; triangle++)
 	{
-		collision::Triangle indices = self.root.source.triangles[triangle];
+		collision::Triangle indices = self.root.tree.triangles[triangle];
 		uint[3] corners = { indices.x, indices.y, indices.z };
 		foreach (corner : corners)
 		{
@@ -720,7 +720,7 @@ fn DeformedRefitStats DeformedCollisionSurface.refit_joints(
 		{
 			if (self.triangle_marks[triangle] == stamp) continue;
 			self.triangle_marks[triangle] = stamp;
-			collision::Triangle indices = self.root.source.triangles[triangle];
+			collision::Triangle indices = self.root.tree.triangles[triangle];
 			uint[3] corners = { indices.x, indices.y, indices.z };
 			foreach (corner : corners)
 			{
@@ -824,14 +824,14 @@ fn void collect_leaf_pairs(
 {
 	for (sz i = 0; i < a.source.count; i++)
 	{
-		uint triangle = (uint)a.source.sorted_indices[a.source.start + i];
+		uint triangle = a.tree.order[a.source.first + i];
 		bool moving = owner.query_marks[triangle] == stamp;
 		bool rigid = skip_rigid && moving && owner.rigid_marks[triangle] == stamp;
 		uint region = owner.triangle_regions[triangle];
 		collision::Aabb3 query = expanded_bound(owner.triangle_bounds[triangle], clearance);
 		for (sz j = a == b ? i + 1 : 0; j < b.source.count; j++)
 		{
-			uint other = (uint)b.source.sorted_indices[b.source.start + j];
+			uint other = b.tree.order[b.source.first + j];
 			bool other_moving = owner.query_marks[other] == stamp;
 			if (!moving && !other_moving) continue;
 			if (rigid && other_moving && owner.rigid_marks[other] == stamp) continue;
@@ -897,7 +897,7 @@ fn void collect_node_pairs(
 *>
 fn bool triangle_rigid_to(DeformedCollisionSurface* owner, gltf::SkinBinding binding, uint triangle, bool[] in_moving) @local
 {
-	collision::Triangle indices = owner.root.source.triangles[triangle];
+	collision::Triangle indices = owner.root.tree.triangles[triangle];
 	uint[3] corners = { indices.x, indices.y, indices.z };
 	foreach (corner : corners)
 	{
@@ -996,7 +996,7 @@ fn DeformedTrianglePair[] DeformedCollisionSurface.broad_phase_pairs_for_joints(
 fn uint[3] DeformedCollisionSurface.triangle_corners(&self, uint triangle)
 {
 	if (!self.root || (usz)triangle >= self.triangles) return {};
-	collision::Triangle indices = self.root.source.triangles[triangle];
+	collision::Triangle indices = self.root.tree.triangles[triangle];
 	return { indices.x, indices.y, indices.z };
 }
 
@@ -1007,17 +1007,17 @@ fn uint[3] DeformedCollisionSurface.triangle_corners(&self, uint triangle)
 fn collision::TriangleVerts DeformedCollisionSurface.rest_triangle(&self, uint triangle)
 {
 	if (!self.root || (usz)triangle >= self.triangles) return {};
-	collision::Triangle indices = self.root.source.triangles[triangle];
+	collision::Triangle indices = self.root.tree.triangles[triangle];
 	return {
-		self.root.source.vertices[indices.x],
-		self.root.source.vertices[indices.y],
-		self.root.source.vertices[indices.z],
+		self.root.tree.vertices[indices.x],
+		self.root.tree.vertices[indices.y],
+		self.root.tree.vertices[indices.z],
 	};
 }
 
 fn void collect_rest_pairs(
 	DeformedCollisionSurface* owner,
-	collision::TriBVHNode* node,
+	collision::BvhNode* node,
 	uint triangle,
 	collision::Aabb3 query,
 	collision::Aabb3[] rest_bounds,
@@ -1028,15 +1028,15 @@ fn void collect_rest_pairs(
 	{
 		for (sz i = 0; i < node.count; i++)
 		{
-			uint other = (uint)node.sorted_indices[node.start + i];
+			uint other = owner.root.tree.order[node.first + i];
 			if (other <= triangle || !rest_bounds[other].collides(query)) continue;
 			if (shared_triangle_vertices(owner, (usz)triangle, other) > 0) continue;
 			pairs.push({ .a = triangle, .b = other });
 		}
 		return;
 	}
-	if (node.left) collect_rest_pairs(owner, node.left, triangle, query, rest_bounds, pairs);
-	if (node.right) collect_rest_pairs(owner, node.right, triangle, query, rest_bounds, pairs);
+	collect_rest_pairs(owner, bvh_left(node), triangle, query, rest_bounds, pairs);
+	collect_rest_pairs(owner, bvh_right(owner.root.tree, node), triangle, query, rest_bounds, pairs);
 }
 
 <*
@@ -1087,8 +1087,8 @@ fn collision::HitInfo posed_ray_intersects(
 		float closest = float::max;
 		for (sz i = 0; i < node.source.count; i++)
 		{
-			sz triangle_index = node.source.sorted_indices[node.source.start + i];
-			collision::Triangle indices = node.source.triangles[triangle_index];
+			sz triangle_index = node.tree.order[node.source.first + i];
+			collision::Triangle indices = node.tree.triangles[triangle_index];
 			collision::TriangleVerts triangle = {
 				owner.posed_vertex((usz)indices.x, binding, palette, generation),
 				owner.posed_vertex((usz)indices.y, binding, palette, generation),
@@ -1270,13 +1270,13 @@ fn void posed_nearest_within(
 	{
 		for (sz i = 0; i < node.source.count; i++)
 		{
-			usz triangle = (usz)node.source.sorted_indices[node.source.start + i];
+			usz triangle = (usz)node.tree.order[node.source.first + i];
 			if (triangle < skip.len && skip[triangle]) continue;
-			collision::Triangle indices = node.source.triangles[triangle];
+			collision::Triangle indices = node.tree.triangles[triangle];
 			Vec3 a = owner.posed_vertex((usz)indices.x, binding, palette, generation);
 			Vec3 b = owner.posed_vertex((usz)indices.y, binding, palette, generation);
 			Vec3 c = owner.posed_vertex((usz)indices.z, binding, palette, generation);
-			Vec3 on = collision::closest_point_on_triangle(point, a, b, c);
+			Vec3 on = ((collision::TriangleVerts){ a, b, c }).closest_point(point);
 			float gap_sq = (point - on).length_sq();
 			if (gap_sq >= best.distance * best.distance) continue;
 			Vec3 face = (b - a).cross(c - a);
@@ -1365,7 +1365,7 @@ fn float DeformedCollisionSurface.joint_thickness(&self, uint joint, Vec3 head, 
 	foreach (usz vertex, region : self.vertex_regions)
 	{
 		if (region != joint || vertex >= self.vertices) continue;
-		Vec3 at = self.root.source.vertices[vertex];
+		Vec3 at = self.root.tree.vertices[vertex];
 		Vec3 on = head;
 		if (axis_sq > 0.0f) on = head + axis * ((at - head).dot(axis) / axis_sq);
 		total += (at - on).length();

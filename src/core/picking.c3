@@ -68,7 +68,7 @@ faultdef NO_SURFACE;
 
 struct Picker
 {
-	collision::TriBVHNode* bvh;
+	collision::TriBVH* bvh;
 
 	<*
 	 The bounding-box diagonal: the length unit the epsilons above are quoted
@@ -89,7 +89,7 @@ $assert collision::Triangle::size == uint::size * 3 : "collision::Triangle is no
 
  An empty picker has a null `bvh`, and every cast below answers "missed" on
  one. That is the state crig runs in before a model is opened, and it has to be
- a legitimate state rather than a crash: `create_indexed_tri_bvh` carries
+ a legitimate state rather than a crash: `create_tri_bvh` carries
  `@require tri_count > 0`, so it cannot be asked about a mesh with no
  triangles at all.
 
@@ -103,7 +103,7 @@ fn Picker build_picker(rig::TriMesh geometry)
 	if (geometry.triangle_count() == 0) return { .scale = 1.0f };
 
 	return {
-		.bvh = collision::create_indexed_tri_bvh(
+		.bvh = collision::create_tri_bvh(
 			geometry.positions.ptr,
 			(collision::Triangle*)geometry.indices.ptr,
 			(sz)geometry.triangle_count()),
@@ -115,10 +115,8 @@ fn void Picker.free(&self)
 {
 	if (self.bvh)
 	{
-		// free_indexed frees the children and the shared index array but not
-		// the node it is called on, which create_indexed_tri_bvh heap-allocated.
-		self.bvh.free_indexed();
-		mem::free(self.bvh);
+		// The tree owns its nodes and triangle order, and frees itself.
+		self.bvh.free();
 	}
 	*self = {};
 }

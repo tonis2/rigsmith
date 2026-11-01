@@ -403,7 +403,7 @@ fn float[] bind_geodesic(
         collision::VoxelGrid grid = voxels.grid;
 
         field = alloc::new_array(allocator, collision::VoxelSource, (sz)(grid.cells.len * GEODESIC_SLOTS));
-        grid.clear_sources(field, GEODESIC_SLOTS);
+        grid.clear_sources(field);
 
         foreach (usz b, joint : joints)
         {

@@ -162,6 +162,35 @@ fn void the_animate_task_asks_for_the_tracks_too() @test
 	Object*? outputs = parsed.get("outputs");
 	test::@check(@ok(outputs) && outputs!!.get_len() == 2, "the clip and its tracks");
 	test::@check((outputs!!.get_string_at(1) ?? "") == "tracks", "the tracks, to fit again without the GPU");
+	test::@check(!@ok(parsed.get("flip")), "the mirror check is on unless turned off");
+	app.capture_job.mirror_off = true;
+	String once = app.capture_animate_json();
+	defer once.free(mem);
+	Object*? read_once = json::parse(mem, once);
+	if (catch read_once)
+	{
+		test::@check(false, "the animate settings parse as JSON: %s", once);
+		return;
+	}
+	defer read_once.free();
+	test::@check(@ok(read_once.get_bool("flip")) && !read_once.get_bool("flip")!!, "with it off each frame is read once");
+}
+
+fn void the_animate_notice_says_how_long_it_took() @test
+{
+	String summary = crig::capture_result_summary(`{"report": {"reprojection_px": {"median": 11.54}, "travel": 0.25, "seconds": {"track": 330, "fit": 4.2, "total": 587.4}}}`);
+	test::@check(summary == "reprojection 11.5 px, root moved 25 cm, in 9 min 47 s (fit 4 s)", "the notice reads '%s'", summary);
+	test::@check(crig::capture_result_summary(`{"report": {}}`) == "done", "an empty report is just done");
+}
+
+fn void an_animate_node_starts_with_the_mirror_check_on() @test
+{
+	String dir = "build/test_nodes_mirror";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
+	test::@check(g.at((usz)g.find("animate")).params[1] == "1", "a new Animate node reads each frame mirrored too (%s)", g.at((usz)g.find("animate")).params[1]);
 }
 
 // The humanoid in a folder of its own, its capture folder empty, its config

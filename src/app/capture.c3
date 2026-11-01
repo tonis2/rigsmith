@@ -99,6 +99,8 @@ struct CaptureJob
 	String finder;
 	String studio;
 	String backbone;
+	// Each frame read once, not also mirrored (which keeps left and right apart).
+	bool mirror_off;
 	// Asked for by the pane; drawn between frames, where the renderer is free:
 	// its folder, its clip ("" = the rest pose) and moment, and how it went.
 	bool reference_pending;
@@ -533,7 +535,7 @@ fn String capture_prompt(String action)
  `finder` and the picture in `studio`: its frames taken out with ffmpeg (or a
  folder of frames used as it is), then the animate task.
 *>
-fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name)
+fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name, bool mirror = true)
 {
 	self.capture_ready(backbone)!;
 	if (finder.len == 0 || !file::exists(finder)) return CAPTURE_NO_FINDER~;
@@ -551,6 +553,7 @@ fn void? AppState.start_capture_animation(&self, String backbone, String finder,
 	job.finder = finder.copy(mem);
 	job.studio = studio.copy(mem);
 	job.backbone = backbone.trim().copy(mem);
+	job.mirror_off = !mirror;
 	job.fps = 24;
 	if (folder)
 	{
@@ -625,6 +628,7 @@ fn String AppState.capture_animate_json(&self)
 	gltf_edit::escape_json_string(&out, job.frames);
 	out.append_string(",\n  \"name\": ");
 	gltf_edit::escape_json_string(&out, job.name);
+	if (job.mirror_off) out.append_string(",\n  \"flip\": false");
 	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\", \"tracks\"]\n}\n", job.fps);
 	return out.copy_str(mem);
 }
@@ -789,7 +793,23 @@ fn String capture_result_summary(String result)
 		if (try double median = reproj.get_float("median")) out.appendf("reprojection %.1f px", median);
 	}
 	if (try double travel = report.get_float("travel")) out.appendf("%sroot moved %.0f cm", out.len() > 0 ? ", " : "", travel * 100);
+	if (try Object* seconds = report.get("seconds"))
+	{
+		if (try double total = seconds.get_float("total"))
+		{
+			out.appendf("%sin %s", out.len() > 0 ? ", " : "", capture_duration(total));
+			if (try double fit = seconds.get_float("fit")) out.appendf(" (fit %s)", capture_duration(fit));
+		}
+	}
 	return out.len() > 0 ? out.str_view() : "done";
+}
+
+// "9 min 47 s", or "4 s".
+fn String capture_duration(double seconds)
+{
+	long s = (long)(seconds + 0.5);
+	if (s < 60) return string::tformat("%d s", s);
+	return string::tformat("%d min %d s", s / 60, s % 60);
 }
 
 <*
