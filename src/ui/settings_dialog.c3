@@ -192,59 +192,12 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 
 			if (app.settings_tab == SETTINGS_TAB_AI)
 			{
-				// Text to motion: the Kimodo plugin runs through llm.c3l; what it
-				// needs from the user is the weights. Saved as typed.
+				// The model files are set on the Nodes pane's model nodes.
 				@node((Label) {
-					.text = "Text to motion (Kimodo) — the weights the Generate tab runs.",
+					.text = "Model files are set on the model nodes in the Nodes pane, and kept here once set.",
 					.size = FILE_HEADING_SIZE,
 					.color = TEXT_DIM,
 				});
-				foreach (row : motion_path_rows)
-				{
-					@tree((Row) { .gap = SETTINGS_GAP, .cross_align = CENTER })
-					{
-						@tree((Row) { .size = { AI_PATH_LABEL_W, 0 } })
-						{
-							@node((Label) { .text = row.label, .size = FILE_HEADING_SIZE, .color = TEXT });
-						};
-						@node((TextField) {
-							.placeholder = row.placeholder,
-							.style = TEXT_FIELD_STYLE,
-							.width = AI_PATH_FIELD_W,
-							.on_change = motion_path_changed_fn(row.key),
-						}).with_id(row.id);
-						@node(panel_button("Browse…", motion_path_browse_fn(row.key)));
-					};
-				}
-				@node((LiveLabel) { .text_of = &motion_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
-					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_MOTION_STATUS_ID);
-
-				// Video capture: the DINOv3 backbone the creature plugin runs on.
-				@node((Label) {
-					.text = "Video capture (DINOv3) — the backbone the Capture pane trains and reads with.",
-					.size = FILE_HEADING_SIZE,
-					.color = TEXT_DIM,
-				});
-				foreach (row : capture_path_rows)
-				{
-					@tree((Row) { .gap = SETTINGS_GAP, .cross_align = CENTER })
-					{
-						@tree((Row) { .size = { AI_PATH_LABEL_W, 0 } })
-						{
-							@node((Label) { .text = row.label, .size = FILE_HEADING_SIZE, .color = TEXT });
-						};
-						@node((TextField) {
-							.placeholder = row.placeholder,
-							.style = TEXT_FIELD_STYLE,
-							.width = AI_PATH_FIELD_W,
-							.on_change = motion_path_changed_fn(row.key),
-						}).with_id(row.id);
-						@node(panel_button("Browse…", motion_path_browse_fn(row.key)));
-					};
-				}
-				@node((LiveLabel) { .text_of = &capture_setup_status, .size = { SETTINGS_DIALOG_W, TREE_STYLE.row_height },
-					.text_size = FILE_HEADING_SIZE, .color = TEXT_DIM }).with_id(AI_CAPTURE_STATUS_ID);
-
 				// Plugins: the folder Kimodo and creature are read from when a
 				// job starts. Empty: beside Rigsmith, else the copy it carries.
 				@node((Label) {
@@ -406,13 +359,6 @@ fn Element* SettingsPanel.build(&self, Element* elem) @dynamic
 	};
 
 	// What is configured, into fields that do not hold state of their own.
-	foreach (row : (MotionPathRow[]){ ...motion_path_rows, ...capture_path_rows })
-	{
-		if (try Element* field = body.find_id(row.id))
-		{
-			field.widget_as(TextField).set_text(field, *app.config.motion_generator.path_of(row.key));
-		}
-	}
 	if (try Element* field = body.find_id(SETTINGS_PLUGINS_FOLDER_ID))
 	{
 		field.widget_as(TextField).set_text(field, app.config.motion_generator.plugins);

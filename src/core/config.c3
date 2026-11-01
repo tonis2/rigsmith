@@ -29,6 +29,7 @@
        "anim_layers_ratio": 0.25,
        "joint_panel_tab": 0,
        "folded_sections": 0,
+       "nodes_template": 0,
        "motion_generator": { "text_model": "/models/Llama-3-Kimodo-Q8_0.gguf", ... } }
 
  **Nothing here refuses.** A session that will not parse is rejected, because
@@ -318,6 +319,9 @@ struct CrigConfig
 	int joint_panel_tab;
 	uint folded_sections;
 
+	// The Nodes pane's open template (a TEMPLATE_DOCS index).
+	int nodes_template;
+
 	// Text-to-motion; unset until the config names a runner.
 	MotionGenerator motion_generator;
 
@@ -527,6 +531,10 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	if (try double wanted = parsed.get_float("folded_sections"))
 	{
 		if (wanted >= 0 && wanted < 4294967296.0) self.folded_sections = (uint)wanted;
+	}
+	if (try double wanted = parsed.get_float("nodes_template"))
+	{
+		if (wanted >= 0 && wanted <= 15) self.nodes_template = (int)wanted;
 	}
 
 	self.adopt_libraries(parsed);
@@ -826,6 +834,7 @@ struct ConfigFile @private
 	float anim_layers_ratio;
 	int joint_panel_tab;
 	uint folded_sections;
+	int nodes_template;
 	MotionGenerator motion_generator;
 }
 
@@ -886,6 +895,7 @@ fn void CrigConfig.save(&self)
 		.anim_layers_ratio = self.anim_layers_ratio,
 		.joint_panel_tab = self.joint_panel_tab,
 		.folded_sections = self.folded_sections,
+		.nodes_template = self.nodes_template,
 		.motion_generator = self.motion_generator,
 	};
 

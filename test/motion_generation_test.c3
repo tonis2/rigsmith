@@ -55,7 +55,7 @@ fn void the_runners_step_lines_are_read_and_nothing_else() @test
 
 fn void the_job_file_carries_the_request_escaped() @test
 {
-	crig::MotionGenerator g = { .text_model = "/m/text.gguf", .model = "/m/motion.gguf" };
+	crig::KimodoModels g = { .text_model = "/m/text.gguf", .model = "/m/motion.gguf" };
 	crig::MotionRequest request = { .prompt = `a "quoted" wave`, .seed = 7 };
 	String json = crig::motion_job_json(&g, &request, "Wave", 150);
 	defer json.free(mem);
@@ -123,7 +123,7 @@ fn void generating_without_a_generator_is_refused() @test
 {
 	crig::AppState app = shared_app::open_cube();
 	defer app.free();
-	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }))
+	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }, app.config.motion_generator.kimodo()))
 	{
 		test::@check(err == crig::MOTION_NO_GENERATOR, "refused with %s", err);
 		return;
@@ -149,7 +149,7 @@ fn void generating_with_no_gpu_is_refused() @test
 {
 	crig::AppState app = generating_app("no-gpu");
 	defer app.free();
-	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }))
+	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }, app.config.motion_generator.kimodo()))
 	{
 		test::@check(err == crig::MOTION_NO_GPU, "refused with %s", err);
 		test::@check(!app.motion_job.running, "a refused job reads as running");
@@ -296,7 +296,9 @@ fn void a_generated_clip_lands_with_the_keys_its_optimize_level_keeps() @test
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 	app.config.directory = string::format(mem, "%s/config", directory);
-	test::@check(app.motion_draft.optimize == LIGHT, "the pane starts on %s, not Light", app.motion_draft.optimize);
+	usz node = app.pipeline().add(crig::NodeKind.TEXT_TO_MOTION, { 0, 0 });
+	crig::KeyReduction start = crig::node_optimize(app.pipeline().at(node).params[4]);
+	test::@check(start == LIGHT, "a Text to motion node starts on %s, not Light", start);
 
 	char[] bytes = file::load(mem, "assets/animations/humanoid.glb")!!;
 	defer alloc::free(mem, bytes);
@@ -322,7 +324,7 @@ fn void a_failed_generation_says_why_and_binds_nothing() @test
 	sz bound = app.doc.animations.len();
 
 	pretend_job(&app, "a person waves");
-	if (catch err = app.start_motion_generation({ .prompt = "a second one" }))
+	if (catch err = app.start_motion_generation({ .prompt = "a second one" }, app.config.motion_generator.kimodo()))
 	{
 		test::@check(err == crig::MOTION_BUSY, "a second job was refused with %s", err);
 	}
@@ -463,7 +465,7 @@ fn void a_guide_clips_keys_become_the_pipelines_poses() @test
 	test::@check((raised - at_rest).length() > 0.5f * arm, "the swung arm did not move the hand: %s of an arm %f long",
 		raised - at_rest, arm);
 
-	String json = crig::motion_job_json(&app.config.motion_generator, &&(crig::MotionRequest){ .prompt = "a wave" },
+	String json = crig::motion_job_json(&&app.config.motion_generator.kimodo(), &&(crig::MotionRequest){ .prompt = "a wave" },
 		"Wave", 150, poses);
 	defer json.free(mem);
 	test::@check(json.contains(`"poses": {`), "the job was not given the poses: %s", json);

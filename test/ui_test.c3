@@ -11252,12 +11252,34 @@ fn usz count_viewports(Fixture* fixture)
 	return n;
 }
 
+// The text field for setting `slot` on the card of node `id`.
+fn Element*? node_field(Fixture* fixture, String id, usz slot) @local
+{
+	crig::PipelineGraph* g = fixture.app.pipeline();
+	Element* graph = fixture.ui.find_id(crig::NODES_GRAPH_ID)!;
+	foreach (card : graph.children)
+	{
+		if (!card.is_widget(NodeCard) || (sz)card.widget_as(NodeCard).node != g.find(id)) continue;
+		return card.find_id(crig::NODE_FIELD_IDS[slot]);
+	}
+	return NOT_FOUND~;
+}
+
+// A card's chooser, with the pointer on it so its choice finds the card.
+fn Select*? node_select(Fixture* fixture, String select_id) @local
+{
+	Element* found = fixture.ui.find_id(select_id)!;
+	fixture.ui.hovered = found;
+	return found.widget_as(Select);
+}
+
 <*
- Text to motion has a pane of its own, a tab beside Assets under the Scene
- outliner: it says what is missing until a generator is configured, then offers
- the prompt — and what is typed there survives the pane rebuilding.
+ Text to motion and video capture share the Nodes pane, a tab beside Assets
+ under the Scene outliner. It opens on the Text to motion template; the bar on
+ top picks another. What is typed on a card goes into its node and survives the
+ pane rebuilding.
 *>
-fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
+fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -11271,133 +11293,98 @@ fn void the_generate_pane_is_open_and_keeps_its_prompt() @test
 	crig::build_ui(fixture.ui, &fixture.app);
 	fixture.ui.flush();
 	// A tab away in the default workspace, beside Assets.
-	test::@check(!@ok(fixture.ui.find_id(crig::GENERATE_PANEL_ID)), "the default workspace opened on Generate");
-	crig::show_pane_view(fixture.ui, crig::GENERATE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	test::@check(!@ok(fixture.ui.find_id(crig::NODES_PANEL_ID)), "the default workspace opened on Nodes");
+	crig::show_pane_view(fixture.ui, crig::NODES_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
+	test::@check(@ok(fixture.ui.find_id(crig::NODES_PANEL_ID)), "Nodes did not open");
+	test::@check(crig::query_nodes(fixture.ui).checked, "the menu does not tick Nodes while it shows");
+	Select* template = node_select(fixture, crig::NODES_TEMPLATE_ID)!!;
+	test::@check(template.selected == 0 && template.options[0] == "Text to motion", "the bar does not open on Text to motion: row %d", template.selected);
+	test::@check(@ok(fixture.ui.find_id("node-run-generate")) && !@ok(fixture.ui.find_id("node-run-train")), "only text to motion's nodes show");
+	test::@check((node_field(fixture, "note", 0)!!).widget_as(TextField).value().contains("Prompt"), "the template's note is not on the canvas");
 
-	test::@check(@ok(fixture.ui.find_id(crig::GENERATE_PANEL_ID)), "Generate did not open");
-	test::@check(!@ok(fixture.ui.find_id(crig::GENERATE_PROMPT_ID)), "a prompt is offered with no generator configured");
-
-	crig::MotionGenerator* g = &fixture.app.config.motion_generator;
-	g.text_model = "/nowhere/text.gguf".copy(mem);
-	g.model = "/nowhere/motion.gguf".copy(mem);
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.ui.flush();
-
-	Element*? found = fixture.ui.find_id(crig::GENERATE_PROMPT_ID);
-	if (catch found)
+	crig::PipelineGraph* g = fixture.app.pipeline();
+	Element*? prompt = node_field(fixture, "prompt", 0);
+	if (catch prompt)
 	{
-		test::@check(false, "no prompt once the generator is configured");
+		test::@check(false, "no prompt field on the Prompt card");
 		return;
 	}
-	fixture.type_into(found, "a person waves");
-	test::@check(fixture.app.motion_draft.prompt == "a person waves", "the draft reads '%s'", fixture.app.motion_draft.prompt);
-	test::@check(fixture.app.motion_draft.seconds == "5" && fixture.app.motion_draft.seed == "0",
-		"the length and seed start at 5 and 0, not '%s' and '%s'", fixture.app.motion_draft.seconds, fixture.app.motion_draft.seed);
-
-	crig::refresh_generate_view(fixture.ui);
+	// The template's prompt goes first.
+	prompt.widget_as(TextField).set_text(prompt, "");
+	fixture.type_into(prompt, "a person waves");
+	test::@check(g.at(g.find("prompt")).params[0] == "a person waves", "the prompt node reads '%s'", g.at(g.find("prompt")).params[0]);
+	test::@check((node_field(fixture, "generate", 1)!!).widget_as(TextField).value() == "5"
+		&& (node_field(fixture, "generate", 2)!!).widget_as(TextField).value() == "0", "the length and seed do not start at 5 and 0");
+	crig::refresh_nodes_view(fixture.ui);
 	fixture.ui.flush();
-	Element* rebuilt = fixture.ui.find_id(crig::GENERATE_PROMPT_ID)!!;
-	test::@check(rebuilt.widget_as(TextField).value() == "a person waves",
-		"a rebuild lost the prompt: '%s'", rebuilt.widget_as(TextField).value());
+	test::@check((node_field(fixture, "prompt", 0)!!).widget_as(TextField).value() == "a person waves", "a rebuild lost the prompt");
 
-	// "Poses from" offers None and every bound clip, and a clip bound while the
+	// Guide poses offer None and every bound clip, and a clip bound while the
 	// pane is up joins the list.
-	Select* guide = fixture.ui.find_id(crig::GENERATE_GUIDE_ID)!!.widget_as(Select);
-	test::@check(guide.options.len >= 1 && guide.options[0] == "None" && guide.selected == 0,
-		"the guide chooser does not start on None");
+	(void)fixture.app.add_node(crig::NodeKind.GUIDE, { 0, 600 });
+	g.changed();
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	Select* guide = node_select(fixture, crig::NODE_GUIDE_ID)!!;
+	test::@check(guide.options.len >= 1 && guide.options[0] == "None" && guide.selected == 0, "the guide chooser does not start on None");
 	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, 1);
 	crig::AnimRef authored = fixture.app.author_clip({ .name = "Guide pose".copy(mem), .duration = 1.0f,
 		.keyframes = frames, .owned = true });
 	test::@check(authored.valid(), "the guide clip was not authored");
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
-	guide = fixture.ui.find_id(crig::GENERATE_GUIDE_ID)!!.widget_as(Select);
+	guide = node_select(fixture, crig::NODE_GUIDE_ID)!!;
 	usz row = guide.options.len - 1;
 	test::@check(guide.options[row] == "Guide pose", "the new clip is not offered: %s", guide.options);
 	guide.on_change(fixture.ui, row);
-	test::@check(fixture.app.motion_draft.guide == "Guide pose", "the draft's guide is '%s'", fixture.app.motion_draft.guide);
-	guide.on_change(fixture.ui, 0);
-	test::@check(fixture.app.motion_draft.guide.len == 0, "None did not clear the guide");
+	test::@check(g.at(g.find("guide")).params[0] == "Guide pose", "the guide node's clip is '%s'", g.at(g.find("guide")).params[0]);
 
-	// "Optimize" starts on Light, and a level picked is kept through a rebuild.
-	Select* optimize = fixture.ui.find_id(crig::GENERATE_OPTIMIZE_ID)!!.widget_as(Select);
+	// Optimize starts on Light, and a level picked is kept through a rebuild.
+	Select* optimize = node_select(fixture, crig::NODE_OPTIMIZE_ID)!!;
 	test::@check(optimize.options.len == 3 && optimize.selected == crig::KeyReduction.LIGHT.ordinal,
 		"Optimize does not start on Light: row %d of %s", optimize.selected, optimize.options);
 	optimize.on_change(fixture.ui, crig::KeyReduction.STRONG.ordinal);
-	test::@check(fixture.app.motion_draft.optimize == STRONG, "the draft's level is %s", fixture.app.motion_draft.optimize);
-	crig::refresh_generate_view(fixture.ui);
+	test::@check(g.at(g.find("generate")).params[4] == "strong", "the node's level is %s", g.at(g.find("generate")).params[4]);
+	crig::refresh_nodes_view(fixture.ui);
 	fixture.ui.flush();
-	optimize = fixture.ui.find_id(crig::GENERATE_OPTIMIZE_ID)!!.widget_as(Select);
+	optimize = node_select(fixture, crig::NODE_OPTIMIZE_ID)!!;
 	test::@check(optimize.selected == crig::KeyReduction.STRONG.ordinal, "a rebuild lost Strong: row %d", optimize.selected);
-}
 
-<*
- Video capture has a pane of its own (View › Video capture): with no model
- file it says the capture folder needs one; given a file and a skeleton its
- graph offers the steps' cards, the pose chooser starting from the rest pose,
- and what is typed goes into the node and survives a rebuild.
-*>
-fn void the_capture_pane_offers_its_steps_once_the_model_has_a_file() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
+	// The bar opens the train template on its own canvas.
+	template = node_select(fixture, crig::NODES_TEMPLATE_ID)!!;
+	template.on_change(fixture.ui, 2);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	test::@check(fixture.app.open_template == 2 && fixture.app.config.nodes_template == 2, "the choice is not kept");
+	foreach (run : (String[]){ "node-run-train", "node-run-reference", "node-run-animate" })
 	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
+		test::@check(@ok(fixture.ui.find_id(run)), "no %s on the train template", run);
 	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	fixture.reset();
-	crig::build_ui(fixture.ui, &fixture.app);
-	fixture.ui.flush();
-	crig::show_pane_view(fixture.ui, crig::CAPTURE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.ui.flush();
-	test::@check(@ok(fixture.ui.find_id(crig::CAPTURE_PANEL_ID)), "Capture did not open");
-	test::@check(crig::query_video_capture(fixture.ui).checked, "the menu does not tick Video capture while it shows");
-
-	String held = fixture.app.source_path;
-	fixture.app.source_path = "";
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.ui.flush();
-	test::@check(!@ok(fixture.ui.find_id("capture-train")), "Train is offered for a model with no file");
-
-	fixture.app.source_path = "/nowhere/hero.glb";
-	defer fixture.app.source_path = held;
-	(void)fixture.app.doc.add_dot({ 0, 1, 0 }, "hips");
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.ui.flush();
-	if (!fixture.app.has_mesh())
-	{
-		test::@check(false, "the fixture has no mesh to capture");
-		return;
-	}
-	test::@check(@ok(fixture.ui.find_id("capture-train")), "no Train once the model has a file and a skeleton");
-	test::@check(@ok(fixture.ui.find_id("capture-reference")), "no Make reference");
-	test::@check(@ok(fixture.ui.find_id("capture-animate")), "no Animate");
+	test::@check(!@ok(fixture.ui.find_id("node-run-generate")), "text to motion's nodes still show");
 	test::@check(!@ok(fixture.ui.find_id("capture-copy-prompt")), "a prompt is offered before there is a picture");
-
-	Select* pose = fixture.ui.find_id(crig::CAPTURE_POSE_ID)!!.widget_as(Select);
-	test::@check(pose.options.len >= 1 && pose.options[0] == "Rest pose", "the pose chooser does not start with the rest pose: %s", pose.options);
-
-	Element* poses = fixture.ui.find_id(crig::CAPTURE_POSES_ID)!!;
-	test::@check(poses.widget_as(TextField).value() == "1500", "the training set does not start at 1500 poses: '%s'", poses.widget_as(TextField).value());
-	Element* video = fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!;
-	fixture.type_into(video, "/clips/wave.mp4");
-	crig::CaptureGraph* graph = &fixture.app.capture_graph;
-	String typed = graph.at(graph.find("video")).params[0];
-	test::@check(typed == "/clips/wave.mp4", "the video node's path reads '%s'", typed);
-	crig::refresh_capture_view(fixture.ui);
+	g = fixture.app.pipeline();
+	// Train starts at 1500 poses, the pose chooser at the rest pose, and a video
+	// typed is the Video node's.
+	test::@check((node_field(fixture, "train", 0)!!).widget_as(TextField).value() == "1500", "the training set does not start at 1500 poses");
+	Select* size = node_select(fixture, crig::NODE_SIZE_ID)!!;
+	test::@check(size.options.len == 6 && size.selected == 0 && size.options[0] == "448 px", "Size does not start on 448 px: row %d of %s", size.selected, size.options);
+	size.on_change(fixture.ui, 2);
+	test::@check(g.at(g.find("train")).params[1] == "640", "the train node's size is %s", g.at(g.find("train")).params[1]);
+	crig::refresh_nodes_view(fixture.ui);
 	fixture.ui.flush();
-	test::@check(fixture.ui.find_id(crig::CAPTURE_VIDEO_ID)!!.widget_as(TextField).value() == "/clips/wave.mp4", "a rebuild lost the video");
+	test::@check((node_select(fixture, crig::NODE_SIZE_ID)!!).selected == 2, "a rebuild lost 640 px");
+	Select* pose = fixture.ui.find_id(crig::NODE_POSE_ID)!!.widget_as(Select);
+	test::@check(pose.options.len >= 1 && pose.options[0] == "Rest pose", "the pose chooser does not start with the rest pose: %s", pose.options);
+	fixture.type_into(node_field(fixture, "video", 0)!!, "/clips/wave.mp4");
+	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
 }
 
-// The Generate pane's Name field: typed, it names the clip; left empty, the clip
+// Text to motion's Name field: typed, it names the clip; left empty, the clip
 // is "Generated N", the lowest number the character does not already have — and
 // the field shows that name as its placeholder.
-fn void the_generate_pane_names_an_unnamed_clip_generated_n() @test
+fn void the_generate_node_names_an_unnamed_clip_generated_n() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -11408,33 +11395,30 @@ fn void the_generate_pane_names_an_unnamed_clip_generated_n() @test
 	defer harness.close();
 	Fixture* fixture = &harness;
 	fixture.reset();
-	crig::MotionGenerator* g = &fixture.app.config.motion_generator;
-	g.text_model = "/nowhere/text.gguf".copy(mem);
-	g.model = "/nowhere/motion.gguf".copy(mem);
 	crig::build_ui(fixture.ui, &fixture.app);
 	fixture.ui.flush();
-	crig::show_pane_view(fixture.ui, crig::GENERATE_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	crig::show_pane_view(fixture.ui, crig::NODES_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
 
-	Element* field = fixture.ui.find_id(crig::GENERATE_NAME_ID)!!;
+	crig::PipelineGraph* g = fixture.app.pipeline();
+	Element* field = node_field(fixture, "generate", 0)!!;
 	test::@check(field.widget_as(TextField).placeholder == "Generated 1",
 		"an unnamed clip would be '%s'", field.widget_as(TextField).placeholder);
 	fixture.type_into(field, "Big jump");
-	test::@check(fixture.app.motion_draft.name == "Big jump", "the draft's name is '%s'", fixture.app.motion_draft.name);
+	test::@check(g.at(g.find("generate")).params[0] == "Big jump", "the node's name is '%s'", g.at(g.find("generate")).params[0]);
 
 	// A clip already called "Generated 1" moves the default on to 2.
 	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, 1);
 	crig::AnimRef taken = fixture.app.author_clip({ .name = "Generated 1".copy(mem), .duration = 1.0f,
 		.keyframes = frames, .owned = true });
 	test::@check(taken.valid(), "the clip was not authored");
-	test::@check(fixture.app.has_bound_clip_named("Generated 1"), "the authored clip is not on the character");
 	String next = fixture.app.next_generated_name(mem);
 	defer next.free(mem);
 	test::eq(next, "Generated 2");
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
-	field = fixture.ui.find_id(crig::GENERATE_NAME_ID)!!;
+	field = node_field(fixture, "generate", 0)!!;
 	test::@check(field.widget_as(TextField).placeholder == "Generated 2",
 		"the placeholder did not move on: '%s'", field.widget_as(TextField).placeholder);
 	test::@check(field.widget_as(TextField).value() == "Big jump", "a rebuild lost the typed name");
@@ -11484,11 +11468,10 @@ fn void settings_port_rebinds_the_mcp_server() @test
 }
 
 <*
- Settings has an AI page for the Kimodo weights: a field and a Browse per .gguf,
- saved as typed, and a line saying what is still missing or not there. The
- pipeline is built in, so there is no runner to point at.
+ Settings has an AI page for the llm folder the pipelines run from. The model
+ files are not there: they are set on the Nodes pane's model nodes.
 *>
-fn void settings_ai_page_sets_up_text_to_motion() @test
+fn void settings_ai_page_holds_the_plugins_only() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -11497,40 +11480,17 @@ fn void settings_ai_page_sets_up_text_to_motion() @test
 	f.ui.flush();
 	test::@check(f.in_tree(crig::SETTINGS_TABS_ID), "Settings has no tabs");
 	test::@check(f.in_tree(crig::SETTINGS_PORT_ID), "Settings does not open on its General page");
-	test::@check(!f.in_tree("settings-motion-model"), "the model files show on the General page");
 
 	crig::open_ai_settings(f.ui);
 	f.ui.flush();
 	test::@check(!f.in_tree(crig::SETTINGS_PORT_ID), "the General page stayed up");
-	test::@check(!f.in_tree("settings-motion-runner"), "a runner is asked for; the pipeline is built in");
-	Element* status = f.ui.find_id(crig::AI_MOTION_STATUS_ID)!!;
-	String said = crig::motion_setup_status(status);
-	test::@check(said == "Still needed: Text model, Motion model.", "an empty setup says '%s'", said);
-	said.free(mem);
-
-	crig::set_motion_path(f.ui, "text_model", "  project.json ");
+	test::@check(!f.in_tree("settings-motion-model") && !f.in_tree("settings-capture-backbone"), "model files are asked for on the AI page");
+	test::@check(f.in_tree(crig::SETTINGS_PLUGINS_FOLDER_ID) && f.in_tree(crig::AI_PLUGINS_STATUS_ID), "no plugins folder");
+	crig::set_motion_path(f.ui, "plugins", "  /nowhere/llm ");
 	f.ui.flush();
-	test::@check(f.app.config.motion_generator.text_model == "project.json", "the text model reads '%s'", f.app.config.motion_generator.text_model);
-	Element* text_model = f.ui.find_id("settings-motion-text-model")!!;
-	test::@check(text_model.widget_as(TextField).value() == "project.json", "the field reads '%s'", text_model.widget_as(TextField).value());
-
-	f.type_into(f.ui.find_id("settings-motion-model")!!, "project.json");
-	test::@check(f.app.config.motion_generator.model == "project.json", "typing did not set the motion model: '%s'", f.app.config.motion_generator.model);
-	said = crig::motion_setup_status(f.ui.find_id(crig::AI_MOTION_STATUS_ID)!!);
-	test::@check(said.starts_with("Ready"), "a complete setup says '%s'", said);
-	said.free(mem);
-	test::@check(crig::generator_configured(&f.app), "the Generate pane does not see the setup");
-
-	crig::set_motion_path(f.ui, "model", "/nowhere/Kimodo-SOMA-RP-v1.1/model.safetensors");
-	said = crig::motion_setup_status(f.ui.find_id(crig::AI_MOTION_STATUS_ID)!!);
-	test::@check(said == "Motion model not found: /nowhere/Kimodo-SOMA-RP-v1.1/model.safetensors", "a missing release says '%s'", said);
-	said.free(mem);
-	crig::set_motion_path(f.ui, "model", "project.json");
-
-	f.type_into(f.ui.find_id("settings-motion-tokenizer")!!, "/nowhere/tok.gguf");
-	said = crig::motion_setup_status(f.ui.find_id(crig::AI_MOTION_STATUS_ID)!!);
-	test::@check(said == "Tokenizer not found: /nowhere/tok.gguf", "a missing tokenizer says '%s'", said);
-	said.free(mem);
+	test::@check(f.app.config.motion_generator.plugins == "/nowhere/llm", "the folder reads '%s'", f.app.config.motion_generator.plugins);
+	Element* folder = f.ui.find_id(crig::SETTINGS_PLUGINS_FOLDER_ID)!!;
+	test::@check(folder.widget_as(TextField).value() == "/nowhere/llm", "the field reads '%s'", folder.widget_as(TextField).value());
 }
 
 <*
@@ -12734,8 +12694,8 @@ fn void the_default_workspace_opens_four_panes() @test
 			if (strip.absolute.x < model.absolute.x + model.size.x) continue;
 			AreaTabStrip* tabs = strip.widget_as(AreaTabStrip);
 			int last = tabs.zone_at(strip, { strip.size.x - 2, strip.size.y * 0.5f });
-			test::@check(last == (int)crig::GENERATE_VIEW + 1,
-				"a %.0f px strip ends on tab %d, not on Generate", strip.size.x, last - 1);
+			test::@check(last == (int)crig::NODES_VIEW + 1,
+				"a %.0f px strip ends on tab %d, not on Nodes", strip.size.x, last - 1);
 		};
 		test::@check(model.size.x > size.x * 0.68f && model.size.x < size.x * 0.76f,
 			"the model should occupy nearly three quarters of the width");

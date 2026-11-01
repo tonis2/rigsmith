@@ -275,7 +275,7 @@ fn AreaNode* find_spare_leaf(AreaNode* node) @private
 	if (node.is_leaf())
 	{
 		return node.active != 0 && node.active != ANIMATION_VIEW && node.active != SCENE_VIEW
-			&& node.active != GENERATE_VIEW ? node : null;
+			&& node.active != NODES_VIEW ? node : null;
 	}
 	AreaNode* found = find_spare_leaf(node.first);
 	return found ? found : find_spare_leaf(node.second);

@@ -60,12 +60,13 @@ enum CardGlyph
 	FOLLOW_GLYPH,
 	// The Joint card's.
 	KEEP_ANGLE_GLYPH,
-	// The Capture graph's cards.
+	// The Nodes pane's cards.
 	RUN_GLYPH,
 	STOP_GLYPH,
 	BROWSE_GLYPH,
 	COPY_GLYPH,
 	FOLDER_GLYPH,
+	SEED_GLYPH,
 }
 
 <*
@@ -294,6 +295,10 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			Vec2[4] tab = { c + (Vec2){ -r * 0.9f, -r * 0.35f }, c + (Vec2){ -r * 0.9f, -r * 0.7f }, c + (Vec2){ -r * 0.2f, -r * 0.7f }, c + (Vec2){ 0, -r * 0.45f } };
 			painter.polyline(tab[..], w, ink);
 			painter.rect(c + (Vec2){ -r * 0.9f, -r * 0.45f }, { r * 1.8f, r * 1.2f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+		case SEED_GLYPH:
+			// A die showing three.
+			painter.rect(c - (Vec2){ r * 0.8f, r * 0.8f }, { r * 1.6f, r * 1.6f }, { .border_width = w, .border_color = ink, .border_radius = { 2, 2, 2, 2 } });
+			for (int i = -1; i <= 1; i++) painter.circle(c + (Vec2){ (float)i * r * 0.42f, (float)i * r * 0.42f }, 1.3f, { .color = ink });
 		case MUTE_GLYPH:
 			// An eye shut: the path is still there and does nothing.
 			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);

@@ -51,6 +51,7 @@ fn void AppState.restore_ui_memory(&self)
 {
 	int tab = self.config.joint_panel_tab;
 	if (tab >= 0 && tab <= JointPanelTab.POSE.ordinal) self.joint_panel_tab = (JointPanelTab)tab;
+	if (self.config.nodes_template >= 0 && self.config.nodes_template < (int)TEMPLATES) self.open_template = (usz)self.config.nodes_template;
 	for (int i = 0; i < FOLDED_SECTIONS; i++)
 	{
 		*self.folded_flag((FoldedSection)i) = (self.config.folded_sections & (1u << i)) != 0;

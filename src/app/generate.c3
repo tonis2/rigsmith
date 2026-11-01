@@ -1,12 +1,12 @@
 <*
  Text to motion: a prompt in, a clip on the character out.
 
- `app.start_motion_generation({ .prompt = "a person waves", .seconds = 5 })!;`
+ `app.start_motion_generation({ .prompt = "a person waves", .seconds = 5 }, app.config.motion_generator.kimodo())!;`
 
  NVIDIA's Kimodo runs as llm-runner's `kimodo` pipeline, which crig links as
  the `llm` library (`lib/llm.c3l`) and runs on its own GPU through
- `llm::pipeline::Job`. What the user supplies is only the weights — in File ›
- Settings › AI: the text encoder's .gguf files and the motion model, either
+ `llm::pipeline::Job`. What the user supplies is only the weights — on the
+ Nodes pane's model nodes: the text encoder's .gguf files and the motion model, either
  kimodo.cpp's .gguf or NVIDIA's release folder as downloaded. The pipeline hands back a .glb — a skeleton, one
  animation, no mesh — and the clip comes in by the door every downloaded clip
  does: `pack_for_file` matches the source skeleton onto the character's body
@@ -69,7 +69,12 @@ faultdef
 	MOTION_CLIP_MISSING,
 	MOTION_GUIDE_MISSING,
 	MOTION_GUIDE_UNMATCHED,
-	MOTION_GUIDE_EMPTY;
+	MOTION_GUIDE_EMPTY,
+	MOTION_NO_SKELETON,
+	MOTION_BAD_SECONDS,
+	MOTION_BAD_SEED,
+	MOTION_BAD_STEPS,
+	MOTION_NAME_TAKEN;
 
 <*
  What the motion model setting still lacks: "" when the pipeline can load it,
@@ -167,28 +172,17 @@ struct MotionJob
 }
 
 <*
- The Generate panel's fields as typed, owned, so a rebuild of the panel (a job
- starting or landing) does not lose a half-written prompt.
+ The Kimodo weights a job runs: the text encoder, its tokenizer ("" = beside
+ it) and the motion model. Borrowed.
 *>
-struct MotionDraft
+struct KimodoModels
 {
-	String name; // the clip's name as typed; "" = `next_generated_name`
-	String prompt;
-	String seconds;
-	String seed;
-	String steps;
-	String guide; // the bound clip chosen under "Poses from"; "" = none
-	KeyReduction optimize; // chosen under "Optimize"; `new_app` starts it at Light
+	String text_model;
+	String tokenizer;
+	String model;
 }
 
-fn void MotionDraft.free(&self)
-{
-	foreach (held : (String[]) { self.name, self.prompt, self.seconds, self.seed, self.steps, self.guide })
-	{
-		if (held.len > 0) alloc::free(mem, held.ptr);
-	}
-	*self = { };
-}
+fn KimodoModels MotionGenerator.kimodo(&self) => { self.text_model, self.tokenizer, self.model };
 
 fn String MotionJob.last(&self) => (String)self.last_line[:self.last_length];
 
@@ -360,7 +354,7 @@ fn String AppState.llm_plugin_problem(&self, String plugin)
  The pipeline's settings for one request, as JSON. `poses` is the guide, as
  `motion_guide_json` writes it; "" for none. Owned.
 *>
-fn String motion_job_json(MotionGenerator* g, MotionRequest* request, String name, uint frames, String poses = "")
+fn String motion_job_json(KimodoModels* g, MotionRequest* request, String name, uint frames, String poses = "")
 {
 	DString out;
 	out.init(mem);
@@ -706,7 +700,7 @@ fn String? AppState.motion_guide_json(
 <*
  Start generating. Returns at once; `tick_motion_job` does the rest.
 
- @return? MOTION_NO_GENERATOR : `The config names no text model or motion model.`
+ @return? MOTION_NO_GENERATOR : `The models name no text model or motion model.`
  @return? MOTION_NO_GPU : `There is no renderer to run on — a headless AppState.`
  @return? MOTION_BUSY : `A job is already running.`
  @return? MOTION_NO_PROMPT : `The prompt is empty.`
@@ -716,9 +710,12 @@ fn String? AppState.motion_guide_json(
  @return? MOTION_GUIDE_UNMATCHED : `The rig does not match Kimodo's skeleton, so a guide cannot be sent.`
  @return? MOTION_GUIDE_EMPTY : `The guide clip has no key inside the generated length.`
 *>
-fn void? AppState.start_motion_generation(&self, MotionRequest request)
+fn void? AppState.start_motion_generation(&self, MotionRequest request, KimodoModels models)
 {
-	MotionGenerator* g = &self.config.motion_generator;
+	KimodoModels* g = &models;
+	g.text_model = g.text_model.trim();
+	g.tokenizer = g.tokenizer.trim();
+	g.model = g.model.trim();
 	if (g.text_model.len == 0 || g.model.len == 0) return MOTION_NO_GENERATOR~;
 	if (self.motion_job.running) return MOTION_BUSY~;
 	if (!self.motion_gpu) return MOTION_NO_GPU~;

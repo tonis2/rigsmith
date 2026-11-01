@@ -422,11 +422,9 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			// is: this answers which folder, and the panel goes on listing them.
 			add_asset_library(ui, path);
 		case MOTION_FILE:
-			set_motion_path(ui, app.motion_path_key, path);
 		case CAPTURE_VIDEO:
-			set_capture_video(ui, path);
 		case CAPTURE_FINDER:
-			use_capture_finder_chosen(ui, path);
+			node_file_chosen(ui, path);
 		case PLUGINS_FOLDER:
 			set_motion_path(ui, "plugins", path);
 		case PLUGIN_LINK:

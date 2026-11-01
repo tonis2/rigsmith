@@ -96,9 +96,9 @@ const TutorialStep[*] TUTORIAL_STEPS = {
 		.targets = { "anim-transport-play", "anim-autokey" },
 	},
 	{
-		.title = "Generate motion",
-		.body = "The Generate panel writes a clip from a text prompt using Kimodo. Download its model files first and point Settings > AI at them. View > Generate motion opens it.",
-		.targets = { "generate-panel", "" },
+		.title = "Nodes",
+		.body = "The Nodes pane writes a clip from a text prompt with Kimodo, or reads one from a video. Pick a template, choose the model files on its model nodes once, and press Run. View > Nodes opens it.",
+		.targets = { "nodes-panel", "" },
 	},
 	{
 		.title = "That's the tour",

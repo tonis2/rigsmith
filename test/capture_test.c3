@@ -3,8 +3,9 @@
  answer means, the clip's name from the video's, where a stopped training set
  carries on, the train task's settings, what a finder file says of itself, the
  refusal of a model with no file to put a capture folder beside, and of a
- plugins folder without the creature plugin; and the pane's graph: its first
- shape, graph.json, its wires, and the order a run takes.
+ plugins folder without the creature plugin; and the Nodes pane's graph: its
+ first shape, nodes.json, templates, model nodes and the config, its wires,
+ and the order a run takes.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::capture`
 *>
@@ -111,8 +112,8 @@ fn void a_model_with_no_file_has_no_capture() @test
 	defer fixture.close();
 	crig::AppState* app = &fixture.app;
 	test::@check(app.source_path.len == 0, "the fixture's model was never read from a file");
-	test::@check(@catch(app.start_capture_training(100, "", "")) == crig::CAPTURE_NO_MODEL_FILE, "training is refused, naming the missing file");
-	test::@check(@catch(app.start_capture_animation("", "", "", "")) == crig::CAPTURE_NO_MODEL_FILE, "so is reading a video");
+	test::@check(@catch(app.start_capture_training(100, 448, "", "", "")) == crig::CAPTURE_NO_MODEL_FILE, "training is refused, naming the missing file");
+	test::@check(@catch(app.start_capture_animation("", "", "", "", "")) == crig::CAPTURE_NO_MODEL_FILE, "so is reading a video");
 	test::@check(@catch(app.request_capture_reference("", "", 0)) == crig::CAPTURE_NO_MODEL_FILE, "and the reference picture");
 	test::@check(!app.capture_job.running && !app.capture_job.reference_pending, "nothing was started");
 }
@@ -131,8 +132,8 @@ fn void a_plugins_folder_without_creature_is_refused_before_the_gpu() @test
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 	app.config.motion_generator.creature_model = "/models/model.ckpt".copy(mem);
 	app.config.motion_generator.plugins = string::format(mem, "%s/no_plugins", dir);
-	test::@check(@catch(app.start_capture_training(100, app.capture_path("renders"), app.capture_path("finder.safetensors"))) == crig::CAPTURE_NO_PLUGIN, "training needs the creature plugin");
-	test::@check(@catch(app.start_capture_animation("", "", "", "")) == crig::CAPTURE_NO_PLUGIN, "so does reading a video");
+	test::@check(@catch(app.start_capture_training(100, 448, app.capture_path("renders"), app.capture_path("finder.safetensors"), "/models/model.ckpt")) == crig::CAPTURE_NO_PLUGIN, "training needs the creature plugin");
+	test::@check(@catch(app.start_capture_animation("/models/model.ckpt", "", "", "", "")) == crig::CAPTURE_NO_PLUGIN, "so does reading a video");
 	test::@check(@catch(app.request_capture_reference(app.capture_path("studio"), "", 0)) != crig::CAPTURE_NO_PLUGIN, "the reference picture is Rigsmith's own drawing");
 	test::@check(crig::capture_fault_text(crig::CAPTURE_NO_PLUGIN).contains("Plugins"), "the notice says where to fix it");
 }
@@ -163,7 +164,8 @@ fn void the_animate_task_asks_for_the_tracks_too() @test
 	test::@check((outputs!!.get_string_at(1) ?? "") == "tracks", "the tracks, to fit again without the GPU");
 }
 
-// The humanoid in a folder of its own, its capture folder empty.
+// The humanoid in a folder of its own, its capture folder empty, its config
+// folder `<dir>/config`.
 fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
 {
 	(void)path::rmtree((Path)dir);
@@ -171,57 +173,75 @@ fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
 	String source = string::tformat("%s/humanoid.glb", dir);
 	trust_fixes::copy_humanoid(source);
 	*mesh = rig::load_gltf(mem, source)!!;
-	return crig::new_app(*mesh, source);
+	crig::AppState app = crig::new_app(*mesh, source);
+	app.config.directory = string::format(mem, "%s/config", dir);
+	return app;
 }
 
-fn void a_new_capture_graph_wires_its_steps_into_animate() @test
+const usz TEXT_TEMPLATE = 0;
+const usz TRAIN_TEMPLATE = 2;
+
+fn void each_template_opens_on_its_own_canvas() @test
 {
-	String dir = "build/test_capture_graph_new";
+	String dir = "build/test_nodes_new";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
-	crig::CaptureGraph* g = app.capture_graph_now();
-	test::@check(g.count() == 4, "four nodes (%d)", g.count());
-	sz animate = g.find("animate");
-	test::@check(animate >= 0 && g.at(animate).kind == crig::CaptureNodeKind.ANIMATE, "an Animate node");
-	if (animate < 0) return;
-	test::@check(g.at(animate).input[0] == g.find("train"), "the trained finder into Animate");
-	test::@check(g.at(animate).input[1] == g.find("reference"), "the picture into Animate");
-	test::@check(g.at(animate).input[2] == g.find("video"), "the video into Animate");
+	app.config.motion_generator.text_model = "/models/kimodo-text.gguf".copy(mem);
+	crig::PipelineGraph* g = app.pipeline();
+	test::@check(app.open_template == TEXT_TEMPLATE && g.count() == 5, "text to motion's four nodes and its note (%d)", g.count());
+	sz generate = g.find("generate");
+	sz note = g.find("note");
+	if (generate < 0 || note < 0)
+	{
+		test::@check(false, "a Text to motion node and a note");
+		return;
+	}
+	test::@check(g.at(generate).input[0] == g.find("text_encoder") && g.at(generate).input[1] == g.find("motion_model")
+		&& g.at(generate).input[2] == g.find("prompt") && g.at(generate).input[3] == -1, "the models and the prompt into Text to motion");
+	test::@check(g.at(note).params[0].contains("Prompt"), "the note says how to use it");
+	test::@check(g.at(g.find("text_encoder")).params[0] == "/models/kimodo-text.gguf", "the text encoder starts with the config's path");
 	g.rebuild_view(&app);
-	test::@check(g.shown_wires.len() == 3 && g.shown_ports.len() == 6, "three wires, six ports (%d, %d)", g.shown_wires.len(), g.shown_ports.len());
+	test::@check(g.shown_wires.len() == 3 && g.shown_ports.len() == 7, "three wires, seven ports (%d, %d)", g.shown_wires.len(), g.shown_ports.len());
+	g.set_param((usz)g.find("prompt"), 0, "a bow");
 
-	// A finder chosen before the graph comes in as a Finder file.
-	String chosen = string::tformat("%s/other.safetensors", dir);
-	(void)file::save(chosen, "x");
-	(void)app.use_capture_finder(chosen);
-	app.capture_graph.free();
-	g = app.capture_graph_now();
-	sz finder = g.find("finder");
-	test::@check(finder >= 0 && g.find("train") < 0, "a Finder file instead of Train");
-	if (finder < 0) return;
-	test::@check(g.at(finder).params[0] == chosen, "holding the chosen file (%s)", g.at(finder).params[0]);
-	test::@check(g.at(g.find("animate")).input[0] == finder, "wired into Animate");
+	app.open_template_named(TRAIN_TEMPLATE);
+	crig::PipelineGraph* capture = app.pipeline();
+	test::@check(capture != g && capture.count() == 6, "train a finder: its five nodes and its note (%d)", capture.count());
+	sz animate = capture.find("animate");
+	test::@check(animate >= 0 && capture.at(animate).input[0] == capture.find("train") && capture.at(animate).input[3] == capture.find("backbone"),
+		"the finder and the backbone into Animate");
+	test::@check(app.config.nodes_template == (int)TRAIN_TEMPLATE, "the config keeps which is open");
+
+	app.open_template_named(TEXT_TEMPLATE);
+	test::@check(app.pipeline().at(app.pipeline().find("prompt")).params[0] == "a bow", "switching back keeps the edit");
+	test::@check(app.reset_template(TEXT_TEMPLATE), "reset");
+	g = app.pipeline();
+	test::@check(g.count() == 5 && g.at(g.find("prompt")).params[0] != "a bow", "reset puts the template back");
+	test::@check(g.at(g.find("text_encoder")).params[0] == "/models/kimodo-text.gguf", "model paths stay");
 }
 
-fn void a_capture_graph_reads_back_what_it_saved() @test
+fn void a_node_graph_reads_back_what_it_saved() @test
 {
-	String dir = "build/test_capture_graph_json";
+	String dir = "build/test_nodes_json";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
-	crig::CaptureGraph* g = app.capture_graph_now();
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
 	usz video = (usz)g.find("video");
 	g.set_param(video, 0, "/clips/a \"b\".mp4");
 	g.at(video).pos = { 120, 640 };
-	usz second = g.add(crig::CaptureNodeKind.ANIMATE, { 400, 500 });
+	usz second = g.add(crig::NodeKind.ANIMATE, { 400, 500 });
 	test::@check(g.connect((usz)g.find("train"), second, 0) && g.connect(video, second, 2), "the second Animate takes the finder and the video");
+	g.set_param((usz)g.find("train"), 0, "700");
+	g.set_param((usz)g.find("note"), 0, "mine\nsecond line");
 	g.view = { .pan = { 15, -30 }, .zoom = 0.5 };
 	g.changed();
-	app.capture_graph.free();
+	test::@check(file::exists(string::tformat("%s/config/nodes/train_finder.json", dir)), "saved in the config folder");
+	g.free();
 
-	g = app.capture_graph_now();
-	test::@check(g.count() == 5, "five nodes read back (%d)", g.count());
+	g = app.pipeline_now(TRAIN_TEMPLATE);
+	test::@check(g.count() == 7, "seven nodes read back (%d)", g.count());
 	sz again = g.find("video");
 	sz read_second = g.find("animate2");
 	if (again < 0 || read_second < 0)
@@ -232,40 +252,126 @@ fn void a_capture_graph_reads_back_what_it_saved() @test
 	test::@check(g.at(again).params[0] == "/clips/a \"b\".mp4", "the path, quotes and all (%s)", g.at(again).params[0]);
 	test::@check(g.at(again).pos.x == 120 && g.at(again).pos.y == 640, "where it was put");
 	test::@check(g.at(read_second).input[0] == g.find("train") && g.at(read_second).input[1] == -1 && g.at(read_second).input[2] == again, "its wires, the picture still free");
+	test::@check(g.at(g.find("train")).params[0] == "700", "the poses as set");
+	test::@check(g.at(g.find("note")).params[0] == "mine\nsecond line", "the note's text, both lines");
 	test::@check(g.view.zoom == 0.5f && g.view.pan.x == 15, "the view");
 }
 
-fn void capture_wires_carry_one_thing_and_go_with_their_nodes() @test
+fn void a_note_has_no_ports_and_nothing_to_run() @test
 {
-	String dir = "build/test_capture_graph_wires";
+	String dir = "build/test_nodes_note";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
-	crig::CaptureGraph* g = app.capture_graph_now();
+	crig::PipelineGraph* g = app.pipeline();
+	usz added = app.add_node(crig::NodeKind.NOTE, { 0, 600 });
+	test::@check(g.at(added).id == "note2" && g.at(added).params[0] == "", "a fresh note, empty");
+	g.rebuild_view(&app);
+	foreach (port : g.ports()) test::@check(port.node != added, "a note has no ports");
+	test::@check(!g.connect(added, (usz)g.find("generate"), 2), "nor can it be wired");
+	test::@check(@catch(app.run_node(g, added)) == crig::NODE_NOTHING_TO_RUN, "nothing runs for it");
+}
+
+fn void a_run_belongs_to_its_template() @test
+{
+	String dir = "build/test_nodes_run";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	app.open_template_named(TRAIN_TEMPLATE);
+	crig::PipelineGraph* capture = app.pipeline();
+	// As a Train step leaves it while it runs.
+	capture.running = capture.find("train");
+	app.open_template_named(TEXT_TEMPLATE);
+	crig::PipelineGraph* text = app.pipeline();
+	test::@check(@catch(app.run_node(text, (usz)text.find("generate"))) == crig::CAPTURE_BUSY, "one run at a time, whichever template");
+	test::@check(@ok(app.running_pipeline()) && app.running_pipeline()!! == capture, "the run is the train template's");
+	app.advance_pipeline();
+	test::@check(capture.running == -1 && capture.failed == -1, "the step ended on its own graph, though another is open");
+	test::@check(text.running == -1 && text.failed == -1, "the open graph untouched");
+}
+
+fn void a_model_node_path_is_the_configs_default() @test
+{
+	String dir = "build/test_nodes_config";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	crig::PipelineGraph* g = app.pipeline();
+	app.set_node_param((usz)g.find("motion_model"), 0, "/models/kimodo-soma");
+	app.open_template_named(TRAIN_TEMPLATE);
+	app.set_node_param((usz)app.pipeline().find("backbone"), 0, "/models/model.ckpt");
+	app.open_template_named(TEXT_TEMPLATE);
+	test::@check(app.config.motion_generator.model == "/models/kimodo-soma", "the motion model is the config's (%s)", app.config.motion_generator.model);
+	test::@check(app.config.motion_generator.creature_model == "/models/model.ckpt", "so is the backbone");
+	usz added = app.add_node(crig::NodeKind.KIMODO_MODEL, { 0, 0 });
+	test::@check(g.at(added).params[0] == "/models/kimodo-soma", "a new motion model node starts with it");
+	app.set_node_param((usz)g.find("prompt"), 0, "a wave");
+	test::@check(app.config.motion_generator.model == "/models/kimodo-soma", "a prompt is not a config setting");
+}
+
+fn void text_to_motion_needs_its_prompt_and_models() @test
+{
+	String dir = "build/test_nodes_generate";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	crig::PipelineGraph* g = app.pipeline();
+	usz generate = (usz)g.find("generate");
+	List{usz} order;
+	order.init(mem);
+	defer order.free();
+	test::@check(@catch(app.node_order(g, generate, &order)) == crig::NODE_SOURCE_MISSING && g.blocker == g.find("text_encoder"),
+		"no text encoder file: refused, naming it");
+	app.set_node_param((usz)g.find("text_encoder"), 0, app.source_path);
+	app.set_node_param((usz)g.find("motion_model"), 0, app.source_path);
+	order.clear();
+	test::@check(@ok(app.node_order(g, generate, &order)) && order.len() == 1 && order[0] == generate, "set: only the generate step runs");
+	g.disconnect(generate, 2);
+	order.clear();
+	test::@check(@catch(app.node_order(g, generate, &order)) == crig::MOTION_NO_PROMPT, "no prompt wired in");
+	(void)g.connect((usz)g.find("prompt"), generate, 2);
+	g.set_param(generate, 1, "40");
+	order.clear();
+	test::@check(@catch(app.node_order(g, generate, &order)) == crig::MOTION_BAD_SECONDS, "forty seconds is too long");
+	test::@check(@catch(app.run_node(g, (usz)g.find("prompt"))) == crig::NODE_NOTHING_TO_RUN, "a prompt is a setting, not a step");
+}
+
+fn void node_wires_carry_one_thing_and_go_with_their_nodes() @test
+{
+	String dir = "build/test_nodes_wires";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
 	usz animate = (usz)g.find("animate");
 	usz video = (usz)g.find("video");
 	test::@check(!g.connect(video, animate, 0), "a video is not a finder");
-	usz other = g.add(crig::CaptureNodeKind.FINDER_FILE, { 0, 0 });
+	test::@check(!g.connect(g.add(crig::NodeKind.KIMODO_TEXT, { 0, 0 }), animate, 3), "a text encoder is not a backbone");
+	usz other = g.add(crig::NodeKind.FINDER_FILE, { 0, 0 });
 	test::@check(g.connect(other, animate, 0) && g.at(animate).input[0] == (sz)other, "a second finder takes the input over");
 
 	g.remove((usz)g.find("reference"));
 	animate = (usz)g.find("animate");
 	test::@check(g.at(animate).input[1] == -1, "the picture's wire went with it");
 	sz fed = g.at(animate).input[2];
-	test::@check(fed >= 0 && g.at(fed).kind == crig::CaptureNodeKind.VIDEO, "the video's wire still finds the video");
+	test::@check(fed >= 0 && g.at(fed).kind == crig::NodeKind.VIDEO, "the video's wire still finds the video");
 }
 
 fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 {
-	String dir = "build/test_capture_graph_order";
+	String dir = "build/test_nodes_order";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-	crig::CaptureGraph* g = app.capture_graph_now();
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
 	usz train = (usz)g.find("train");
 	usz animate = (usz)g.find("animate");
 	g.set_param((usz)g.find("video"), 0, app.source_path);
+	g.set_param((usz)g.find("backbone"), 0, app.source_path);
 	g.set_param(animate, 0, "order_test");
 	(void)path::mkdir(app.capture_path("studio"), true);
 	(void)file::save(app.capture_path("studio/studio.json"), "{}");
@@ -273,18 +379,61 @@ fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 	List{usz} order;
 	order.init(mem);
 	defer order.free();
-	test::@check(@ok(app.capture_order(animate, &order)), "Animate can run");
+	test::@check(@ok(app.node_order(g, animate, &order)), "Animate can run");
 	test::@check(order.len() == 2 && order[0] == train && order[1] == animate, "the finder is trained first: %s", order);
 
 	(void)file::save(app.capture_path("finder.safetensors"), "x");
 	order.clear();
-	(void)app.capture_order(animate, &order);
+	(void)app.node_order(g, animate, &order);
 	test::@check(order.len() == 1 && order[0] == animate, "a trained finder is skipped: %s", order);
 	order.clear();
-	(void)app.capture_order(train, &order);
+	(void)app.node_order(g, train, &order);
 	test::@check(order.len() == 1 && order[0] == train, "but trains again when run itself");
 
 	g.disconnect(animate, 1);
 	order.clear();
-	test::@check(@catch(app.capture_order(animate, &order)) == crig::CAPTURE_NO_REFERENCE, "Animate without a picture is refused");
+	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_REFERENCE, "Animate without a picture is refused");
+	g.disconnect(animate, 3);
+	(void)g.connect((usz)g.find("reference"), animate, 1);
+	order.clear();
+	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_BACKBONE, "and without a backbone");
+}
+
+fn void a_train_node_checks_its_size() @test
+{
+	String dir = "build/test_nodes_size";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
+	usz train = (usz)g.find("train");
+	g.set_param((usz)g.find("backbone"), 0, app.source_path);
+	test::@check(g.at(train).params[1] == "448", "a new Train node draws 448 px pictures (%s)", g.at(train).params[1]);
+	List{usz} order;
+	order.init(mem);
+	defer order.free();
+	foreach (bad : (String[]) { "500", "464", "2048", "big" })
+	{
+		g.set_param(train, 1, bad);
+		order.clear();
+		test::@check(@catch(app.node_order(g, train, &order)) == crig::CAPTURE_BAD_SIZE, "%s px is refused", bad);
+	}
+	g.set_param(train, 1, "640");
+	order.clear();
+	test::@check(@ok(app.node_order(g, train, &order)) && order.len() == 1, "640 px is taken");
+	test::@check(@catch(app.start_capture_training(100, 500, "", "", "")) == crig::CAPTURE_BAD_SIZE, "so is the job's own check");
+}
+
+fn void a_training_set_of_another_size_is_drawn_again() @test
+{
+	String dir = "build/test_capture_resize";
+	(void)path::mkdir(dir, true);
+	defer (void)path::rmtree((Path)dir);
+	String first = string::tformat("%s/poses_000000.json", dir);
+	(void)file::save(first, `{"size": 448, "images": []}`);
+	crig::fit_renders_to(dir, 448);
+	test::@check(file::exists(first), "a set at the same size is kept, to carry on");
+	crig::fit_renders_to(dir, 640);
+	test::@check(!file::exists(first), "a set at another size is emptied");
 }

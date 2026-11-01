@@ -796,10 +796,6 @@ struct AppState
 	*>
 	FilePurpose file_purpose;
 
-	// Which model file a MOTION_FILE chooser answers: a `MotionGenerator`
-	// config key, static.
-	String motion_path_key;
-
 	// The Settings page showing: SETTINGS_TAB_GENERAL or SETTINGS_TAB_AI.
 	usz settings_tab;
 
@@ -875,9 +871,9 @@ struct AppState
 	// Null in a headless AppState, which cannot generate.
 	three::Renderer* motion_gpu;
 
-	// The Generate panel: what is typed in it.
-	MotionDraft motion_draft;
-	CaptureGraph capture_graph;
+	// The Nodes pane's graphs, one per template, and the one open.
+	PipelineGraph[TEMPLATES] pipelines;
+	usz open_template;
 }
 
 <*
@@ -985,7 +981,6 @@ fn AppState new_app_with_geometry(
 
 		// A generated clip comes with a key every frame; Light is what makes it one
 		// that can be edited, so it is what the Generate pane starts on.
-		.motion_draft = { .optimize = LIGHT },
 
 		// The config `main` hands over is the one with a file behind it — see
 		// there — and this is the one field of it that is read before that
@@ -1434,11 +1429,9 @@ enum FilePurpose
 	// `file_dialog_confirmed`.
 	ASSET_LIBRARY,
 
-	// One of the model files on Settings › AI, named by
-	// `AppState.motion_path_key`: a .gguf or .safetensors.
+	// A model node's file (a .gguf or .safetensors), a Video node's video and a
+	// Finder file node's finder, for the node `node_pick` names.
 	MOTION_FILE,
-
-	// The Capture pane's video, and a joint finder trained before.
 	CAPTURE_VIDEO,
 	CAPTURE_FINDER,
 
@@ -1571,10 +1564,9 @@ fn void AppState.free(&self)
 	// library nobody is watching.
 	(void)self.stop_motion_generation();
 	self.motion_job.clear();
-	self.motion_draft.free();
 	(void)self.stop_capture();
 	self.capture_job.free();
-	self.capture_graph.free();
+	foreach (&g : self.pipelines) g.free();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
 

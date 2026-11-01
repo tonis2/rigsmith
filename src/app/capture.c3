@@ -1,14 +1,15 @@
 <*
  Video capture: an animation of the character out of a video of it, through
  llm-runner's `creature` plugin (DINOv3 and a rig fit), run in-process like
- Kimodo (`app/generate.c3`). The Capture pane's graph (`app/capture_graph.c3`)
+ Kimodo (`app/generate.c3`). The Nodes pane's graph (`app/pipeline_graph.c3`)
  runs three steps, each of which can be done again on its own:
 
  1. **A joint finder** for this character: a training set drawn the way
     render_poses draws it (poses inside the rig's limits and frames of its
     clips, from the front and both sides), a few poses a frame so the window
     keeps repainting, then creature's `train` task on it, about half an hour
-    on one GPU. Or a finder trained before, chosen as a file.
+    on one GPU, at the node's picture size (bigger is finer and slower). Or a
+    finder trained before, chosen as a file.
  2. **The reference picture**: render_studio's two cameras side by side, the
     front and the right side, from a pose the user picks (an idle's first
     frame stands best). A video model animates this picture.
@@ -20,9 +21,8 @@
  Everything goes in a folder beside the model, `<model>.capture/`: the
  training set (`renders/`), the finder (`finder.safetensors`), the picture
  (`studio/`), each clip's frames and the points found on them
- (`clips/<name>/frames/`, `clips/<name>/tracks.json`), the pane's graph
- (`graph.json`; a second Train or Reference node keeps its own under
- `<node>/`), and `capture.json`, which remembers a finder chosen from
+ (`clips/<name>/frames/`, `clips/<name>/tracks.json`; a second Train or
+ Reference node keeps its own under `<node>/`), and `capture.json`, which remembers a finder chosen from
  elsewhere. The model file itself is never written.
 
  One pipeline job runs at a time in the process, so a capture step and a text
@@ -43,11 +43,16 @@ import gltf_edit;
 import llm::pipeline;
 
 faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
-	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_FFMPEG, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED;
+	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_FFMPEG, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED,
+	CAPTURE_BAD_SIZE;
 
 // The training set's size by default, and how many poses one frame draws.
 const usz CAPTURE_DEFAULT_POSES = 1500;
 const usz CAPTURE_CHUNK = 8;
+// The training pictures' sides in pixels a finder can be trained at (multiples
+// of DINOv3's 16-px patch, up to render_poses' 1024), and the default.
+const uint[6] CAPTURE_SIZES = { 448, 512, 640, 768, 896, 1024 };
+const uint CAPTURE_DEFAULT_SIZE = 448;
 // The finder's training as the Zidane finder that fits best was trained: the
 // last block's features beside the 20th's.
 const String CAPTURE_TRAIN_EXTRA = `"layers": [20]`;
@@ -78,9 +83,10 @@ struct CaptureJob
 	char[512] last_line;
 	usz last_length;
 	bool failed;
-	// The training set: the next pose to draw, and how many.
+	// The training set: the next pose to draw, how many, and their side in pixels.
 	usz render_next;
 	usz render_total;
+	uint render_size;
 	// The clip being made: its name, its frames' folder (the training set's,
 	// while training), their rate and count.
 	String name;
@@ -88,9 +94,11 @@ struct CaptureJob
 	float fps;
 	usz frames_expected;
 	uint polls;
-	// The clip's finder and picture layout, for the animate task.
+	// The clip's finder and picture layout, for the animate task, and the
+	// backbone the creature tasks run on.
 	String finder;
 	String studio;
+	String backbone;
 	// Asked for by the pane; drawn between frames, where the renderer is free:
 	// its folder, its clip ("" = the rest pose) and moment, and how it went.
 	bool reference_pending;
@@ -137,11 +145,11 @@ fn void CaptureJob.clear(&self)
 {
 	self.close_engine();
 	self.stop_ffmpeg();
-	foreach (held : (String[]) { self.name, self.frames, self.finder, self.studio })
+	foreach (held : (String[]) { self.name, self.frames, self.finder, self.studio, self.backbone })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.name = self.frames = self.finder = self.studio = "";
+	self.name = self.frames = self.finder = self.studio = self.backbone = "";
 	self.running = false;
 	self.stage = IDLE;
 	self.failed = false;
@@ -270,6 +278,7 @@ fn String finder_summary(String finder_path)
 			if (try double median = held.get_float("median")) out.appendf("%s%.2f px held out", out.len() > 0 ? " · " : "", median);
 		}
 	}
+	if (try double size = info.get_float("size")) out.appendf("%s%d px pictures", out.len() > 0 ? " · " : "", (int)size);
 	return out.str_view();
 }
 
@@ -335,12 +344,13 @@ fn usz first_missing_chunk(String renders, usz total)
 // The pipeline's job is one per process: text to motion or a capture step.
 fn bool AppState.capture_engine_busy(&self) => self.motion_job.running || self.capture_job.running;
 
-fn void? AppState.capture_ready(&self, bool needs_backbone = true)
+// `backbone` is DINOv3's checkpoint; "" with `needs_backbone` off.
+fn void? AppState.capture_ready(&self, String backbone, bool needs_backbone = true)
 {
 	if (self.source_path.len == 0) return CAPTURE_NO_MODEL_FILE~;
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
 	if (self.capture_engine_busy()) return CAPTURE_BUSY~;
-	if (needs_backbone && self.config.motion_generator.creature_model.len == 0) return CAPTURE_NO_BACKBONE~;
+	if (needs_backbone && backbone.trim().len == 0) return CAPTURE_NO_BACKBONE~;
 	if (needs_backbone && self.llm_plugin_problem("creature").len > 0) return CAPTURE_NO_PLUGIN~;
 	if (needs_backbone && !self.motion_gpu) return CAPTURE_NO_GPU~;
 }
@@ -350,7 +360,7 @@ fn String capture_fault_text(fault err)
 	switch (err)
 	{
 		case CAPTURE_NO_MODEL_FILE: return "the model has no file yet — save it as a .glb first, the capture folder goes beside it";
-		case CAPTURE_NO_BACKBONE: return "choose the DINOv3 backbone (SAM 3D Body's model.ckpt) in File › Settings › AI";
+		case CAPTURE_NO_BACKBONE: return "wire in a DINOv3 backbone node holding SAM 3D Body's model.ckpt";
 		case CAPTURE_BUSY: return "another pipeline job is running";
 		case CAPTURE_NO_GPU: return "there is no GPU to run it on";
 		case CAPTURE_NO_SKELETON: return "the model needs a skinned skeleton first";
@@ -360,6 +370,7 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_FFMPEG: return "ffmpeg is not on the PATH — give a folder of the video's frames instead";
 		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
 		case CAPTURE_BAD_POSES: return "Poses is a whole number from 50 to 20000";
+		case CAPTURE_BAD_SIZE: return "Size is one of 448, 512, 640, 768, 896 or 1024 pixels";
 		case CAPTURE_NO_PLUGIN: return "the creature plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
 		default: return "the pipeline would not start";
 	}
@@ -369,26 +380,47 @@ fn String capture_fault_text(fault err)
 // 1. The joint finder.
 
 <*
- Start drawing the training set (`poses` poses into `renders`, from where a
- stopped set left off) and then training the finder at `finder` on it.
+ Start drawing the training set (`poses` pictures `size` pixels a side into
+ `renders`, from where a stopped set left off) and then training the finder at
+ `finder` on it.
 *>
-fn void? AppState.start_capture_training(&self, usz poses, String renders, String finder)
+fn void? AppState.start_capture_training(&self, usz poses, uint size, String renders, String finder, String backbone)
 {
-	self.capture_ready()!;
+	if (!capture_size_ok(size)) return CAPTURE_BAD_SIZE~;
+	self.capture_ready(backbone)!;
+	fit_renders_to(renders, size);
 	(void)path::mkdir(renders, true);
 	if (!path::is_dir((Path)renders)) return CAPTURE_NOT_STARTED~;
 	CaptureJob* job = &self.capture_job;
 	job.clear();
 	job.frames = renders.copy(mem);
 	job.finder = finder.copy(mem);
+	job.backbone = backbone.trim().copy(mem);
 	job.running = true;
 	job.stage = RENDERING;
 	job.render_total = math::max(poses, CAPTURE_CHUNK);
+	job.render_size = size;
 	job.render_next = first_missing_chunk(renders, job.render_total);
 	job.step = (uint)job.render_next;
 	job.steps = (uint)job.render_total;
 	job.set_last(job.render_next > 0 ? "carrying on with the training set" : "drawing the training set");
-	self.@notice("Drawing %d poses of the character to train its joint finder on…", job.render_total);
+	self.@notice("Drawing %d poses of the character at %d px to train its joint finder on…", job.render_total, size);
+}
+
+fn bool capture_size_ok(uint size)
+{
+	foreach (s : CAPTURE_SIZES) if (s == size) return true;
+	return false;
+}
+
+// A training set drawn at another size is emptied: train refuses mixed sizes.
+fn void fit_renders_to(String renders, uint size)
+{
+	char[]? bytes = file::load_temp(string::tformat("%s/poses_000000.json", renders));
+	if (catch bytes) return;
+	Object*? set = json::parse(tmem, (String)bytes);
+	if (try set) if (try double drawn = set.get_float("size")) if ((uint)drawn == size) return;
+	(void)path::rmtree((Path)renders);
 }
 
 <*
@@ -404,6 +436,7 @@ fn void AppState.draw_capture_chunk(&self)
 	shoot.out = job.frames;
 	shoot.first = job.render_next;
 	shoot.count = math::min(CAPTURE_CHUNK, job.render_total - job.render_next);
+	shoot.size = job.render_size;
 	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
 	shoot.cameras[1] = { .name = "left", .yaw = 90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
 	shoot.cameras[2] = { .name = "right", .yaw = -90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
@@ -422,7 +455,7 @@ fn void AppState.draw_capture_chunk(&self)
 	job.render_next += shoot.count;
 	job.step = (uint)job.render_next;
 	if (job.render_next < job.render_total) return;
-	self.start_capture_engine(TRAINING, capture_train_json(self.config.motion_generator.creature_model, job.frames, job.finder));
+	self.start_capture_engine(TRAINING, capture_train_json(job.backbone, job.frames, job.finder));
 }
 
 // The train task's settings, as JSON. Owned.
@@ -500,9 +533,9 @@ fn String capture_prompt(String action)
  `finder` and the picture in `studio`: its frames taken out with ffmpeg (or a
  folder of frames used as it is), then the animate task.
 *>
-fn void? AppState.start_capture_animation(&self, String finder, String studio, String video, String name)
+fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name)
 {
-	self.capture_ready()!;
+	self.capture_ready(backbone)!;
 	if (finder.len == 0 || !file::exists(finder)) return CAPTURE_NO_FINDER~;
 	if (studio.len == 0 || !file::exists(string::tformat("%s/studio.json", studio))) return CAPTURE_NO_REFERENCE~;
 	video = video.trim();
@@ -517,6 +550,7 @@ fn void? AppState.start_capture_animation(&self, String finder, String studio, S
 	job.name = name.copy(mem);
 	job.finder = finder.copy(mem);
 	job.studio = studio.copy(mem);
+	job.backbone = backbone.trim().copy(mem);
 	job.fps = 24;
 	if (folder)
 	{
@@ -580,7 +614,7 @@ fn String AppState.capture_animate_json(&self)
 	DString out = dstring::new(mem);
 	defer out.free();
 	out.append_string("{\n  \"model\": ");
-	gltf_edit::escape_json_string(&out, self.config.motion_generator.creature_model);
+	gltf_edit::escape_json_string(&out, job.backbone);
 	out.append_string(",\n  \"rig\": ");
 	out.append_string(rig);
 	out.append_string(",\n  \"finder\": ");
@@ -651,7 +685,7 @@ fn void AppState.service_capture(&self)
 fn void AppState.tick_capture(&self)
 {
 	CaptureJob* job = &self.capture_job;
-	self.advance_capture_graph();
+	self.advance_pipeline();
 	if (!job.running) return;
 	switch (job.stage)
 	{
@@ -767,7 +801,7 @@ fn String capture_result_summary(String result)
 fn bool AppState.stop_capture(&self)
 {
 	CaptureJob* job = &self.capture_job;
-	self.capture_graph.stop_run();
+	self.stop_runs();
 	if (!job.running) return false;
 	job.close_engine();
 	job.stop_ffmpeg();

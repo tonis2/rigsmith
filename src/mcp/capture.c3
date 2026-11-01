@@ -4,7 +4,7 @@
 
  `{"action": "status"}` says what the character's capture has (its folder,
  finder, reference picture) and what is running. `train` starts a training
- set and the finder's training (`poses`), `use_finder` takes a finder trained
+ set and the finder's training (`poses`, `size`), `use_finder` takes a finder trained
  before (`finder`), `reference` draws the reference picture (`clip`, `time`;
  the rest pose without a clip), `animate` reads a video (`video`, `name`) into
  a clip, `stop` stops the running step. A started step answers at once; ask
@@ -20,6 +20,7 @@ faultdef CAPTURE_REFUSED;
 const String CAPTURE_SCHEMA = `{"type":"object","properties":{
 	"action":{"type":"string","enum":["status","train","use_finder","reference","animate","stop"],"description":"What to do."},
 	"poses":{"type":"integer","description":"train: the training set's size. Default 1500."},
+	"size":{"type":"integer","description":"train: the pictures' side in pixels: 448, 512, 640, 768, 896 or 1024; bigger finds joints more precisely but trains slower. Default 448."},
 	"finder":{"type":"string","description":"use_finder: a .safetensors trained before."},
 	"clip":{"type":"string","description":"reference: the clip to take the pose from, \"pack/clip\"; the rest pose without."},
 	"time":{"type":"number","description":"reference: the clip's moment in seconds. Default 0."},
@@ -45,7 +46,14 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 				detail.appendf(`capture's "poses" is %s; it is from 50 to 20000.`, (JsonFloat)poses);
 				return CAPTURE_REFUSED~;
 			}
-			if (catch err = app.start_capture_training((usz)poses, app.capture_path("renders"), app.capture_path("finder.safetensors"))) return capture_refused(detail, err);
+			double size = (double)CAPTURE_DEFAULT_SIZE;
+			if (try given = args.get_float("size")) size = given;
+			if (size != (double)(uint)size || !capture_size_ok((uint)size))
+			{
+				detail.appendf(`capture's "size" is %s; it is 448, 512, 640, 768, 896 or 1024.`, (JsonFloat)size);
+				return CAPTURE_REFUSED~;
+			}
+			if (catch err = app.start_capture_training((usz)poses, (uint)size, app.capture_path("renders"), app.capture_path("finder.safetensors"), app.config.motion_generator.creature_model)) return capture_refused(detail, err);
 		case "use_finder":
 			String finder;
 			if (!required_string(args, "finder", &finder, detail, `capture's use_finder needs "finder": a .safetensors trained before.`)) return CAPTURE_REFUSED~;
@@ -80,7 +88,7 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 				detail.appendf(`the character already has a clip called "%s"; give "name".`, named);
 				return CAPTURE_REFUSED~;
 			}
-			if (catch err = app.start_capture_animation(app.capture_finder(), app.capture_path("studio"), video, name)) return capture_refused(detail, err);
+			if (catch err = app.start_capture_animation(app.config.motion_generator.creature_model, app.capture_finder(), app.capture_path("studio"), video, name)) return capture_refused(detail, err);
 		case "stop":
 			(void)app.stop_capture();
 		default:

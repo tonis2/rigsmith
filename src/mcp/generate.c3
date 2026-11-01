@@ -71,7 +71,7 @@ fn String? tool_generate_motion(Object* args, void* user_data, DString* detail) 
 		detail.append_string("There is no skeleton to put a generated clip on. Rig the model first.");
 		return GENERATE_REFUSED~;
 	}
-	if (catch err = app.start_motion_generation(request))
+	if (catch err = app.start_motion_generation(request, app.config.motion_generator.kimodo()))
 	{
 		switch (err)
 		{
