@@ -104,39 +104,23 @@ fn void SketchToolbar.paint(&self, Element* elem, Painter* painter) @dynamic
 		}
 		Vec2 c = { x + TINT_CELL_W * 0.5f, TINT_CELL_H * 0.5f };
 		Color ink = off ? TEXT_DIM.dim(0.5f) : TEXT;
-		float r = TINT_ICON_R;
 		switch (cell)
 		{
-			case RED:
-				painter.circle(c, r, { .color = SKETCH_RED });
-			case GREEN:
-				painter.circle(c, r, { .color = SKETCH_GREEN });
-			case BLUE:
-				painter.circle(c, r, { .color = SKETCH_BLUE });
-			case ERASER:
-				// A tilted block, its rubber end filled.
-				Vec2 along = { r * 0.7f, -r * 0.7f };
-				Vec2 across = { r * 0.35f, r * 0.35f };
-				Color eraser_ink = on ? DOT_OUTLINE : ink;
-				painter.line(c - along - across, c + along - across, TINT_STROKE, eraser_ink);
-				painter.line(c - along + across, c + along + across, TINT_STROKE, eraser_ink);
-				painter.line(c + along - across, c + along + across, TINT_STROKE, eraser_ink);
-				painter.line(c - along - across, c - along + across, TINT_STROKE * 2.4f, eraser_ink);
-			case UNDO:
-				// A hooked arrow back: the last mark goes.
-				painter.line({ c.x + r, c.y + r * 0.6f }, { c.x + r, c.y - r * 0.2f }, TINT_STROKE, ink);
-				painter.line({ c.x + r, c.y - r * 0.2f }, { c.x - r * 0.6f, c.y - r * 0.2f }, TINT_STROKE, ink);
-				painter.line({ c.x - r * 0.6f, c.y - r * 0.2f }, { c.x - r * 0.1f, c.y - r * 0.8f }, TINT_STROKE, ink);
-				painter.line({ c.x - r * 0.6f, c.y - r * 0.2f }, { c.x - r * 0.1f, c.y + r * 0.4f }, TINT_STROKE, ink);
-			case CLEAR:
-				// A cross: everything goes.
-				painter.line({ c.x - r * 0.7f, c.y - r * 0.7f }, { c.x + r * 0.7f, c.y + r * 0.7f }, TINT_STROKE, ink);
-				painter.line({ c.x - r * 0.7f, c.y + r * 0.7f }, { c.x + r * 0.7f, c.y - r * 0.7f }, TINT_STROKE, ink);
-			case DONE:
-				painter.line({ c.x - r * 0.8f, c.y }, { c.x - r * 0.2f, c.y + r * 0.6f }, TINT_STROKE, ink);
-				painter.line({ c.x - r * 0.2f, c.y + r * 0.6f }, { c.x + r * 0.8f, c.y - r * 0.6f }, TINT_STROKE, ink);
+			case RED: painter.icon(c, STRIP_ICON_VIEW, ICON_DISC, SKETCH_RED);
+			case GREEN: painter.icon(c, STRIP_ICON_VIEW, ICON_DISC, SKETCH_GREEN);
+			case BLUE: painter.icon(c, STRIP_ICON_VIEW, ICON_DISC, SKETCH_BLUE);
+			case ERASER: painter.icon(c, STRIP_ICON_VIEW, ICON_ERASER, on ? DOT_OUTLINE : ink);
+			case UNDO: painter.icon(c, STRIP_ICON_VIEW, ICON_UNDO, ink);
+			case CLEAR: painter.icon(c, STRIP_ICON_VIEW, ICON_CLEAR, ink);
+			case DONE: painter.icon(c, STRIP_ICON_VIEW, ICON_DONE, ink);
 		}
 	}
+}
+
+fn void SketchToolbar.describe(&self, Element* elem, Description* out) @dynamic
+{
+	if (!self.shown) return;
+	foreach (usz i, tip : SKETCH_TIPS) out.part(tip, { sketch_cell_x(i), 0 }, { TINT_CELL_W, TINT_CELL_H });
 }
 
 fn usz? SketchToolbar.cell_at(&self, Vec2 pixel)

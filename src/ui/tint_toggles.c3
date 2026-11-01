@@ -35,14 +35,8 @@ const float TINT_STRIP_W = TINT_CELL_W * 3.0;
 // ViewPanel, which is what places it.
 const float TINT_MARGIN = 12.0;
 
-const float TINT_ICON_R = 7.0;
-const float TINT_STROKE = 1.5;
-
 const Vec4 TINT_STRIP_RADII = { 6.0, 6.0, 6.0, 6.0 };
 const Vec4 TINT_CELL_RADII = { 5.0, 5.0, 5.0, 5.0 };
-
-// Where the territory glyph's wedges divide, in degrees clockwise from +x.
-const float[3] TERRITORY_CUTS = { 70.0, 150.0, 300.0 };
 
 faultdef NO_TINT_CELL;
 
@@ -147,10 +141,7 @@ fn void TintToggles.paint(&self, Element* elem, Painter* painter) @dynamic
 }
 
 <*
- The glyphs, drawn from primitives rather than loaded from an atlas — there is
- no icon font in the build and three shapes do not justify one.
-
- All are built on a circle so the strip reads as one control, and they are told
+ The glyphs, SVGs in assets/icons/strip. All are built on a circle so the strip reads as one control, and they are told
  apart by what is inside it: wedges, rings, a slash.
 
  @param centre : `Middle of the cell, in element-local pixels.`
@@ -160,39 +151,14 @@ fn void paint_tint_icon(Painter* painter, TintGlyph glyph, Vec2 centre, Color in
 {
 	switch (glyph)
 	{
-		case TERRITORY:
-			// A disc cut into wedges — one region per joint, which is what the
-			// territory map paints. The wedges are deliberately uneven: three
-			// equal ones meet at 120° and the glyph starts reading as a wireframe
-			// cube, which in a mesh tool means something else entirely.
-			painter.circle(centre, TINT_ICON_R, { .border_width = TINT_STROKE, .border_color = ink });
-			foreach (degrees : TERRITORY_CUTS)
-			{
-				float angle = math::deg_to_rad(degrees);
-				Vec2 arm = { math::cos(angle), math::sin(angle) };
-				painter.line(centre, centre + arm * TINT_ICON_R, TINT_STROKE, ink);
-			}
+		case TERRITORY: painter.icon(centre, STRIP_ICON_VIEW, ICON_TERRITORY, ink);
 		case FALLOFF:
-			// Rings fading outward from one point: one joint's weight over the
-			// distance it reaches, and the shape Blender already uses for
-			// proportional editing.
-			painter.circle(centre, 2.0f, { .color = ink });
-			// Only slightly dimmer per ring. The fade is the point of the glyph,
-			// but it compounds with the greying the caller may already have
-			// applied, and two multiplications of a dim ink is an invisible one.
-			painter.circle(centre, TINT_ICON_R * 0.6f, {
-				.border_width = TINT_STROKE,
-				.border_color = ink.dim(0.85),
-			});
-			painter.circle(centre, TINT_ICON_R, {
-				.border_width = TINT_STROKE,
-				.border_color = ink.dim(0.65),
-			});
-		case UNUSED:
-			// The empty set: a ring struck through — the vertices nothing holds.
-			painter.circle(centre, TINT_ICON_R * 0.8f, { .border_width = TINT_STROKE, .border_color = ink });
-			Vec2 arm = { TINT_ICON_R * 0.75f, -TINT_ICON_R * 0.75f };
-			painter.line(centre - arm, centre + arm, TINT_STROKE, ink);
+			// Rings fading outward from one point, only slightly dimmer per ring:
+			// the caller may already have greyed the ink.
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_FALLOFF, ink);
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_FALLOFF_INNER, ink.dim(0.85));
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_FALLOFF_OUTER, ink.dim(0.65));
+		case UNUSED: painter.icon(centre, STRIP_ICON_VIEW, ICON_UNUSED, ink);
 	}
 }
 
@@ -256,6 +222,11 @@ String[3] tint_tips = {
 	"Weight falloff (F) — tint the mesh by how strongly the selected joint pulls",
 	"Unused weights — mark the vertices no joint holds; posed, they follow the root",
 };
+
+fn void TintToggles.describe(&self, Element* elem, Description* out) @dynamic
+{
+	foreach (i, tip : tint_tips) out.part(tip, { TINT_CELL_W * (float)i, 0 }, { TINT_CELL_W, TINT_CELL_H });
+}
 
 fn String tint_tip(Element* holder, Vec2 pos)
 {

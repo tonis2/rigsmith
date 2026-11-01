@@ -489,7 +489,7 @@ fn void the_floor_arrow_shows_which_way_the_rig_faces() @test
 		facing_strokes(fixture, crig::DOT_PIN_MISSED));
 
 	fixture.app.config.hide_facing = true;
-	fixture.ui.request_paint(crig::Viewport);
+	fixture.ui.find(crig::Viewport)!!.request_paint();
 	fixture.ui.flush();
 	test::@check(facing_strokes(fixture, crig::DOT_PIN_MISSED) == 0 && facing_strokes(fixture, crig::AXIS_Z) == 0,
 		"with the arrow turned off it was still drawn");

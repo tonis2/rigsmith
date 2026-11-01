@@ -426,22 +426,11 @@ const TextFieldStyle TEXT_FIELD_STYLE = {
 
  @param at : `The gear's centre, in element-local pixels.`
  @param radius : `Half the width it occupies, teeth included.`
- @param ink : `The gear itself.`
- @param hole : `What shows through the middle — the surface behind it, not a shade of the ink.`
+ @param ink : `The gear itself; the middle is a hole.`
 *>
-fn void paint_gear(Painter* painter, Vec2 at, float radius, Color ink, Color hole)
+fn void paint_gear(Painter* painter, Vec2 at, float radius, Color ink)
 {
-	const usz TEETH = 8;
-	for (usz i = 0; i < TEETH; i++)
-	{
-		float turn = (float)i * (float)math::TAU / (float)TEETH;
-		painter.circle(
-			{ at.x + math::cos(turn) * radius * 0.72f, at.y + math::sin(turn) * radius * 0.72f },
-			radius * 0.28f,
-			{ .color = ink });
-	}
-	painter.circle(at, radius * 0.66f, { .color = ink });
-	painter.circle(at, radius * 0.26f, { .color = hole });
+	painter.icon(at, radius * 2, ICON_GEAR, ink);
 }
 
 // A ticked box takes the accent with dark ink on it, which is what every other
@@ -457,7 +446,6 @@ const CheckboxStyle CHECKBOX_STYLE = {
 	.text_size = 13.0,
 	.box = 16.0,
 	.gap = 8.0,
-	.thickness = 2.0,
 };
 
 // Segmented controls and toggle buttons: an unlit segment is a panel button, a

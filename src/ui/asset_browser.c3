@@ -468,8 +468,7 @@ fn void AssetCell.paint(&self, Element* elem, Painter* painter) @dynamic
 	// the file the tag belongs to.
 	if (self.hovered)
 	{
-		paint_gear(painter, self.gear_at(elem.size), ASSET_GEAR_R,
-			self.on_gear ? TEXT : TEXT_DIM, BG);
+		paint_gear(painter, self.gear_at(elem.size), ASSET_GEAR_R, self.on_gear ? TEXT : TEXT_DIM);
 	}
 
 	// The bind mark, and the one thing in a cell drawn whether or not the pointer

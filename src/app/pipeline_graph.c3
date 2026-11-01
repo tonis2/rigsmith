@@ -171,11 +171,19 @@ fn String node_default(NodeKind kind, usz slot)
 				case 4: return "light";
 			}
 		case TRAIN: if (slot == 0) return "1500"; if (slot == 1) return "448";
-		case ANIMATE:
+		// Mirror: off for a video, where it costs a second look a frame.
+		case ANIMATE: if (slot == 1) return "0";
 		case POSE: if (slot == 1) return "1";
 		default: break;
 	}
 	return "";
+}
+
+// Whether an Animate or Image to pose node also looks mirrored; unset is its default.
+fn bool node_mirror_on(PipelineNode* n)
+{
+	String m = n.params[1].trim();
+	return (m.len > 0 ? m : node_default(n.kind, 1)) != "0";
 }
 
 fn KeyReduction node_optimize(String text)
@@ -869,7 +877,7 @@ fn void? AppState.start_node(&self, PipelineGraph* g, usz node)
 		case ANIMATE:
 		case POSE:
 			String finder = self.capture_node_finder(g.at(n.input[0]));
-			self.start_capture_animation(g.fed(node, 2), finder, "", g.fed(node, 1), g.clip_name(node), n.params[1].trim() != "0", n.kind == POSE)!;
+			self.start_capture_animation(g.fed(node, 2), finder, "", g.fed(node, 1), g.clip_name(node), node_mirror_on(n), n.kind == POSE)!;
 		default:
 			return CAPTURE_NOT_STARTED~;
 	}

@@ -7,7 +7,7 @@ import std::math;
 
 fn float repair_key_time(Fixture* f, usz i) => f.app.clip(f.app.editing).keyframes[i].time;
 
-fn void repair_submit(Fixture* f, String id, String typed, OnSubmit submit)
+fn void repair_submit(Fixture* f, String id, String typed, OnText submit)
 {
 	Element* field = f.ui.find_id(id)!!;
 	field.widget_as(TextField).set_text(field, typed);

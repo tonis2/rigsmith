@@ -87,25 +87,24 @@ fn void ShadingToggles.paint(&self, Element* elem, Painter* painter) @dynamic
  and a shadowed side for the textured look.
 
  @param ink : `Stroke and fill colour.`
- @param ground : `What the cell behind the icon is, for the textured sphere's shadow.`
+ @param ground : `What the cell behind the icon is, for the textured sphere's highlight.`
 *>
 fn void paint_shading_icon(Painter* painter, ShadingMode mode, Vec2 centre, Color ink, Color ground)
 {
 	switch (mode)
 	{
-		case WIREFRAME:
-			painter.circle(centre, TINT_ICON_R, { .border_width = TINT_STROKE, .border_color = ink });
-			painter.ellipse(centre, { TINT_ICON_R * 0.45f, TINT_ICON_R }, { .border_width = 1.2f, .border_color = ink });
-			painter.line(centre - (Vec2) { TINT_ICON_R, 0 }, centre + (Vec2) { TINT_ICON_R, 0 }, 1.2f, ink);
-		case SOLID:
-			painter.circle(centre, TINT_ICON_R, { .color = ink });
+		case WIREFRAME: painter.icon(centre, STRIP_ICON_VIEW, ICON_WIREFRAME, ink);
+		case SOLID: painter.icon(centre, STRIP_ICON_VIEW, ICON_SOLID, ink);
 		case TEXTURED:
-			painter.circle(centre, TINT_ICON_R, { .color = ink });
-			// The shadowed half: a disc of the ground laid over the lower right, so
-			// the lit crescent stays at the upper left.
-			painter.circle(centre + (Vec2) { 2.5f, 2.5f }, TINT_ICON_R * 0.72f, { .color = ink.dim(0.55f) });
-			painter.circle(centre + (Vec2) { -2.5f, -2.5f }, 1.6f, { .color = ground });
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_TEXTURED, ink);
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_TEXTURED_SHADE, ink.dim(0.55f));
+			painter.icon(centre, STRIP_ICON_VIEW, ICON_TEXTURED_LIGHT, ground);
 	}
+}
+
+fn void ShadingToggles.describe(&self, Element* elem, Description* out) @dynamic
+{
+	foreach (i, tip : shading_tips) out.part(tip, { TINT_CELL_W * (float)i, 0 }, { TINT_CELL_W, TINT_CELL_H });
 }
 
 fn usz? ShadingToggles.cell_at(&self, Vec2 pixel)

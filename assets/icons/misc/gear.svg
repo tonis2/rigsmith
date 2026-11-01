@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 2 2" fill="currentColor">
+  <circle cx="0.720" cy="0.000" r="0.28"/>
+  <circle cx="0.509" cy="0.509" r="0.28"/>
+  <circle cx="0.000" cy="0.720" r="0.28"/>
+  <circle cx="-0.509" cy="0.509" r="0.28"/>
+  <circle cx="-0.720" cy="0.000" r="0.28"/>
+  <circle cx="-0.509" cy="-0.509" r="0.28"/>
+  <circle cx="-0.000" cy="-0.720" r="0.28"/>
+  <circle cx="0.509" cy="-0.509" r="0.28"/>
+  <path fill-rule="evenodd" d="M0.66 0 A0.66 0.66 0 1 1 -0.66 0 A0.66 0.66 0 1 1 0.66 0 Z M0.26 0 A0.26 0.26 0 1 1 -0.26 0 A0.26 0.26 0 1 1 0.26 0 Z"/>
+</svg>

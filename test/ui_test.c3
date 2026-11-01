@@ -402,12 +402,7 @@ fn void Fixture.toggle_weights(&self, Vec2 mouse)
  Press and release without moving: a click, in the sense the viewport resolves
  on release.
 *>
-fn void Fixture.click(&self, Vec2 at)
-{
-	self.feed(at); // arrive first, so hover and the hit test settle
-	self.feed(at, left: true);
-	self.feed(at);
-}
+fn void Fixture.click(&self, Vec2 at) => self.ui.click(at);
 
 <*
  A click with shift held: what adds a dot to the selection, or takes it out.
@@ -416,24 +411,12 @@ fn void Fixture.click(&self, Vec2 at)
  because the viewport reads it live from `Input` at the press rather than off the
  event — the same reason `chord` spreads a Ctrl shortcut over four frames.
 *>
-fn void Fixture.shift_click(&self, Vec2 at)
-{
-	Key[1] held = { Key.LEFT_SHIFT };
-	self.feed(at, keys: held[..]);
-	self.feed(at, left: true, keys: held[..]);
-	self.feed(at, keys: held[..]);
-	self.feed(at);
-}
+fn void Fixture.shift_click(&self, Vec2 at) => self.ui.click(at, held: { Key.LEFT_SHIFT });
 
 <*
  The same edge with the right button — what opens a context menu.
 *>
-fn void Fixture.right_click(&self, Vec2 at)
-{
-	self.feed(at);
-	self.feed(at, right: true);
-	self.feed(at);
-}
+fn void Fixture.right_click(&self, Vec2 at) => self.ui.click(at, RIGHT);
 
 fn void Fixture.drag(&self, Vec2 from, Vec2 to)
 {
@@ -759,8 +742,7 @@ fn String Fixture.notice_text(&self) => self.app.notice();
 *>
 fn Vec2? Fixture.center_of(&self, String id)
 {
-	Element* elem = self.ui.find_id(id)!;
-	return elem.absolute + elem.size * 0.5f;
+	return self.ui.target_id(id)!.center();
 }
 
 <*
@@ -11393,21 +11375,21 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	test::@check(!@ok(fixture.ui.find_id("node-reference")), "Video has no Reference dropdown: its first frame finds it");
 	fixture.type_into(node_field(fixture, "video", 0)!!, "/clips/wave.mp4");
 	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
-	// Animate's mirror check starts on; a click turns it off, another back on.
+	// Animate's mirror check starts off; a click turns it on, another back off.
 	usz animate = (usz)g.find("animate");
-	test::@check(g.at(animate).params[1] == "1", "Animate does not start with the mirror check on (%s)", g.at(animate).params[1]);
-	test::@check(mirror_lit(fixture), "the mirror icon is not lit while the check is on");
+	test::@check(g.at(animate).params[1] == "0", "Animate does not start with the mirror check off (%s)", g.at(animate).params[1]);
+	test::@check(!mirror_lit(fixture), "the mirror icon is lit while the check is off");
 	node_press(fixture, crig::NODE_MIRROR_ID);
-	test::@check(g.at(animate).params[1] == "0", "a click did not turn the mirror check off (%s)", g.at(animate).params[1]);
+	test::@check(g.at(animate).params[1] == "1", "a click did not turn the mirror check on (%s)", g.at(animate).params[1]);
 	// The next frames redraw the icon by themselves.
 	fixture.feed({ 0, 0 });
 	fixture.feed({ 0, 0 });
-	test::@check(!mirror_lit(fixture), "the mirror icon still shows on after a click turned it off");
-	node_press(fixture, crig::NODE_MIRROR_ID);
-	test::@check(g.at(animate).params[1] == "1", "a second click did not turn it back on (%s)", g.at(animate).params[1]);
-	fixture.feed({ 0, 0 });
-	fixture.feed({ 0, 0 });
 	test::@check(mirror_lit(fixture), "the mirror icon still shows off after a click turned it on");
+	node_press(fixture, crig::NODE_MIRROR_ID);
+	test::@check(g.at(animate).params[1] == "0", "a second click did not turn it back off (%s)", g.at(animate).params[1]);
+	fixture.feed({ 0, 0 });
+	fixture.feed({ 0, 0 });
+	test::@check(!mirror_lit(fixture), "the mirror icon still shows on after a click turned it off");
 
 	// Browse on Video takes a folder of frames: Select on a folder picks it.
 	String picked = "build/test_pick_frames";

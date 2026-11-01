@@ -105,16 +105,16 @@ const String JOINT_LIMIT_Z_MAX_ID = "joint-limit-z-max";
 const String[3] JOINT_ROTATION_CAPTIONS = { "X swing °", "Y twist °", "Z swing °" };
 const String[3] JOINT_LIMIT_NAMES = { "X swing", "Y twist", "Z swing" };
 const String[3] JOINT_ROTATION_IDS = { JOINT_ROTATION_X_ID, JOINT_ROTATION_Y_ID, JOINT_ROTATION_Z_ID };
-const OnSubmit[3] JOINT_ROTATION_ENTRIES = {
+const OnText[3] JOINT_ROTATION_ENTRIES = {
 	&joint_rotation_x_entered, &joint_rotation_y_entered, &joint_rotation_z_entered };
 const String[3] JOINT_LIMIT_ALLOW_IDS = { JOINT_LIMIT_X_ALLOW_ID, JOINT_LIMIT_Y_ALLOW_ID, JOINT_LIMIT_Z_ALLOW_ID };
 const String[3] JOINT_LIMIT_MIN_IDS = { JOINT_LIMIT_X_MIN_ID, JOINT_LIMIT_Y_MIN_ID, JOINT_LIMIT_Z_MIN_ID };
 const String[3] JOINT_LIMIT_MAX_IDS = { JOINT_LIMIT_X_MAX_ID, JOINT_LIMIT_Y_MAX_ID, JOINT_LIMIT_Z_MAX_ID };
 const OnToggle[3] JOINT_LIMIT_ALLOWED = {
 	&joint_limit_x_allowed, &joint_limit_y_allowed, &joint_limit_z_allowed };
-const OnSubmit[3] JOINT_LIMIT_MIN_ENTERED = {
+const OnText[3] JOINT_LIMIT_MIN_ENTERED = {
 	&joint_limit_x_min_entered, &joint_limit_y_min_entered, &joint_limit_z_min_entered };
-const OnSubmit[3] JOINT_LIMIT_MAX_ENTERED = {
+const OnText[3] JOINT_LIMIT_MAX_ENTERED = {
 	&joint_limit_x_max_entered, &joint_limit_y_max_entered, &joint_limit_z_max_entered };
 
 const float JOINT_PANEL_W = 306.0f;
@@ -125,7 +125,6 @@ const float JOINT_TAB_W = 46.0f;
 const float JOINT_TAB_H = 54.0f;
 const float JOINT_TAB_GAP = 4.0f;
 const float JOINT_TAB_TEXT = 11.0f;
-const float JOINT_TAB_STROKE = 1.6f;
 // What the card's width leaves beside the Rename and Cancel buttons, less a
 // little: a Row squeezes its last child into whatever is left, and a Cancel
 // button squeezed to half its label is what a field sized to the exact
@@ -172,8 +171,8 @@ const DisclosureStyle JOINT_SECTION_STYLE = {
 	.border_width = 1.0f,
 };
 
-// The rail is built from ordinary CUI Buttons. Only this face is crig-specific:
-// the tiny bone/alignment glyphs have no icon font to come from.
+// The rail is built from ordinary CUI Buttons; this face adds the glyph
+// (assets/icons/joint) and the label under it.
 struct JointPanelTabFace (Widget)
 {
 	JointPanelTab tab;
@@ -197,32 +196,15 @@ fn void JointPanelTabFace.paint(&self, Element* elem, Painter* painter) @dynamic
 		});
 	}
 
+	String svg;
 	switch (self.tab)
 	{
-		case JOINT:
-			Vec2 a = { cx - 6.0f, 13.0f };
-			Vec2 b = { cx + 6.0f, 21.0f };
-			painter.line(a, b, JOINT_TAB_STROKE, glyph);
-			painter.circle(a, 3.2f, { .border_width = JOINT_TAB_STROKE, .border_color = glyph });
-			painter.circle(b, 3.2f, { .border_width = JOINT_TAB_STROKE, .border_color = glyph });
-		case ALIGN:
-			float left = cx - 7.0f;
-			painter.line({ left, 10.0f }, { left, 24.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ left, 12.0f }, { cx + 7.0f, 12.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ left, 17.0f }, { cx + 3.0f, 17.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ left, 22.0f }, { cx + 9.0f, 22.0f }, JOINT_TAB_STROKE, glyph);
-		case WEIGHTS:
-			painter.circle({ cx, 17.0f }, 7.0f, { .border_width = JOINT_TAB_STROKE, .border_color = glyph });
-			painter.circle({ cx + 1.5f, 18.5f }, 3.5f, { .color = glyph });
-		case POSE:
-			// A stick figure with one arm raised: head, spine, arms, legs.
-			painter.circle({ cx, 9.0f }, 2.8f, { .border_width = JOINT_TAB_STROKE, .border_color = glyph });
-			painter.line({ cx, 12.0f }, { cx, 20.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ cx - 6.0f, 16.0f }, { cx, 14.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ cx, 14.0f }, { cx + 5.0f, 9.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ cx, 20.0f }, { cx - 4.0f, 26.0f }, JOINT_TAB_STROKE, glyph);
-			painter.line({ cx, 20.0f }, { cx + 4.0f, 26.0f }, JOINT_TAB_STROKE, glyph);
+		case JOINT: svg = ICON_TAB_JOINT;
+		case ALIGN: svg = ICON_TAB_ALIGN;
+		case WEIGHTS: svg = ICON_TAB_WEIGHTS;
+		case POSE: svg = ICON_TAB_POSE;
 	}
+	painter.icon({ cx, JOINT_TAB_ICON_Y }, JOINT_TAB_ICON_VIEW, svg, glyph);
 
 	String label = "Joint";
 	if (self.tab == JointPanelTab.ALIGN) label = "Align";

@@ -120,56 +120,28 @@ fn ushort AnimLayerKind.icon(self)
 }
 
 <*
- Draws the strip's icons with the painter's shapes, and hands the outliner's eye
- on to the outliner's painter.
+ Draws the strip's icons (assets/icons/tree), and hands the outliner's eye on
+ to the outliner's painter.
 *>
 fn void paint_layer_icon(Painter* painter, Vec2 at, float size, ushort icon, bool dim)
 {
-	float r = size * 0.5f;
-	Color ink = TEXT_DIM;
 	switch (icon)
 	{
-		case LAYER_ICON_KEYED:
-			// A key diamond.
-			painter.line({ at.x - r * 0.7f, at.y }, { at.x, at.y - r * 0.7f }, 1.6f, ink);
-			painter.line({ at.x, at.y - r * 0.7f }, { at.x + r * 0.7f, at.y }, 1.6f, ink);
-			painter.line({ at.x + r * 0.7f, at.y }, { at.x, at.y + r * 0.7f }, 1.6f, ink);
-			painter.line({ at.x, at.y + r * 0.7f }, { at.x - r * 0.7f, at.y }, 1.6f, ink);
-		case LAYER_ICON_WAVE:
-			Vec2 last = { at.x - r, at.y };
-			for (int i = 1; i <= 8; i++)
-			{
-				float u = (float)i / 8.0f;
-				Vec2 next = { at.x - r + 2.0f * r * u, at.y - r * 0.6f * math::sin(u * 2.0f * (float)math::PI) };
-				painter.line(last, next, 1.6f, ink);
-				last = next;
-			}
-		case LAYER_ICON_NOISE:
-			float[7] ups = { 0.1f, -0.5f, 0.4f, -0.2f, 0.6f, -0.4f, 0.0f };
-			Vec2 last = { at.x - r, at.y + r * ups[0] };
-			for (usz i = 1; i < 7; i++)
-			{
-				Vec2 next = { at.x - r + 2.0f * r * (float)i / 6.0f, at.y + r * ups[i] };
-				painter.line(last, next, 1.6f, ink);
-				last = next;
-			}
-		case LAYER_ICON_PULSE:
-			Vec2 last = { at.x - r, at.y + r * 0.5f };
-			for (int i = 1; i <= 8; i++)
-			{
-				float u = (float)i / 8.0f * 2.0f - 1.0f;
-				Vec2 next = { at.x + r * u, at.y + r * 0.5f - r * 1.1f * math::exp(-u * u * 6.0f) };
-				painter.line(last, next, 1.6f, ink);
-				last = next;
-			}
-		case LAYER_ICON_BASE:
-			painter.rect({ at.x - r * 0.7f, at.y - r * 0.5f }, { r * 1.4f, r },
-				{ .border_color = ink, .border_width = 1.5f, .border_radius = { 2, 2, 2, 2 } });
+		case LAYER_ICON_KEYED: paint_tree_icon(painter, at, size, ICON_KEYED, TEXT_DIM);
+		case LAYER_ICON_WAVE: paint_tree_icon(painter, at, size, ICON_WAVE, TEXT_DIM);
+		case LAYER_ICON_NOISE: paint_tree_icon(painter, at, size, ICON_NOISE, TEXT_DIM);
+		case LAYER_ICON_PULSE: paint_tree_icon(painter, at, size, ICON_PULSE, TEXT_DIM);
+		case LAYER_ICON_BASE: paint_tree_icon(painter, at, size, ICON_BASE, TEXT_DIM);
 		case LAYER_ICON_SOLO:
 			// A ring that fills when the layer is the only one heard.
-			Color lit = dim ? (Color){ 0.40, 0.42, 0.50, 1.0 } : ACCENT;
-			painter.circle(at, r * 0.75f, { .border_color = lit, .border_width = 1.5f });
-			if (!dim) painter.circle(at, r * 0.4f, { .color = lit });
+			if (dim)
+			{
+				paint_tree_icon(painter, at, size, ICON_SOLO_OFF, { 0.40, 0.42, 0.50, 1.0 });
+			}
+			else
+			{
+				paint_tree_icon(painter, at, size, ICON_SOLO, ACCENT);
+			}
 		default:
 			paint_outliner_icon(painter, at, size, icon, dim);
 	}

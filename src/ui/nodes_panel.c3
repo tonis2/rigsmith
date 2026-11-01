@@ -131,6 +131,8 @@ struct NodesPanel (Widget)
 
 fn String NodesPanel.hold(&self, String text)
 {
+	// On the heap by name: an uninitialised List would take temp memory.
+	if (!self.held.allocator) self.held.init(mem);
 	String kept = text.copy(mem);
 	self.held.push(kept);
 	return kept;
@@ -436,7 +438,7 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 					@node((TextField) { .width = NODE_INNER - 2 * (TOOL_CELL_W + 4), .style = TEXT_FIELD_STYLE, .placeholder = self.hold(named),
 						.on_change = &node_param0_changed }).with_id(NODE_FIELD_IDS[0]);
 					@card_icon(MIRROR_GLYPH, "Mirror check — also reads each frame mirrored, so left and right don't swap. Off is about 40% faster at finding joints.",
-						&node_mirror_clicked, n.params[1].trim() != "0" ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
+						&node_mirror_clicked, node_mirror_on(n) ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
 					self.run_icon(n.kind, running, pose ? "Image to pose — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
 						: "Animate — reads the video a frame at a time into a clip on the character, with the finder and the picture's layout; save the model to keep it");
 				};
@@ -484,12 +486,12 @@ fn void small_label(String text) @private
 	@node((Label) { .text = text, .size = NODE_TEXT, .color = TEXT_DIM });
 }
 
-fn void number_field(usz slot, float width, OnChange changed) @private
+fn void number_field(usz slot, float width, OnText changed) @private
 {
 	@node((TextField) { .width = width, .style = TEXT_FIELD_STYLE, .on_change = changed, .on_submit = &node_field_submitted }).with_id(NODE_FIELD_IDS[slot]);
 }
 
-const OnChange[4] NODE_PARAM_CHANGED = { &node_param0_changed, &node_param1_changed, &node_param2_changed, &node_param3_changed };
+const OnText[4] NODE_PARAM_CHANGED = { &node_param0_changed, &node_param1_changed, &node_param2_changed, &node_param3_changed };
 const OnClick[4] NODE_BROWSE_CLICKED = { &node_browse0_clicked, &node_browse1_clicked, &node_browse2_clicked, &node_browse3_clicked };
 
 // A path setting: its field and its Browse icon.
@@ -642,7 +644,7 @@ fn void node_mirror_clicked(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	sz node = node_card_clicked(ui);
 	if (node < 0) return;
-	app.set_node_param((usz)node, 1, app.pipeline().at((usz)node).params[1].trim() == "0" ? "1" : "0");
+	app.set_node_param((usz)node, 1, node_mirror_on(app.pipeline().at((usz)node)) ? "0" : "1");
 	// The card rebuilds, so the icon shows the new state.
 	app.pipeline().version++;
 }

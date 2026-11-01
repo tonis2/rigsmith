@@ -29,11 +29,6 @@ import std::math;
 const String LOCK_TOGGLES_ID = "joint-lock-toggles";
 const float LOCK_TOGGLES_H = 30.0f;
 
-// The padlock: a rounded body under a shackle, sized to sit beside a 12px label.
-const float LOCK_BODY_W = 13.0f;
-const float LOCK_BODY_H = 10.0f;
-const float LOCK_SHACKLE_R = 4.0f;
-const float LOCK_STROKE = 1.8f;
 const float LOCK_LABEL_SIZE = 12.0f;
 // Where each half's padlock centre sits, from the half's left edge.
 const float LOCK_ICON_X = 15.0f;
@@ -55,31 +50,12 @@ fn int lock_half_at(Element* elem, Vec2 pixel) @local
 }
 
 <*
- One padlock, drawn open (off) or shut (on).
-
- `body_top` is the middle of the body's top edge; the shackle rises from there.
- The arc runs the painter's way — clockwise from +x — so from the left side over
- the top to the right side is start `PI`, sweep `PI`. Shut: both legs reach the
- body. Open: the shackle lifts and only the near leg stays, the far side ajar.
+ One padlock, shut (on) or open, from assets/icons/lock. `body_top` is the
+ middle of the body's top edge, the SVG's centre.
 *>
 fn void draw_padlock(Painter* painter, Vec2 body_top, bool on, Color ink) @local
 {
-	const float PI = (float)math::PI;
-	float shackle_h = on ? 3.0f : 5.0f;
-	Vec2 sc = { body_top.x, body_top.y - shackle_h };
-
-	painter.arc(sc, LOCK_SHACKLE_R, PI, PI, LOCK_STROKE, ink);
-	painter.line({ sc.x - LOCK_SHACKLE_R, sc.y }, { sc.x - LOCK_SHACKLE_R, body_top.y }, LOCK_STROKE, ink);
-	if (on) painter.line({ sc.x + LOCK_SHACKLE_R, sc.y }, { sc.x + LOCK_SHACKLE_R, body_top.y }, LOCK_STROKE, ink);
-
-	painter.rect({ body_top.x - LOCK_BODY_W * 0.5f, body_top.y }, { LOCK_BODY_W, LOCK_BODY_H }, {
-		.color = on ? ink : (Color){ 0, 0, 0, 0 },
-		.border_width = on ? 0.0f : 1.6f,
-		.border_color = ink,
-		.border_radius = { 2.5f, 2.5f, 2.5f, 2.5f },
-	});
-	// The keyhole reads against whichever fill it sits on.
-	painter.circle({ body_top.x, body_top.y + LOCK_BODY_H * 0.55f }, 1.5f, { .color = on ? PANEL : ink });
+	painter.icon(body_top, LOCK_ICON_VIEW, on ? ICON_LOCKED : ICON_UNLOCKED, ink);
 }
 
 fn void draw_lock_half(Element* elem, Painter* painter, float left, float width, String label, bool on, bool lit) @local
@@ -102,6 +78,15 @@ fn void LockToggles.paint(&self, Element* elem, Painter* painter) @dynamic
 		sel != 0 && app.locks_position(sel), self.lit == 1);
 	draw_lock_half(elem, painter, half, half, "Pin angle",
 		sel != 0 && app.locks_rotation(sel), self.lit == 2);
+}
+
+fn void LockToggles.describe(&self, Element* elem, Description* out) @dynamic
+{
+	AppState* app = elem.inherit(AppState)!!;
+	uint sel = app.selected;
+	float half = elem.size.x * 0.5f;
+	out.part(sel != 0 && app.locks_position(sel) ? "Pin position = on" : "Pin position", { 0, 0 }, { half, elem.size.y });
+	out.part(sel != 0 && app.locks_rotation(sel) ? "Pin angle = on" : "Pin angle", { half, 0 }, { half, elem.size.y });
 }
 
 fn void LockToggles.on_hover(&self, Element* elem, bool entered) @dynamic

@@ -97,7 +97,7 @@ fn void anim_curve_scaled(Ui* ui, usz index, CurveLock axis, float factor, float
  A box released over points: pick their keys. Plain replaces the selection,
  Shift adds, Ctrl toggles; an empty box with no modifier clears it.
 *>
-fn void anim_curve_boxed(Ui* ui, usz[] indices, CurveBox mode) @private
+fn void anim_curve_boxed(Ui* ui, usz[] indices, SelectMode mode) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
 	AnimCurves* curves = anim_curves(ui);

@@ -157,9 +157,7 @@ fn void paint_curve_list_icon(Painter* painter, Vec2 at, float size, ushort icon
 		return;
 	}
 	if (icon < CURVE_ICON_CHIP || icon >= CURVE_ICON_CHIP + 3) return;
-	float side = size * 0.7f;
-	painter.rect({ at.x - side * 0.5f, at.y - side * 0.5f }, { side, side },
-		{ .color = GRAPH_AXIS_COLORS[icon - CURVE_ICON_CHIP], .border_radius = { 2, 2, 2, 2 } });
+	paint_tree_icon(painter, at, size, ICON_CHIP, GRAPH_AXIS_COLORS[icon - CURVE_ICON_CHIP]);
 }
 
 fn CurveChannelList* curve_channel_list(Ui* ui) @private

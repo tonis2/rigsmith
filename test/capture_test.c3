@@ -210,14 +210,15 @@ fn void the_animate_notice_says_how_long_it_took() @test
 	test::@check(crig::capture_result_summary(`{"report": {}}`) == "done", "an empty report is just done");
 }
 
-fn void an_animate_node_starts_with_the_mirror_check_on() @test
+fn void an_animate_node_starts_with_the_mirror_check_off() @test
 {
 	String dir = "build/test_nodes_mirror";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
 	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
-	test::@check(g.at((usz)g.find("animate")).params[1] == "1", "a new Animate node reads each frame mirrored too (%s)", g.at((usz)g.find("animate")).params[1]);
+	crig::PipelineNode* animate = g.at((usz)g.find("animate"));
+	test::@check(animate.params[1] == "0" && !crig::node_mirror_on(animate), "a new Animate node reads each frame once (%s)", animate.params[1]);
 }
 
 fn void image_to_pose_makes_a_saved_pose() @test

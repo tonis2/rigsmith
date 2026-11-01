@@ -8,7 +8,7 @@
  had move into the tooltip, where they are read once and then out of the way.
 
  Composed like the tool column (`tool_column.c3`) and from its parts: cui's
- `Tooltip` around `tool_button`, with only the glyph painted here. A lit cell is
+ `Tooltip` around `tool_button`, with the glyph an SVG in assets/icons/card. A lit cell is
  a switch that is on (Mirror, the brush); a commit (Apply, Fix strays) keeps the
  plain cell and draws its glyph in the accent, so the two never read alike. An
  action with nothing to act on stays off the card rather than greyed — Fix
@@ -20,12 +20,8 @@ import cui;
 import cui::widgets;
 import std::math;
 
-// The glyphs are drawn a touch smaller than the tool column's, whose cells are
-// the same size: there the glyph is the whole message, here a row of six reads
-// as one strip, and a little air inside each cell is what separates them.
-const float CARD_ICON_R = 7.0;
-const float CARD_ICON_STROKE = 1.5;
-const float CARD_ICON_HEAD = 3.5;
+// The SVGs' viewBox is the 30 px cell, drawn at its own size.
+const float CARD_ICON_VIEW = 30.0;
 
 // How a cell is drawn: see the file's comment.
 enum CardCell
@@ -35,42 +31,43 @@ enum CardCell
 	COMMIT,
 }
 
-enum CardGlyph
+<* Each glyph carries its SVG, from assets/icons/card. *>
+enum CardGlyph : (String svg)
 {
-	APPLY_GLYPH,
-	RESET_GLYPH,
-	MIRROR_GLYPH,
-	BRUSH_GLYPH,
-	GROW_GLYPH,
-	SHRINK_GLYPH,
-	CLEAR_GLYPH,
-	INVERT_GLYPH,
-	FIND_STRAYS_GLYPH,
-	FIX_STRAYS_GLYPH,
-	FIND_TEARS_GLYPH,
-	FIX_TEARS_GLYPH,
-	LASSO_GLYPH,
+	APPLY_GLYPH { $embed("../../assets/icons/card/apply.svg") },
+	RESET_GLYPH { $embed("../../assets/icons/card/reset.svg") },
+	MIRROR_GLYPH { $embed("../../assets/icons/card/mirror.svg") },
+	BRUSH_GLYPH { $embed("../../assets/icons/card/brush.svg") },
+	GROW_GLYPH { $embed("../../assets/icons/card/grow.svg") },
+	SHRINK_GLYPH { $embed("../../assets/icons/card/shrink.svg") },
+	CLEAR_GLYPH { $embed("../../assets/icons/card/clear.svg") },
+	INVERT_GLYPH { $embed("../../assets/icons/card/invert.svg") },
+	FIND_STRAYS_GLYPH { $embed("../../assets/icons/card/find_strays.svg") },
+	FIX_STRAYS_GLYPH { $embed("../../assets/icons/card/fix_strays.svg") },
+	FIND_TEARS_GLYPH { $embed("../../assets/icons/card/find_tears.svg") },
+	FIX_TEARS_GLYPH { $embed("../../assets/icons/card/fix_tears.svg") },
+	LASSO_GLYPH { $embed("../../assets/icons/card/lasso.svg") },
 	// The Path toolbar's.
-	PEN_GLYPH,
-	FROM_MOTION_GLYPH,
-	SLICE_GLYPH,
-	CLOSE_PATH_GLYPH,
-	BAKE_GLYPH,
-	MUTE_GLYPH,
-	FOLLOW_GLYPH,
+	PEN_GLYPH { $embed("../../assets/icons/card/pen.svg") },
+	FROM_MOTION_GLYPH { $embed("../../assets/icons/card/from_motion.svg") },
+	SLICE_GLYPH { $embed("../../assets/icons/card/slice.svg") },
+	CLOSE_PATH_GLYPH { $embed("../../assets/icons/card/close_path.svg") },
+	BAKE_GLYPH { $embed("../../assets/icons/card/bake.svg") },
+	MUTE_GLYPH { $embed("../../assets/icons/card/mute.svg") },
+	FOLLOW_GLYPH { $embed("../../assets/icons/card/follow.svg") },
 	// The Joint card's.
-	KEEP_ANGLE_GLYPH,
+	KEEP_ANGLE_GLYPH { $embed("../../assets/icons/card/keep_angle.svg") },
 	// The Nodes pane's cards.
-	RUN_GLYPH,
-	STOP_GLYPH,
-	BROWSE_GLYPH,
-	COPY_GLYPH,
-	FOLDER_GLYPH,
-	SEED_GLYPH,
+	RUN_GLYPH { $embed("../../assets/icons/card/run.svg") },
+	STOP_GLYPH { $embed("../../assets/icons/card/stop.svg") },
+	BROWSE_GLYPH { $embed("../../assets/icons/card/browse.svg") },
+	COPY_GLYPH { $embed("../../assets/icons/card/copy.svg") },
+	FOLDER_GLYPH { $embed("../../assets/icons/card/folder.svg") },
+	SEED_GLYPH { $embed("../../assets/icons/card/seed.svg") },
 	// The Pose tab's reference picture and its prompts.
-	PICTURE_GLYPH,
-	VIDEO_PROMPT_GLYPH,
-	IMAGE_PROMPT_GLYPH,
+	PICTURE_GLYPH { $embed("../../assets/icons/card/picture.svg") },
+	VIDEO_PROMPT_GLYPH { $embed("../../assets/icons/card/video_prompt.svg") },
+	IMAGE_PROMPT_GLYPH { $embed("../../assets/icons/card/image_prompt.svg") },
 }
 
 <*
@@ -89,253 +86,5 @@ macro Element* @card_icon(CardGlyph glyph, String text, OnClick on_click, CardCe
 	Color ink = TEXT;
 	if (cell == LIT) ink = DOT_OUTLINE;
 	if (cell == COMMIT) ink = ACCENT;
-	Element* button;
-	@tree(widgets::tip(text, hint))
-	{
-		button = @tree(tool_button({ .checked = cell == LIT }, on_click))
-		{
-			@node((CardIcon) { .glyph = glyph, .ink = ink });
-		};
-	};
-	return button;
-}
-
-struct CardIcon (Widget)
-{
-	CardGlyph glyph;
-	Color ink;
-}
-
-fn Vec2 CardIcon.layout(&self, Element* elem, Constraints constraints) @dynamic
-{
-	return constraints.max;
-}
-
-// An open arrowhead at `tip`, pointing along `dir` (a unit vector).
-fn void card_arrow_head(Painter* painter, Vec2 tip, Vec2 dir, Color ink) @private
-{
-	Vec2 back = -dir * CARD_ICON_HEAD;
-	Vec2 side = { -dir.y * CARD_ICON_HEAD * 0.75f, dir.x * CARD_ICON_HEAD * 0.75f };
-	painter.line(tip, tip + back + side, CARD_ICON_STROKE, ink);
-	painter.line(tip, tip + back - side, CARD_ICON_STROKE, ink);
-}
-
-fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
-{
-	Vec2 c = elem.size * 0.5f;
-	float r = CARD_ICON_R;
-	float w = CARD_ICON_STROKE;
-	Color ink = self.ink;
-
-	switch (self.glyph)
-	{
-		case APPLY_GLYPH:
-			// A tick: the commit, and the one cell drawn heavier.
-			Vec2 knee = c + (Vec2){ -r * 0.25f, r * 0.6f };
-			painter.line(c + (Vec2){ -r * 0.85f, 0 }, knee, w * 1.4f, ink);
-			painter.line(knee, c + (Vec2){ r * 0.9f, -r * 0.65f }, w * 1.4f, ink);
-		case RESET_GLYPH:
-			// Turning back: a circle open at the top-left whose arrow arrives at the
-			// top going left — the glyph for "as it was" in every program.
-			float start = -(float)math::PI * 0.5f;
-			float sweep = (float)math::PI * 1.6f;
-			float radius = r * 0.85f;
-			painter.arc(c, radius, start, sweep, w, ink);
-			card_arrow_head(painter, c + (Vec2){ 0, -radius }, { -1.0f, 0 }, ink);
-		case MIRROR_GLYPH:
-			// Two halves facing across a dashed axis, Blender's mirror.
-			for (int i = 0; i < 3; i++)
-			{
-				float y = c.y - r + (float)i * r * 0.75f;
-				painter.line({ c.x, y }, { c.x, y + r * 0.45f }, 1.0f, ink);
-			}
-			float[2] sides = { -1.0f, 1.0f };
-			foreach (side : sides)
-			{
-				Vec2 top = c + (Vec2){ side * 2.5f, -r * 0.8f };
-				Vec2 foot = c + (Vec2){ side * 2.5f, r * 0.8f };
-				Vec2 point = c + (Vec2){ side * (r + 2.0f), r * 0.8f };
-				painter.line(top, foot, w, ink);
-				painter.line(foot, point, w, ink);
-				painter.line(point, top, w, ink);
-			}
-		case BRUSH_GLYPH:
-			// A round brush down to the left: a thin handle, the band holding the
-			// bristles, and the bristles swelling and then drawn to a point.
-			Vec2 along = { -0.7071f, 0.7071f };
-			Vec2 grip = c - along * r;
-			Vec2 band = c + along * (r * 0.05f);
-			Vec2 belly = c + along * (r * 0.55f);
-			painter.line(grip, band, w, ink);
-			painter.line(band, band + along * (r * 0.25f), w * 2.4f, ink);
-			painter.circle(belly, r * 0.36f, { .color = ink });
-			painter.line(belly, c + along * (r * 1.15f), w * 1.3f, ink);
-		case GROW_GLYPH:
-		case SHRINK_GLYPH:
-			// Four corners pulled out, or pushed in: the part one ring wider or narrower.
-			bool out = self.glyph == GROW_GLYPH;
-			Vec2[4] corners = { { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } };
-			foreach (d : corners)
-			{
-				Vec2 near = c + d * (r * 0.25f);
-				Vec2 far = c + d * (r * 0.95f);
-				painter.line(near, far, w, ink);
-				Vec2 tip = out ? far : near;
-				float sign = out ? -1.0f : 1.0f;
-				painter.line(tip, tip + (Vec2){ sign * d.x * CARD_ICON_HEAD, 0 }, w, ink);
-				painter.line(tip, tip + (Vec2){ 0, sign * d.y * CARD_ICON_HEAD }, w, ink);
-			}
-		case CLEAR_GLYPH:
-			// Nothing picked: an empty ring struck through.
-			painter.circle(c, r * 0.8f, { .border_width = w, .border_color = ink });
-			painter.line(c + (Vec2){ -r, r }, c + (Vec2){ r, -r }, w, ink);
-		case INVERT_GLYPH:
-			// Half and half: the picked islands swapped for the rest. The filled
-			// half is one stroke as wide as the radius, since the painter has no fan.
-			painter.circle(c, r * 0.85f, { .border_width = w, .border_color = ink });
-			painter.arc(c, r * 0.425f, (float)math::PI * 0.5f, (float)math::PI, r * 0.85f, ink);
-		case FIND_STRAYS_GLYPH:
-			// A lens over a lone dot.
-			Vec2 lens = c + (Vec2){ -r * 0.25f, -r * 0.25f };
-			painter.circle(lens, r * 0.62f, { .border_width = w, .border_color = ink });
-			painter.circle(lens, 1.4f, { .color = ink });
-			painter.line(lens + (Vec2){ r * 0.45f, r * 0.45f }, c + (Vec2){ r, r }, w * 1.4f, ink);
-		case FIX_STRAYS_GLYPH:
-			// A wand with a spark at its tip: put right in one go.
-			Vec2 spark = c + (Vec2){ r * 0.5f, -r * 0.5f };
-			painter.line(c + (Vec2){ -r, r }, spark + (Vec2){ -2.0f, 2.0f }, w * 1.4f, ink);
-			float arm = r * 0.45f;
-			painter.line(spark + (Vec2){ -arm, 0 }, spark + (Vec2){ arm, 0 }, w, ink);
-			painter.line(spark + (Vec2){ 0, -arm }, spark + (Vec2){ 0, arm }, w, ink);
-			float tick = arm * 0.55f;
-			painter.line(spark + (Vec2){ -tick, -tick }, spark + (Vec2){ tick, tick }, 1.0f, ink);
-			painter.line(spark + (Vec2){ -tick, tick }, spark + (Vec2){ tick, -tick }, 1.0f, ink);
-		case FIND_TEARS_GLYPH:
-			// A seam split open: two edges parting along a zigzag.
-			float step = r * 0.5f;
-			for (int i = 0; i < 4; i++)
-			{
-				float y0 = -r + step * (float)i;
-				float x0 = (i % 2 == 0) ? -r * 0.15f : r * 0.15f;
-				painter.line(c + (Vec2){ x0 - r * 0.35f, y0 }, c + (Vec2){ -x0 - r * 0.35f, y0 + step }, w, ink);
-				painter.line(c + (Vec2){ x0 + r * 0.35f, y0 }, c + (Vec2){ -x0 + r * 0.35f, y0 + step }, w, ink);
-			}
-		case FIX_TEARS_GLYPH:
-			// The seam stitched shut: one line with stitches across it.
-			painter.line(c + (Vec2){ 0, -r }, c + (Vec2){ 0, r }, w, ink);
-			for (int i = -1; i <= 1; i++)
-			{
-				float y = (float)i * r * 0.6f;
-				painter.line(c + (Vec2){ -r * 0.5f, y - r * 0.15f }, c + (Vec2){ r * 0.5f, y + r * 0.15f }, w, ink);
-			}
-		case LASSO_GLYPH:
-			// A loop drawn round something, its rope trailing off below.
-			Vec2 loop = c + (Vec2){ 0, -r * 0.2f };
-			painter.arc(loop, r * 0.75f, (float)math::PI * 0.65f, (float)math::PI * 1.75f, w, ink);
-			Vec2 knot = loop + (Vec2){ -r * 0.6f, r * 0.45f };
-			painter.line(knot, c + (Vec2){ -r * 0.2f, r }, w, ink);
-		case PEN_GLYPH:
-			// A curve with a point on it, the pen that lays it.
-			Vec2 last = c + (Vec2){ -r, r * 0.6f };
-			for (int i = 1; i <= 8; i++)
-			{
-				float u = (float)i / 8.0f;
-				Vec2 next = c + (Vec2){ -r + 2.0f * r * u, r * 0.6f - r * 1.2f * math::sin(u * (float)math::PI) };
-				painter.line(last, next, w, ink);
-				last = next;
-			}
-			painter.rect(c + (Vec2){ -2.5f, -r * 0.6f - 2.5f }, { 5.0f, 5.0f }, { .color = ink });
-		case FROM_MOTION_GLYPH:
-			// A joint's dot leaving a trail behind it.
-			painter.circle(c + (Vec2){ r * 0.55f, -r * 0.4f }, 2.6f, { .color = ink });
-			for (int i = 0; i < 3; i++)
-			{
-				float x = c.x - r + (float)i * r * 0.5f;
-				float y = c.y + r * 0.6f - (float)i * r * 0.3f;
-				painter.circle({ x, y }, 1.2f, { .color = ink });
-			}
-		case SLICE_GLYPH:
-			// A curve cut across by one slice.
-			painter.arc(c + (Vec2){ 0, r * 0.9f }, r * 1.1f, (float)math::PI * 1.2f, (float)math::PI * 0.6f, w, ink);
-			painter.line(c + (Vec2){ 0, -r * 0.9f }, c + (Vec2){ 0, r * 0.4f }, w, ink);
-			painter.circle(c + (Vec2){ 0, -r * 0.2f }, 2.4f, { .border_width = w, .border_color = ink });
-		case CLOSE_PATH_GLYPH:
-			// A loop with its ends joined by an arrow.
-			painter.arc(c, r * 0.8f, (float)math::PI * 0.1f, (float)math::PI * 1.7f, w, ink);
-			card_arrow_head(painter, c + (Vec2){ r * 0.78f, -r * 0.25f }, { 0.2f, 0.98f }, ink);
-		case BAKE_GLYPH:
-			// Down into keys: an arrow onto a row of diamonds.
-			painter.line(c + (Vec2){ 0, -r }, c + (Vec2){ 0, r * 0.2f }, w, ink);
-			card_arrow_head(painter, c + (Vec2){ 0, r * 0.2f }, { 0, 1.0f }, ink);
-			for (int i = -1; i <= 1; i++) paint_diamond(painter, c + (Vec2){ (float)i * r * 0.7f, r * 0.8f }, 2.2f, ink);
-		case FOLLOW_GLYPH:
-			// An arc with an arrow riding it, turned the way it goes.
-			painter.arc(c + (Vec2){ 0, r * 0.7f }, r * 1.1f, (float)math::PI * 1.15f, (float)math::PI * 0.7f, w, ink);
-			Vec2 tip = c + (Vec2){ r * 0.75f, -r * 0.05f };
-			painter.line(tip - (Vec2){ r * 0.55f, r * 0.45f }, tip, w, ink);
-			card_arrow_head(painter, tip, { 0.77f, 0.64f }, ink);
-		case KEEP_ANGLE_GLYPH:
-			// An angle on a level floor, its arc marking the turn held.
-			Vec2 corner = c + (Vec2){ -r * 0.8f, r * 0.7f };
-			Vec2 arm = { 0.7071f, -0.7071f };
-			painter.line(corner, corner + (Vec2){ r * 1.8f, 0 }, w, ink);
-			painter.line(corner, corner + arm * (r * 1.9f), w, ink);
-			painter.arc(corner, r * 1.0f, -(float)math::PI * 0.25f, (float)math::PI * 0.25f, w, ink);
-		case RUN_GLYPH:
-			// Play: a triangle pointing right.
-			Vec2[4] play = { c + (Vec2){ -r * 0.55f, -r * 0.8f }, c + (Vec2){ r * 0.8f, 0 }, c + (Vec2){ -r * 0.55f, r * 0.8f }, c + (Vec2){ -r * 0.55f, -r * 0.8f } };
-			painter.polyline(play[..], w, ink);
-		case STOP_GLYPH:
-			painter.rect(c - (Vec2){ r * 0.6f, r * 0.6f }, { r * 1.2f, r * 1.2f }, { .color = ink, .border_radius = { 1, 1, 1, 1 } });
-		case BROWSE_GLYPH:
-			// The ellipsis of a file chooser.
-			for (int i = -1; i <= 1; i++) painter.circle(c + (Vec2){ (float)i * r * 0.65f, 0 }, 1.6f, { .color = ink });
-		case COPY_GLYPH:
-			// Two sheets, one over the other.
-			painter.rect(c + (Vec2){ -r * 0.8f, -r * 0.8f }, { r * 1.1f, r * 1.3f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-			painter.rect(c + (Vec2){ -r * 0.3f, -r * 0.4f }, { r * 1.1f, r * 1.3f }, { .color = BTN, .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-		case FOLDER_GLYPH:
-			// A folder: its tab, then its body.
-			Vec2[4] tab = { c + (Vec2){ -r * 0.9f, -r * 0.35f }, c + (Vec2){ -r * 0.9f, -r * 0.7f }, c + (Vec2){ -r * 0.2f, -r * 0.7f }, c + (Vec2){ 0, -r * 0.45f } };
-			painter.polyline(tab[..], w, ink);
-			painter.rect(c + (Vec2){ -r * 0.9f, -r * 0.45f }, { r * 1.8f, r * 1.2f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-		case SEED_GLYPH:
-			// A die showing three.
-			painter.rect(c - (Vec2){ r * 0.8f, r * 0.8f }, { r * 1.6f, r * 1.6f }, { .border_width = w, .border_color = ink, .border_radius = { 2, 2, 2, 2 } });
-			for (int i = -1; i <= 1; i++) painter.circle(c + (Vec2){ (float)i * r * 0.42f, (float)i * r * 0.42f }, 1.3f, { .color = ink });
-		case PICTURE_GLYPH:
-			// The two-view picture: a frame split down the middle, a figure in each half.
-			painter.rect(c - (Vec2){ r, r * 0.75f }, { r * 2, r * 1.5f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-			painter.line(c + (Vec2){ 0, -r * 0.75f }, c + (Vec2){ 0, r * 0.75f }, w, ink);
-			for (int i = -1; i <= 1; i += 2)
-			{
-				Vec2 at = c + (Vec2){ (float)i * r * 0.5f, 0 };
-				painter.circle(at + (Vec2){ 0, -r * 0.3f }, 1.4f, { .color = ink });
-				painter.line(at + (Vec2){ 0, -r * 0.1f }, at + (Vec2){ 0, r * 0.45f }, 1.0f, ink);
-			}
-		case VIDEO_PROMPT_GLYPH:
-		case IMAGE_PROMPT_GLYPH:
-			// The copy sheets, the front one marked: a play arrow for a video, a figure for a picture.
-			painter.rect(c + (Vec2){ -r * 0.8f, -r * 0.8f }, { r * 1.1f, r * 1.3f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-			painter.rect(c + (Vec2){ -r * 0.3f, -r * 0.4f }, { r * 1.1f, r * 1.3f }, { .color = BTN, .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
-			Vec2 mark = c + (Vec2){ r * 0.25f, r * 0.25f };
-			if (self.glyph == VIDEO_PROMPT_GLYPH)
-			{
-				Vec2[4] play = { mark + (Vec2){ -r * 0.2f, -r * 0.3f }, mark + (Vec2){ r * 0.3f, 0 }, mark + (Vec2){ -r * 0.2f, r * 0.3f }, mark + (Vec2){ -r * 0.2f, -r * 0.3f } };
-				painter.polyline(play[..], 1.0f, ink);
-			}
-			else
-			{
-				painter.circle(mark + (Vec2){ 0, -r * 0.25f }, 1.2f, { .color = ink });
-				painter.line(mark + (Vec2){ 0, -r * 0.05f }, mark + (Vec2){ 0, r * 0.35f }, 1.0f, ink);
-			}
-		case MUTE_GLYPH:
-			// An eye shut: the path is still there and does nothing.
-			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);
-			for (int i = -1; i <= 1; i++)
-			{
-				Vec2 root = c + (Vec2){ (float)i * r * 0.45f, r * 0.35f };
-				painter.line(root, root + (Vec2){ (float)i * 2.0f, 3.0f }, 1.0f, ink);
-			}
-	}
+	return widgets::@icon_button(glyph.svg, text, tool_button({ .checked = cell == LIT }, on_click), ink, CARD_ICON_VIEW, hint);
 }

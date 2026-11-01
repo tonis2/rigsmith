@@ -238,69 +238,34 @@ fn TreeToggle scene_item_eye(AppState* app, SceneOutlinerItem item) @private
 	}
 }
 
-// A closed outline triangle, point down — Blender's object mark.
-fn void paint_outline_triangle(Painter* painter, Vec2 a, Vec2 b, Vec2 c, float thickness, Color ink) @private
-{
-	painter.line(a, b, thickness, ink);
-	painter.line(b, c, thickness, ink);
-	painter.line(c, a, thickness, ink);
-}
-
 <*
- Draws the outliner's icons with the painter's shapes — cui has no icon set, so
- each is a few strokes, the way the tool column's are.
+ Draws the outliner's icons: SVGs in assets/icons/tree, and the overlay's own
+ dot for a joint, so a row and the joint it names look alike.
 *>
 fn void paint_outliner_icon(Painter* painter, Vec2 at, float size, ushort icon, bool dim)
 {
-	float r = size * 0.5f;
 	switch (icon)
 	{
-		case OUTLINER_ICON_SCENE:
-			// A box with a lid: a collection.
-			painter.rect({ at.x - r, at.y - r * 0.7f }, { size, r * 1.7f },
-				{ .border_color = TEXT_DIM, .border_width = 1.5f, .border_radius = { 2, 2, 2, 2 } });
-			painter.line({ at.x - r, at.y - r * 0.2f }, { at.x + r, at.y - r * 0.2f }, 1.5f, TEXT_DIM);
-		case OUTLINER_ICON_MODEL:
-			paint_outline_triangle(painter,
-				{ at.x - r, at.y - r * 0.75f }, { at.x + r, at.y - r * 0.75f }, { at.x, at.y + r * 0.9f },
-				2.0f, OUTLINER_MODEL_INK);
-		case OUTLINER_ICON_MESH:
-			Vec2 a = { at.x - r * 0.85f, at.y - r * 0.6f };
-			Vec2 b = { at.x + r * 0.85f, at.y - r * 0.6f };
-			Vec2 c = { at.x, at.y + r * 0.85f };
-			paint_outline_triangle(painter, a, b, c, 1.3f, OUTLINER_MESH_INK);
-			painter.circle(a, 2.0f, { .color = OUTLINER_MESH_INK });
-			painter.circle(b, 2.0f, { .color = OUTLINER_MESH_INK });
-			painter.circle(c, 2.0f, { .color = OUTLINER_MESH_INK });
-		case OUTLINER_ICON_SKELETON:
-			// A bone: a shaft with a knuckle at each end.
-			Vec2 a = { at.x - r * 0.55f, at.y + r * 0.55f };
-			Vec2 b = { at.x + r * 0.55f, at.y - r * 0.55f };
-			painter.line(a, b, 2.5f, OUTLINER_BONE_INK);
-			painter.circle(a + { -1.5f, 0.0f }, 2.2f, { .color = OUTLINER_BONE_INK });
-			painter.circle(a + { 0.0f, 1.5f }, 2.2f, { .color = OUTLINER_BONE_INK });
-			painter.circle(b + { 1.5f, 0.0f }, 2.2f, { .color = OUTLINER_BONE_INK });
-			painter.circle(b + { 0.0f, -1.5f }, 2.2f, { .color = OUTLINER_BONE_INK });
+		case OUTLINER_ICON_SCENE: paint_tree_icon(painter, at, size, ICON_SCENE, TEXT_DIM);
+		case OUTLINER_ICON_MODEL: paint_tree_icon(painter, at, size, ICON_MODEL, OUTLINER_MODEL_INK);
+		case OUTLINER_ICON_MESH: paint_tree_icon(painter, at, size, ICON_MESH, OUTLINER_MESH_INK);
+		case OUTLINER_ICON_SKELETON: paint_tree_icon(painter, at, size, ICON_SKELETON, OUTLINER_BONE_INK);
 		case OUTLINER_ICON_JOINT:
 		case OUTLINER_ICON_ROOT:
-			// The overlay's own dot, so a row and the joint it names look alike.
-			painter.circle(at, r * 0.5f, {
+			painter.circle(at, size * 0.25f, {
 				.color = icon == OUTLINER_ICON_ROOT ? DOT_ROOT : DOT,
 				.border_color = DOT_OUTLINE,
 				.border_width = 1.0f,
 			});
 		case OUTLINER_ICON_EYE:
-			Color ink = dim ? { 0.40, 0.42, 0.50, 1.0 } : TEXT;
 			if (dim)
 			{
-				// Shut: the lower lid and its lashes.
-				painter.arc(at + { 0.0f, -r * 0.55f }, r * 0.9f, 0.55f, 2.03f, 1.5f, ink);
-				painter.line({ at.x - r * 0.35f, at.y + r * 0.3f }, { at.x - r * 0.5f, at.y + r * 0.6f }, 1.2f, ink);
-				painter.line({ at.x + r * 0.35f, at.y + r * 0.3f }, { at.x + r * 0.5f, at.y + r * 0.6f }, 1.2f, ink);
-				return;
+				paint_tree_icon(painter, at, size, ICON_EYE_SHUT, { 0.40, 0.42, 0.50, 1.0 });
 			}
-			painter.ellipse(at, { r * 0.95f, r * 0.55f }, { .border_color = ink, .border_width = 1.5f });
-			painter.circle(at, r * 0.28f, { .color = ink });
+			else
+			{
+				paint_tree_icon(painter, at, size, ICON_EYE, TEXT);
+			}
 		default:
 	}
 }
