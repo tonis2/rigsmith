@@ -643,6 +643,8 @@ fn void node_mirror_clicked(Ui* ui) @private
 	sz node = node_card_clicked(ui);
 	if (node < 0) return;
 	app.set_node_param((usz)node, 1, app.pipeline().at((usz)node).params[1].trim() == "0" ? "1" : "0");
+	// The card rebuilds, so the icon shows the new state.
+	app.pipeline().version++;
 }
 
 fn void node_new_seed_clicked(Ui* ui) @private

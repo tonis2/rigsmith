@@ -275,6 +275,15 @@ fn String finder_summary(String finder_path)
 			if (try double median = held.get_float("median")) out.appendf("%s%.2f px held out", out.len() > 0 ? " · " : "", median);
 		}
 	}
+	// A finder that looks again at the hands says how well.
+	if (try Object* hands = info.get("hands"))
+	{
+		out.appendf("%shands", out.len() > 0 ? " · " : "");
+		if (try Object* report = hands.get("report")) if (try Object* held = report.get("held_out_px"))
+		{
+			if (try double median = held.get_float("median")) out.appendf(" %.2f px", median);
+		}
+	}
 	if (try double size = info.get_float("size")) out.appendf("%s%d px pictures", out.len() > 0 ? " · " : "", (int)size);
 	return out.str_view();
 }

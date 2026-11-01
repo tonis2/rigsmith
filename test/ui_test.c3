@@ -11275,6 +11275,13 @@ fn void node_press(Fixture* fixture, String button_id) @local
 	found.widget_as(Button).on_click(fixture.ui);
 }
 
+// Whether the Animate card's mirror icon is drawn lit.
+fn bool mirror_lit(Fixture* fixture) @local
+{
+	Element* found = fixture.ui.find_id(crig::NODE_MIRROR_ID)!!;
+	return found.widget_as(Button).style.color == crig::ACCENT;
+}
+
 fn Select*? node_select(Fixture* fixture, String select_id) @local
 {
 	Element* found = fixture.ui.find_id(select_id)!;
@@ -11389,12 +11396,18 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	// Animate's mirror check starts on; a click turns it off, another back on.
 	usz animate = (usz)g.find("animate");
 	test::@check(g.at(animate).params[1] == "1", "Animate does not start with the mirror check on (%s)", g.at(animate).params[1]);
+	test::@check(mirror_lit(fixture), "the mirror icon is not lit while the check is on");
 	node_press(fixture, crig::NODE_MIRROR_ID);
 	test::@check(g.at(animate).params[1] == "0", "a click did not turn the mirror check off (%s)", g.at(animate).params[1]);
-	crig::refresh_nodes_view(fixture.ui);
-	fixture.ui.flush();
+	// The next frames redraw the icon by themselves.
+	fixture.feed({ 0, 0 });
+	fixture.feed({ 0, 0 });
+	test::@check(!mirror_lit(fixture), "the mirror icon still shows on after a click turned it off");
 	node_press(fixture, crig::NODE_MIRROR_ID);
-	test::@check(g.at(animate).params[1] == "1", "after a rebuild a click did not turn it back on (%s)", g.at(animate).params[1]);
+	test::@check(g.at(animate).params[1] == "1", "a second click did not turn it back on (%s)", g.at(animate).params[1]);
+	fixture.feed({ 0, 0 });
+	fixture.feed({ 0, 0 });
+	test::@check(mirror_lit(fixture), "the mirror icon still shows off after a click turned it on");
 
 	// Browse on Video takes a folder of frames: Select on a folder picks it.
 	String picked = "build/test_pick_frames";

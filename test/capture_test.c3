@@ -98,6 +98,26 @@ fn void a_finder_says_what_it_is() @test
 	test::@check(crig::finder_summary("build/no_such_finder.safetensors") == "", "a missing file says nothing");
 }
 
+fn void a_finder_with_hands_says_so() @test
+{
+	String finder = "build/test_capture_hands.safetensors";
+	String meta = `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5}},"hands":{"report":{"held_out_px":{"median":3.25}}}}`;
+	DString header = dstring::new(mem);
+	defer header.free();
+	header.append_string(`{"__metadata__":{"finder":`);
+	gltf_edit::escape_json_string(&header, meta);
+	header.append_string("}}");
+	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
+	defer alloc::free(mem, bytes);
+	ulong n = (ulong)header.len();
+	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
+	bytes[8..] = ((char[])header.str_view())[..];
+	(void)file::save(finder, bytes);
+	defer (void)file::delete(finder);
+	String said = crig::finder_summary(finder);
+	test::@check(said == "2 points · 5.50 px held out · hands 3.25 px", "its hands' held-out error (%s)", said);
+}
+
 fn void a_model_with_no_file_has_no_capture() @test
 {
 	Fixture fixture;
