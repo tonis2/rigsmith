@@ -112,6 +112,8 @@ struct StudioAsk
 	uint front_width;
 	String clip;
 	float time;
+	// A saved pose to draw instead (borrowed); a clip is not read then.
+	AnimKeyDot[] dots;
 }
 
 // Right across the picture for a camera at `yaw` degrees (OrbitCamera's: 0 puts
@@ -448,7 +450,20 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 
 	// The pose: the rest pose, or the clip's moment on the spot.
 	rig::Pose pose;
-	if (ask.clip.len > 0)
+	if (ask.dots.len > 0)
+	{
+		AnimKeyframe[1] keys = { { .dots = ask.dots } };
+		AnimTemplate held = { .keyframes = keys[..] };
+		pose = held.pose(mem, &view.skeleton, view.names, 0, false);
+		constrain_pose_to_joint_limits(&app.doc, &view.skeleton, view.dot_ids, &pose);
+		foreach (usz j, parent : view.skeleton.parents)
+		{
+			if (parent >= 0 || j >= pose.offsets.len) continue;
+			pose.offsets[j].x = 0;
+			pose.offsets[j].z = 0;
+		}
+	}
+	else if (ask.clip.len > 0)
 	{
 		AnimRef? named = resolve_named(app, ask.clip, detail);
 		if (catch named) return RENDER_STUDIO_REFUSED~;

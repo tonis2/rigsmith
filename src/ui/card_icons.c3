@@ -67,6 +67,10 @@ enum CardGlyph
 	COPY_GLYPH,
 	FOLDER_GLYPH,
 	SEED_GLYPH,
+	// The Pose tab's reference picture and its prompts.
+	PICTURE_GLYPH,
+	VIDEO_PROMPT_GLYPH,
+	IMAGE_PROMPT_GLYPH,
 }
 
 <*
@@ -299,6 +303,32 @@ fn void CardIcon.paint(&self, Element* elem, Painter* painter) @dynamic
 			// A die showing three.
 			painter.rect(c - (Vec2){ r * 0.8f, r * 0.8f }, { r * 1.6f, r * 1.6f }, { .border_width = w, .border_color = ink, .border_radius = { 2, 2, 2, 2 } });
 			for (int i = -1; i <= 1; i++) painter.circle(c + (Vec2){ (float)i * r * 0.42f, (float)i * r * 0.42f }, 1.3f, { .color = ink });
+		case PICTURE_GLYPH:
+			// The two-view picture: a frame split down the middle, a figure in each half.
+			painter.rect(c - (Vec2){ r, r * 0.75f }, { r * 2, r * 1.5f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+			painter.line(c + (Vec2){ 0, -r * 0.75f }, c + (Vec2){ 0, r * 0.75f }, w, ink);
+			for (int i = -1; i <= 1; i += 2)
+			{
+				Vec2 at = c + (Vec2){ (float)i * r * 0.5f, 0 };
+				painter.circle(at + (Vec2){ 0, -r * 0.3f }, 1.4f, { .color = ink });
+				painter.line(at + (Vec2){ 0, -r * 0.1f }, at + (Vec2){ 0, r * 0.45f }, 1.0f, ink);
+			}
+		case VIDEO_PROMPT_GLYPH:
+		case IMAGE_PROMPT_GLYPH:
+			// The copy sheets, the front one marked: a play arrow for a video, a figure for a picture.
+			painter.rect(c + (Vec2){ -r * 0.8f, -r * 0.8f }, { r * 1.1f, r * 1.3f }, { .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+			painter.rect(c + (Vec2){ -r * 0.3f, -r * 0.4f }, { r * 1.1f, r * 1.3f }, { .color = BTN, .border_width = w, .border_color = ink, .border_radius = { 1, 1, 1, 1 } });
+			Vec2 mark = c + (Vec2){ r * 0.25f, r * 0.25f };
+			if (self.glyph == VIDEO_PROMPT_GLYPH)
+			{
+				Vec2[4] play = { mark + (Vec2){ -r * 0.2f, -r * 0.3f }, mark + (Vec2){ r * 0.3f, 0 }, mark + (Vec2){ -r * 0.2f, r * 0.3f }, mark + (Vec2){ -r * 0.2f, -r * 0.3f } };
+				painter.polyline(play[..], 1.0f, ink);
+			}
+			else
+			{
+				painter.circle(mark + (Vec2){ 0, -r * 0.25f }, 1.2f, { .color = ink });
+				painter.line(mark + (Vec2){ 0, -r * 0.05f }, mark + (Vec2){ 0, r * 0.35f }, 1.0f, ink);
+			}
 		case MUTE_GLYPH:
 			// An eye shut: the path is still there and does nothing.
 			painter.arc(c + (Vec2){ 0, -r * 0.5f }, r, (float)math::PI * 0.2f, (float)math::PI * 0.6f, w, ink);

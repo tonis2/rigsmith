@@ -288,6 +288,7 @@ struct JointPanelSnapshot
 	uint locks_hash;
 	usz poses;
 	usz pose_row;
+	uint captures; // a reference picture drawn changes the Pose tab's icons
 	bool pose_renaming;
 	bool pose_selected_only;
 	usz selection_count;
@@ -332,6 +333,7 @@ fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
 		.locks_hash = lock_list_hash(app),
 		.poses = app.doc.poses.len,
 		.pose_row = app.pose_library_row,
+		.captures = app.capture_job.finished,
 		.pose_renaming = app.pose_library_renaming,
 		.pose_selected_only = app.pose_library_selected_only,
 		.selection_count = app.selection_count(),
@@ -369,7 +371,7 @@ fn bool JointPanelSnapshot.differs(self, JointPanelSnapshot other)
 		|| self.balance_off != other.balance_off
 		|| self.locks_hash != other.locks_hash
 		|| self.poses != other.poses
-		|| self.pose_row != other.pose_row
+		|| self.pose_row != other.pose_row || self.captures != other.captures
 		|| self.pose_renaming != other.pose_renaming
 		|| self.pose_selected_only != other.pose_selected_only
 		|| self.selection_count != other.selection_count

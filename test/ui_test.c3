@@ -26,6 +26,7 @@
 module crig_tests::ui;
 
 import crig;
+import libc;
 import cui;
 import cui::widgets;
 import c3w;
@@ -11366,15 +11367,14 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
 	test::@check(fixture.app.open_template == 2 && fixture.app.config.nodes_template == 2, "the choice is not kept");
-	foreach (run : (String[]){ "node-run-train", "node-run-reference", "node-run-animate" })
+	foreach (run : (String[]){ "node-run-train", "node-run-animate" })
 	{
 		test::@check(@ok(fixture.ui.find_id(run)), "no %s on the train template", run);
 	}
 	test::@check(!@ok(fixture.ui.find_id("node-run-generate")), "text to motion's nodes still show");
-	test::@check(!@ok(fixture.ui.find_id("capture-copy-prompt")), "a prompt is offered before there is a picture");
+	test::@check(!@ok(fixture.ui.find_id("node-run-reference")), "a Reference node is still in the template");
 	g = fixture.app.pipeline();
-	// Train starts at 1500 poses, the pose chooser at the rest pose, and a video
-	// typed is the Video node's.
+	// Train starts at 1500 poses, and a video typed is the Video node's.
 	test::@check((node_field(fixture, "train", 0)!!).widget_as(TextField).value() == "1500", "the training set does not start at 1500 poses");
 	Select* size = node_select(fixture, crig::NODE_SIZE_ID)!!;
 	test::@check(size.options.len == 6 && size.selected == 0 && size.options[0] == "448 px", "Size does not start on 448 px: row %d of %s", size.selected, size.options);
@@ -11383,8 +11383,7 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	crig::refresh_nodes_view(fixture.ui);
 	fixture.ui.flush();
 	test::@check((node_select(fixture, crig::NODE_SIZE_ID)!!).selected == 2, "a rebuild lost 640 px");
-	Select* pose = fixture.ui.find_id(crig::NODE_POSE_ID)!!.widget_as(Select);
-	test::@check(pose.options.len >= 1 && pose.options[0] == "Rest pose", "the pose chooser does not start with the rest pose: %s", pose.options);
+	test::@check(!@ok(fixture.ui.find_id("node-reference")), "Video has no Reference dropdown: its first frame finds it");
 	fixture.type_into(node_field(fixture, "video", 0)!!, "/clips/wave.mp4");
 	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
 	// Animate's mirror check starts on; a click turns it off, another back on.
@@ -11396,6 +11395,43 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	fixture.ui.flush();
 	node_press(fixture, crig::NODE_MIRROR_ID);
 	test::@check(g.at(animate).params[1] == "1", "after a rebuild a click did not turn it back on (%s)", g.at(animate).params[1]);
+
+	// Browse on Video takes a folder of frames: Select on a folder picks it.
+	String picked = "build/test_pick_frames";
+	(void)path::mkdir(picked, true);
+	defer (void)path::rmtree((Path)picked);
+	test::@check(@ok(node_browse_press(fixture, "video", 0)), "no Browse on the Video card");
+	fixture.ui.flush();
+	test::@check(fixture.app.file_purpose == crig::FilePurpose.CAPTURE_VIDEO, "Video's Browse asks for %s", fixture.app.file_purpose);
+	Element* path_field = fixture.ui.find_id(crig::FILE_PATH_ID)!!;
+	path_field.widget_as(TextField).set_text(path_field, "build/test_pick_frames/");
+	path_field.widget_as(TextField).on_submit(fixture.ui, "build/test_pick_frames/");
+	fixture.ui.flush();
+	test::@check(g.at(g.find("video")).params[0] == picked, "Select on a folder did not pick it: '%s'", g.at(g.find("video")).params[0]);
+	// Animate writes no files: no save folder. Train's asks for a folder.
+	test::@check(!@ok(node_browse_press(fixture, "animate", 2)), "Animate still has a save folder");
+	test::@check(@ok(node_browse_press(fixture, "train", 2)), "no save folder Browse on Train");
+	fixture.ui.flush();
+	test::@check(fixture.app.file_purpose == crig::FilePurpose.CAPTURE_FOLDER, "Train's save folder asks for %s", fixture.app.file_purpose);
+	close_the_chooser(fixture);
+	fixture.type_into(node_field(fixture, "train", 2)!!, "/captures/zidane");
+	test::@check(g.at(g.find("train")).params[2] == "/captures/zidane", "Train's save folder reads '%s'", g.at(g.find("train")).params[2]);
+}
+
+// Press a card's Browse icon for `slot`.
+fn void? node_browse_press(Fixture* fixture, String id, usz slot) @local
+{
+	crig::PipelineGraph* g = fixture.app.pipeline();
+	Element* graph = fixture.ui.find_id(crig::NODES_GRAPH_ID)!;
+	foreach (card : graph.children)
+	{
+		if (!card.is_widget(NodeCard) || (sz)card.widget_as(NodeCard).node != g.find(id)) continue;
+		Element* found = card.find_id(string::tformat("node-browse-%d", slot))!;
+		fixture.ui.hovered = found;
+		found.widget_as(Button).on_click(fixture.ui);
+		return;
+	}
+	return NOT_FOUND~;
 }
 
 // Text to motion's Name field: typed, it names the clip; left empty, the clip

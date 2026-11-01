@@ -104,3 +104,30 @@ fn String field_value(Fixture* f, String id)
 	if (try Element* field = f.ui.find_id(id)) return field.widget_as(TextField).value();
 	return "";
 }
+
+fn void the_pose_tab_draws_a_saved_pose_as_a_reference_picture() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	Quaternionf turn = quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), 0.4f);
+	pose_clipboard_workspace(&f, turn);
+	f.open_pose_tab();
+	test::@check(!pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_ID), "Reference picture offered with no saved pose");
+	f.click(f.center_of(crig::ANIM_POSE_SAVE_ID)!!);
+	f.ui.flush();
+	test::@check(pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_ID), "no Reference picture for the saved pose");
+	test::@check(!pose_panel_has(&f, crig::ANIM_POSE_VIDEO_PROMPT_ID) && !pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_FOLDER_ID),
+		"prompts and the folder offered before the picture is drawn");
+	f.click(f.center_of(crig::ANIM_POSE_REFERENCE_ID)!!);
+	f.ui.flush();
+	crig::CaptureJob* job = &f.app.capture_job;
+	if (f.app.source_path.len == 0)
+	{
+		test::@check(!job.reference_pending, "a model with no file has nowhere to put the picture");
+		return;
+	}
+	test::@check(job.reference_pending && job.reference_pose == "Pose 1", "the saved pose was not asked for (%s)", job.reference_pose);
+	test::@check(job.reference_studio == f.app.capture_reference_path("Pose 1"), "it goes in references/Pose 1 (%s)", job.reference_studio);
+	job.reference_pending = false;
+}

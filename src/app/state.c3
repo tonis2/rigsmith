@@ -1429,11 +1429,14 @@ enum FilePurpose
 	// `file_dialog_confirmed`.
 	ASSET_LIBRARY,
 
-	// A model node's file (a .gguf or .safetensors), a Video node's video and a
-	// Finder file node's finder, for the node `node_pick` names.
+	// A node's setting, for the node `node_pick` names: a model file, a model
+	// file or folder, a video or frames folder, a finder, a picture, a folder.
 	MOTION_FILE,
+	MOTION_PATH,
 	CAPTURE_VIDEO,
 	CAPTURE_FINDER,
+	CAPTURE_IMAGE,
+	CAPTURE_FOLDER,
 
 	// Folders, like ASSET_LIBRARY: the llm folder, and a plugin's folder
 	// to link into it (Settings › AI › Plugins).

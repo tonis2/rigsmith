@@ -134,6 +134,9 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case MOTION_FILE: return { "Choose a model file", "Select" };
 		case CAPTURE_VIDEO: return { "Choose the video", "Select" };
 		case CAPTURE_FINDER: return { "Choose a joint finder", "Use" };
+		case MOTION_PATH: return { "Choose a model file or folder", "Select" };
+		case CAPTURE_IMAGE: return { "Choose the picture", "Select" };
+		case CAPTURE_FOLDER: return { "Choose a folder", "Use" };
 		case PLUGINS_FOLDER: return { "Choose the llm folder", "Use" };
 		case PLUGIN_LINK: return { "Link a plugin's folder", "Link" };
 		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
@@ -228,8 +231,11 @@ fn String[] file_dialog_mask(AppState* app) @private
 {
 	switch (app.file_purpose)
 	{
-		case MOTION_FILE: return motion_file_mask[..];
-		case CAPTURE_VIDEO: return capture_video_mask[..];
+		case MOTION_FILE:
+		case MOTION_PATH: return motion_file_mask[..];
+		case CAPTURE_VIDEO:
+		case CAPTURE_FOLDER: return capture_video_mask[..];
+		case CAPTURE_IMAGE: return capture_image_mask[..];
 		case CAPTURE_FINDER: return capture_finder_mask[..];
 		case PLUGINS_FOLDER:
 		case PLUGIN_LINK: return plugin_mask[..];
@@ -350,7 +356,10 @@ fn void file_path_submitted(Ui* ui, String text) @private
  confirmation takes the file.
 *>
 // The purposes whose answer is a folder, which confirming takes rather than opens.
-fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK;
+fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK || purpose == CAPTURE_FOLDER;
+
+// The purposes a folder answers as well as a file: Select takes the folder in the field.
+fn bool takes_folder(FilePurpose purpose) @private => picks_folder(purpose) || purpose == MOTION_PATH || purpose == CAPTURE_VIDEO;
 
 fn void file_dialog_confirmed(Ui* ui) @private
 {
@@ -362,7 +371,7 @@ fn void file_dialog_confirmed(Ui* ui) @private
 	// Walking there rather than opening it. A trailing separator means the same
 	// thing, and is what `file_directory_changed` leaves behind.
 	String bare = typed.len > 1 && typed[^1] == '/' ? typed[:typed.len - 1] : typed;
-	if (path::is_dir((Path)bare) && !picks_folder(app.file_purpose))
+	if (path::is_dir((Path)bare) && !takes_folder(app.file_purpose))
 	{
 		if (try Element* elem = ui.find_id(FILE_BROWSER_ID))
 		{
@@ -422,8 +431,11 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			// is: this answers which folder, and the panel goes on listing them.
 			add_asset_library(ui, path);
 		case MOTION_FILE:
+		case MOTION_PATH:
 		case CAPTURE_VIDEO:
 		case CAPTURE_FINDER:
+		case CAPTURE_IMAGE:
+		case CAPTURE_FOLDER:
 			node_file_chosen(ui, path);
 		case PLUGINS_FOLDER:
 			set_motion_path(ui, "plugins", path);

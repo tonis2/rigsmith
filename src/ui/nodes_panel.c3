@@ -2,8 +2,8 @@
  The Nodes pane: text to motion and video capture as graphs
  (`app/pipeline_graph.c3`) in cui's node editor, one per template, picked in
  the bar on top. Model nodes hold the weights, Prompt and Guide poses feed Text
- to motion; Finder file, Train finder, Reference picture and Video feed
- Animate. Nodes are added from the menu (double-click, Space or Tab, or a wire
+ to motion; Finder file, Train finder and Video feed Animate, and an Image
+ feeds Image to pose (their reference pictures come from the Pose tab). Nodes are added from the menu (double-click, Space or Tab, or a wire
  dropped on nothing), wired by dragging, and run from their cards.
 
  One pipeline job runs at a time; the MCP tools share it.
@@ -28,13 +28,11 @@ const String NODES_TEMPLATE_ID = "nodes-template";
 const String NODES_RESET_ID = "nodes-reset";
 // A card's text field for each setting slot.
 const String[NODE_PARAMS] NODE_FIELD_IDS = { "node-param-0", "node-param-1", "node-param-2", "node-param-3", "node-param-4" };
-const String NODE_POSE_ID = "node-pose";
 const String NODE_GUIDE_ID = "node-guide";
 const String NODE_OPTIMIZE_ID = "node-optimize";
 const String NODE_SIZE_ID = "node-size";
 const String NODE_MIRROR_ID = "node-mirror";
 // The pose chooser's first row: the rig's rest pose rather than a clip.
-const String CAPTURE_REST = "<rest>";
 // A card's body, inside its padding.
 const float NODE_INNER = NODE_W - 16;
 const float NODE_TEXT = 11;
@@ -53,8 +51,6 @@ String[TEMPLATES] nodes_template_names = TEMPLATE_NAMES;
 // Set by the routes that open the pane for typing (View › Nodes);
 // the pane puts the caret in a prompt on its next update.
 bool nodes_focus_prompt;
-// Read when the pane is built: whether videos can be read straight.
-bool nodes_have_ffmpeg;
 
 fn Element* build_nodes_view(Ui* ui)
 {
@@ -206,7 +202,6 @@ fn Element* NodesPanel.build(&self, Element* elem) @dynamic
 	self.shown = nodes_snapshot(app);
 	PipelineGraph* g = app.pipeline();
 	g.rebuild_view(app);
-	nodes_have_ffmpeg = find_program("ffmpeg").len > 0;
 	// What the cards cannot say: read when the pane is built, Settings rebuilds it.
 	bool generates;
 	bool captures;
@@ -424,39 +419,28 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 						.width = 72, .style = VIEW_MENU_STYLE, .on_change = &node_size_chosen }).with_id(NODE_SIZE_ID);
 					self.run_icon(n.kind, running, "Train — draws the character in this many poses from the front and both sides, then teaches the finder where its joints are: about half an hour. A stopped run carries on. Size — the pictures' side: bigger finds joints more precisely but trains slower (896 is about 4× 448). Changing it draws the set again.");
 				};
+				folder_field(2);
 				if (!running) self.status(ready ? finder_summary(app.capture_node_finder(n)) : "Not trained yet", ready);
-			case REFERENCE:
-				@tree((Row) { .gap = 4, .cross_align = CENTER })
-				{
-					@node((CapturePoseChooser) { .node = i });
-					number_field(1, 36, &node_param1_changed);
-					small_label("s");
-				};
-				@node((TextField) { .width = NODE_INNER, .style = TEXT_FIELD_STYLE, .placeholder = "the action: waves with his left hand",
-					.on_change = &node_param2_changed }).with_id(NODE_FIELD_IDS[2]);
-				@tree((Row) { .gap = 4, .cross_align = CENTER })
-				{
-					self.run_icon(n.kind, running, "Make reference — the pose from the front and its right side in one picture, for the video model to animate");
-					if (ready)
-					{
-						@card_icon(COPY_GLYPH, "Copy prompt — give the video model reference.png as the first frame and this prompt, the action filled in. Keep it standing in place.", &capture_copy_prompt_clicked).with_id("capture-copy-prompt");
-						@card_icon(FOLDER_GLYPH, "Open folder — where reference.png is", &capture_open_folder_clicked).with_id("capture-open-folder");
-					}
-				};
-				if (!running) self.status(ready ? "reference.png drawn" : "No picture yet", ready);
 			case VIDEO:
-				path_field(0, "the clip, or a folder of its frames", "Choose video — the clip the video model made, or a folder of its frames");
+				path_field(0, "the clip, or a folder of its frames", "Choose video — the .mp4 or .mov (H.264) the video model made from a reference picture, or a folder of its frames");
+				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
+			case IMAGE:
+				path_field(0, "reference.png in a new pose", "Choose picture — a reference picture moved into a new pose by an image model: the same two views, the same framing");
 				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 			case ANIMATE:
+			case POSE:
+				bool pose = n.kind == POSE;
 				@tree((Row) { .gap = 4, .cross_align = CENTER })
 				{
-					@node((TextField) { .width = NODE_INNER - 2 * (TOOL_CELL_W + 4), .style = TEXT_FIELD_STYLE, .placeholder = self.hold(g.clip_name(i)),
+					String named = string::tformat("%s name: %s", pose ? "pose" : "clip", g.clip_name(i));
+					@node((TextField) { .width = NODE_INNER - 2 * (TOOL_CELL_W + 4), .style = TEXT_FIELD_STYLE, .placeholder = self.hold(named),
 						.on_change = &node_param0_changed }).with_id(NODE_FIELD_IDS[0]);
 					@card_icon(MIRROR_GLYPH, "Mirror check — also reads each frame mirrored, so left and right don't swap. Off is about 40% faster at finding joints.",
 						&node_mirror_clicked, n.params[1].trim() != "0" ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
-					self.run_icon(n.kind, running, "Animate — reads the video into a clip on the character, with the finder and the picture's layout");
+					self.run_icon(n.kind, running, pose ? "Image to pose — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
+						: "Animate — reads the video a frame at a time into a clip on the character, with the finder and the picture's layout; save the model to keep it");
 				};
-				if (!running && g.failed != (sz)i) self.status(ready ? "On the character" : "", ready);
+				if (!running && g.failed != (sz)i) self.status(ready ? (pose ? "In Poses" : "On the character") : "", ready);
 		}
 		if (running)
 		{
@@ -505,15 +489,24 @@ fn void number_field(usz slot, float width, OnChange changed) @private
 	@node((TextField) { .width = width, .style = TEXT_FIELD_STYLE, .on_change = changed, .on_submit = &node_field_submitted }).with_id(NODE_FIELD_IDS[slot]);
 }
 
+const OnChange[4] NODE_PARAM_CHANGED = { &node_param0_changed, &node_param1_changed, &node_param2_changed, &node_param3_changed };
+const OnClick[4] NODE_BROWSE_CLICKED = { &node_browse0_clicked, &node_browse1_clicked, &node_browse2_clicked, &node_browse3_clicked };
+
 // A path setting: its field and its Browse icon.
 fn void path_field(usz slot, String placeholder, String tip) @private
 {
 	@tree((Row) { .gap = 4, .cross_align = CENTER })
 	{
 		@node((TextField) { .width = NODE_INNER - TOOL_CELL_W - 4, .style = TEXT_FIELD_STYLE, .placeholder = placeholder,
-			.on_change = slot == 0 ? &node_param0_changed : &node_param1_changed }).with_id(NODE_FIELD_IDS[slot]);
-		@card_icon(BROWSE_GLYPH, tip, slot == 0 ? &node_browse0_clicked : &node_browse1_clicked);
+			.on_change = NODE_PARAM_CHANGED[slot] }).with_id(NODE_FIELD_IDS[slot]);
+		@card_icon(BROWSE_GLYPH, tip, NODE_BROWSE_CLICKED[slot]).with_id(string::tformat("node-browse-%d", slot));
 	};
+}
+
+// A step's save folder; empty is the capture folder beside the model.
+fn void folder_field(usz slot) @private
+{
+	path_field(slot, "save folder: <model>.capture", "Save folder — where this step writes its files; empty is the capture folder beside the model");
 }
 
 <*
@@ -543,10 +536,15 @@ fn String node_status_text(Element* elem) @private
 		case DINO_BACKBONE:
 			if (first.len == 0) return "Choose the backbone".copy(mem);
 			return (path::exists((Path)first) ? "Found" : "Not found").copy(mem);
+		case IMAGE:
+			if (first.len == 0) return "Choose the picture".copy(mem);
+			return (file::is_file(first) ? "A picture: makes a pose" : "Not there").copy(mem);
 		case VIDEO:
 			if (first.len > 0 && !path::exists((Path)first)) return "Not there".copy(mem);
 			if (first.len > 0 && path::is_dir((Path)first)) return "A folder of frames".copy(mem);
-			return (nodes_have_ffmpeg ? "Read with ffmpeg" : "ffmpeg not found: give a folder of frames").copy(mem);
+			String lower = first.to_lower_tcopy();
+			if (first.len > 0 && !lower.ends_with(".mp4") && !lower.ends_with(".mov") && !lower.ends_with(".m4v")) return "Not an .mp4 or .mov".copy(mem);
+			return "H.264 .mp4 or .mov, read in Rigsmith".copy(mem);
 		default:
 			return "".copy(mem);
 	}
@@ -985,23 +983,40 @@ fn void node_browse(Ui* ui, usz slot) @private
 	if (node_pick < 0) return;
 	node_pick_slot = slot;
 	PipelineNode* n = app.pipeline().at(node_pick);
-	// Start beside what is set, since the other weights are usually next to it.
+	// Start in a folder that is set, or beside a file, since the other weights are usually next to it.
 	String held = n.params[slot].trim();
-	if (try slash = held.rindex_of_char('/'))
+	if (held.len > 1 && held[^1] == '/') held = held[:held.len - 1];
+	if (held.len > 0 && path::is_dir((Path)held))
+	{
+		app.remember_directory(held);
+	}
+	else if (try slash = held.rindex_of_char('/'))
 	{
 		String dir = held[:(usz)slash];
 		if (path::is_dir((Path)dir)) app.remember_directory(dir);
 	}
-	switch (n.kind)
+	open_file_dialog(ui, node_browse_purpose(n.kind, slot));
+}
+
+// What a node's Browse asks for: a file, a folder, or either.
+fn FilePurpose node_browse_purpose(NodeKind kind, usz slot)
+{
+	if (slot > 0 && slot == node_folder_slot(kind)) return CAPTURE_FOLDER;
+	switch (kind)
 	{
-		case VIDEO: open_file_dialog(ui, FilePurpose.CAPTURE_VIDEO);
-		case FINDER_FILE: open_file_dialog(ui, FilePurpose.CAPTURE_FINDER);
-		default: open_file_dialog(ui, FilePurpose.MOTION_FILE);
+		case KIMODO_MODEL:
+		case DINO_BACKBONE: return MOTION_PATH;
+		case VIDEO: return CAPTURE_VIDEO;
+		case IMAGE: return CAPTURE_IMAGE;
+		case FINDER_FILE: return CAPTURE_FINDER;
+		default: return MOTION_FILE;
 	}
 }
 
 fn void node_browse0_clicked(Ui* ui) @private => node_browse(ui, 0);
 fn void node_browse1_clicked(Ui* ui) @private => node_browse(ui, 1);
+fn void node_browse2_clicked(Ui* ui) @private => node_browse(ui, 2);
+fn void node_browse3_clicked(Ui* ui) @private => node_browse(ui, 3);
 
 // A chosen file into the node and setting whose chooser it was.
 fn void node_file_chosen(Ui* ui, String path)
@@ -1014,32 +1029,6 @@ fn void node_file_chosen(Ui* ui, String path)
 	if (g.at(node_pick).kind == FINDER_FILE) app.@notice("Using the joint finder %s", base_name(path));
 }
 
-fn void capture_copy_prompt_clicked(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	sz node = node_card_clicked(ui);
-	if (node < 0) return;
-	String action = app.pipeline().at(node).params[2];
-	ui.clipboard_write(capture_prompt(action));
-	app.@notice(action.trim().len > 0 ? "Prompt copied, with the action filled in" : "Prompt copied · fill in the action where it says <describe the movement here>");
-}
-
-fn void capture_open_folder_clicked(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	sz node = node_card_clicked(ui);
-	if (node < 0) return;
-	String folder = app.capture_node_path(app.pipeline().at(node), "studio");
-	$if env::DARWIN:
-		String opener = "open";
-	$else
-		String opener = "xdg-open";
-	$endif
-	Process? shown = process::spawn({ opener, folder });
-	if (catch shown) { app.@notice("Could not open %s", folder); return; }
-	(void)shown.destroy();
-}
-
 fn String capture_status_text(Element* elem) @private
 {
 	CaptureJob* job = &elem.inherit(AppState)!!.capture_job;
@@ -1047,7 +1036,6 @@ fn String capture_status_text(Element* elem) @private
 	switch (job.stage)
 	{
 		case RENDERING: return string::format(mem, "Pose %d of %d", job.step, job.steps);
-		case EXTRACTING: return job.steps > 0 ? string::format(mem, "Frame %d of %d", job.step, job.steps) : string::format(mem, "%d frames", job.step);
 		default: return job.last().copy(mem);
 	}
 }
@@ -1112,100 +1100,4 @@ fn void node_guide_chosen(Ui* ui, usz row) @private
 	String name = row == 0 || (sz)row > app.doc.animations.len() ? "" : app.doc.animations[(sz)row - 1].clip;
 	app.set_node_param((usz)node, 0, name);
 	app.pipeline().version++;
-}
-
-// ---------------------------------------------------------------------------
-// The reference picture's pose: the rest pose, or a clip that plays on the rig.
-
-// The clips a pose can come from, in the chooser's order; row 0 is the rest pose.
-macro @each_capture_pose(AppState* app; @body(String label, String clip))
-{
-	@body("Rest pose", CAPTURE_REST);
-	foreach (usz p, &pack : app.packs)
-	{
-		foreach (usz c, &clip : pack.clips)
-		{
-			if (!app.clip_applies({ (int)p, (int)c })) continue;
-			@body(string::tformat("%s / %s", pack.name, clip.name), string::tformat("%s/%s", pack.name, clip.name));
-		}
-	}
-}
-
-<*
- A Reference node's pose dropdown. Owns its labels. With nothing chosen yet it
- picks the first clip that sounds like standing (an idle), which starts a video
- best.
-*>
-struct CapturePoseChooser (Widget)
-{
-	usz node;
-	String[] labels;
-}
-
-fn void CapturePoseChooser.release(&self)
-{
-	foreach (label : self.labels) label.free(mem);
-	if (self.labels.len > 0) alloc::free(mem, self.labels);
-	self.labels = {};
-}
-
-fn void CapturePoseChooser.unmount(&self, Element* elem) @dynamic => self.release();
-
-fn Element* CapturePoseChooser.build(&self, Element* elem) @dynamic
-{
-	AppState* app = elem.inherit(AppState)!!;
-	PipelineGraph* g = app.pipeline();
-	self.release();
-	usz count;
-	@each_capture_pose(app; String label, String clip) { count++; };
-	self.labels = alloc::new_array(mem, String, (sz)count);
-	String chosen = g.at(self.node).params[0];
-	usz row;
-	usz selected;
-	usz idle;
-	@each_capture_pose(app; String label, String clip)
-	{
-		self.labels[row] = label.copy(mem);
-		String lower = clip.to_lower_tcopy();
-		if (idle == 0 && row > 0 && (lower.contains("idle") || lower.contains("stand"))) idle = row;
-		if (clip == chosen) selected = row;
-		row++;
-	};
-	if (chosen.len == 0)
-	{
-		selected = idle;
-		g.set_param(self.node, 0, capture_pose_clip(app, idle));
-	}
-	return @subtree(elem.ui)
-	{
-		@node((Select) { .options = self.labels, .selected = selected, .width = NODE_INNER - 56, .style = VIEW_MENU_STYLE,
-			.searchable = self.labels.len > ANIM_CHOOSER_SEARCH_MIN, .on_change = &capture_pose_chosen }).with_id(NODE_POSE_ID);
-	};
-}
-
-fn Vec2 CapturePoseChooser.layout(&self, Element* elem, Constraints constraints) @dynamic
-{
-	Vec2 own = elem.layout_child(0, constraints);
-	elem.place_child(0, { 0, 0 });
-	return own;
-}
-
-// The clip of the chooser's row `row`. Temporary.
-fn String capture_pose_clip(AppState* app, usz row) @private
-{
-	usz at;
-	String found = CAPTURE_REST;
-	@each_capture_pose(app; String label, String clip)
-	{
-		if (at++ == row) found = clip;
-	};
-	return found;
-}
-
-fn void capture_pose_chosen(Ui* ui, usz row) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	sz node = node_card_clicked(ui);
-	if (node < 0) return;
-	app.set_node_param((usz)node, 0, capture_pose_clip(app, row));
 }

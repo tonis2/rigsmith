@@ -507,8 +507,9 @@ String[3] motion_file_mask = { "*.gguf", "*.safetensors", "*.ckpt" };
 // The llm folder's chooser shows the manifests, so a plugin's folder reads as one.
 String[2] plugin_mask = { "plugin.json", "core.json" };
 // The Capture pane's choosers: a video, and a joint finder trained before.
-String[5] capture_video_mask = { "*.mp4", "*.mov", "*.webm", "*.mkv", "*.avi" };
+String[3] capture_video_mask = { "*.mp4", "*.mov", "*.m4v" };
 String[1] capture_finder_mask = { "*.safetensors" };
+String[3] capture_image_mask = { "*.png", "*.jpg", "*.jpeg" };
 
 // The asset browser's category sidebar, in the listing's colours — it is the
 // same kind of thing as the file browser beside a path, and a second palette for

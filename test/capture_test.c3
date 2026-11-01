@@ -1,6 +1,6 @@
 <*
- Video capture's plumbing, without a GPU: where its files go, what ffprobe's
- answer means, the clip's name from the video's, where a stopped training set
+ Video capture's plumbing, without a GPU: where its files go, the clip's
+ name from the video's, which reference a video's first frame was made from, where a stopped training set
  carries on, the train task's settings, what a finder file says of itself, the
  refusal of a model with no file to put a capture folder beside, and of a
  plugins folder without the creature plugin; and the Nodes pane's graph: its
@@ -12,6 +12,7 @@
 module crig_tests::capture;
 
 import crig;
+import libc;
 import crig_tests::mcp;
 import std::core::test;
 import std::collections::object;
@@ -22,6 +23,10 @@ import std::math;
 import std::collections::list;
 import gltf_edit;
 import rig;
+import image;
+import image::png;
+import image::mp4;
+import image::h264;
 import crig_tests::trust_fixes;
 
 fn void the_capture_folder_sits_beside_the_model() @test
@@ -29,18 +34,6 @@ fn void the_capture_folder_sits_beside_the_model() @test
 	test::@check(crig::capture_folder_of("/models/zidane_2.glb") == "/models/zidane_2.capture", "the extension goes");
 	test::@check(crig::capture_folder_of("/models/v1.2/hero") == "/models/v1.2/hero.capture", "a dot in a folder name is not an extension");
 	test::@check(crig::capture_folder_of("") == "", "a model with no file has none");
-}
-
-fn void ffprobe_answers_are_read() @test
-{
-	float fps;
-	usz frames;
-	crig::parse_probe("24/1,107\n", &fps, &frames);
-	test::@check(fps == 24.0f && frames == 107, "a whole rate and a count (%s, %d)", fps, frames);
-	crig::parse_probe("30000/1001,N/A", &fps, &frames);
-	test::@check(math::abs(fps - 29.97f) < 0.01f && frames == 0, "NTSC's rate, and no count (%s, %d)", fps, frames);
-	crig::parse_probe("", &fps, &frames);
-	test::@check(fps == 0.0f, "nothing said is no rate");
 }
 
 fn void a_clip_is_named_after_its_video() @test
@@ -138,7 +131,7 @@ fn void a_plugins_folder_without_creature_is_refused_before_the_gpu() @test
 	test::@check(crig::capture_fault_text(crig::CAPTURE_NO_PLUGIN).contains("Plugins"), "the notice says where to fix it");
 }
 
-fn void the_animate_task_asks_for_the_tracks_too() @test
+fn void the_animate_task_asks_for_the_clip_only() @test
 {
 	String dir = "build/test_capture_animate";
 	(void)path::mkdir(dir, true);
@@ -160,8 +153,7 @@ fn void the_animate_task_asks_for_the_tracks_too() @test
 	}
 	defer parsed.free();
 	Object*? outputs = parsed.get("outputs");
-	test::@check(@ok(outputs) && outputs!!.get_len() == 2, "the clip and its tracks");
-	test::@check((outputs!!.get_string_at(1) ?? "") == "tracks", "the tracks, to fit again without the GPU");
+	test::@check(@ok(outputs) && outputs!!.get_len() == 1 && (outputs!!.get_string_at(0) ?? "") == "glb", "the clip and nothing to write beside the model");
 	test::@check(!@ok(parsed.get("flip")), "the mirror check is on unless turned off");
 	app.capture_job.mirror_off = true;
 	String once = app.capture_animate_json();
@@ -174,6 +166,21 @@ fn void the_animate_task_asks_for_the_tracks_too() @test
 	}
 	defer read_once.free();
 	test::@check(@ok(read_once.get_bool("flip")) && !read_once.get_bool("flip")!!, "with it off each frame is read once");
+
+	// A picture goes as a one-item list, read where it is.
+	app.capture_job.pose = true;
+	app.capture_job.frames = "/pictures/crouch.png".copy(mem);
+	String pose = app.capture_animate_json();
+	defer pose.free(mem);
+	Object*? read_pose = json::parse(mem, pose);
+	if (catch read_pose)
+	{
+		test::@check(false, "the pose settings parse as JSON: %s", pose);
+		return;
+	}
+	defer read_pose.free();
+	Object*? frames = read_pose.get("frames");
+	test::@check(@ok(frames) && frames!!.get_len() == 1 && (frames!!.get_string_at(0) ?? "") == "/pictures/crouch.png", "the picture itself: %s", pose);
 }
 
 fn void the_animate_notice_says_how_long_it_took() @test
@@ -193,6 +200,144 @@ fn void an_animate_node_starts_with_the_mirror_check_on() @test
 	test::@check(g.at((usz)g.find("animate")).params[1] == "1", "a new Animate node reads each frame mirrored too (%s)", g.at((usz)g.find("animate")).params[1]);
 }
 
+fn void image_to_pose_makes_a_saved_pose() @test
+{
+	String dir = "build/test_nodes_pose";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	app.open_template_named(POSE_TEMPLATE);
+	crig::PipelineGraph* g = app.pipeline();
+	sz animate = g.find("pose");
+	sz image = g.find("image");
+	test::@check(g.count() == 5 && animate >= 0 && image >= 0 && g.at(animate).input[1] == image, "the picture into Image to pose (%d nodes)", g.count());
+	if (animate < 0 || image < 0) return;
+	test::@check(g.find("reference") < 0, "no reference node: references come from the Pose tab");
+	test::@check(!g.connect((usz)image, (usz)g.add(crig::NodeKind.ANIMATE, { 600, 0 }), 1), "a picture does not wire into Animate's video");
+	test::@check(!app.node_ready(g, (usz)image), "no picture chosen, not ready");
+
+	// Everything it needs there, so only the pose's name can refuse it.
+	String picture = string::tformat("%s/crouch.png", dir);
+	String finder = string::tformat("%s/finder.safetensors", dir);
+	String backbone = string::tformat("%s/model.ckpt", dir);
+	foreach (made : (String[]) { picture, finder, backbone }) (void)file::save(made, "x");
+	g.set_param((usz)image, 0, picture);
+	g.set_param((usz)g.find("finder"), 0, finder);
+	g.set_param((usz)g.find("backbone"), 0, backbone);
+	test::@check(app.node_ready(g, (usz)image), "the picture is there");
+	test::@check(g.clip_name((usz)animate) == "crouch", "the pose is named after the picture (%s)", g.clip_name((usz)animate));
+	test::@check(!app.node_ready(g, (usz)animate), "no such pose yet");
+	List{usz} order;
+	order.init(tmem);
+	test::@check(@catch(app.node_order(g, (usz)animate, &order)) == crig::CAPTURE_NO_REFERENCE, "no reference saved yet: refused");
+	(void)path::mkdir(app.capture_reference_path("Crouch"), true);
+	(void)file::save(string::tformat("%s/studio.json", app.capture_reference_path("Crouch")), "{}");
+	(void)app.store_pose({ .name = "crouch".copy(mem) });
+	test::@check(app.node_ready(g, (usz)animate), "ready once the pose is saved");
+	test::@check(@catch(app.run_node(g, (usz)animate)) == crig::CAPTURE_POSE_TAKEN, "a taken name is refused");
+	test::@check(crig::node_folder_slot(POSE) == 0 && crig::node_folder_slot(ANIMATE) == 0, "Image to pose and Animate write no files: no save folder");
+}
+
+fn void references_list_newest_first_and_the_old_studio_counts() @test
+{
+	String dir = "build/test_capture_references";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.capture_reference_for("").len == 0, "no references: none to read with");
+	test::@check(crig::capture_reference_name("Arms / up: 2") == "Arms _ up_ 2", "a pose name as a folder (%s)", crig::capture_reference_name("Arms / up: 2"));
+	String[3] made = { "studio", "Wave", "Crouch" };
+	foreach (usz i, name : made)
+	{
+		String folder = app.capture_reference_path(name);
+		(void)path::mkdir(folder, true);
+		String json = string::tformat("%s/studio.json", folder);
+		(void)file::save(json, "{}");
+		(void)file::set_modified_time(json, (libc::Time_t)(1700000000 + (long)i * 100));
+	}
+	List{String} found;
+	found.init(tmem);
+	app.capture_references(tmem, &found);
+	test::@check(found.len() == 3 && found[0] == "Crouch" && found[1] == "Wave" && found[2] == "studio", "newest first, the old studio too: %s", found);
+	test::@check(app.capture_reference_for("Wave") == app.capture_reference_path("Wave"), "a chosen reference is used");
+	test::@check(app.capture_reference_for("Gone") == app.capture_reference_path("Crouch"), "a missing one falls back to the newest");
+	test::@check(app.capture_reference_path("studio") == app.capture_path("studio"), "the old studio keeps its folder");
+}
+
+// A picture with a light figure at `at` (0..1 across) on grey.
+fn void save_figure(String file_name, float at, char shade = 200) @local
+{
+	uint w = 192;
+	uint h = 96;
+	char[] rgb = alloc::new_array(tmem, char, (usz)w * h * 3);
+	for (uint y = 0; y < h; y++)
+	{
+		for (uint x = 0; x < w; x++)
+		{
+			bool figure = y > h / 4 && math::abs((float)x / w - at) < 0.06f;
+			rgb[((usz)y * w + x) * 3 :3] = figure ? shade : (char)90;
+		}
+	}
+	image::Image img = { .width = w, .height = h, .bit_depth = 8, .format = image::PixelFormat.RGB, .pixels = rgb, .allocator = tmem };
+	(void)png::save_file(&img, file_name, tmem);
+}
+
+fn void the_first_frame_picks_its_reference() @test
+{
+	String dir = "build/test_capture_matching";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.capture_reference_matching("nothing.png").len == 0, "no references: nothing to match");
+	float[2] places = { 0.2f, 0.7f };
+	foreach (usz i, name : (String[]) { "Left", "Right" })
+	{
+		String folder = app.capture_reference_path(name);
+		(void)path::mkdir(folder, true);
+		String json = string::tformat("%s/studio.json", folder);
+		(void)file::save(json, "{}");
+		(void)file::set_modified_time(json, (libc::Time_t)(1700000000 + (long)i * 100));
+		save_figure(string::tformat("%s/reference.png", folder), places[i]);
+	}
+	String frames = string::tformat("%s/frames", dir);
+	(void)path::mkdir(frames, true);
+	save_figure(string::tformat("%s/f_00002.png", frames), 0.7f);
+	save_figure(string::tformat("%s/f_00001.png", frames), 0.22f, 230);
+	test::@check(app.capture_reference_matching(string::tformat("%s/f_00001.png", frames)) == app.capture_reference_path("Left"), "a brighter frame still finds Left");
+	test::@check(app.capture_reference_matching(string::tformat("%s/f_00002.png", frames)) == app.capture_reference_path("Right"), "and Right, though Left is older");
+	test::@check(app.capture_reference_matching("unreadable.png") == app.capture_reference_path("Right"), "an unreadable frame takes the newest");
+	test::@check(crig::first_picture_in(frames).ends_with("f_00001.png"), "the first frame is the first by name (%s)", crig::first_picture_in(frames));
+
+	// A video is matched by its first frame, decoded here.
+	String video = "libs/three/lib/image.c3l/test/crop_70x46.mp4";
+	mp4::Video v = mp4::open(video)!!;
+	image::Image first = v.frame(0, tmem)!!;
+	v.close();
+	String clip = app.capture_reference_path("Clip");
+	(void)path::mkdir(clip, true);
+	(void)file::save(string::tformat("%s/studio.json", clip), "{}");
+	(void)file::set_modified_time(string::tformat("%s/studio.json", clip), (libc::Time_t)1600000000);
+	(void)png::save_file(&first, string::tformat("%s/reference.png", clip), tmem);
+	test::@check(app.capture_reference_matching(video) == clip, "a video finds the reference its first frame is, though it is the oldest");
+	test::@check(crig::capture_fault_text(h264::CABAC).starts_with("High-profile H.264"), "a video it can't read says why: %s", crig::capture_fault_text(h264::CABAC));
+}
+
+fn void a_steps_save_folder_moves_its_files() @test
+{
+	String dir = "build/test_nodes_folder";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
+	usz train = (usz)g.find("train");
+	test::@check(app.capture_node_finder(g.at(train)) == app.capture_path("finder.safetensors"), "no folder: the capture folder's own");
+	g.set_param(train, 2, "/elsewhere/train");
+	test::@check(app.capture_node_finder(g.at(train)) == "/elsewhere/train/finder.safetensors", "the finder in Train's folder (%s)", app.capture_node_finder(g.at(train)));
+	test::@check(crig::node_browse_purpose(TRAIN, 2) == crig::FilePurpose.CAPTURE_FOLDER && crig::node_browse_purpose(VIDEO, 0) == crig::FilePurpose.CAPTURE_VIDEO
+		&& crig::node_browse_purpose(KIMODO_TEXT, 0) == crig::FilePurpose.MOTION_FILE && crig::node_browse_purpose(DINO_BACKBONE, 0) == crig::FilePurpose.MOTION_PATH,
+		"each Browse asks for what its setting takes");
+}
+
 // The humanoid in a folder of its own, its capture folder empty, its config
 // folder `<dir>/config`.
 fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
@@ -209,6 +354,7 @@ fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
 
 const usz TEXT_TEMPLATE = 0;
 const usz TRAIN_TEMPLATE = 2;
+const usz POSE_TEMPLATE = 4;
 
 fn void each_template_opens_on_its_own_canvas() @test
 {
@@ -236,9 +382,9 @@ fn void each_template_opens_on_its_own_canvas() @test
 
 	app.open_template_named(TRAIN_TEMPLATE);
 	crig::PipelineGraph* capture = app.pipeline();
-	test::@check(capture != g && capture.count() == 6, "train a finder: its five nodes and its note (%d)", capture.count());
+	test::@check(capture != g && capture.count() == 5, "train a finder: its four nodes and its note (%d)", capture.count());
 	sz animate = capture.find("animate");
-	test::@check(animate >= 0 && capture.at(animate).input[0] == capture.find("train") && capture.at(animate).input[3] == capture.find("backbone"),
+	test::@check(animate >= 0 && capture.at(animate).input[0] == capture.find("train") && capture.at(animate).input[2] == capture.find("backbone"),
 		"the finder and the backbone into Animate");
 	test::@check(app.config.nodes_template == (int)TRAIN_TEMPLATE, "the config keeps which is open");
 
@@ -261,7 +407,7 @@ fn void a_node_graph_reads_back_what_it_saved() @test
 	g.set_param(video, 0, "/clips/a \"b\".mp4");
 	g.at(video).pos = { 120, 640 };
 	usz second = g.add(crig::NodeKind.ANIMATE, { 400, 500 });
-	test::@check(g.connect((usz)g.find("train"), second, 0) && g.connect(video, second, 2), "the second Animate takes the finder and the video");
+	test::@check(g.connect((usz)g.find("train"), second, 0) && g.connect(video, second, 1), "the second Animate takes the finder and the video");
 	g.set_param((usz)g.find("train"), 0, "700");
 	g.set_param((usz)g.find("note"), 0, "mine\nsecond line");
 	g.view = { .pan = { 15, -30 }, .zoom = 0.5 };
@@ -270,7 +416,7 @@ fn void a_node_graph_reads_back_what_it_saved() @test
 	g.free();
 
 	g = app.pipeline_now(TRAIN_TEMPLATE);
-	test::@check(g.count() == 7, "seven nodes read back (%d)", g.count());
+	test::@check(g.count() == 6, "six nodes read back (%d)", g.count());
 	sz again = g.find("video");
 	sz read_second = g.find("animate2");
 	if (again < 0 || read_second < 0)
@@ -280,7 +426,7 @@ fn void a_node_graph_reads_back_what_it_saved() @test
 	}
 	test::@check(g.at(again).params[0] == "/clips/a \"b\".mp4", "the path, quotes and all (%s)", g.at(again).params[0]);
 	test::@check(g.at(again).pos.x == 120 && g.at(again).pos.y == 640, "where it was put");
-	test::@check(g.at(read_second).input[0] == g.find("train") && g.at(read_second).input[1] == -1 && g.at(read_second).input[2] == again, "its wires, the picture still free");
+	test::@check(g.at(read_second).input[0] == g.find("train") && g.at(read_second).input[1] == again && g.at(read_second).input[2] == -1, "its wires, the backbone still free");
 	test::@check(g.at(g.find("train")).params[0] == "700", "the poses as set");
 	test::@check(g.at(g.find("note")).params[0] == "mine\nsecond line", "the note's text, both lines");
 	test::@check(g.view.zoom == 0.5f && g.view.pan.x == 15, "the view");
@@ -378,14 +524,14 @@ fn void node_wires_carry_one_thing_and_go_with_their_nodes() @test
 	usz animate = (usz)g.find("animate");
 	usz video = (usz)g.find("video");
 	test::@check(!g.connect(video, animate, 0), "a video is not a finder");
-	test::@check(!g.connect(g.add(crig::NodeKind.KIMODO_TEXT, { 0, 0 }), animate, 3), "a text encoder is not a backbone");
+	test::@check(!g.connect(g.add(crig::NodeKind.KIMODO_TEXT, { 0, 0 }), animate, 2), "a text encoder is not a backbone");
 	usz other = g.add(crig::NodeKind.FINDER_FILE, { 0, 0 });
 	test::@check(g.connect(other, animate, 0) && g.at(animate).input[0] == (sz)other, "a second finder takes the input over");
 
-	g.remove((usz)g.find("reference"));
+	g.remove((usz)g.find("train"));
 	animate = (usz)g.find("animate");
-	test::@check(g.at(animate).input[1] == -1, "the picture's wire went with it");
-	sz fed = g.at(animate).input[2];
+	test::@check(g.at(animate).input[0] == (sz)g.find("finder"), "the other finder's wire stays");
+	sz fed = g.at(animate).input[1];
 	test::@check(fed >= 0 && g.at(fed).kind == crig::NodeKind.VIDEO, "the video's wire still finds the video");
 }
 
@@ -402,6 +548,9 @@ fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 	g.set_param((usz)g.find("video"), 0, app.source_path);
 	g.set_param((usz)g.find("backbone"), 0, app.source_path);
 	g.set_param(animate, 0, "order_test");
+	List{usz} early;
+	early.init(tmem);
+	test::@check(@catch(app.node_order(g, animate, &early)) == crig::CAPTURE_NO_REFERENCE, "Animate with no reference saved is refused");
 	(void)path::mkdir(app.capture_path("studio"), true);
 	(void)file::save(app.capture_path("studio/studio.json"), "{}");
 
@@ -419,11 +568,7 @@ fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 	(void)app.node_order(g, train, &order);
 	test::@check(order.len() == 1 && order[0] == train, "but trains again when run itself");
 
-	g.disconnect(animate, 1);
-	order.clear();
-	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_REFERENCE, "Animate without a picture is refused");
-	g.disconnect(animate, 3);
-	(void)g.connect((usz)g.find("reference"), animate, 1);
+	g.disconnect(animate, 2);
 	order.clear();
 	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_BACKBONE, "and without a backbone");
 }

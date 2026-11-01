@@ -1,8 +1,8 @@
 <*
  Video capture: an animation of the character out of a video of it, through
  llm-runner's `creature` plugin (DINOv3 and a rig fit), run in-process like
- Kimodo (`app/generate.c3`). The Nodes pane's graph (`app/pipeline_graph.c3`)
- runs three steps, each of which can be done again on its own:
+ Kimodo (`app/generate.c3`). Three steps, each of which can be done again on
+ its own:
 
  1. **A joint finder** for this character: a training set drawn the way
     render_poses draws it (poses inside the rig's limits and frames of its
@@ -10,20 +10,21 @@
     keeps repainting, then creature's `train` task on it, about half an hour
     on one GPU, at the node's picture size (bigger is finer and slower). Or a
     finder trained before, chosen as a file.
- 2. **The reference picture**: render_studio's two cameras side by side, the
-    front and the right side, from a pose the user picks (an idle's first
-    frame stands best). A video model animates this picture.
- 3. **The clip**: the video's frames taken out with ffmpeg (a process polled a
-    frame at a time), then creature's animate task with the picture's layout
-    (`studio`) and the finder; the clip lands on the character as Kimodo's do,
-    one undo step.
+ 2. **A reference picture**, from the Pose tab: render_studio's two cameras
+    side by side, the front and the right side, on a saved pose. A video
+    model animates it, or an image model reposes it.
+ 3. **The clip** (Nodes: Animate): creature's animate task reads the video
+    a frame at a time (image::mp4, no ffmpeg) with the reference's layout
+    (`studio.json`) and the finder; the clip lands on the character as
+    Kimodo's do, one undo step. Or one picture (Image to pose), which lands as
+    a saved pose.
 
- Everything goes in a folder beside the model, `<model>.capture/`: the
- training set (`renders/`), the finder (`finder.safetensors`), the picture
- (`studio/`), each clip's frames and the points found on them
- (`clips/<name>/frames/`, `clips/<name>/tracks.json`; a second Train or
- Reference node keeps its own under `<node>/`), and `capture.json`, which remembers a finder chosen from
- elsewhere. The model file itself is never written.
+ What is kept goes in a folder beside the model, `<model>.capture/`: the
+ training set (`renders/`), the finder (`finder.safetensors`), the reference
+ pictures (`references/<pose>/`; `studio/` from before; a second Train node
+ keeps its own under `<node>/`, or in its save folder), and `capture.json`,
+ which remembers a finder chosen from elsewhere. A clip writes nothing there.
+ The model file itself is never written.
 
  One pipeline job runs at a time in the process, so a capture step and a text
  to motion job wait for each other.
@@ -35,16 +36,20 @@ import std::encoding::json;
 import std::io;
 import std::io::file;
 import std::io::path;
-import std::os::env;
-import std::os::process;
 import std::core::string;
 import std::math;
+import std::collections::list;
 import gltf_edit;
+import image;
+import image::png;
+import image::jpeg;
+import image::mp4;
+import image::h264;
 import llm::pipeline;
 
 faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
-	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_FFMPEG, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED,
-	CAPTURE_BAD_SIZE;
+	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED,
+	CAPTURE_BAD_SIZE, CAPTURE_NO_IMAGE;
 
 // The training set's size by default, and how many poses one frame draws.
 const usz CAPTURE_DEFAULT_POSES = 1500;
@@ -62,7 +67,6 @@ enum CaptureStage
 	IDLE,
 	RENDERING,  // the training set, a chunk between frames
 	TRAINING,   // creature's train task
-	EXTRACTING, // ffmpeg taking the video's frames out
 	ANIMATING,  // creature's animate task
 }
 
@@ -76,8 +80,6 @@ struct CaptureJob
 	bool running;
 	CaptureStage stage;
 	llm::pipeline::Job* engine;
-	Process ffmpeg;
-	bool ffmpeg_alive;
 	uint step;
 	uint steps;
 	char[512] last_line;
@@ -87,13 +89,11 @@ struct CaptureJob
 	usz render_next;
 	usz render_total;
 	uint render_size;
-	// The clip being made: its name, its frames' folder (the training set's,
-	// while training), their rate and count.
+	// The clip being made: its name, its video, picture or frames' folder (the
+	// training set's, while training), and their rate.
 	String name;
 	String frames;
 	float fps;
-	usz frames_expected;
-	uint polls;
 	// The clip's finder and picture layout, for the animate task, and the
 	// backbone the creature tasks run on.
 	String finder;
@@ -101,6 +101,8 @@ struct CaptureJob
 	String backbone;
 	// Each frame read once, not also mirrored (which keeps left and right apart).
 	bool mirror_off;
+	// Whether the one picture lands as a saved pose instead of a clip.
+	bool pose;
 	// Asked for by the pane; drawn between frames, where the renderer is free:
 	// its folder, its clip ("" = the rest pose) and moment, and how it went.
 	bool reference_pending;
@@ -108,6 +110,8 @@ struct CaptureJob
 	String reference_studio;
 	String reference_clip;
 	float reference_time;
+	// A saved pose to draw instead of a clip, by name.
+	String reference_pose;
 	// Bumped whenever a step ends, so the pane rebuilds its statuses.
 	uint finished;
 	// Set when a clip has landed, for the interface to select; taken once.
@@ -134,24 +138,15 @@ fn void CaptureJob.close_engine(&self)
 	self.engine = null;
 }
 
-fn void CaptureJob.stop_ffmpeg(&self)
-{
-	if (!self.ffmpeg_alive) return;
-	(void)self.ffmpeg.terminate();
-	(void)self.ffmpeg.join();
-	(void)self.ffmpeg.destroy();
-	self.ffmpeg_alive = false;
-}
-
 fn void CaptureJob.clear(&self)
 {
 	self.close_engine();
-	self.stop_ffmpeg();
 	foreach (held : (String[]) { self.name, self.frames, self.finder, self.studio, self.backbone })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
 	self.name = self.frames = self.finder = self.studio = self.backbone = "";
+	self.pose = false;
 	self.running = false;
 	self.stage = IDLE;
 	self.failed = false;
@@ -162,11 +157,11 @@ fn void CaptureJob.clear(&self)
 fn void CaptureJob.free(&self)
 {
 	self.clear();
-	foreach (held : (String[]) { self.reference_studio, self.reference_clip })
+	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.reference_studio = self.reference_clip = "";
+	self.reference_studio = self.reference_clip = self.reference_pose = "";
 }
 
 <*
@@ -285,51 +280,6 @@ fn String finder_summary(String finder_path)
 }
 
 <*
- Where `program` is on the PATH, or "" when it is not. Temporary.
-*>
-fn String find_program(String program)
-{
-	String? paths = env::get_var(tmem, "PATH");
-	if (catch paths) return "";
-	foreach (dir : paths.tsplit(":"))
-	{
-		if (dir.len == 0) continue;
-		String candidate = string::tformat("%s/%s", dir, program);
-		if (file::exists(candidate)) return candidate;
-	}
-	return "";
-}
-
-<*
- The video's frame rate and frame count, as ffprobe reports them ("24/1,107",
- "30000/1001,N/A"): `fps` 0 when it cannot say.
-*>
-fn void parse_probe(String text, float* fps, usz* frames)
-{
-	*fps = 0;
-	*frames = 0;
-	String line = text.trim();
-	if (try nl = line.index_of_char('\n')) line = line[:(usz)nl].trim();
-	String[] parts = line.tsplit(",");
-	if (parts.len == 0) return;
-	String[] ratio = parts[0].trim().tsplit("/");
-	double? top = ratio[0].to_double();
-	if (catch top) return;
-	double bottom = 1;
-	if (ratio.len > 1)
-	{
-		double? given = ratio[1].to_double();
-		if (catch given) return;
-		bottom = given;
-	}
-	if (bottom > 0 && top > 0) *fps = (float)(top / bottom);
-	if (parts.len > 1)
-	{
-		if (try count = parts[1].trim().to_uint()) *frames = count;
-	}
-}
-
-<*
  The first pose of the training set not yet drawn: the training set is drawn
  CAPTURE_CHUNK poses a call, each call writing poses_<first>.json, so a set
  stopped part way carries on from its first missing chunk.
@@ -367,13 +317,30 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_GPU: return "there is no GPU to run it on";
 		case CAPTURE_NO_SKELETON: return "the model needs a skinned skeleton first";
 		case CAPTURE_NO_FINDER: return "train a joint finder, or choose one, first";
-		case CAPTURE_NO_REFERENCE: return "make the reference picture first: the video is read by its layout";
-		case CAPTURE_NO_VIDEO: return "choose a video, or a folder of its frames";
-		case CAPTURE_NO_FFMPEG: return "ffmpeg is not on the PATH — give a folder of the video's frames instead";
+		case CAPTURE_NO_REFERENCE: return "save a reference picture first: Pose tab › Reference picture";
+		case CAPTURE_NO_VIDEO: return "choose a video (H.264 .mp4 or .mov), or a folder of its frames";
 		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
+		case CAPTURE_POSE_TAKEN: return "a pose by that name is saved — name this one";
+		case CAPTURE_NO_IMAGE: return "choose the picture: a .png or .jpg";
 		case CAPTURE_BAD_POSES: return "Poses is a whole number from 50 to 20000";
 		case CAPTURE_BAD_SIZE: return "Size is one of 448, 512, 640, 768, 896 or 1024 pixels";
 		case CAPTURE_NO_PLUGIN: return "the creature plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
+		case h264::CABAC:
+		case h264::B_SLICES:
+		case h264::TRANSFORM_8X8:
+		case h264::SCALING_LISTS:
+		case h264::WEIGHTED: return "High-profile H.264 (CABAC, B-frames) isn't read yet: export the video as H.264 Baseline";
+		case h264::INTERLACED: return "interlaced H.264 isn't read";
+		case h264::SAMPLING: return "only 8-bit 4:2:0 H.264 is read";
+		case h264::SLICE_GROUPS:
+		case h264::UNSUPPORTED: return "this H.264 uses a feature that isn't read";
+		case mp4::NOT_H264: return "only H.264 video is read (not HEVC, AV1 or VP9)";
+		case mp4::NO_VIDEO: return "the file has no video track";
+		case mp4::NOT_MP4: return "not an MP4 or MOV file";
+		case mp4::CORRUPT:
+		case mp4::NO_FRAME:
+		case h264::CORRUPT:
+		case h264::NO_PARAMETERS: return "the video is damaged";
 		default: return "the pipeline would not start";
 	}
 }
@@ -480,16 +447,17 @@ fn String capture_train_json(String backbone, String renders, String finder)
 
 <*
  Draw the reference picture into `studio` next time the renderer is free:
- render_studio's two cameras on `clip` ("pack/clip"; "" or CAPTURE_REST is the
- rest pose) at `time` seconds.
+ render_studio's two cameras on the saved pose `pose`, or else on `clip`
+ ("pack/clip"; "" is the rest pose) at `time` seconds.
 *>
-fn void? AppState.request_capture_reference(&self, String studio, String clip, float time)
+fn void? AppState.request_capture_reference(&self, String studio, String clip, float time, String pose = "")
 {
 	if (self.source_path.len == 0) return CAPTURE_NO_MODEL_FILE~;
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
 	CaptureJob* job = &self.capture_job;
 	replace_owned(&job.reference_studio, studio);
-	replace_owned(&job.reference_clip, clip == CAPTURE_REST ? "" : clip);
+	replace_owned(&job.reference_clip, clip);
+	replace_owned(&job.reference_pose, pose);
 	job.reference_time = math::max(time, 0.0f);
 	job.reference_ok = false;
 	job.reference_pending = true;
@@ -504,6 +472,18 @@ fn void AppState.draw_capture_reference(&self)
 	StudioAsk ask = studio_ask_defaults(studio);
 	ask.clip = job.reference_clip;
 	ask.time = job.reference_time;
+	if (job.reference_pose.len > 0)
+	{
+		sz at = self.saved_pose_named(job.reference_pose);
+		if (at < 0)
+		{
+			job.finished++;
+			self.@notice("The reference picture could not be drawn: no saved pose \"%s\"", job.reference_pose);
+			return;
+		}
+		ask.dots = self.doc.poses[at].dots;
+		ask.clip = "";
+	}
 	DString detail = dstring::new(mem);
 	defer detail.free();
 	String? answer = self.render_studio_picture(&ask, &detail);
@@ -515,7 +495,200 @@ fn void AppState.draw_capture_reference(&self)
 	}
 	alloc::free(mem, answer.ptr);
 	job.reference_ok = true;
+	if (job.reference_pose.len > 0)
+	{
+		self.@notice("Reference picture of \"%s\" written · copy a prompt for a video or an image model", job.reference_pose);
+		return;
+	}
 	self.@notice("Reference picture written to %s · give it to the video model with the prompt", studio);
+}
+
+// ---------------------------------------------------------------------------
+// The references: each a folder with reference.png and studio.json.
+
+// A pose's name as a folder name. Temporary.
+fn String capture_reference_name(String pose)
+{
+	String name = pose.trim().tcopy();
+	foreach (&c : name) if (*c == '/' || *c == '\\' || *c == ':') *c = '_';
+	return name.len > 0 ? name : "pose";
+}
+
+// A reference's folder: "studio" is the capture folder's own, from before references. Temporary.
+fn String AppState.capture_reference_path(&self, String name)
+{
+	if (name == "studio") return self.capture_path("studio");
+	return self.capture_path(string::tformat("references/%s", name));
+}
+
+<*
+ The references saved for this character, newest first (by their studio.json),
+ into `out` as names allocated with `allocator`.
+*>
+fn void AppState.capture_references(&self, Allocator allocator, List{String}* out)
+{
+	if (self.capture_folder().len == 0) return;
+	List{String} names;
+	names.init(tmem);
+	List{long} times;
+	times.init(tmem);
+	String root = self.capture_path("references");
+	if (try PathList listed = path::ls(tmem, (Path)root))
+	{
+		foreach (entry : listed)
+		{
+			String name = (String)entry;
+			if (try time = file::last_modified(string::tformat("%s/%s/studio.json", root, name)))
+			{
+				names.push(name.tcopy());
+				times.push((long)time);
+			}
+		}
+	}
+	if (try time = file::last_modified(self.capture_path("studio/studio.json")))
+	{
+		names.push("studio");
+		times.push((long)time);
+	}
+	// Newest first; a tie by name.
+	sz count = names.len();
+	for (sz i = 1; i < count; i++)
+	{
+		for (sz k = i; k > 0; k--)
+		{
+			bool later = times[k] > times[k - 1] || (times[k] == times[k - 1] && names[k].compare_to(names[k - 1]) < 0);
+			if (!later) break;
+			times.swap(k, k - 1);
+			names.swap(k, k - 1);
+		}
+	}
+	foreach (name : names) out.push(name.copy(allocator));
+}
+
+// The reference `chosen` names when it is there, else the newest; "" when there is none. Temporary.
+fn String AppState.capture_reference_for(&self, String chosen)
+{
+	chosen = chosen.trim();
+	if (chosen.len > 0 && file::exists(string::tformat("%s/studio.json", self.capture_reference_path(chosen)))) return self.capture_reference_path(chosen);
+	List{String} found;
+	found.init(tmem);
+	self.capture_references(tmem, &found);
+	return found.len() > 0 ? self.capture_reference_path(found[0]) : "";
+}
+
+const uint MATCH_W = 48;
+const uint MATCH_H = 24;
+const uint MATCH_CELLS = MATCH_W * MATCH_H;
+
+// A picture or a video's first frame; png and jpeg by extension, mp4 and mov decoded.
+fn image::Image? load_picture(String file_name, Allocator allocator) @private
+{
+	String lower = file_name.to_lower_tcopy();
+	if (lower.ends_with(".png")) return png::load_file(file_name, allocator);
+	if (lower.ends_with(".mp4") || lower.ends_with(".m4v") || lower.ends_with(".mov"))
+	{
+		mp4::Video v = mp4::open(file_name, allocator)!;
+		defer v.close();
+		return v.frame(0, allocator);
+	}
+	return jpeg::load_file(file_name, allocator);
+}
+
+// `file_name` as a small grey grid of box averages, levelled to mean 0 and spread 1.
+fn bool picture_thumb(String file_name, float[] out) @private
+{
+	@pool()
+	{
+		image::Image? img = load_picture(file_name, tmem);
+		if (catch img) return false;
+		if (img.bit_depth != 8 || img.width < MATCH_W || img.height < MATCH_H) return false;
+		char[] rgba = img.to_rgba(tmem);
+		float[MATCH_CELLS] count;
+		out[..] = 0;
+		for (uint y = 0; y < img.height; y++)
+		{
+			uint row = y * MATCH_H / img.height * MATCH_W;
+			for (uint x = 0; x < img.width; x++)
+			{
+				usz at = ((usz)y * img.width + x) * 4;
+				uint cell = row + x * MATCH_W / img.width;
+				out[cell] += (float)rgba[at] + (float)rgba[at + 1] + (float)rgba[at + 2];
+				count[cell] += 1;
+			}
+		}
+		float mean = 0;
+		for (uint i = 0; i < MATCH_CELLS; i++)
+		{
+			out[i] /= count[i];
+			mean += out[i];
+		}
+		mean /= MATCH_CELLS;
+		float spread = 0;
+		for (uint i = 0; i < MATCH_CELLS; i++) spread += (out[i] - mean) * (out[i] - mean);
+		spread = math::sqrt(spread / MATCH_CELLS) + 1e-3f;
+		for (uint i = 0; i < MATCH_CELLS; i++) out[i] = (out[i] - mean) / spread;
+		return true;
+	};
+}
+
+<*
+ The reference `picture` (or a video's first frame) was made from: the saved
+ one whose reference.png looks most like it (the newest when it can't be
+ read); "" when there is none. Temporary.
+*>
+fn String AppState.capture_reference_matching(&self, String picture)
+{
+	List{String} found;
+	found.init(tmem);
+	self.capture_references(tmem, &found);
+	if (found.len() == 0) return "";
+	sz best = 0;
+	float[MATCH_CELLS] seen;
+	if (found.len() > 1 && picture_thumb(picture, &seen))
+	{
+		float least = math::FLOAT_MAX;
+		for (sz i = 0; i < found.len(); i++)
+		{
+			float[MATCH_CELLS] drawn;
+			if (!picture_thumb(string::tformat("%s/reference.png", self.capture_reference_path(found[i])), &drawn)) continue;
+			float apart = 0;
+			for (uint k = 0; k < MATCH_CELLS; k++) apart += (seen[k] - drawn[k]) * (seen[k] - drawn[k]);
+			if (apart < least)
+			{
+				least = apart;
+				best = i;
+			}
+		}
+	}
+	return self.capture_reference_path(found[best]);
+}
+
+// The first picture in `folder` by name; "" when there is none. Temporary.
+fn String first_picture_in(String folder)
+{
+	String first = "";
+	PathList? listed = path::ls(tmem, (Path)folder, no_dirs: true);
+	if (catch listed) return "";
+	foreach (entry : listed)
+	{
+		String name = (String)entry;
+		String lower = name.to_lower_tcopy();
+		if (!lower.ends_with(".png") && !lower.ends_with(".jpg") && !lower.ends_with(".jpeg")) continue;
+		if (first.len == 0 || name.compare_to(first) < 0) first = name;
+	}
+	return first.len > 0 ? string::tformat("%s/%s", folder, first) : "";
+}
+
+// For an image model: reference.png moved into another pose, the framing kept.
+const String POSE_PROMPT = `Edit this split-screen image of one character. Left: a front camera, the character faces the viewer. Right: a side camera on its right side, the character faces right. Both show the same moment. Change only the pose, the same pose in both views: <describe the pose here>. Keep the character exactly as it is: the same model, colours and proportions, nothing added or lost. Keep it the same size, centred in each view where it stands now, feet on the floor. The cameras do not move; the plain grey background, the lighter floor band and the dark vertical divider stay exactly as they are, and the image keeps its size.`;
+
+// The prompt for an image model, `pose` filled in. Temporary.
+fn String capture_pose_prompt(String pose)
+{
+	pose = pose.trim();
+	if (pose.len == 0) return POSE_PROMPT;
+	if (pose[^1] == '.') pose = pose[:pose.len - 1];
+	return POSE_PROMPT.treplace("<describe the pose here>", pose);
 }
 
 // The prompt render_studio wrote, `action` filled in. Temporary.
@@ -531,19 +704,37 @@ fn String capture_prompt(String action)
 // 3. The clip.
 
 <*
- Start turning `video` into the clip `name` ("" = the video's file name) with
- `finder` and the picture in `studio`: its frames taken out with ffmpeg (or a
- folder of frames used as it is), then the animate task.
+Start turning `video` into the clip `name` ("" = the video's file name) with
+ `finder` and the reference in `studio` ("" = the one its first frame looks
+ like): an H.264 .mp4/.mov the pipeline reads a frame at a time, or a folder
+ of frames. With `pose`, `video` is one picture and the result a saved pose.
+ Nothing is written beside the model.
 *>
-fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name, bool mirror = true)
+fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name, bool mirror = true,
+	bool pose = false)
 {
 	self.capture_ready(backbone)!;
 	if (finder.len == 0 || !file::exists(finder)) return CAPTURE_NO_FINDER~;
-	if (studio.len == 0 || !file::exists(string::tformat("%s/studio.json", studio))) return CAPTURE_NO_REFERENCE~;
+	if (studio.len == 0 && self.capture_reference_for("").len == 0) return CAPTURE_NO_REFERENCE~;
+	if (studio.len > 0 && !file::exists(string::tformat("%s/studio.json", studio))) return CAPTURE_NO_REFERENCE~;
 	video = video.trim();
-	if (video.len == 0 || !path::exists((Path)video)) return CAPTURE_NO_VIDEO~;
-	bool folder = path::is_dir((Path)video);
-	if (!folder && find_program("ffmpeg").len == 0) return CAPTURE_NO_FFMPEG~;
+	if (pose)
+	{
+		if (video.len == 0 || !file::is_file(video)) return CAPTURE_NO_IMAGE~;
+	}
+	else if (video.len == 0 || !path::exists((Path)video))
+	{
+		return CAPTURE_NO_VIDEO~;
+	}
+	bool folder = !pose && path::is_dir((Path)video);
+	float fps = 24;
+	if (!pose && !folder)
+	{
+		// Refused here, with the decoder's reason, rather than part way through.
+		mp4::Video v = mp4::open(video)!;
+		if (v.fps > 0) fps = v.fps;
+		v.close();
+	}
 
 	name = name.trim();
 	if (name.len == 0) name = capture_clip_name(video);
@@ -551,50 +742,15 @@ fn void? AppState.start_capture_animation(&self, String backbone, String finder,
 	job.clear();
 	job.name = name.copy(mem);
 	job.finder = finder.copy(mem);
-	job.studio = studio.copy(mem);
 	job.backbone = backbone.trim().copy(mem);
 	job.mirror_off = !mirror;
-	job.fps = 24;
-	if (folder)
-	{
-		job.frames = video.copy(mem);
-		job.running = true;
-		self.start_capture_engine(ANIMATING, self.capture_animate_json());
-		return;
-	}
-	// A folder of its own for this clip's frames, emptied first: a shorter take
-	// must not keep the last one's tail.
-	String frames = self.capture_path(string::tformat("clips/%s/frames", name));
-	if (path::is_dir((Path)frames)) (void)path::rmtree((Path)frames);
-	(void)path::mkdir(frames, true);
-	if (!path::is_dir((Path)frames)) return CAPTURE_NOT_STARTED~;
-	job.frames = frames.copy(mem);
-
-	char[256] probe;
-	if (try String said = process::run_capture_stdout(probe[..],
-		{ "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate,nb_frames", "-of", "csv=p=0", video }))
-	{
-		float fps;
-		usz count;
-		parse_probe(said, &fps, &count);
-		if (fps > 0) job.fps = fps;
-		job.frames_expected = count;
-	}
-	Process? started = process::spawn({ "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", video, string::tformat("%s/f_%%05d.png", frames) });
-	if (catch started)
-	{
-		job.failed = true;
-		job.set_last("ffmpeg would not start");
-		return CAPTURE_NOT_STARTED~;
-	}
-	job.ffmpeg = started;
-	job.ffmpeg_alive = true;
+	job.pose = pose;
+	job.fps = fps;
+	job.frames = video.copy(mem);
+	if (studio.len == 0) studio = self.capture_reference_matching(folder ? first_picture_in(video) : video);
+	if (studio.len > 0) job.studio = studio.copy(mem);
 	job.running = true;
-	job.stage = EXTRACTING;
-	job.step = 0;
-	job.steps = (uint)job.frames_expected;
-	job.set_last("taking the video's frames out");
-	self.@notice("Reading \"%s\"'s frames…", name);
+	self.start_capture_engine(ANIMATING, self.capture_animate_json());
 }
 
 // A clip's name out of a video's file name: "zidane_wave.mp4" is "zidane_wave". Temporary.
@@ -625,11 +781,13 @@ fn String AppState.capture_animate_json(&self)
 	out.append_string(",\n  \"studio\": ");
 	gltf_edit::escape_json_string(&out, string::tformat("%s/studio.json", job.studio));
 	out.append_string(",\n  \"frames\": ");
+	if (job.pose) out.append_string("[");
 	gltf_edit::escape_json_string(&out, job.frames);
+	if (job.pose) out.append_string("]");
 	out.append_string(",\n  \"name\": ");
 	gltf_edit::escape_json_string(&out, job.name);
 	if (job.mirror_off) out.append_string(",\n  \"flip\": false");
-	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\", \"tracks\"]\n}\n", job.fps);
+	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\"]\n}\n", job.fps);
 	return out.copy_str(mem);
 }
 
@@ -663,7 +821,6 @@ fn void AppState.fail_capture(&self, String why)
 	CaptureJob* job = &self.capture_job;
 	job.set_last(why);
 	job.close_engine();
-	job.stop_ffmpeg();
 	job.running = false;
 	job.failed = true;
 	job.stage = IDLE;
@@ -683,8 +840,8 @@ fn void AppState.service_capture(&self)
 }
 
 <*
- A frame of the running step: the pipeline pumped or ffmpeg polled, and what
- follows once it ends. Driven from `AppRoot.update`.
+ A frame of the running step: the pipeline pumped, and what follows once it
+ ends. Driven from `AppRoot.update`.
 *>
 fn void AppState.tick_capture(&self)
 {
@@ -693,27 +850,6 @@ fn void AppState.tick_capture(&self)
 	if (!job.running) return;
 	switch (job.stage)
 	{
-		case EXTRACTING:
-			if (job.polls++ % 15 == 0)
-			{
-				if (try PathList listed = path::ls(tmem, (Path)job.frames, no_dirs: true, mask: "*.png")) job.step = (uint)listed.len();
-			}
-			bool? alive = job.ffmpeg.is_running();
-			if (try alive && alive) return;
-			CInt? code = job.ffmpeg.join();
-			(void)job.ffmpeg.destroy();
-			job.ffmpeg_alive = false;
-			if (catch code)
-			{
-				self.fail_capture("ffmpeg stopped without saying why");
-				return;
-			}
-			if (code != 0)
-			{
-				self.fail_capture(string::tformat("ffmpeg could not read the video (exit %d)", code));
-				return;
-			}
-			self.start_capture_engine(ANIMATING, self.capture_animate_json());
 		case TRAINING:
 		case ANIMATING:
 			if (!job.engine) return;
@@ -735,7 +871,6 @@ fn void AppState.tick_capture(&self)
 				self.@notice("Joint finder trained: %s", finder_summary(job.finder));
 				return;
 			}
-			self.save_capture_tracks(job.engine.output("tracks.json"));
 			char[] handed = job.engine.output("glb");
 			char[] glb = handed.len > 0 ? alloc::new_array(mem, char, handed.len) : { };
 			if (handed.len > 0) glb[..] = handed[..];
@@ -750,6 +885,11 @@ fn void AppState.tick_capture(&self)
 				job.failed = true;
 				job.set_last("the pipeline handed back no clip");
 				self.@notice("Video capture failed: the pipeline handed back no clip");
+				return;
+			}
+			if (job.pose)
+			{
+				self.land_capture_pose(glb, summary);
 				return;
 			}
 			AnimRef landed = self.land_generated_motion(glb, job.name, LIGHT);
@@ -768,13 +908,29 @@ fn void AppState.tick_capture(&self)
 	}
 }
 
-// The points the fit was made from, kept beside the clip's frames.
-fn void AppState.save_capture_tracks(&self, char[] tracks)
+// The one frame of a picture's fit, into the pose library as job.name.
+fn void AppState.land_capture_pose(&self, char[] glb, String summary)
 {
-	if (tracks.len == 0) return;
-	String clip = self.capture_path(string::tformat("clips/%s", self.capture_job.name));
-	(void)path::mkdir(clip, true);
-	(void)file::save(string::tformat("%s/tracks.json", clip), tracks);
+	CaptureJob* job = &self.capture_job;
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, job.name, OFF);
+	if (catch sampled)
+	{
+		job.failed = true;
+		self.@notice("Read \"%s\", but it did not read as a pose for this character", job.name);
+		return;
+	}
+	AnimTemplate clip = sampled;
+	defer clip.free(mem);
+	if (clip.keyframes.len == 0 || clip.keyframes[0].dots.len == 0)
+	{
+		job.failed = true;
+		self.@notice("Read \"%s\", but the fit handed back no pose", job.name);
+		return;
+	}
+	SavedPose made = { .name = job.name.copy(mem), .dots = keyframe_copy(mem, { .dots = clip.keyframes[0].dots }).dots };
+	self.pose_library_row = (usz)self.store_pose(made);
+	job.set_last(summary);
+	self.@notice("Pose \"%s\" from the picture (%s) · in Poses", job.name, summary);
 }
 
 <*
@@ -824,7 +980,6 @@ fn bool AppState.stop_capture(&self)
 	self.stop_runs();
 	if (!job.running) return false;
 	job.close_engine();
-	job.stop_ffmpeg();
 	job.running = false;
 	job.failed = true;
 	job.stage = IDLE;
