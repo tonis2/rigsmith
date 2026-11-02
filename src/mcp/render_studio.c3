@@ -45,6 +45,7 @@ import image::png;
 import rig;
 import three;
 import std::collections::object;
+import std::encoding::json;
 import std::io::file;
 import std::io::path;
 import std::math;
@@ -201,7 +202,7 @@ fn StudioLayout studio_layout(Vec3[] at, float height, float ground, float facin
  The layout an earlier studio.json at `path` describes, for a rig facing world
  yaw `facing` placed by `model`.
 *>
-fn StudioLayout? studio_layout_from(String path, float facing, Matrix4f model)
+fn StudioLayout? studio_layout_from(String path, float facing, ProjectTransform model)
 {
 	@pool()
 	{
@@ -218,7 +219,7 @@ fn StudioLayout? studio_layout_from(String path, float facing, Matrix4f model)
 		if (layout.units_per_pixel <= 0) return RENDER_STUDIO_REFUSED~;
 		for (usz v = 0; v < 2; v++)
 		{
-			Object* view = views.get_at(v);
+			Object* view = views.get_at((sz)v);
 			float yaw = (float)view.get_float("yaw")!;
 			layout.views[v] = { .name = v == 1 ? "side" : yaw == 0 ? "front" : "three_quarter", .x = (uint)view.get_int("x")!,
 				.width = (uint)view.get_int("width")!, .yaw = v == 1 ? -90 : yaw };
@@ -226,7 +227,7 @@ fn StudioLayout? studio_layout_from(String path, float facing, Matrix4f model)
 		// The origin is the floor point both views are centred on, in model space.
 		Object* origin = views.get_at(0).get("origin")!;
 		if (!origin.is_array() || origin.get_len() != 3) return RENDER_STUDIO_REFUSED~;
-		layout.centre = model.point({ (float)origin.get_at(0).get_float(""), (float)origin.get_at(1).f, (float)origin.get_at(2).f });
+		layout.centre = model.point({ (float)origin.get_float_at(0)!, (float)origin.get_float_at(1)!, (float)origin.get_float_at(2)! });
 		layout.ground = layout.centre.y;
 		return layout;
 	};

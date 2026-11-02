@@ -11,7 +11,10 @@
  With `clips`, a share of the poses (`clip_share`) are frames of clips the rig
  plays instead, each joint nudged by up to `clip_noise` degrees inside its
  limits and the root turned as a random pose's is: the finder sees mostly
- poses a body takes, and the far reaches of the limits as well.
+ poses a body takes, and the far reaches of the limits as well. `leg_share` of
+ the random poses bend the legs hard: every leg joint near an end of its range
+ (deep knee folds, high knees, heel kicks, crossed legs), both legs alike in
+ some (squats).
 
  Each pose is photographed from every camera in `cameras`: yaw and pitch
  against the way the rig faces, each jittered, zoomed so the box round the
@@ -114,6 +117,7 @@ const String RENDER_POSES_SCHEMA = `{"type":"object","properties":{
 	"clips":{"description":"Clips (names as get_scene lists them, or \"all\" for every clip that plays on the rig) a share of the random poses are drawn from, each nudged."},
 	"clip_share":{"type":"number","description":"The share of random poses drawn from clips. Default 0.5."},
 	"clip_noise":{"type":"number","description":"Degrees each joint of a clip's pose is nudged at most, inside its limits. Default 12."},
+	"leg_share":{"type":"number","description":"The share of random poses whose legs are bent hard: each leg joint near an end of its range, both legs alike in some. Default 0."},
 	"light_jitter":{"type":"number","description":"How far each picture's light strays from the scene's, 0 to 1. Default 1."},
 	"landmarks":{"type":"string","description":"\"auto\": follow points on the surface (the front and back of the head, chest and root, the heels) as well as the joints. Default none."}
 },"required":["out"]}`;
@@ -159,6 +163,8 @@ struct PoseShoot
 	bool all_clips;
 	float clip_share;
 	float clip_noise;
+	// Random poses with the legs bent hard.
+	float leg_share;
 	// How far each picture's light strays from the scene's, 0 to 1.
 	float light_jitter;
 	// Follow points on the surface as well as the joints.
@@ -227,6 +233,7 @@ const ulong DRAW_MOTION = 3;
 const ulong DRAW_SOURCE = 4;
 const ulong DRAW_NUDGE = 5;
 const ulong DRAW_LIGHT = 6;
+const ulong DRAW_LEGS = 7;
 
 // ============================================================================
 // Poses
@@ -288,16 +295,95 @@ fn Quaternionf root_turn(float heading, float tilt_axis, float tilt) @local
 }
 
 <*
+ Each joint's mirror partner when it is a leg's (it has one, and the joints
+ below it reach the floor), else -1; empty without legs. The caller frees it.
+*>
+fn int[] leg_mates(RigView* view) @local
+{
+	rig::Skeleton* skeleton = &view.skeleton;
+	usz count = skeleton.len();
+	if (count == 0) return {};
+	float ground = 1.0e30f;
+	float top = -1.0e30f;
+	foreach (p : skeleton.joints)
+	{
+		ground = math::min(ground, p.y);
+		top = math::max(top, p.y);
+	}
+	// The lowest point at or below each joint, children after their parents.
+	float[] lowest = alloc::new_array(tmem, float, (sz)count);
+	foreach (usz j, p : skeleton.joints) lowest[j] = p.y;
+	for (usz k = count; k > 0; k--)
+	{
+		int parent = skeleton.parents[k - 1];
+		if (parent >= 0) lowest[parent] = math::min(lowest[parent], lowest[k - 1]);
+	}
+	int[] mates = alloc::new_array(mem, int, (sz)count);
+	bool found = false;
+	foreach (usz j, name : view.names)
+	{
+		mates[j] = -1;
+		if (skeleton.parents[j] < 0 || lowest[j] - ground > 0.05f * (top - ground)) continue;
+		String twin = mirror_name(tmem, name);
+		if (twin.len == 0 || twin == name) continue;
+		foreach (usz k, other : view.names)
+		{
+			if (other != twin) continue;
+			mates[j] = (int)k;
+			found = true;
+		}
+	}
+	if (!found)
+	{
+		alloc::free(mem, mates);
+		return {};
+	}
+	return mates;
+}
+
+<*
+ A leg joint's turn bent hard: each allowed axis between halfway to an end of
+ its range and the end, the end drawn. A free joint turns as `random_turn`'s.
+*>
+fn Quaternionf leg_turn(RigDocument* doc, rig::Skeleton* skeleton, uint[] dot_ids, usz joint, PoseDraw* draw, float spread) @local
+{
+	JointRotationLimits limits = doc.rotation_limits_of(dot_ids[joint]);
+	JointLimitFrame frame;
+	if (limits.constrained) frame = joint_limit_frame(skeleton, dot_ids, limits);
+	if (!limits.constrained || !frame.usable()) return random_turn(doc, skeleton, dot_ids, joint, draw, spread, 0);
+	Vec3 angles;
+	for (usz axis = 0; axis < 3; axis++)
+	{
+		JointAxisLimit row = limits.axes[axis];
+		if (!row.allowed)
+		{
+			angles[axis] = row.locked;
+			continue;
+		}
+		float least, most, rest;
+		drawn_range(row, &least, &most, &rest);
+		float end = draw.unit() < 0.5f ? least : most;
+		angles[axis] = rest + (end - rest) * draw.between(0.5f, 1.0f);
+	}
+	return rotation_from_joint_angles(frame, angles);
+}
+
+<*
  Pose `index` of a random set: every joint drawn on its own, the root turned,
- the whole pose pulled toward rest by one share. The caller frees it.
+ the whole pose pulled toward rest by one share; `leg_share` of them with the
+ legs bent hard (`legs`: leg_mates). The caller frees it.
 
  @param dot_ids : `The dot each joint was built from, for its limits.`
 *>
-fn rig::Pose random_pose(RigDocument* doc, rig::Skeleton* skeleton, uint[] dot_ids, PoseShoot* shoot, ulong index, ulong purpose)
+fn rig::Pose random_pose(RigDocument* doc, rig::Skeleton* skeleton, uint[] dot_ids, PoseShoot* shoot, ulong index, ulong purpose, int[] legs = {})
 {
 	usz count = skeleton.len();
 	rig::Pose pose = rig::rest_pose(mem, count);
 	PoseDraw draw = pose_draw(shoot.seed, index, purpose);
+	// Hard legs, and in some both legs drawn alike (a joint and its mate share a stream).
+	PoseDraw leg_draw = pose_draw(shoot.seed, index, DRAW_LEGS);
+	bool hard = legs.len == count && leg_draw.unit() < shoot.leg_share;
+	bool alike = leg_draw.unit() < 0.4f;
 	// How far toward the ends of their ranges this pose's joints may reach: the
 	// square root of a uniform draw, so most reach far (one pose in nine stays
 	// within a third of the way); the calm poses come from clips (`clips`).
@@ -312,6 +398,13 @@ fn rig::Pose random_pose(RigDocument* doc, rig::Skeleton* skeleton, uint[] dot_i
 				draw.between(-heading, heading),
 				draw.between(0.0f, (float)math::TAU),
 				draw.between(0.0f, math::deg_to_rad(shoot.tilt)));
+			continue;
+		}
+		if (hard && legs[joint] >= 0)
+		{
+			ulong key = alike ? (ulong)math::min((int)joint, legs[joint]) : (ulong)joint;
+			PoseDraw own = pose_draw(shoot.seed, index, (purpose + 1) * 65536 + DRAW_LEGS * 4096 + key);
+			pose.rotations[joint] = leg_turn(doc, skeleton, dot_ids, joint, &own, math::deg_to_rad(shoot.spread));
 			continue;
 		}
 		pose.rotations[joint] = random_turn(doc, skeleton, dot_ids, joint, &draw, math::deg_to_rad(shoot.spread) * (1.0f - 0.5f * calm), calm);
@@ -990,6 +1083,8 @@ fn bool read_pose_shoot(Object* args, PoseShoot* shoot, DString* detail) @local
 	shoot.clip_share = (float)v;
 	if (!poses_number(args, "clip_noise", 12, 0, 90, &v, detail)) return false;
 	shoot.clip_noise = (float)v;
+	if (!poses_number(args, "leg_share", 0, 0, 1, &v, detail)) return false;
+	shoot.leg_share = (float)v;
 	if (!poses_number(args, "light_jitter", 1, 0, 1, &v, detail)) return false;
 	shoot.light_jitter = (float)v;
 	shoot.clip_count = 0;
@@ -1263,6 +1358,8 @@ fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
 		exam_framed = clip_framed;
 	}
 
+	int[] legs = shoot.leg_share > 0 ? leg_mates(&view) : {};
+	defer if (legs.len > 0) alloc::free(mem, legs);
 	for (usz k = 0; k < shoot.count; k++)
 	{
 		ulong index = (ulong)(shoot.first + k);
@@ -1290,7 +1387,7 @@ fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
 		}
 		else
 		{
-			pose = random_pose(&app.doc, &view.skeleton, view.dot_ids, &shoot, index, DRAW_POSE);
+			pose = random_pose(&app.doc, &view.skeleton, view.dot_ids, &shoot, index, DRAW_POSE, legs);
 		}
 		defer pose.free(mem);
 
@@ -1318,7 +1415,7 @@ fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
 				// Toward another pose; a clip's toward its own a quarter second on.
 				rig::Pose toward = from_clip.pack >= 0
 					? clip_drawn_pose(app, &view, &shoot, from_clip, index, clip_time + 0.25f)
-					: random_pose(&app.doc, &view.skeleton, view.dot_ids, &shoot, index, DRAW_BLUR + 16);
+					: random_pose(&app.doc, &view.skeleton, view.dot_ids, &shoot, index, DRAW_BLUR + 16, legs);
 				defer toward.free(mem);
 				float reach = blur_draw.between(0.05f, 0.2f);
 				for (usz s = 0; s < BLUR_FRAMES; s++) subs[s] = between_poses(pose, toward, reach * (float)s / (float)(BLUR_FRAMES - 1));
