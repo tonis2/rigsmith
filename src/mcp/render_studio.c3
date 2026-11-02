@@ -3,11 +3,14 @@
  model animates into a clip that a joint finder reads well (llm-runner's
  creature plugin), as anymove films its creatures.
 
- One picture, `width` x `height`: the character from the front on the left,
- facing the viewer, and from its right side on the right, its head toward the
- right edge, the same moment in both. Both cameras are level and (all but)
- orthographic and share one scale and one floor row, so a joint sits on the
- same row in both halves and the pair pins it in 3D. Behind it a plain grey
+ One picture, `width` x `height`: on the left the character from in front and
+ off its left side, `left_yaw` degrees round (45, a three-quarter view; 0 is
+ straight on), and from its right side on the right, its head toward the
+ right edge, the same moment in both. A three-quarter view keeps both legs in
+ sight in a stride, where a front view hides one behind the other. Both
+ cameras are level and (all but) orthographic and share one scale and one
+ floor row, so a joint sits on the same row in both halves and the pair pins
+ it in 3D. Behind it a plain grey
  wall, a lighter floor band below the floor row, and a dark divider between
  the halves.
 
@@ -25,8 +28,8 @@
  The cameras stand STUDIO_DISTANCE rig sizes away, zoomed in to the scale: the
  renderer has no orthographic projection, and from that far the perspective
  moves a point by a fraction of a pixel (the answer says how much). The light
- is the studio's own, high and between the two cameras, so the face and the
- right flank are both lit; studio.json records it for the training pictures.
+ is the studio's own, high and between the two cameras, so both views are
+ lit; studio.json records it.
  The floor row is under the posed mesh's lowest point, with a soft shadow on
  the band under what touches it.
 
@@ -70,13 +73,15 @@ const String RENDER_STUDIO_SCHEMA = `{"type":"object","properties":{
 	"height":{"type":"integer","description":"The picture's height in pixels. Default 720."},
 	"ground_row":{"type":"integer","description":"The floor's row, from the top. Default seven eighths of the height (630 of 720)."},
 	"fill":{"type":"number","description":"The share of the floor row's height the character stands. Default 0.8."},
-	"front_width":{"type":"integer","description":"The front view's width in pixels; by default the two views are as wide as the character is across each, side by side."},
+	"left_yaw":{"type":"number","description":"The left camera, degrees round from the character's face toward its left side: 45 (default) a front-left three-quarter view, 0 straight on. The right camera is at its right side."},
+	"front_width":{"type":"integer","description":"The left view's width in pixels; by default the two views are as wide as the character is across each, side by side."},
 	"clip":{"type":"string","description":"A clip to take the pose from, by name as get_scene lists it; the rest pose without."},
-	"time":{"type":"number","description":"The clip's moment in seconds. Default 0."}
+	"time":{"type":"number","description":"The clip's moment in seconds. Default 0."},
+	"layout":{"type":"string","description":"An earlier studio.json to draw with: its size, scale, views and floor kept instead of fitted to this pose, so a clip's frames share one set of cameras (a studio exam). The size options are ignored then."}
 },"required":["out"]}`;
 
 // One half of the picture: its columns and its camera's yaw against the way
-// the rig faces (0 at its face, -90 at its right side).
+// the rig faces (0 at its face, 90 at its left side, -90 at its right).
 struct StudioView
 {
 	String name;
@@ -108,10 +113,14 @@ struct StudioAsk
 	uint height;
 	uint ground_row;
 	float fill;
+	// The left camera's yaw (the right one is at -90).
+	float left_yaw;
 	// 0 to split the picture by what each view has to show.
 	uint front_width;
 	String clip;
 	float time;
+	// An earlier studio.json whose cameras are kept; "" to fit the pose.
+	String layout;
 	// A saved pose to draw instead (borrowed); a clip is not read then.
 	AnimKeyDot[] dots;
 }
@@ -134,7 +143,7 @@ fn Vec3 studio_right(float yaw)
 fn StudioLayout studio_layout(Vec3[] at, float height, float ground, float facing, StudioAsk* ask)
 {
 	StudioLayout layout = { .width = ask.width, .height = ask.height, .ground_row = ask.ground_row, .ground = ground, .facing = facing };
-	layout.views[0] = { .name = "front", .yaw = 0 };
+	layout.views[0] = { .name = ask.left_yaw == 0 ? "front" : "three_quarter", .yaw = ask.left_yaw };
 	layout.views[1] = { .name = "side", .yaw = -90 };
 	height = math::max(height, 1.0e-4f);
 	float[2] least = { 1.0e30f, 1.0e30f };
@@ -149,16 +158,28 @@ fn StudioLayout studio_layout(Vec3[] at, float height, float ground, float facin
 		}
 		if (most[v] < least[v]) least[v] = most[v] = 0;
 	}
-	// The two rights are level and square to each other: the point on the floor
-	// that is the middle of the joints along both.
-	layout.centre = studio_right(facing) * ((least[0] + most[0]) * 0.5f)
-		+ studio_right(facing - 90.0f) * ((least[1] + most[1]) * 0.5f);
+	// The point on the floor that is the middle of the joints along both rights
+	// (level, at least 30 degrees apart): c = a r0 + b r1 with c·r0 = m0, c·r1 = m1.
+	Vec3 r0 = studio_right(facing + layout.views[0].yaw);
+	Vec3 r1 = studio_right(facing + layout.views[1].yaw);
+	float m0 = (least[0] + most[0]) * 0.5f;
+	float m1 = (least[1] + most[1]) * 0.5f;
+	float k = r0.dot(r1);
+	float d = math::max(1.0f - k * k, 0.25f);
+	layout.centre = r0 * ((m0 - k * m1) / d) + r1 * ((m1 - k * m0) / d);
 	layout.centre.y = ground;
 
+	// Room for a stride, as much of it as a view sees across.
 	float per_pixel = height / (ask.fill * (float)ask.ground_row);
 	float body = 0.15f * height;
-	float front = (most[0] - least[0] + 2.0f * body) * 1.1f / per_pixel;
-	float side = (math::max(most[1] - least[1], 0.5f * height) + 2.0f * body) * 1.1f / per_pixel;
+	float[2] need;
+	for (usz v = 0; v < 2; v++)
+	{
+		float stride = 0.5f * height * math::abs((float)math::sin(math::deg_to_rad(layout.views[v].yaw)));
+		need[v] = (math::max(most[v] - least[v], stride) + 2.0f * body) * 1.1f / per_pixel;
+	}
+	float front = need[0];
+	float side = need[1];
 	float total = (float)ask.width;
 	uint split = ask.front_width;
 	if (split == 0)
@@ -174,6 +195,41 @@ fn StudioLayout studio_layout(Vec3[] at, float height, float ground, float facin
 	layout.views[1].x = split;
 	layout.views[1].width = ask.width - split;
 	return layout;
+}
+
+<*
+ The layout an earlier studio.json at `path` describes, for a rig facing world
+ yaw `facing` placed by `model`.
+*>
+fn StudioLayout? studio_layout_from(String path, float facing, Matrix4f model)
+{
+	@pool()
+	{
+		Object* json = json::parse(tmem, (String)file::load_temp(path)!)!;
+		Object* views = json.get("views")!;
+		if (!views.is_array() || views.get_len() != 2) return RENDER_STUDIO_REFUSED~;
+		StudioLayout layout = {
+			.width = (uint)json.get_int("width")!,
+			.height = (uint)json.get_int("height")!,
+			.ground_row = (uint)json.get_int("ground_row")!,
+			.units_per_pixel = (float)json.get_float("units_per_pixel")!,
+			.facing = facing,
+		};
+		if (layout.units_per_pixel <= 0) return RENDER_STUDIO_REFUSED~;
+		for (usz v = 0; v < 2; v++)
+		{
+			Object* view = views.get_at(v);
+			float yaw = (float)view.get_float("yaw")!;
+			layout.views[v] = { .name = v == 1 ? "side" : yaw == 0 ? "front" : "three_quarter", .x = (uint)view.get_int("x")!,
+				.width = (uint)view.get_int("width")!, .yaw = v == 1 ? -90 : yaw };
+		}
+		// The origin is the floor point both views are centred on, in model space.
+		Object* origin = views.get_at(0).get("origin")!;
+		if (!origin.is_array() || origin.get_len() != 3) return RENDER_STUDIO_REFUSED~;
+		layout.centre = model.point({ (float)origin.get_at(0).get_float(""), (float)origin.get_at(1).f, (float)origin.get_at(2).f });
+		layout.ground = layout.centre.y;
+		return layout;
+	};
 }
 
 // Where world point `p` lands in view `v`, as an orthographic camera puts it:
@@ -310,16 +366,21 @@ fn void StudioLayout.divide(&self, char[] rgb)
 }
 
 <*
- The studio's light: `base` with its sun high and between the two cameras, in
- front of the figure and off its right side, so the face and the right flank
- are both lit, and the shadowed side lifted more than the scene's default.
+ The studio's light: `base` with its sun high and between the two cameras, so
+ both views are lit, and the shadowed side lifted more than the scene's default.
 *>
 fn three::Lighting StudioLayout.lighting(&self, three::Lighting* base)
 {
 	three::Lighting lit = *base;
-	Vec3 ahead = studio_right(self.facing + 90.0f);
-	Vec3 right_side = -studio_right(self.facing);
-	Vec3 sun = (ahead * 0.6f + right_side * 0.6f + (Vec3){ 0, 1.2f, 0 }).normalize();
+	// Surface to light, as three takes it: toward both eyes (OrbitCamera.eye's).
+	Vec3 between;
+	foreach (view : self.views)
+	{
+		float a = math::deg_to_rad(self.facing + view.yaw);
+		between += (Vec3){ (float)math::sin(a), 0, (float)math::cos(a) };
+	}
+	between = between.length() > 1.0e-4f ? between.normalize() : studio_right(self.facing + 90.0f);
+	Vec3 sun = (between * 0.85f + (Vec3){ 0, 1.2f, 0 }).normalize();
 	lit.lights[0].direction = { sun.x, sun.y, sun.z, base.lights[0].direction[3] };
 	lit.lights[0].color = { 1, 1, 1, 1 };
 	lit.ambient = STUDIO_AMBIENT;
@@ -327,8 +388,25 @@ fn three::Lighting StudioLayout.lighting(&self, three::Lighting* base)
 	return lit;
 }
 
-// The prompt a video model is given with the picture; the action is the caller's.
-const String STUDIO_PROMPT = `Animate the exact character shown twice in this split-screen image. Left: a front camera, the character faces the viewer. Right: a side camera on its right side, the character faces right. Both are locked-off cameras filming the same character at the same moment, so every movement happens in both views at exactly the same time, frame for frame. Keep the character exactly as it is: the same model, colours and proportions, nothing added or lost. Action: <describe the movement here>. It stays on the spot, centred in both views, and does not travel. One continuous shot at natural speed, no slow motion. The cameras never move, cut, pan or zoom; the plain grey background, the lighter floor band and the dark vertical divider stay fixed.`;
+// The prompt a video model is given with the picture; the action, first, is the caller's.
+const String STUDIO_PROMPT = `Action: <describe the movement here>.
+
+Animate the exact character shown twice in this split-screen image doing the action above. <the views> Both are locked-off cameras filming the same character at the same moment, so every movement happens in both views at exactly the same time, frame for frame. Keep the character exactly as it is: the same model, colours and proportions, nothing added or lost. It stays on the spot, centred in both views, and does not travel; its whole body, feet included, stays inside each view.
+
+Film it with a fast shutter: every frame is sharp and crisp, with no motion blur, smearing or ghosting, even on fast-moving hands and feet. Each arm and leg keeps its full shape in every frame and stays clearly separate from the others. Everything in focus, even light, no flicker. One continuous shot at natural speed, no slow motion. The cameras never move, cut, pan or zoom; the plain grey background, the lighter floor band and the dark vertical divider stay fixed.`;
+
+// The views as the prompts say them, for a left camera at `left_yaw`.
+fn String studio_views_text(float left_yaw)
+{
+	String left = left_yaw == 0
+		? "Left: a front camera, the character faces the viewer."
+		: "Left: a three-quarter camera in front of the character and off its left side, the character faces toward the viewer and the left of the picture, both legs in sight.";
+	return string::tformat("%s Right: a side camera on its right side, the character faces right.", left);
+}
+
+// The video prompt for a left camera at `left_yaw`, the action still to fill.
+fn String studio_prompt(float left_yaw) => STUDIO_PROMPT.treplace("<the views>", studio_views_text(left_yaw));
+
 
 // ============================================================================
 // Arguments
@@ -372,6 +450,8 @@ fn bool read_studio_ask(Object* args, StudioAsk* ask, DString* detail) @local
 	ask.ground_row = (uint)v;
 	if (!studio_number(args, "fill", 0.8, 0.2, 0.95, &v, detail)) return false;
 	ask.fill = (float)v;
+	if (!studio_number(args, "left_yaw", 45, 0, 60, &v, detail)) return false;
+	ask.left_yaw = (float)v;
 	if (!studio_number(args, "front_width", 0, 0, (double)ask.width - 64, &v, detail)) return false;
 	ask.front_width = (uint)v;
 	if (ask.front_width > 0 && ask.front_width < 64)
@@ -386,6 +466,11 @@ fn bool read_studio_ask(Object* args, StudioAsk* ask, DString* detail) @local
 	}
 	if (!studio_number(args, "time", 0, 0, 1.0e6, &v, detail)) return false;
 	ask.time = (float)v;
+	ask.layout = "";
+	if (member(args, "layout") != null)
+	{
+		if (!required_string(args, "layout", &ask.layout, detail, `render_studio's "layout" is the path of an earlier studio.json`)) return false;
+	}
 	return true;
 }
 
@@ -403,7 +488,7 @@ fn String? tool_render_studio(Object* args, void* user_data, DString* detail) @p
 // What a call with nothing but `out` asks for.
 fn StudioAsk studio_ask_defaults(String out)
 {
-	return { .out = out, .width = 1280, .height = 720, .ground_row = 630, .fill = 0.8f };
+	return { .out = out, .width = 1280, .height = 720, .ground_row = 630, .fill = 0.8f, .left_yaw = 45 };
 }
 
 <*
@@ -519,7 +604,22 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 	Vec3 origin = app.doc.model_transform.point({ 0, 0, 0 });
 	Vec3 ahead = app.doc.model_transform.point({ 0, 0, 1 }) - origin;
 	float facing = math::rad_to_deg((float)math::atan2(ahead.x, ahead.z));
-	StudioLayout layout = studio_layout(world, height, ground, facing, &ask);
+	StudioLayout layout;
+	if (ask.layout.len > 0)
+	{
+		StudioLayout? kept = studio_layout_from(ask.layout, facing, app.doc.model_transform);
+		if (catch kept)
+		{
+			detail.appendf(`"%s" is not a studio.json render_studio wrote.`, ask.layout);
+			return RENDER_STUDIO_REFUSED~;
+		}
+		layout = kept;
+		ask.left_yaw = layout.views[0].yaw;
+	}
+	else
+	{
+		layout = studio_layout(world, height, ground, facing, &ask);
+	}
 
 	// Everything below changes what the window shows; every way out puts it back.
 	three::Renderer* renderer = stage_renderer();
@@ -643,7 +743,8 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 		return RENDER_STUDIO_REFUSED~;
 	}
 	String prompt_path = string::tformat("%s/prompt.txt", ask.out);
-	if (catch file::save(prompt_path, (char[])STUDIO_PROMPT))
+	String prompt = studio_prompt(ask.left_yaw);
+	if (catch file::save(prompt_path, (char[])prompt))
 	{
 		detail.appendf("could not write %s", prompt_path);
 		return RENDER_STUDIO_REFUSED~;
@@ -656,9 +757,10 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 	json_escape_into(&answer, picture_path);
 	answer.append_string(`","layout":"`);
 	json_escape_into(&answer, layout_path);
-	answer.appendf(`","views":[{"name":"front","x":0,"width":%d},{"name":"side","x":%d,"width":%d}],"units_per_pixel":%s,"ortho_error_px":%s,"prompt":"`,
-		layout.views[0].width, layout.views[1].x, layout.views[1].width, (JsonFloat)layout.units_per_pixel, (JsonFloat)worst);
-	json_escape_into(&answer, STUDIO_PROMPT);
+	answer.appendf(`","views":[{"name":"%s","yaw":%s,"x":0,"width":%d},{"name":"%s","yaw":%s,"x":%d,"width":%d}],"units_per_pixel":%s,"ortho_error_px":%s,"prompt":"`,
+		layout.views[0].name, (JsonFloat)layout.views[0].yaw, layout.views[0].width, layout.views[1].name, (JsonFloat)layout.views[1].yaw,
+		layout.views[1].x, layout.views[1].width, (JsonFloat)layout.units_per_pixel, (JsonFloat)worst);
+	json_escape_into(&answer, prompt);
 	answer.appendf(`","seconds":%s}`, (JsonFloat)took);
 	return answer.copy_str(mem);
 }

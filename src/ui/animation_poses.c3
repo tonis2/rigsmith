@@ -144,9 +144,10 @@ fn void anim_pose_reference_clicked(Ui* ui)
 fn void anim_pose_prompt(Ui* ui, bool video) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	ui.clipboard_write(video ? capture_prompt("") : capture_pose_prompt(""));
-	app.@notice(video ? "Video prompt copied · fill in the action where it says <describe the movement here>"
-		: "Image prompt copied · fill in the pose where it says <describe the pose here>");
+	float yaw = capture_left_yaw(selected_pose_reference(app));
+	ui.clipboard_write(video ? capture_prompt("", yaw) : capture_pose_prompt("", yaw));
+	app.@notice(video ? "Video prompt copied · write the action on its first line"
+		: "Image prompt copied · write the pose on its first line");
 }
 
 fn void anim_pose_video_prompt_clicked(Ui* ui) => anim_pose_prompt(ui, true);

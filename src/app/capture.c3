@@ -6,12 +6,13 @@
 
  1. **A joint finder** for this character: a training set drawn the way
     render_poses draws it (poses inside the rig's limits and frames of its
-    clips, from the front and both sides), a few poses a frame so the window
-    keeps repainting, then creature's `train` task on it, about half an hour
+    clips, from the front, the studio's front-left three-quarter and both
+    sides), a few poses a frame so the window keeps repainting, then creature's `train` task on it, about half an hour
     on one GPU, at the node's picture size (bigger is finer and slower). Or a
     finder trained before, chosen as a file.
  2. **A reference picture**, from the Pose tab: render_studio's two cameras
-    side by side, the front and the right side, on a saved pose. A video
+    side by side, a front-left three-quarter view and the right side, on a
+    saved pose. A video
     model animates it, or an image model reposes it.
  3. **The clip** (Nodes: Animate): creature's animate task reads the video
     a frame at a time (image::mp4, no ffmpeg) with the reference's layout
@@ -391,21 +392,38 @@ fn bool capture_size_ok(uint size)
 	return false;
 }
 
-// A training set drawn at another size is emptied: train refuses mixed sizes.
+// A training set drawn at another size or from other cameras is emptied: train
+// refuses mixed sizes, and a set must not mix camera rigs.
 fn void fit_renders_to(String renders, uint size)
 {
 	char[]? bytes = file::load_temp(string::tformat("%s/poses_000000.json", renders));
 	if (catch bytes) return;
 	Object*? set = json::parse(tmem, (String)bytes);
-	if (try set) if (try double drawn = set.get_float("size")) if ((uint)drawn == size) return;
+	if (try set) if (try double drawn = set.get_float("size")) if ((uint)drawn == size)
+	{
+		if (try Object* cameras = set.get("cameras")) if (cameras.is_array() && (usz)cameras.get_len() == CAPTURE_CAMERAS) return;
+	}
 	(void)path::rmtree((Path)renders);
+}
+
+// The training set's cameras: the front, the studio's front-left three-quarter
+// and both sides.
+const usz CAPTURE_CAMERAS = 4;
+
+fn void capture_cameras(PoseShoot* shoot)
+{
+	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[1] = { .name = "quarter", .yaw = 45, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[2] = { .name = "left", .yaw = 90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[3] = { .name = "right", .yaw = -90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.camera_count = CAPTURE_CAMERAS;
 }
 
 <*
  One chunk of the training set, between frames: the poses render_poses draws
- for the same seed and index, from the front and both sides, a share of them
- frames of the clips that play on the rig, with the points of the mesh that
- show which way the head and the feet turn.
+ for the same seed and index, from the front, the front-left three-quarter
+ and both sides, a share of them frames of the clips that play on the rig,
+ with the points of the mesh that show which way the head and the feet turn.
 *>
 fn void AppState.draw_capture_chunk(&self)
 {
@@ -415,10 +433,7 @@ fn void AppState.draw_capture_chunk(&self)
 	shoot.first = job.render_next;
 	shoot.count = math::min(CAPTURE_CHUNK, job.render_total - job.render_next);
 	shoot.size = job.render_size;
-	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.cameras[1] = { .name = "left", .yaw = 90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.cameras[2] = { .name = "right", .yaw = -90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.camera_count = 3;
+	capture_cameras(&shoot);
 	shoot.all_clips = true;
 	shoot.landmarks = true;
 	DString detail = dstring::new(mem);
@@ -689,24 +704,43 @@ fn String first_picture_in(String folder)
 }
 
 // For an image model: reference.png moved into another pose, the framing kept.
-const String POSE_PROMPT = `Edit this split-screen image of one character. Left: a front camera, the character faces the viewer. Right: a side camera on its right side, the character faces right. Both show the same moment. Change only the pose, the same pose in both views: <describe the pose here>. Keep the character exactly as it is: the same model, colours and proportions, nothing added or lost. Keep it the same size, centred in each view where it stands now, feet on the floor. The cameras do not move; the plain grey background, the lighter floor band and the dark vertical divider stay exactly as they are, and the image keeps its size.`;
+const String POSE_PROMPT = `Pose: <describe the pose here>.
+
+Edit this split-screen image of one character into the pose above. <the views> Both show the same moment. Change only the pose, the same pose in both views. Keep the character exactly as it is: the same model, colours and proportions, nothing added or lost. Keep it the same size, centred in each view where it stands now, feet on the floor. The cameras do not move; the plain grey background, the lighter floor band and the dark vertical divider stay exactly as they are, and the image keeps its size.`;
+
+// The left camera's yaw in the reference folder `studio` (its studio.json); 0,
+// the front, for a reference from before the three-quarter view.
+fn float capture_left_yaw(String studio)
+{
+	char[]? bytes = file::load_temp(string::tformat("%s/studio.json", studio));
+	if (catch bytes) return 45;
+	Object*? layout = json::parse(tmem, (String)bytes);
+	if (catch layout) return 45;
+	if (try Object* views = layout.get("views")) if (views.is_array() && views.get_len() > 0)
+	{
+		if (try double yaw = views.get_at(0).get_float("yaw")) return (float)yaw;
+	}
+	return 0;
+}
 
 // The prompt for an image model, `pose` filled in. Temporary.
-fn String capture_pose_prompt(String pose)
+fn String capture_pose_prompt(String pose, float left_yaw)
 {
+	String prompt = POSE_PROMPT.treplace("<the views>", studio_views_text(left_yaw));
 	pose = pose.trim();
-	if (pose.len == 0) return POSE_PROMPT;
+	if (pose.len == 0) return prompt;
 	if (pose[^1] == '.') pose = pose[:pose.len - 1];
-	return POSE_PROMPT.treplace("<describe the pose here>", pose);
+	return prompt.treplace("<describe the pose here>", pose);
 }
 
 // The prompt render_studio wrote, `action` filled in. Temporary.
-fn String capture_prompt(String action)
+fn String capture_prompt(String action, float left_yaw)
 {
+	String prompt = studio_prompt(left_yaw);
 	action = action.trim();
-	if (action.len == 0) return STUDIO_PROMPT;
+	if (action.len == 0) return prompt;
 	if (action[^1] == '.') action = action[:action.len - 1];
-	return STUDIO_PROMPT.treplace("<describe the movement here>", action);
+	return prompt.treplace("<describe the movement here>", action);
 }
 
 // ---------------------------------------------------------------------------

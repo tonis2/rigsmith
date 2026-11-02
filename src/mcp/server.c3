@@ -534,7 +534,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// same joint finder.
 	server.add_tool({
 		.name = "render_studio",
-		.description = "Draw the character in a two-camera studio for a video model to animate into a clip llm-runner's creature finder reads well: one picture (reference.png), the front view on the left and the right side on the right, the same moment from level, (all but) orthographic cameras sharing one scale and floor row, over a grey wall, a lighter floor band and a dark divider. studio.json beside it says where a point of the model lands in each view; prompt.txt and the answer carry a prompt for the video model, its action left to fill in. The pose is the rest pose, or a clip's moment on the spot. The document is not touched.",
+		.description = "Draw the character in a two-camera studio for a video model to animate into a clip llm-runner's creature finder reads well: one picture (reference.png), a front-left three-quarter view (left_yaw 45; 0 for straight on) on the left and the right side on the right, the same moment from level, (all but) orthographic cameras sharing one scale and floor row, over a grey wall, a lighter floor band and a dark divider. studio.json beside it says where a point of the model lands in each view; prompt.txt and the answer carry a prompt for the video model, its action left to fill in. The pose is the rest pose, or a clip's moment on the spot. The document is not touched.",
 		.input_schema = RENDER_STUDIO_SCHEMA,
 		.handler = &tool_render_studio,
 		.user_data = app,
