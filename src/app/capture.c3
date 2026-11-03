@@ -568,9 +568,21 @@ fn void AppState.draw_capture_reference(&self)
 			self.@notice("Reference picture drawn, but it could not be saved as %s", job.reference_copy);
 			return;
 		}
+		// Its prompt beside it, so the copy is never sent with another picture's camera wording.
+		(void)copy_file(string::tformat("%s/prompt.txt", studio), reference_prompt_copy(job.reference_copy));
 		shown = job.reference_copy;
 	}
 	self.@notice("Reference picture saved as %s at %d × %d · copy a prompt for the video or image model", shown, ask.width, ask.height);
+}
+
+// The prompt's path beside a copied picture: "dir/Test.png" is "dir/Test.txt". Temporary.
+fn String reference_prompt_copy(String picture)
+{
+	usz end = picture.len;
+	usz start = 0;
+	if (try slash = picture.rindex_of_char('/')) start = (usz)slash + 1;
+	if (try dot = picture[start..].rindex_of_char('.')) end = start + (usz)dot;
+	return string::tformat("%s.txt", picture[:end]);
 }
 
 
@@ -985,7 +997,8 @@ fn void AppState.tick_capture(&self)
 				self.land_capture_pose(glb, summary);
 				return;
 			}
-			AnimRef landed = self.land_generated_motion(glb, job.name, LIGHT);
+			// The studio's cameras saw where the root went: kept, not taken off.
+			AnimRef landed = self.land_generated_motion(glb, job.name, LIGHT, keep_travel: true);
 			if (!landed.valid())
 			{
 				job.failed = true;
@@ -1005,7 +1018,7 @@ fn void AppState.tick_capture(&self)
 fn void AppState.land_capture_pose(&self, char[] glb, String summary)
 {
 	CaptureJob* job = &self.capture_job;
-	AnimTemplate? sampled = self.generated_clip_on_rig(glb, job.name, OFF);
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, job.name, OFF, keep_travel: true);
 	if (catch sampled)
 	{
 		job.failed = true;

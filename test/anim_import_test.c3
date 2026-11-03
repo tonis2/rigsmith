@@ -104,8 +104,9 @@ const float SPACER_ROLL = 0.25f; // radians about Y
 const Vec3 KNEE_OFFSET = { 0, -0.4f, 0 };
 const Vec3 ANKLE_OFFSET = { 0, -0.4f, 0 };
 
-// How far the second animation walks its root forward, in the root's frame.
-const Vec3 WALK_STEP = { 0, 0, 1.0f };
+// How far the second animation walks its root forward, in the root's frame,
+// and down: it ends lower than it starts, as a walk into a crouch does.
+const Vec3 WALK_STEP = { 0, -0.2f, 1.0f };
 
 // And how far the third one pivots the hips: past half a circle, which is where
 // a rotation stops having a short way round and a quaternion changes the sign it
@@ -884,7 +885,8 @@ fn void a_pivot_past_half_a_circle_survives() @test
  A clip that walks forward has to come back, or it plays once and leaves.
 
  The travel is taken out in proportion to how far through the clip each sample
- is, which removes the drift and keeps whatever the root did around it.
+ is, which removes the drift and keeps whatever the root did around it. Only
+ across the floor: a clip that ends lower keeps its height.
 *>
 fn void root_travel_comes_off() @test
 {
@@ -901,7 +903,7 @@ fn void root_travel_comes_off() @test
 
 	Vec3 first = walk.keyframes[0].offset_of("hips");
 	Vec3 last = walk.keyframes[walk.keyframes.len - 1].offset_of("hips");
-	test::@check((last - first).length() < EXACT, "the root ends the clip where it started it");
+	test::@check(math::abs(last.x - first.x) < EXACT && math::abs(last.z - first.z) < EXACT, "the root ends the clip over where it started it");
 
 	crig::AnimTemplate kept = crig::import_gltf_animation(
 		mem, path, { .name = "walk", .keep_root_travel = true })!!;
@@ -910,6 +912,9 @@ fn void root_travel_comes_off() @test
 	Vec3 kept_first = kept.keyframes[0].offset_of("hips");
 	Vec3 kept_last = kept.keyframes[kept.keyframes.len - 1].offset_of("hips");
 	test::@check((kept_last - kept_first).length() > 0.1f, "and asking to keep the travel keeps it");
+	float drop = last.y - first.y;
+	float kept_drop = kept_last.y - kept_first.y;
+	test::@check(kept_drop < 0.0f && math::abs(drop - kept_drop) < EXACT, "and the height it ends at stays (%.4f, kept %.4f)", drop, kept_drop);
 }
 
 <*

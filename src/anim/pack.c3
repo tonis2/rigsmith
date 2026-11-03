@@ -313,6 +313,7 @@ struct AnimPackReport
  @param report : `Filled in with what was found and what was left behind, if given.`
  @param plans : `Body plans this file's rig may be matched onto by shape; empty keeps its own joint names.`
  @param bytes : `The file's bytes, read instead of the file at path, which then only names it. Borrowed, and must outlive the pack when defer_clips is set.`
+ @param keep_root_travel : `Leave each clip's root where it carried it, rather than taking its travel off.`
  @return? PACK_EMPTY : `The file carries neither a convertible clip nor a named joint.`
 *>
 fn AnimPack? read_pack(
@@ -321,7 +322,8 @@ fn AnimPack? read_pack(
 	AnimPackReport* report = null,
 	Preset[] plans = {},
 	bool defer_clips = false,
-	char[] bytes = {})
+	char[] bytes = {},
+	bool keep_root_travel = false)
 {
 	gltf::GltfStream stream = bytes.len > 0
 		? gltf::open_bytes(bytes, path, allocator)!
@@ -350,7 +352,7 @@ fn AnimPack? read_pack(
 	// hips and thighs then addressed as joints the dog does not have.
 	int which = as_written(&stream) ? -1 : match_stream(allocator, &stream, plans);
 	Preset[] matched = which >= 0 ? plans[(usz)which : 1] : (Preset[]){};
-	AnimImportOptions naming = { .plans = matched, .keep_source_names = which < 0 };
+	AnimImportOptions naming = { .plans = matched, .keep_source_names = which < 0, .keep_root_travel = keep_root_travel };
 	if (which >= 0) tally.plan_matched = plans[(usz)which].name;
 
 	// --- metadata -----------------------------------------------------------

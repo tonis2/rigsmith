@@ -43,6 +43,12 @@ fn void a_clip_is_named_after_its_video() @test
 	test::@check(crig::capture_clip_name("") == "Captured", "something when there is nothing");
 }
 
+fn void a_copied_reference_keeps_its_prompt_beside_it() @test
+{
+	test::@check(crig::reference_prompt_copy("/refs/Test.png") == "/refs/Test.txt", "the picture's name, as text");
+	test::@check(crig::reference_prompt_copy("/refs.v2/Test") == "/refs.v2/Test.txt", "a dot in the folder is not the extension");
+}
+
 fn void a_stopped_training_set_carries_on_from_its_first_missing_chunk() @test
 {
 	String dir = "build/test_capture_chunks";

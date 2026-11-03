@@ -523,9 +523,11 @@ fn AnimTemplate? import_animation(
 	// Measured against the rig rather than against zero: every clip drifts a
 	// little, and taking a millimetre off a two-metre figure would only add
 	// noise to a walk that was already authored in place.
-	if (!options.keep_root_travel && tally.root_travel.length() > height * 1.0e-4f)
+	// Across the floor only: a clip that ends lower (a crouch, a sit) keeps its height.
+	Vec3 ground_travel = { tally.root_travel.x, 0.0f, tally.root_travel.z };
+	if (!options.keep_root_travel && ground_travel.length() > height * 1.0e-4f)
 	{
-		strip_root_travel(slides, joint_parent, joints, samples, sampled, tally.root_travel);
+		strip_root_travel(slides, joint_parent, joints, samples, sampled, ground_travel);
 		tally.travel_removed = true;
 	}
 
@@ -1884,7 +1886,7 @@ fn Vec3 root_travel(Vec3[] slides, int[] joint_parent, usz joints, usz samples) 
 }
 
 // Take the walk off the treadmill: subtract the travel in proportion to how far
-// through the clip each sample is, so the root ends where it started and the
+// through the clip each sample is, so the root ends over where it started and the
 // sway around that line survives.
 //
 // A clip that was authored in place has no travel to remove and is untouched.

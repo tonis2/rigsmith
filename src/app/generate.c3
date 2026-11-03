@@ -29,7 +29,7 @@
  every unsaved edit.
 
  **What a generated clip is.** In place, like every imported clip — the importer
- takes the travel off the hips (`strip_root_travel`) — at the runner's 30 fps,
+ takes the travel off the hips (`strip_root_travel`; a capture keeps it) — at the runner's 30 fps,
  and not a loop; Kimodo generates one-off motions.
 
  **Guide poses.** A request can name one of the character's clips as its guide
@@ -892,9 +892,9 @@ fn bool AppState.stop_motion_generation(&self)
 
  @return `The clip, or NO_ANIM when the file holds none this rig can take.`
 *>
-fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyReduction optimize = LIGHT)
+fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyReduction optimize = LIGHT, bool keep_travel = false)
 {
-	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name, optimize);
+	AnimTemplate? sampled = self.generated_clip_on_rig(glb, name, optimize, keep_travel: keep_travel);
 	if (catch sampled) return NO_ANIM;
 	AnimRef landed = self.author_clip(sampled);
 	if (!landed.valid()) return NO_ANIM;
@@ -927,16 +927,17 @@ fn AnimRef AppState.land_generated_motion(&self, char[] glb, String name, KeyRed
  @param name : `The clip's name, made unique against the authored pack.`
  @param optimize : `The keys dropped; OFF keeps every key the import made.`
  @param from_clip : `Which of the file's clips, by name; "" takes the one called name, else the first.`
+ @param keep_travel : `Keep the root where the clip carried it (a capture's cameras saw it move), not in place.`
  @return? RIG_EMPTY : `There is no rig to put it on.`
  @return? MOTION_NOT_STARTED : `The file holds no clip, or one for a skeleton this rig does not relate to.`
  @return? MOTION_CLIP_MISSING : `from_clip names no clip in the file.`
 *>
-fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, KeyReduction optimize = LIGHT, String from_clip = "")
+fn AnimTemplate? AppState.generated_clip_on_rig(&self, char[] glb, String name, KeyReduction optimize = LIGHT, String from_clip = "", bool keep_travel = false)
 {
 	RigView view = self.open_rig(mem)!;
 	defer view.free(mem);
 
-	AnimPack pack = read_pack(mem, "kimodo.glb", plans: self.reference_plans, bytes: glb)!;
+	AnimPack pack = read_pack(mem, "kimodo.glb", plans: self.reference_plans, bytes: glb, keep_root_travel: keep_travel)!;
 	defer pack.free(mem);
 	if (pack.clips.len == 0) return MOTION_NOT_STARTED~;
 	AnimTemplate source = pack.clips[0];
