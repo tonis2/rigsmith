@@ -2432,6 +2432,10 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				.close_outside = true,
 			}).with_id(ASSET_SETTINGS_DIALOG_ID);
 
+			// Under the chooser, which its Browse opens.
+			@node((Dialog) { .title = "Reference picture", .body = &build_reference_dialog_body,
+				.style = DIALOG_STYLE, .modal = true }).with_id(REFERENCE_DIALOG_ID);
+
 			@node((Dialog) {
 				.title = "Open model",
 				.body = &build_file_dialog_body,

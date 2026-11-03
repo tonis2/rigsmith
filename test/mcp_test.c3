@@ -5298,6 +5298,10 @@ fn void render_studio_names_a_bad_argument_and_a_missing_window() @test
 		"a picture with nowhere to go is refused, naming out");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","width":1281}`, "1281", "even"),
 		"an odd width, which video encoders refuse, is refused");
+	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1344}`, "width", "height"),
+		"a reference width without its height is refused");
+	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1345,"height":768}`, "even"),
+		"an odd reference width is refused");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","ground_row":100}`, "ground_row", "360"),
 		"a floor above the middle of the picture is refused against the range");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","front_width":1250}`, "front_width"),

@@ -462,6 +462,10 @@ struct AppState
 	bool pose_library_selected_only;
 	bool pose_library_renaming;
 	String pose_library_name;
+	// The Reference picture dialog: its pose choices (the frame, then the saved
+	// poses; owned) and the one chosen.
+	String[] reference_pose_names;
+	usz reference_pose_row;
 
 	// Sketching (sketch.c3): the tool, the stroke in flight (pixels), the ink or
 	// the eraser, and the marks drawn so far.
@@ -1442,6 +1446,8 @@ enum FilePurpose
 	// to link into it (Settings › AI › Plugins).
 	PLUGINS_FOLDER,
 	PLUGIN_LINK,
+	// Where the Reference picture dialog saves its picture.
+	REFERENCE_FOLDER,
 }
 
 <*
@@ -1582,6 +1588,8 @@ fn void AppState.free(&self)
 	self.anim_pose_clipboard.free(mem);
 	self.piece_drag.clear();
 	self.pose_library_name.free(mem);
+	free_names(mem, self.reference_pose_names);
+	self.reference_pose_names = {};
 	if (self.pending_open.len > 0) alloc::free(mem, self.pending_open.ptr);
 	if (self.pending_add.len > 0) alloc::free(mem, self.pending_add.ptr);
 	if (self.pending_scene.len > 0) alloc::free(mem, self.pending_scene.ptr);

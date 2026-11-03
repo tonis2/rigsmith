@@ -633,6 +633,8 @@ fn Element* build_anim_clip_menu(Ui* ui)
 				.disabled = none }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-mirror-clip");
 			@node((PopupMenuItem) { .item = { .label = "Fix mapping…", .on_select = &anim_fix_mapping_clicked,
 				.disabled = !app.clip_mappable(app.editing) }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FIX_MAPPING_ID);
+			@node((PopupMenuItem) { .item = { .label = "Reference picture…", .on_select = &reference_dialog_clicked },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_REFERENCE_ID);
 			if (app.config.self_collision)
 			{
 				@node((PopupMenuItem) { .item = { .label = "Collision…", .on_select = &collision_dialog_clicked },

@@ -10,9 +10,9 @@
     sides), a few poses a frame so the window keeps repainting, then creature's `train` task on it, about half an hour
     on one GPU, at the node's picture size (bigger is finer and slower). Or a
     finder trained before, chosen as a file.
- 2. **A reference picture**, from the Pose tab: render_studio's two cameras
-    side by side, a front-left three-quarter view and the right side, on a
-    saved pose. A video
+ 2. **A reference picture**, from the Animations ⋯ menu: render_studio's two cameras
+    side by side, a front-left three-quarter view and the right side, on the
+    frame at the playhead or a saved pose. A video
     model animates it, or an image model reposes it.
  3. **The clip** (Nodes: Animate): creature's animate task reads the video
     a frame at a time (image::mp4, no ffmpeg) with the reference's layout
@@ -104,6 +104,8 @@ struct CaptureJob
 	bool mirror_off;
 	// Whether the one picture lands as a saved pose instead of a clip.
 	bool pose;
+	// Only the video's first this many frames are read; 0 = all of them.
+	uint max_frames;
 	// Asked for by the pane; drawn between frames, where the renderer is free:
 	// its folder, its clip ("" = the rest pose) and moment, and how it went.
 	bool reference_pending;
@@ -111,8 +113,12 @@ struct CaptureJob
 	String reference_studio;
 	String reference_clip;
 	float reference_time;
+	uint reference_width;
+	uint reference_height;
 	// A saved pose to draw instead of a clip, by name.
 	String reference_pose;
+	// Where a copy of the picture goes too; "" for none.
+	String reference_copy;
 	// Bumped whenever a step ends, so the pane rebuilds its statuses.
 	uint finished;
 	// Set when a clip has landed, for the interface to select; taken once.
@@ -148,6 +154,7 @@ fn void CaptureJob.clear(&self)
 	}
 	self.name = self.frames = self.finder = self.studio = self.backbone = "";
 	self.pose = false;
+	self.max_frames = 0;
 	self.running = false;
 	self.stage = IDLE;
 	self.failed = false;
@@ -158,11 +165,11 @@ fn void CaptureJob.clear(&self)
 fn void CaptureJob.free(&self)
 {
 	self.clear();
-	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose })
+	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose, self.reference_copy })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.reference_studio = self.reference_clip = self.reference_pose = "";
+	self.reference_studio = self.reference_clip = self.reference_pose = self.reference_copy = "";
 }
 
 <*
@@ -327,12 +334,13 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_GPU: return "there is no GPU to run it on";
 		case CAPTURE_NO_SKELETON: return "the model needs a skinned skeleton first";
 		case CAPTURE_NO_FINDER: return "train a joint finder, or choose one, first";
-		case CAPTURE_NO_REFERENCE: return "save a reference picture first: Pose tab › Reference picture";
+		case CAPTURE_NO_REFERENCE: return "save a reference picture first: Animations ⋯ › Reference picture…";
 		case CAPTURE_NO_VIDEO: return "choose a video (H.264 .mp4 or .mov), or a folder of its frames";
 		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
 		case CAPTURE_POSE_TAKEN: return "a pose by that name is saved — name this one";
 		case CAPTURE_NO_IMAGE: return "choose the picture: a .png or .jpg";
 		case CAPTURE_BAD_POSES: return "Poses is a whole number from 50 to 20000";
+		case CAPTURE_BAD_FRAMES: return "Frames is a whole number of frames, 1 or more, or empty for the whole video";
 		case CAPTURE_BAD_SIZE: return "Size is one of 448, 512, 640, 768, 896 or 1024 pixels";
 		case CAPTURE_NO_PLUGIN: return "the creature plugin is not in the plugins folder — link it in File › Settings › AI › Plugins";
 		case h264::CABAC:
@@ -469,12 +477,33 @@ fn String capture_train_json(String backbone, String renders, String finder)
 // ---------------------------------------------------------------------------
 // 2. The reference picture.
 
+// The reference picture's sizes: the frame sizes video models make, so a clip
+// comes back at the picture's own size.
+const uint[2][*] REFERENCE_SIZES = { { 1280, 720 }, { 1344, 768 }, { 832, 480 }, { 1920, 1080 }, { 1024, 576 } };
+const String[*] REFERENCE_SIZE_NAMES = { "1280 × 720", "1344 × 768", "832 × 480", "1920 × 1080", "1024 × 576" };
+
+// The chosen size's row; a row past the list is the first.
+fn usz AppState.reference_size_row(&self)
+{
+	int row = self.config.reference_size;
+	return row >= 0 && row < (int)REFERENCE_SIZES.len ? (usz)row : 0;
+}
+
+fn void AppState.set_reference_size(&self, usz row)
+{
+	if (row >= REFERENCE_SIZES.len || (int)row == self.config.reference_size) return;
+	self.config.reference_size = (int)row;
+	self.config.save();
+}
+
 <*
  Draw the reference picture into `studio` next time the renderer is free:
  render_studio's two cameras on the saved pose `pose`, or else on `clip`
- ("pack/clip"; "" is the rest pose) at `time` seconds.
+ ("pack/clip"; "" is the rest pose) at `time` seconds, `width` x `height`
+ pixels (0 = the chosen reference size), with a copy of the picture at `copy`
+ ("" = none).
 *>
-fn void? AppState.request_capture_reference(&self, String studio, String clip, float time, String pose = "")
+fn void? AppState.request_capture_reference(&self, String studio, String clip, float time, String pose = "", uint width = 0, uint height = 0, String copy = "")
 {
 	if (self.source_path.len == 0) return CAPTURE_NO_MODEL_FILE~;
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
@@ -482,7 +511,11 @@ fn void? AppState.request_capture_reference(&self, String studio, String clip, f
 	replace_owned(&job.reference_studio, studio);
 	replace_owned(&job.reference_clip, clip);
 	replace_owned(&job.reference_pose, pose);
+	replace_owned(&job.reference_copy, copy);
 	job.reference_time = math::max(time, 0.0f);
+	uint[2] size = REFERENCE_SIZES[self.reference_size_row()];
+	job.reference_width = width > 0 ? width : size[0];
+	job.reference_height = height > 0 ? height : size[1];
 	job.reference_ok = false;
 	job.reference_pending = true;
 }
@@ -494,6 +527,13 @@ fn void AppState.draw_capture_reference(&self)
 	String studio = job.reference_studio;
 	(void)path::mkdir(studio, true);
 	StudioAsk ask = studio_ask_defaults(studio);
+	if (job.reference_width > 0 && job.reference_height > 0)
+	{
+		// The floor seven eighths down, as at the default size.
+		ask.width = job.reference_width;
+		ask.height = job.reference_height;
+		ask.ground_row = (uint)math::round((double)ask.height * 0.875);
+	}
 	ask.clip = job.reference_clip;
 	ask.time = job.reference_time;
 	if (job.reference_pose.len > 0)
@@ -519,13 +559,20 @@ fn void AppState.draw_capture_reference(&self)
 	}
 	alloc::free(mem, answer.ptr);
 	job.reference_ok = true;
-	if (job.reference_pose.len > 0)
+	String shown = studio;
+	if (job.reference_copy.len > 0)
 	{
-		self.@notice("Reference picture of \"%s\" written · copy a prompt for a video or an image model", job.reference_pose);
-		return;
+		if (try slash = job.reference_copy.rindex_of_char('/')) if (slash > 0) (void)path::mkdir(job.reference_copy[:(usz)slash], true);
+		if (!copy_file(string::tformat("%s/reference.png", studio), job.reference_copy))
+		{
+			self.@notice("Reference picture drawn, but it could not be saved as %s", job.reference_copy);
+			return;
+		}
+		shown = job.reference_copy;
 	}
-	self.@notice("Reference picture written to %s · give it to the video model with the prompt", studio);
+	self.@notice("Reference picture saved as %s at %d × %d · copy a prompt for the video or image model", shown, ask.width, ask.height);
 }
+
 
 // ---------------------------------------------------------------------------
 // The references: each a folder with reference.png and studio.json.
@@ -751,10 +798,11 @@ Start turning `video` into the clip `name` ("" = the video's file name) with
  `finder` and the reference in `studio` ("" = the one its first frame looks
  like): an H.264 .mp4/.mov the pipeline reads a frame at a time, or a folder
  of frames. With `pose`, `video` is one picture and the result a saved pose.
+ `max_frames` reads only the video's first that many frames (0 = all).
  Nothing is written beside the model.
 *>
 fn void? AppState.start_capture_animation(&self, String backbone, String finder, String studio, String video, String name, bool mirror = true,
-	bool pose = false)
+	bool pose = false, uint max_frames = 0)
 {
 	self.capture_ready(backbone)!;
 	if (finder.len == 0 || !file::exists(finder)) return CAPTURE_NO_FINDER~;
@@ -788,6 +836,7 @@ fn void? AppState.start_capture_animation(&self, String backbone, String finder,
 	job.backbone = backbone.trim().copy(mem);
 	job.mirror_off = !mirror;
 	job.pose = pose;
+	job.max_frames = pose ? 0 : max_frames;
 	job.fps = fps;
 	job.frames = video.copy(mem);
 	if (studio.len == 0) studio = self.capture_reference_matching(folder ? first_picture_in(video) : video);
@@ -830,6 +879,7 @@ fn String AppState.capture_animate_json(&self)
 	out.append_string(",\n  \"name\": ");
 	gltf_edit::escape_json_string(&out, job.name);
 	if (job.mirror_off) out.append_string(",\n  \"flip\": false");
+	if (job.max_frames > 0) out.appendf(",\n  \"max_frames\": %d", job.max_frames);
 	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\"]\n}\n", job.fps);
 	return out.copy_str(mem);
 }

@@ -442,6 +442,17 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 					self.run_icon(n.kind, running, pose ? "Image to pose — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
 						: "Animate — reads the video a frame at a time into a clip on the character, with the finder and the picture's layout; save the model to keep it");
 				};
+				if (!pose)
+				{
+					// Fewer frames for a quick test run; empty reads the whole video.
+					@tree((Row) { .gap = 4, .cross_align = CENTER })
+					{
+						small_label("Frames");
+						@node((TextField) { .width = 48, .style = TEXT_FIELD_STYLE, .placeholder = "all", .on_change = &node_param3_changed,
+							.on_submit = &node_field_submitted }).with_id(NODE_FIELD_IDS[3]);
+						small_label("from the start");
+					};
+				}
 				if (!running && g.failed != (sz)i) self.status(ready ? (pose ? "In Poses" : "On the character") : "", ready);
 		}
 		if (running)

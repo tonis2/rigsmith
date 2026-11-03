@@ -5,8 +5,6 @@ module crig;
 import cui;
 import cui::widgets;
 import std::math;
-import std::io::file;
-import std::os::process;
 
 const String ANIM_POSE_PANEL_ID = "anim-pose-panel";
 const String ANIM_POSE_NAME_ID = "anim-pose-name";
@@ -18,10 +16,6 @@ const String ANIM_POSE_APPLY_ID = "anim-pose-apply";
 const String ANIM_POSE_APPLY_MIRRORED_ID = "anim-pose-apply-mirrored";
 const String ANIM_POSE_RENAME_ID = "anim-pose-rename";
 const String ANIM_POSE_DELETE_ID = "anim-pose-delete";
-const String ANIM_POSE_REFERENCE_ID = "anim-pose-reference";
-const String ANIM_POSE_VIDEO_PROMPT_ID = "anim-pose-video-prompt";
-const String ANIM_POSE_IMAGE_PROMPT_ID = "anim-pose-image-prompt";
-const String ANIM_POSE_REFERENCE_FOLDER_ID = "anim-pose-reference-folder";
 // Rows the list shows before it scrolls.
 const float ANIM_POSE_ROWS = 5;
 
@@ -119,55 +113,6 @@ struct AnimPosesPanel (Widget)
 	TreeRow[] rows;
 }
 
-// The selected pose's reference folder; "" with no pose. Temporary.
-fn String selected_pose_reference(AppState* app) @private
-{
-	if (app.pose_library_row >= app.doc.poses.len) return "";
-	return app.capture_reference_path(capture_reference_name(app.doc.poses[app.pose_library_row].name));
-}
-
-fn void anim_pose_reference_clicked(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	if (app.pose_library_row >= app.doc.poses.len)
-	{
-		app.@notice("pick a saved pose to draw");
-		return;
-	}
-	String name = app.doc.poses[app.pose_library_row].name;
-	if (catch err = app.request_capture_reference(selected_pose_reference(app), "", 0, name))
-	{
-		app.@notice("No reference picture: %s", capture_fault_text(err));
-	}
-}
-
-fn void anim_pose_prompt(Ui* ui, bool video) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	float yaw = capture_left_yaw(selected_pose_reference(app));
-	ui.clipboard_write(video ? capture_prompt("", yaw) : capture_pose_prompt("", yaw));
-	app.@notice(video ? "Video prompt copied · write the action on its first line"
-		: "Image prompt copied · write the pose on its first line");
-}
-
-fn void anim_pose_video_prompt_clicked(Ui* ui) => anim_pose_prompt(ui, true);
-fn void anim_pose_image_prompt_clicked(Ui* ui) => anim_pose_prompt(ui, false);
-
-fn void anim_pose_reference_folder_clicked(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	String folder = selected_pose_reference(app);
-	if (folder.len == 0) return;
-	$if env::DARWIN:
-		String opener = "open";
-	$else
-		String opener = "xdg-open";
-	$endif
-	Process? shown = process::spawn({ opener, folder });
-	if (catch shown) { app.@notice("Could not open %s", folder); return; }
-	(void)shown.destroy();
-}
-
 fn void AnimPosesPanel.release(&self)
 {
 	foreach (row : self.rows)
@@ -226,22 +171,6 @@ fn Element* AnimPosesPanel.build(&self, Element* elem) @dynamic
 					@node(panel_button("Apply mirrored", &anim_pose_apply_mirrored_clicked)).with_id(ANIM_POSE_APPLY_MIRRORED_ID);
 					@node(panel_button("Rename…", &anim_pose_rename_clicked)).with_id(ANIM_POSE_RENAME_ID);
 					@node(panel_button("Delete", &anim_pose_delete_clicked)).with_id(ANIM_POSE_DELETE_ID);
-				};
-				String reference = selected_pose_reference(app);
-				bool drawn = reference.len > 0 && file::exists(string::tformat("%s/reference.png", reference));
-				@tree((Row) { .gap = 4, .cross_align = CENTER })
-				{
-					@card_icon(PICTURE_GLYPH, "Reference picture — draws the selected pose from the front and its right side in one picture, for a video model to animate or an image model to repose; the Nodes' Video and Image read it",
-						&anim_pose_reference_clicked).with_id(ANIM_POSE_REFERENCE_ID);
-					if (drawn)
-					{
-						@card_icon(VIDEO_PROMPT_GLYPH, "Copy video prompt — give a video model reference.png as the first frame and this prompt; fill in the action",
-							&anim_pose_video_prompt_clicked).with_id(ANIM_POSE_VIDEO_PROMPT_ID);
-						@card_icon(IMAGE_PROMPT_GLYPH, "Copy image prompt — give an image model reference.png and this prompt; fill in the new pose",
-							&anim_pose_image_prompt_clicked).with_id(ANIM_POSE_IMAGE_PROMPT_ID);
-						@card_icon(FOLDER_GLYPH, "Open folder — where this pose's reference.png is",
-							&anim_pose_reference_folder_clicked).with_id(ANIM_POSE_REFERENCE_FOLDER_ID);
-					}
 				};
 			}
 			if (self.rows.len == 0)

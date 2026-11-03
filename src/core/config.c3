@@ -30,6 +30,8 @@
        "joint_panel_tab": 0,
        "folded_sections": 0,
        "nodes_template": 0,
+       "reference_size": 0,
+       "reference_folder": "/Users/me/pictures",
        "motion_generator": { "text_model": "/models/Llama-3-Kimodo-Q8_0.gguf", ... } }
 
  **Nothing here refuses.** A session that will not parse is rejected, because
@@ -322,6 +324,11 @@ struct CrigConfig
 	// The Nodes pane's open template (a TEMPLATE_DOCS index).
 	int nodes_template;
 
+	// The reference picture's size, a REFERENCE_SIZES row (the video model's frame size).
+	int reference_size;
+	// Where a copy of the reference picture is saved; "" for none. Owned.
+	String reference_folder;
+
 	// Text-to-motion; unset until the config names a runner.
 	MotionGenerator motion_generator;
 
@@ -535,6 +542,14 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	if (try double wanted = parsed.get_float("nodes_template"))
 	{
 		if (wanted >= 0 && wanted <= 15) self.nodes_template = (int)wanted;
+	}
+	if (try double wanted = parsed.get_float("reference_size"))
+	{
+		if (wanted >= 0 && wanted <= 15) self.reference_size = (int)wanted;
+	}
+	if (try String folder = parsed.get_string("reference_folder"))
+	{
+		if (folder.len > 0) self.reference_folder = folder.copy(mem);
 	}
 
 	self.adopt_libraries(parsed);
@@ -835,6 +850,8 @@ struct ConfigFile @private
 	int joint_panel_tab;
 	uint folded_sections;
 	int nodes_template;
+	int reference_size;
+	String reference_folder;
 	MotionGenerator motion_generator;
 }
 
@@ -896,6 +913,8 @@ fn void CrigConfig.save(&self)
 		.joint_panel_tab = self.joint_panel_tab,
 		.folded_sections = self.folded_sections,
 		.nodes_template = self.nodes_template,
+		.reference_size = self.reference_size,
+		.reference_folder = self.reference_folder,
 		.motion_generator = self.motion_generator,
 	};
 
@@ -927,6 +946,7 @@ fn void CrigConfig.free(&self)
 	}
 	self.libraries.free();
 	if (self.browse_directory.len > 0) alloc::free(mem, self.browse_directory.ptr);
+	if (self.reference_folder.len > 0) alloc::free(mem, self.reference_folder.ptr);
 	MotionGenerator* g = &self.motion_generator;
 	foreach (held : (String[]){ g.text_model, g.tokenizer, g.model, g.creature_model, g.plugins })
 	{

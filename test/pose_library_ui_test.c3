@@ -105,29 +105,58 @@ fn String field_value(Fixture* f, String id)
 	return "";
 }
 
-fn void the_pose_tab_draws_a_saved_pose_as_a_reference_picture() @test
+fn void the_clip_menu_draws_a_reference_picture_into_a_chosen_folder() @test
 {
 	Fixture f;
 	f.open()!!;
 	defer f.close();
 	Quaternionf turn = quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), 0.4f);
 	pose_clipboard_workspace(&f, turn);
-	f.open_pose_tab();
-	test::@check(!pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_ID), "Reference picture offered with no saved pose");
-	f.click(f.center_of(crig::ANIM_POSE_SAVE_ID)!!);
+	test::@check(f.app.save_named_pose("Crouch") >= 0, "the pose would not save");
+	f.app.point_at("build/test_reference_dialog.glb");
+	test::@check(f.app.scrub_to(1.5f), "the clip would not scrub");
 	f.ui.flush();
-	test::@check(pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_ID), "no Reference picture for the saved pose");
-	test::@check(!pose_panel_has(&f, crig::ANIM_POSE_VIDEO_PROMPT_ID) && !pose_panel_has(&f, crig::ANIM_POSE_REFERENCE_FOLDER_ID),
-		"prompts and the folder offered before the picture is drawn");
-	f.click(f.center_of(crig::ANIM_POSE_REFERENCE_ID)!!);
+	f.pick_menu_item(crig::ANIM_MORE_ID, crig::ANIM_REFERENCE_ID);
+	test::@check(pose_panel_has(&f, crig::REFERENCE_POSE_ID), "Reference picture… did not open its dialog");
+	test::@check(f.app.reference_pose_names.len == 2, "the pose choices are not the frame and Crouch");
+	test::eq(f.app.reference_pose_names[0], "Frame at the playhead");
+	test::eq(f.app.reference_pose_names[1], "Pose: Crouch");
+
+	// Browse's chooser opens over the dialog, and its answer fills the folder.
+	f.click(f.center_of(crig::REFERENCE_BROWSE_ID)!!);
 	f.ui.flush();
+	Element* chooser = f.ui.find_id(crig::FILE_DIALOG_ID)!!;
+	test::@check(chooser.widget_as(Dialog).open, "Browse did not open the chooser");
+	Element* path_field = f.ui.find_id(crig::FILE_PATH_ID)!!;
+	Element* hit = f.ui.hit_test(path_field.absolute + path_field.size * 0.5f);
+	while (hit && hit != chooser) hit = hit.parent;
+	test::@check(hit == chooser, "the chooser is under the Reference picture dialog");
+	path_field.widget_as(TextField).set_text(path_field, "build");
+	path_field.request_focus();
+	f.feed_key(Key.RETURN);
+	test::@check(!chooser.widget_as(Dialog).open, "Use did not close the chooser");
+	test::eq(field_value(&f, crig::REFERENCE_FOLDER_ID), "build");
+	test::@check(pose_panel_has(&f, crig::REFERENCE_POSE_ID), "the dialog closed with the chooser");
+	Element* folder_field = f.ui.find_id(crig::REFERENCE_FOLDER_ID)!!;
+	folder_field.widget_as(TextField).set_text(folder_field, "");
+	f.type_into(folder_field, "build/test_reference_copy/");
+
 	crig::CaptureJob* job = &f.app.capture_job;
-	if (f.app.source_path.len == 0)
-	{
-		test::@check(!job.reference_pending, "a model with no file has nowhere to put the picture");
-		return;
-	}
-	test::@check(job.reference_pending && job.reference_pose == "Pose 1", "the saved pose was not asked for (%s)", job.reference_pose);
-	test::@check(job.reference_studio == f.app.capture_reference_path("Pose 1"), "it goes in references/Pose 1 (%s)", job.reference_studio);
+	f.click(f.center_of(crig::REFERENCE_DRAW_ID)!!);
+	f.ui.flush();
+	test::eq(f.app.config.reference_folder, "build/test_reference_copy");
+	test::@check(job.reference_pending && job.reference_pose.len == 0 && job.reference_clip.ends_with("Posed"),
+		"the frame at the playhead was not asked for (%s)", job.reference_clip);
+	test::@check(job.reference_time == 1.5f, "not at the playhead (%f)", job.reference_time);
+	test::eq(job.reference_studio, f.app.capture_reference_path("Posed"));
+	test::eq(job.reference_copy, "build/test_reference_copy/Posed.png");
+	job.reference_pending = false;
+
+	f.app.reference_pose_row = 1;
+	f.click(f.center_of(crig::REFERENCE_DRAW_ID)!!);
+	f.ui.flush();
+	test::@check(job.reference_pending && job.reference_pose == "Crouch", "the saved pose was not asked for (%s)", job.reference_pose);
+	test::eq(job.reference_studio, f.app.capture_reference_path("Crouch"));
+	test::eq(job.reference_copy, "build/test_reference_copy/Crouch.png");
 	job.reference_pending = false;
 }

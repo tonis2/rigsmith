@@ -13,6 +13,7 @@
 *>
 module crig;
 
+import std::math;
 import std::collections::object;
 import std::io::file;
 import std::collections::list;
@@ -27,6 +28,8 @@ const String CAPTURE_SCHEMA = `{"type":"object","properties":{
 	"pose":{"type":"string","description":"reference: a saved pose to draw, by name."},
 	"clip":{"type":"string","description":"reference: the clip to take the pose from, \"pack/clip\", instead of a saved pose; the rest pose without either."},
 	"time":{"type":"number","description":"reference: the clip's moment in seconds. Default 0."},
+	"width":{"type":"integer","description":"reference: the picture's width in pixels, even, 256 to 3840 (the video model's frame width). Default the size chosen in the Poses panel (1280 × 720 at first)."},
+	"height":{"type":"integer","description":"reference: the picture's height in pixels, even, 256 to 2160. Given with width."},
 	"video":{"type":"string","description":"animate: the video the picture was animated into (H.264 .mp4 or .mov, read in Rigsmith), or a folder of its frames."},
 	"picture":{"type":"string","description":"animate, instead of video: one .png or .jpg in the reference picture's layout (reference.png edited into a pose); it lands as a saved pose."},
 	"name":{"type":"string","description":"animate: the clip's (or pose's) name. Default the video's (or picture's) file name."},
@@ -82,9 +85,19 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 			}
 			double time = 0;
 			if (try given = args.get_float("time")) time = given;
+			double width = 0;
+			double height = 0;
+			if (try given = args.get_float("width")) width = given;
+			if (try given = args.get_float("height")) height = given;
+			if ((width > 0) != (height > 0) || (width > 0 && (width < 256 || width > 3840 || height < 256 || height > 2160
+				|| (uint)width % 2 != 0 || (uint)height % 2 != 0 || width != math::floor(width) || height != math::floor(height))))
+			{
+				detail.append_string(`capture's reference takes "width" and "height" together: whole, even pixels, 256 to 3840 by 256 to 2160.`);
+				return CAPTURE_REFUSED~;
+			}
 			String named = capture_reference_name(pose.len > 0 ? pose : clip.len > 0 ? clip : "rest");
 			String studio = app.capture_reference_path(named).copy(tmem);
-			if (catch err = app.request_capture_reference(studio, clip, (float)time, pose)) return capture_refused(detail, err);
+			if (catch err = app.request_capture_reference(studio, clip, (float)time, pose, (uint)width, (uint)height)) return capture_refused(detail, err);
 			// MCP calls are answered between frames, where the renderer is free.
 			app.draw_capture_reference();
 			if (!file::exists(string::tformat("%s/studio.json", studio)))

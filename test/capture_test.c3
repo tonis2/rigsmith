@@ -186,6 +186,19 @@ fn void the_animate_task_asks_for_the_clip_only() @test
 	}
 	defer read_once.free();
 	test::@check(@ok(read_once.get_bool("flip")) && !read_once.get_bool("flip")!!, "with it off each frame is read once");
+	test::@check(!@ok(read_once.get("max_frames")), "the whole video unless told fewer");
+	app.capture_job.max_frames = 40;
+	String brief = app.capture_animate_json();
+	defer brief.free(mem);
+	Object*? read_short = json::parse(mem, brief);
+	if (catch read_short)
+	{
+		test::@check(false, "the animate settings parse as JSON: %s", brief);
+		return;
+	}
+	defer read_short.free();
+	test::@check((read_short.get_int("max_frames") ?? 0) == 40, "only the first 40 frames: %s", brief);
+	app.capture_job.max_frames = 0;
 
 	// A picture goes as a one-item list, read where it is.
 	app.capture_job.pose = true;
@@ -201,6 +214,31 @@ fn void the_animate_task_asks_for_the_clip_only() @test
 	defer read_pose.free();
 	Object*? frames = read_pose.get("frames");
 	test::@check(@ok(frames) && frames!!.get_len() == 1 && (frames!!.get_string_at(0) ?? "") == "/pictures/crouch.png", "the picture itself: %s", pose);
+}
+
+fn void the_reference_picture_is_drawn_at_the_chosen_size() @test
+{
+	String dir = "build/test_reference_size";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	test::@check(app.reference_size_row() == 0, "1280 x 720 at first");
+	String studio = app.capture_path("references/rest").copy(tmem);
+	app.request_capture_reference(studio, "", 0)!!;
+	test::@check(app.capture_job.reference_width == 1280 && app.capture_job.reference_height == 720, "the first size by default");
+
+	app.set_reference_size(1);
+	test::@check(app.config.reference_size == 1, "the choice is kept in the settings");
+	app.request_capture_reference(studio, "", 0)!!;
+	test::@check(app.capture_job.reference_width == 1344 && app.capture_job.reference_height == 768,
+		"the chosen size (%d x %d)", app.capture_job.reference_width, app.capture_job.reference_height);
+	app.request_capture_reference(studio, "", 0, "", 832, 480)!!;
+	test::@check(app.capture_job.reference_width == 832 && app.capture_job.reference_height == 480, "a size asked for wins");
+
+	app.config.reference_size = 99;
+	test::@check(app.reference_size_row() == 0, "a size past the list is the first");
+	app.capture_job.reference_pending = false;
 }
 
 fn void the_animate_notice_says_how_long_it_took() @test
@@ -219,6 +257,14 @@ fn void an_animate_node_starts_with_the_mirror_check_off() @test
 	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
 	crig::PipelineNode* animate = g.at((usz)g.find("animate"));
 	test::@check(animate.params[1] == "0" && !crig::node_mirror_on(animate), "a new Animate node reads each frame once (%s)", animate.params[1]);
+	test::@check((crig::node_max_frames(animate) ?? 99) == 0, "and the whole video");
+	g.set_param((usz)g.find("animate"), 3, " 40 ");
+	test::@check((crig::node_max_frames(animate) ?? 0) == 40, "Frames 40 reads the first 40");
+	foreach (bad : (String[]) { "0", "-3", "ten" })
+	{
+		g.set_param((usz)g.find("animate"), 3, bad);
+		test::@check(@catch(crig::node_max_frames(animate)) == crig::CAPTURE_BAD_FRAMES, "Frames '%s' is refused", bad);
+	}
 }
 
 fn void image_to_pose_makes_a_saved_pose() @test
@@ -233,7 +279,7 @@ fn void image_to_pose_makes_a_saved_pose() @test
 	sz image = g.find("image");
 	test::@check(g.count() == 5 && animate >= 0 && image >= 0 && g.at(animate).input[1] == image, "the picture into Image to pose (%d nodes)", g.count());
 	if (animate < 0 || image < 0) return;
-	test::@check(g.find("reference") < 0, "no reference node: references come from the Pose tab");
+	test::@check(g.find("reference") < 0, "no reference node: references come from the clip menu");
 	test::@check(!g.connect((usz)image, (usz)g.add(crig::NodeKind.ANIMATE, { 600, 0 }), 1), "a picture does not wire into Animate's video");
 	test::@check(!app.node_ready(g, (usz)image), "no picture chosen, not ready");
 

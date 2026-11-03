@@ -139,6 +139,7 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case CAPTURE_FOLDER: return { "Choose a folder", "Use" };
 		case PLUGINS_FOLDER: return { "Choose the llm folder", "Use" };
 		case PLUGIN_LINK: return { "Link a plugin's folder", "Link" };
+		case REFERENCE_FOLDER: return { "Save the reference picture in", "Use" };
 		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
 		case OPEN_SCENE: return { "Open scene", "Open" };
 		case SAVE_SCENE: return { "Save scene as", "Save" };
@@ -235,7 +236,8 @@ fn String[] file_dialog_mask(AppState* app) @private
 		case MOTION_PATH: return motion_file_mask[..];
 		case CAPTURE_VIDEO:
 		case CAPTURE_FOLDER: return capture_video_mask[..];
-		case CAPTURE_IMAGE: return capture_image_mask[..];
+		case CAPTURE_IMAGE:
+		case REFERENCE_FOLDER: return capture_image_mask[..];
 		case CAPTURE_FINDER: return capture_finder_mask[..];
 		case PLUGINS_FOLDER:
 		case PLUGIN_LINK: return plugin_mask[..];
@@ -356,7 +358,7 @@ fn void file_path_submitted(Ui* ui, String text) @private
  confirmation takes the file.
 *>
 // The purposes whose answer is a folder, which confirming takes rather than opens.
-fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK || purpose == CAPTURE_FOLDER;
+fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK || purpose == CAPTURE_FOLDER || purpose == REFERENCE_FOLDER;
 
 // The purposes a folder answers as well as a file: Select takes the folder in the field.
 fn bool takes_folder(FilePurpose purpose) @private => picks_folder(purpose) || purpose == MOTION_PATH || purpose == CAPTURE_VIDEO;
@@ -441,6 +443,8 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			set_motion_path(ui, "plugins", path);
 		case PLUGIN_LINK:
 			link_plugin_chosen(ui, path);
+		case REFERENCE_FOLDER:
+			set_reference_folder_field(ui, path);
 	}
 	app.refresh_ui();
 }

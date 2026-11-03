@@ -22,7 +22,7 @@ import cui;
 import cui::widgets;
 import gltf_edit;
 
-faultdef CAPTURE_CLIP_TAKEN, CAPTURE_POSE_TAKEN, CAPTURE_BAD_POSES, NODE_NOTHING_TO_RUN, NODE_SOURCE_MISSING;
+faultdef CAPTURE_CLIP_TAKEN, CAPTURE_POSE_TAKEN, CAPTURE_BAD_POSES, CAPTURE_BAD_FRAMES, NODE_NOTHING_TO_RUN, NODE_SOURCE_MISSING;
 
 enum NodeKind : char
 {
@@ -86,7 +86,7 @@ const String[NODE_PARAMS][NODE_KINDS] NODE_PARAM_NAMES = {
 	{ "path", "", "", "", "" },
 	{ "poses", "size", "folder", "", "" },
 	{ "path", "", "", "", "" },
-	{ "name", "mirror", "folder", "", "" },
+	{ "name", "mirror", "folder", "frames", "" },
 	{ "text", "", "", "", "" },
 	{ "path", "", "", "", "" },
 	{ "name", "mirror", "folder", "", "" },
@@ -184,6 +184,17 @@ fn bool node_mirror_on(PipelineNode* n)
 {
 	String m = n.params[1].trim();
 	return (m.len > 0 ? m : node_default(n.kind, 1)) != "0";
+}
+
+// How many of the video's first frames an Animate node reads; 0 = all of them.
+fn uint? node_max_frames(PipelineNode* n)
+{
+	String text = n.params[3].trim();
+	if (text.len == 0) return 0;
+	uint? frames = text.to_uint();
+	if (catch frames) return CAPTURE_BAD_FRAMES~;
+	if (frames < 1) return CAPTURE_BAD_FRAMES~;
+	return frames;
 }
 
 fn KeyReduction node_optimize(String text)
@@ -620,21 +631,21 @@ const String[TEMPLATES] TEMPLATE_DOCS = {
 		{ "id": "generate", "type": "text_to_motion", "pos": [300, 60], "params": { "text_encoder": { "from": "text_encoder.text_encoder" },
 			"motion_model": { "from": "motion_model.motion_model" }, "prompt": { "from": "prompt.prompt" }, "poses": { "from": "guide.poses" } } } ] }`,
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Set the DINOv3 backbone, then Run Train finder once per character.\n2. In the 3D view's Pose tab, pick a saved pose and press Reference picture.\n3. Animate reference.png with a video model (Copy video prompt there).\n4. Choose the video, then Run Animate." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Set the DINOv3 backbone, then Run Train finder once per character.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there).\n4. Choose the video, then Run Animate." } },
 		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
 		{ "id": "train", "type": "train_finder", "pos": [0, 140], "params": { "backbone": { "from": "backbone.backbone" } } },
 		{ "id": "video", "type": "video", "pos": [0, 330] },
 		{ "id": "animate", "type": "animate", "pos": [300, 140], "params": { "finder": { "from": "train.finder" },
 			"video": { "from": "video.video" }, "backbone": { "from": "backbone.backbone" } } } ] }`,
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Choose a finder trained before in Finder file.\n2. In the 3D view's Pose tab, pick a saved pose and press Reference picture.\n3. Animate reference.png with a video model (Copy video prompt there).\n4. Choose the video, then Run Animate." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Choose a finder trained before in Finder file.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there).\n4. Choose the video, then Run Animate." } },
 		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
 		{ "id": "finder", "type": "finder_file", "pos": [0, 140] },
 		{ "id": "video", "type": "video", "pos": [0, 300] },
 		{ "id": "animate", "type": "animate", "pos": [300, 140], "params": { "finder": { "from": "finder.finder" },
 			"video": { "from": "video.video" }, "backbone": { "from": "backbone.backbone" } } } ] }`,
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. In the 3D view's Pose tab, pick a saved pose near the one you want and press Reference picture.\n2. Copy image prompt there, and give it to an image model with reference.png.\n3. Choose what it makes in Image.\n4. Run Image to pose: the pose lands in Poses." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. In Animations, ⋯ › Reference picture…: pick a saved pose near the one you want, then Draw.\n2. Copy image prompt there, and give it to an image model with the picture.\n3. Choose what it makes in Image.\n4. Run Image to pose: the pose lands in Poses." } },
 		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
 		{ "id": "finder", "type": "finder_file", "pos": [0, 140] },
 		{ "id": "image", "type": "image", "pos": [0, 300] },
@@ -800,6 +811,7 @@ fn void? AppState.node_order(&self, PipelineGraph* g, usz node, List{usz}* order
 		case ANIMATE:
 			if (self.capture_reference_for("").len == 0) return CAPTURE_NO_REFERENCE~;
 			if (self.has_bound_clip_named(g.clip_name(node))) return CAPTURE_CLIP_TAKEN~;
+			(void)node_max_frames(n)!;
 		case POSE:
 			if (self.capture_reference_for("").len == 0) return CAPTURE_NO_REFERENCE~;
 			if (self.saved_pose_named(g.clip_name(node)) >= 0) return CAPTURE_POSE_TAKEN~;
@@ -877,7 +889,9 @@ fn void? AppState.start_node(&self, PipelineGraph* g, usz node)
 		case ANIMATE:
 		case POSE:
 			String finder = self.capture_node_finder(g.at(n.input[0]));
-			self.start_capture_animation(g.fed(node, 2), finder, "", g.fed(node, 1), g.clip_name(node), node_mirror_on(n), n.kind == POSE)!;
+			uint max_frames = n.kind == ANIMATE ? node_max_frames(n)! : 0;
+			self.start_capture_animation(g.fed(node, 2), finder, "", g.fed(node, 1), g.clip_name(node), node_mirror_on(n), n.kind == POSE,
+				max_frames)!;
 		default:
 			return CAPTURE_NOT_STARTED~;
 	}
