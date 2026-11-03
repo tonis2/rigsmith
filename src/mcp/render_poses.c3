@@ -34,7 +34,7 @@
  always draw the same picture. A big set is therefore drawn a few hundred at a
  time (the window stands still for a call) and can be extended later. Beside
  the pictures goes poses_<first>.json:
- - the joints and their parents, and the cameras;
+ - the joints and their parents, the cameras, and the blur and leg shares;
  - per picture, each joint's pixel (x, y from the top left), its depth along
    the camera's view, and whether it is in sight: inside the picture with no
    part of the body in front of it;
@@ -1562,9 +1562,9 @@ fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
 		Vec3 p = view.skeleton.joints[j];
 		out.appendf("[%s,%s,%s]", (JsonFloat)p.x, (JsonFloat)p.y, (JsonFloat)p.z);
 	}
-	out.appendf(`],"size":%d,"seed":%d,"first":%d,"count":%d,"motion":%s,"fps":%s,"height":%s,"fill":[%s,%s],"cameras":[`,
+	out.appendf(`],"size":%d,"seed":%d,"first":%d,"count":%d,"motion":%s,"fps":%s,"height":%s,"fill":[%s,%s],"blur":%s,"leg_share":%s,"cameras":[`,
 		shoot.size, shoot.seed, shoot.first, shoot.count, shoot.motion ? "true" : "false", (JsonFloat)shoot.fps, (JsonFloat)height,
-		(JsonFloat)shoot.fill_least, (JsonFloat)shoot.fill_most);
+		(JsonFloat)shoot.fill_least, (JsonFloat)shoot.fill_most, (JsonFloat)shoot.blur, (JsonFloat)shoot.leg_share);
 	for (usz c = 0; c < shoot.camera_count; c++)
 	{
 		PoseCamera cam = shoot.cameras[c];

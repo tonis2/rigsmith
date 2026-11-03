@@ -61,7 +61,12 @@ const uint[6] CAPTURE_SIZES = { 448, 512, 640, 768, 896, 1024 };
 const uint CAPTURE_DEFAULT_SIZE = 448;
 // The finder's training as the Zidane finder that fits best was trained: the
 // last block's features beside the 20th's.
-const String CAPTURE_TRAIN_EXTRA = `"layers": [20]`;
+// Also trained on half the poses, to tell whether more would help.
+const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "half_check": true`;
+// No motion blur: the studio's videos are shot sharp.
+const float CAPTURE_BLUR = 0;
+// Random poses with the legs bent hard: wide stances, squats, kicks.
+const float CAPTURE_LEG_SHARE = 0.25f;
 
 enum CaptureStage
 {
@@ -282,6 +287,11 @@ fn String finder_summary(String finder_path)
 		{
 			if (try double median = held.get_float("median")) out.appendf("%s%.2f px held out", out.len() > 0 ? " · " : "", median);
 		}
+		// Trained on half the poses as well: close to the full figure, more poses would not help.
+		if (try Object* half = report.get("held_out_px_half"))
+		{
+			if (try double median = half.get_float("median")) out.appendf(" (half the poses %.2f px)", median);
+		}
 	}
 	// A finder that looks again at the hands says how well.
 	if (try Object* hands = info.get("hands"))
@@ -400,31 +410,65 @@ fn bool capture_size_ok(uint size)
 	return false;
 }
 
-// A training set drawn at another size or from other cameras is emptied: train
-// refuses mixed sizes, and a set must not mix camera rigs.
+// A training set drawn at another size, from other cameras, with other draw
+// settings or in other chunks is emptied: the trainer reads every chunk's labels.
 fn void fit_renders_to(String renders, uint size)
 {
 	char[]? bytes = file::load_temp(string::tformat("%s/poses_000000.json", renders));
 	if (catch bytes) return;
 	Object*? set = json::parse(tmem, (String)bytes);
-	if (try set) if (try double drawn = set.get_float("size")) if ((uint)drawn == size)
-	{
-		if (try Object* cameras = set.get("cameras")) if (cameras.is_array() && (usz)cameras.get_len() == CAPTURE_CAMERAS) return;
-	}
+	if (try set) if (renders_drawn_as(set, capture_shoot(size))) return;
 	(void)path::rmtree((Path)renders);
 }
 
+fn bool renders_drawn_as(Object* set, PoseShoot shoot) @local
+{
+	if (!same_number(set, "size", (float)shoot.size) || !same_number(set, "count", (float)CAPTURE_CHUNK)) return false;
+	if (!same_number(set, "blur", shoot.blur) || !same_number(set, "leg_share", shoot.leg_share)) return false;
+	Object*? cameras = set.get("cameras");
+	if (catch cameras) return false;
+	if (!cameras.is_array() || (usz)cameras.get_len() != shoot.camera_count) return false;
+	for (usz c = 0; c < shoot.camera_count; c++)
+	{
+		if (!same_number(cameras.get_at((sz)c), "pitch", shoot.cameras[c].pitch)) return false;
+	}
+	return true;
+}
+
+fn bool same_number(Object* in, String key, float want) @local
+{
+	if (try double got = in.get_float(key)) return math::abs((float)got - want) < 1.0e-4f;
+	return false;
+}
+
 // The training set's cameras: the front, the studio's front-left three-quarter
-// and both sides.
+// and both sides, pitched about the studio's level cameras.
 const usz CAPTURE_CAMERAS = 4;
 
 fn void capture_cameras(PoseShoot* shoot)
 {
-	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.cameras[1] = { .name = "quarter", .yaw = 45, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.cameras[2] = { .name = "left", .yaw = 90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
-	shoot.cameras[3] = { .name = "right", .yaw = -90, .pitch = 8, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[0] = { .name = "front", .yaw = 0, .pitch = 4, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[1] = { .name = "quarter", .yaw = 45, .pitch = 4, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[2] = { .name = "left", .yaw = 90, .pitch = 4, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
+	shoot.cameras[3] = { .name = "right", .yaw = -90, .pitch = 4, .distance = 4, .yaw_jitter = 20, .pitch_jitter = 8 };
 	shoot.camera_count = CAPTURE_CAMERAS;
+}
+
+<*
+ How Animate draws its training set at `size`: render_poses' defaults from
+ the four cameras, a share of the poses from the rig's clips, the landmarks,
+ sharp, with hard legs.
+*>
+fn PoseShoot capture_shoot(uint size)
+{
+	PoseShoot shoot = pose_shoot_defaults();
+	shoot.size = size;
+	capture_cameras(&shoot);
+	shoot.all_clips = true;
+	shoot.landmarks = true;
+	shoot.blur = CAPTURE_BLUR;
+	shoot.leg_share = CAPTURE_LEG_SHARE;
+	return shoot;
 }
 
 <*
@@ -436,14 +480,10 @@ fn void capture_cameras(PoseShoot* shoot)
 fn void AppState.draw_capture_chunk(&self)
 {
 	CaptureJob* job = &self.capture_job;
-	PoseShoot shoot = pose_shoot_defaults();
+	PoseShoot shoot = capture_shoot(job.render_size);
 	shoot.out = job.frames;
 	shoot.first = job.render_next;
 	shoot.count = math::min(CAPTURE_CHUNK, job.render_total - job.render_next);
-	shoot.size = job.render_size;
-	capture_cameras(&shoot);
-	shoot.all_clips = true;
-	shoot.landmarks = true;
 	DString detail = dstring::new(mem);
 	defer detail.free();
 	String? answer = self.render_pose_set(&shoot, &detail);

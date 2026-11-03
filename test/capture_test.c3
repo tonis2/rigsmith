@@ -104,6 +104,26 @@ fn void a_finder_says_what_it_is() @test
 	test::@check(crig::finder_summary("build/no_such_finder.safetensors") == "", "a missing file says nothing");
 }
 
+fn void a_finder_trained_on_half_the_poses_says_how_well() @test
+{
+	String finder = "build/test_capture_half.safetensors";
+	String meta = `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5},"held_out_px_half":{"median":6.25}}}`;
+	DString header = dstring::new(mem);
+	defer header.free();
+	header.append_string(`{"__metadata__":{"finder":`);
+	gltf_edit::escape_json_string(&header, meta);
+	header.append_string("}}");
+	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
+	defer alloc::free(mem, bytes);
+	ulong n = (ulong)header.len();
+	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
+	bytes[8..] = ((char[])header.str_view())[..];
+	(void)file::save(finder, bytes);
+	defer (void)file::delete(finder);
+	String said = crig::finder_summary(finder);
+	test::@check(said == "2 points · 5.50 px held out (half the poses 6.25 px)", "the half set's error (%s)", said);
+}
+
 fn void a_finder_with_hands_says_so() @test
 {
 	String finder = "build/test_capture_hands.safetensors";
@@ -678,15 +698,39 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	(void)path::mkdir(dir, true);
 	defer (void)path::rmtree((Path)dir);
 	String first = string::tformat("%s/poses_000000.json", dir);
-	(void)file::save(first, `{"size": 448, "cameras": [{}, {}, {}, {}], "images": []}`);
+	String camera = `{"pitch": 4}`;
+	String cameras = string::tformat("[%s, %s, %s, %s]", camera, camera, camera, camera);
+	(void)file::save(first, string::tformat(`{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras));
 	crig::fit_renders_to(dir, 448);
 	test::@check(file::exists(first), "a set at the same size is kept, to carry on");
 	crig::fit_renders_to(dir, 640);
 	test::@check(!file::exists(first), "a set at another size is emptied");
 
-	// Drawn from fewer cameras than the set now has: drawn again too.
-	(void)path::mkdir(dir, true);
-	(void)file::save(first, `{"size": 448, "cameras": [{}], "images": []}`);
-	crig::fit_renders_to(dir, 448);
-	test::@check(!file::exists(first), "a set from fewer cameras is emptied");
+	// Drawn from fewer cameras, with other settings or in other chunks: drawn again too.
+	String level = `[{"pitch": 8}, {"pitch": 8}, {"pitch": 8}, {"pitch": 8}]`;
+	String[2][*] stale = {
+		{ `{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, `[{"pitch": 4}]` },
+		{ `{"size": 448, "count": 8, "blur": 0.3, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras },
+		{ `{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, level },
+		{ `{"size": 448, "count": 125, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras },
+		{ `{"size": 448, "cameras": %s, "images": []}`, cameras },
+	};
+	foreach (row : stale)
+	{
+		String header = string::tformat(row[0], row[1]);
+		(void)path::mkdir(dir, true);
+		(void)file::save(first, header);
+		crig::fit_renders_to(dir, 448);
+		test::@check(!file::exists(first), "a stale set is emptied: %s", header);
+	}
+}
+
+fn void animate_draws_sharp_hard_legged_level_poses() @test
+{
+	crig::PoseShoot shoot = crig::capture_shoot(768);
+	test::eq(shoot.size, 768u);
+	test::@check(shoot.blur == 0 && shoot.leg_share == 0.25f, "blur %f, leg share %f", shoot.blur, shoot.leg_share);
+	test::eq(shoot.camera_count, crig::CAPTURE_CAMERAS);
+	for (usz c = 0; c < shoot.camera_count; c++) test::@check(shoot.cameras[c].pitch == 4, "camera %d pitch %f", c, shoot.cameras[c].pitch);
+	test::@check(shoot.all_clips && shoot.landmarks, "clips and landmarks are drawn");
 }
