@@ -1556,6 +1556,20 @@ fn Vec2 ViewPanel.layout(&self, Element* elem, Constraints constraints) @dynamic
 	return own;
 }
 
+// A Padding the pointer passes through, so its empty insets over the view
+// do not take clicks meant for the strips across the top.
+struct OpenPadding (Widget)
+{
+	Insets insets;
+}
+
+fn Vec2 OpenPadding.layout(&self, Element* elem, Constraints constraints) @dynamic
+{
+	elem.ignores_pointer = true;
+	Padding pad = { .insets = self.insets };
+	return pad.layout(elem, constraints);
+}
+
 <*
  The model view, built once per pane that shows it: its header, then the
  Viewport filling the rest, and the overlays as anchored children — corners of
@@ -1647,7 +1661,7 @@ fn Element* build_3d_view(Ui* ui)
 				// a long card scrolls inside the view instead of running off its foot.
 				@tree((Anchored) { .h = END, .v = START })
 				{
-					@tree((Padding) { .insets = { .top = GIZMO_MARGIN + GIZMO_SIZE + 6.0f,
+					@tree((OpenPadding) { .insets = { .top = GIZMO_MARGIN + GIZMO_SIZE + 6.0f,
 						.right = GIZMO_MARGIN, .bottom = GIZMO_MARGIN } })
 					{
 						@node((JointPanel) { }).with_id(JOINT_PANEL_ID);

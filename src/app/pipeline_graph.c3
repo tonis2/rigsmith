@@ -270,7 +270,7 @@ fn void PipelineGraph.reset(&self, String file)
 	uint version = self.version;
 	self.free();
 	self.loaded = true;
-	self.file = file.copy(mem);
+	self.file = file.len > 0 ? file.copy(mem) : "";
 	self.nodes.init(mem);
 	self.queue.init(mem);
 	self.shown_nodes.init(mem);

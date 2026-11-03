@@ -626,9 +626,15 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	(void)path::mkdir(dir, true);
 	defer (void)path::rmtree((Path)dir);
 	String first = string::tformat("%s/poses_000000.json", dir);
-	(void)file::save(first, `{"size": 448, "images": []}`);
+	(void)file::save(first, `{"size": 448, "cameras": [{}, {}, {}, {}], "images": []}`);
 	crig::fit_renders_to(dir, 448);
 	test::@check(file::exists(first), "a set at the same size is kept, to carry on");
 	crig::fit_renders_to(dir, 640);
 	test::@check(!file::exists(first), "a set at another size is emptied");
+
+	// Drawn from fewer cameras than the set now has: drawn again too.
+	(void)path::mkdir(dir, true);
+	(void)file::save(first, `{"size": 448, "cameras": [{}], "images": []}`);
+	crig::fit_renders_to(dir, 448);
+	test::@check(!file::exists(first), "a set from fewer cameras is emptied");
 }

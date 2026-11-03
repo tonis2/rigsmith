@@ -264,6 +264,8 @@ const float BODY_SOLVE_ON_LIMIT = 1.0e-5;
 
 // How near the floor, as a share of the height, a floored joint has to be to rest on it.
 const float BODY_SOLVE_RESTING = 1.0e-3;
+// How far, as a share of the height, the last step may carry a floored joint through the floor.
+const float BODY_SOLVE_SINK = 1.0e-5;
 
 // ---------------------------------------------------------------------------
 // The working state
@@ -1232,6 +1234,21 @@ fn bool BodySolve.block_floor(&self, double* scale)
 	return added;
 }
 
+// Whether `to` carries a floored joint further through the floor than `from` had it:
+// the floor rows are linear, so a step can still bend a foot through.
+fn bool BodySolve.sinks(&self, BodySolveState* from, BodySolveState* to)
+{
+	if (!self.settings.has_floor) return false;
+	float give = self.h * BODY_SOLVE_SINK;
+	foreach (pj : self.joints)
+	{
+		if (!pj.floored || pj.joint >= self.n) continue;
+		float was = math::min(from.x[pj.joint].dot(self.up) - self.settings.floor, 0.0f);
+		if (to.x[pj.joint].dot(self.up) - self.settings.floor < was - give) return true;
+	}
+	return false;
+}
+
 <*
  The weighted sum of squares of everything asked of `s`, and — when `derive` — the
  normal equations at it in `mat` and `grad`.
@@ -1721,7 +1738,17 @@ fn void BodySolve.minimise(&self, int iterations, double saving, double* lambda)
 			double ease = 1.0 - math::pow(2.0 * ratio - 1.0, 3.0);
 			*lambda = math::max(*lambda * math::clamp(ease, 1.0 / 3.0, 8.0), BODY_SOLVE_DAMPING_FLOOR);
 			raise = 2.0;
-			if (settled || saved_little) break;
+			if (settled || saved_little || t == iterations - 1)
+			{
+				// The solve does not end on a step that took a foot through the floor.
+				if (self.sinks(&self.trial, &self.cur))
+				{
+					held = self.cur;
+					self.cur = self.trial;
+					self.trial = held;
+				}
+				break;
+			}
 		}
 		else
 		{

@@ -520,7 +520,7 @@ fn String node_status_text(Element* elem) @private
 	AppState* app = elem.inherit(AppState)!!;
 	PipelineGraph* g = app.pipeline();
 	sz node = card_above(elem);
-	if (node < 0 || (usz)node >= g.count()) return "".copy(mem);
+	if (node < 0 || (usz)node >= g.count()) return "";
 	PipelineNode* n = g.at(node);
 	String first = n.params[0].trim();
 	switch (n.kind)
@@ -548,7 +548,7 @@ fn String node_status_text(Element* elem) @private
 			if (first.len > 0 && !lower.ends_with(".mp4") && !lower.ends_with(".mov") && !lower.ends_with(".m4v")) return "Not an .mp4 or .mov".copy(mem);
 			return "H.264 .mp4 or .mov, read in Rigsmith".copy(mem);
 		default:
-			return "".copy(mem);
+			return "";
 	}
 }
 
@@ -1036,11 +1036,11 @@ fn void node_file_chosen(Ui* ui, String path)
 fn String capture_status_text(Element* elem) @private
 {
 	CaptureJob* job = &elem.inherit(AppState)!!.capture_job;
-	if (!job.running) return "".copy(mem);
+	if (!job.running) return "";
 	switch (job.stage)
 	{
 		case RENDERING: return string::format(mem, "Pose %d of %d", job.step, job.steps);
-		default: return job.last().copy(mem);
+		default: return job.last().len > 0 ? job.last().copy(mem) : "";
 	}
 }
 

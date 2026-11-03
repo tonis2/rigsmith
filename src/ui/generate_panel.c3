@@ -47,7 +47,7 @@ fn String motion_fault_text(fault err)
 fn String generate_status_text(Element* elem) @private
 {
 	MotionJob* job = &elem.inherit(AppState)!!.motion_job;
-	if (!job.running) return "".copy(mem);
+	if (!job.running) return "";
 	if (job.step == 0) return "Loading Kimodo and reading the prompt…".copy(mem);
 	return string::format(mem, "Step %d of %d · %d%%", job.step, job.steps, (int)(job.progress() * 100.0f));
 }

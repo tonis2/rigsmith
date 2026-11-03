@@ -4,7 +4,7 @@
 	"authors": [],
 	"version": "0.1.0",
 	"dependency-search-paths": ["libs-dev", "libs/three/lib", "libs"],
-	"dependencies": ["vk", "c3w", "gltf", "image", "collision", "quickjs", "mcp", "ktx", "font", "cui", "shady", "llm"],
+	"dependencies": ["vk", "c3w", "gltf", "image", "collision", "fastjs", "mcp", "ktx", "font", "cui", "shady", "llm"],
 	"features": [],
 	"wincrt": "dynamic",
 	"script-dir": "./",
