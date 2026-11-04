@@ -2537,7 +2537,7 @@ const float FOLD_C = 0.3f;  // about X, on the spine link the plan keeps
 
  crig's own, written out here rather than read from tools/body_plans.c3 which
  this target does not link. A T-pose on purpose: the fixture below stands in an
- A-pose, and the whole claim of core/joint_match.c3 is that the two still match.
+ A-pose, and the whole claim of algo/match/joint_match.c3 is that the two still match.
 
  A plain global rather than a `const`: a const holding a slice is materialized
  where it is used, so `match_plan_dots[..]` taken inside a function and handed
@@ -2569,7 +2569,7 @@ fn crig::Preset match_plan() => { .name = "Biped", .plan = "biped", .dots = matc
 <*
  A rig with the shape of a biped and the names of nothing at all.
 
- Every joint is called `n_` and a letter. That is the point: core/joint_match.c3
+ Every joint is called `n_` and a letter. That is the point: algo/match/joint_match.c3
  claims to read no names, and a fixture named after the plan it is expected to
  match would let a name-reading matcher pass. Nothing here spells `spine`, and
  the check below still expects a joint to become one.

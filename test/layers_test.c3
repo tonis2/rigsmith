@@ -1,5 +1,5 @@
 <*
- Animation layers (anim/layers.c3): evaluation inside `AnimTemplate.pose`, the
+ Animation layers (algo/layers/layers.c3): evaluation inside `AnimTemplate.pose`, the
  project sidecar, the writers that keep authored keys, and the MCP tools.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::layers`

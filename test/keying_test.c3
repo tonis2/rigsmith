@@ -3,7 +3,7 @@
 
      `c3c test --trust=full --test-filter crig_tests::keying`
 
- `anim/keying.c3` is what the timeline edits *through*: every operation it offers
+ `algo/curves/keying.c3` is what the timeline edits *through*: every operation it offers
  is "build a new clip from the old one", because that is what `put_authored_clip`
  turns into a single undo entry. So the checks here are about the rewriters
  themselves, with no window, no `AppState` and no library — which is also the

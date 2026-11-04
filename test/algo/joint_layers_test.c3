@@ -1,5 +1,5 @@
 <*
- Taking joints out of a clip (anim/keying.c3 `clip_without_joints`,
+ Taking joints out of a clip (algo/curves/keying.c3 `clip_without_joints`,
  `clip_with_joints_layered`) and the evaluation they lean on: a full-strength
  override is its keys exactly, and a joint only a layer turns is carried from
  the bone that layer's keys record.

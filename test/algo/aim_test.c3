@@ -1,5 +1,5 @@
 <*
- Look-at targets (anim/aim.c3): the sampler, the chain math, the clip rewriters
+ Look-at targets (algo/layers/aim.c3): the sampler, the chain math, the clip rewriters
  and the copy and mirror helpers. Pure data: no app, no files.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::aim`

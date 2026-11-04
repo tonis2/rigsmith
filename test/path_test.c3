@@ -1,5 +1,5 @@
 <*
- Motion paths (anim/path.c3): the curve and its timing, the joint held on it
+ Motion paths (algo/layers/path.c3): the curve and its timing, the joint held on it
  live, the bake, the sidecar shape and the MCP tool.
 
      `c3c test --trust=full --test-noleak --test-filter crig_tests::paths`

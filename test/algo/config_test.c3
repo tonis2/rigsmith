@@ -1,7 +1,7 @@
 <*
  The config file: the round trip, and everything it promises not to do.
 
- Half of these are about refusing to refuse. `core/config.c3` says a missing
+ Half of these are about refusing to refuse. `format/config.c3` says a missing
  file, a malformed one and a version from the future all read as "no setting",
  and that is a promise nothing else in crig makes — the session file breaks the
  other way on purpose. A regression there would not look like a crash; crig

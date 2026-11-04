@@ -3012,7 +3012,7 @@ fn Vec3? posed_at(Object* pose, String name)
 
 // The knee bent a quarter turn about world X, written three ways. Applied to
 // the fixture's hips-knee-foot chain, this swings the foot backward — see the
-// turning table in anim/animation.c3.
+// turning table in algo/curves/animation.c3.
 const String QUARTER_TURN_AXIS @local = `{"axis":[1,0,0],"angle":1.5707963267948966}`;
 const String QUARTER_TURN_QUAT @local = `{"x":0.7071067811865476,"y":0,"z":0,"w":0.7071067811865476}`;
 const String QUARTER_TURN_EULER @local = `[1.5707963267948966,0,0]`;

@@ -1,5 +1,5 @@
 <*
- A digit's limit axes come from its hand (`core/joint_limits.c3`
+ A digit's limit axes come from its hand (`algo/pose/joint_limits.c3`
  `knuckle_line`, `along_the_knuckles`): X runs along the line across the
  knuckles, so X bends every finger and the thumb toward the palm however each
  one leans. Also Use bone axes (`limits_on_bone_axes`), which carries a table

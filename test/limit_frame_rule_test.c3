@@ -1,5 +1,5 @@
 <*
- The near-axis roll rule for derived limit frames (`core/joint_limits.c3`
+ The near-axis roll rule for derived limit frames (`algo/pose/joint_limits.c3`
  `frame_seed`), the pin an older session's tables get on load, and the shipped
  humanoid's hand read on it.
 

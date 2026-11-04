@@ -1,5 +1,5 @@
 <*
- Gait authoring (`anim/gait.c3`, `mcp/gait.c3`) and the baked mode of
+ Gait authoring (`algo/motion/gait.c3`, `mcp/gait.c3`) and the baked mode of
  solve_targets.
 
  The leg solve is checked on synthetic chains — a bare skeleton, no document —
