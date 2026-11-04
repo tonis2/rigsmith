@@ -17,5 +17,6 @@ rule test changed, that is a rule change: stop and ask the owner.
 - [Clips](clips.md)
 - [Editing](editing.md)
 - [Weights](weights.md)
+- [Files](files.md)
 - [Posing](posing.md)
 - [Rigging](rigging.md)

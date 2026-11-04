@@ -247,12 +247,5 @@ fn void? write_scene_file(String scene_path, SceneFile* scene)
 {
 	String body = scene_file_text(mem, scene, scene_path);
 	defer body.free(mem);
-	String temporary = string::format(mem, "%s.tmp", scene_path);
-	defer temporary.free(mem);
-	if (catch io::file::save(temporary, body)) return SCENE_IO~;
-	if (libc::rename(temporary.zstr_tcopy(), scene_path.zstr_tcopy()) != 0)
-	{
-		(void)io::file::delete(temporary);
-		return SCENE_IO~;
-	}
+	if (catch save_safely(scene_path, body)) return SCENE_IO~;
 }

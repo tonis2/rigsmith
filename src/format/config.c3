@@ -929,10 +929,7 @@ fn void CrigConfig.save(&self)
 	String path = string::format(mem, "%s/%s", self.directory, CONFIG_FILE);
 	defer alloc::free(mem, path.ptr);
 
-	File? out = file::open(path, "w");
-	if (catch out) return;
-	defer (void)out.close();
-	(void)out.write(text);
+	(void)save_safely(path, text);
 }
 
 fn void CrigConfig.free(&self)

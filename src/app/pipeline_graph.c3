@@ -528,7 +528,7 @@ fn void PipelineGraph.save(&self)
 	if (try slash = self.file.rindex_of_char('/')) (void)path::mkdir(self.file[:(usz)slash], true);
 	String text = self.to_json();
 	defer text.free(mem);
-	(void)file::save(self.file, text);
+	(void)save_safely(self.file, text);
 }
 
 <*

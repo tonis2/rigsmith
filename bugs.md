@@ -24,7 +24,5 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
 
 ## Files
-- `config.c3:932` ignores write errors and `pipeline_graph.c3:531` discards the result. `write_glb` (`patch.c3:863`) saves over the model directly. Read.
 - Scene path in `export.c3` lacks the `joints > 0` guard and hard-codes 4 influences. Read.
-- Only 2 of 7 JSON number readers reject non-finite values. Read.
 - `capture.c3:211,626,979` don't handle `\` in paths. Read.

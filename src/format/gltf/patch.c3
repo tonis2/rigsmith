@@ -43,6 +43,10 @@
 *>
 module gltf_edit;
 
+import libc;
+
+faultdef SAVE_FAILED;
+
 import std::collections::list;
 
 
@@ -843,6 +847,28 @@ fn GlbParts? split_glb(Allocator allocator, String path)
 }
 
 <*
+ Write `text` to `path` through a temporary file beside it, so the old file
+ survives a full disk or a crash. See rules/files.md.
+
+ @require path.len > 0 : "A save needs a path"
+
+ @return? SAVE_FAILED
+*>
+fn void? save_safely(String path, String text)
+{
+	@pool()
+	{
+		String temporary = path.tconcat(".tmp");
+		if (catch file::save(temporary, text)) return SAVE_FAILED~;
+		if (libc::rename(temporary.zstr_tcopy(), path.zstr_tcopy()) != 0)
+		{
+			(void)file::delete(temporary);
+			return SAVE_FAILED~;
+		}
+	};
+}
+
+<*
  Write the parts back out as one file.
 
  	`gltf_edit::write_glb("character.glb", parts)!;`
@@ -864,7 +890,7 @@ fn void? write_glb(String path, GlbParts parts)
 {
 	if (!parts.binary)
 	{
-		if (catch file::save(path, parts.json)) return GLB_WRITE_FAILED~;
+		if (catch save_safely(path, (String)parts.json)) return GLB_WRITE_FAILED~;
 		return;
 	}
 
@@ -890,7 +916,7 @@ fn void? write_glb(String path, GlbParts parts)
 		out[20 + padded : parts.rest.len] = parts.rest[..];
 	}
 
-	if (catch file::save(path, out)) return GLB_WRITE_FAILED~;
+	if (catch save_safely(path, (String)out)) return GLB_WRITE_FAILED~;
 }
 
 // glTF is little-endian throughout: the GLB header, the chunk headers and every
