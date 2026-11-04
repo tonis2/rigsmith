@@ -152,3 +152,95 @@ fn void fresh_aim_spread(RigView* view, uint[] dots, usz i, AnimAim* lock) @priv
 	for (usz k = 0; k < own; k++) lock.weights[k + 1] = AIM_DEFAULT_WEIGHTS[k];
 	for (usz k = own + 1; k < AIM_MAX_SPREAD; k++) lock.weights[k] = 0.0f;
 }
+
+<*
+ Where a new target goes, as a fraction of rig height: in front of the joints, or
+ with none in front of the root at about chest height.
+
+ @param dots : `The joints being locked.`
+ @param positions : `Each one's world position.`
+ @param worlds : `Each one's world rotation.`
+ @param [&out] at : `Receives the spot.`
+ @return `False when the pose can't be read.`
+*>
+fn bool aim_spot_for(RigView* view, rig::Pose pose, uint[] dots, Vec3[] positions, Quaternionf[] worlds, Vec3* at)
+{
+	float height = view.skeleton.height();
+	Vec3 centre;
+	Vec3 front = { 0, 0, 1 };
+	if (dots.len > 0)
+	{
+		foreach (point : positions) centre += point;
+		centre = centre / (float)dots.len;
+		front = worlds[0].rotate_vec3({ 0, 0, 1 });
+		if (front.length_sq() < 1.0e-12f) front = { 0, 0, 1 };
+		front = front.normalize();
+		// A limb held out — fingers, a hand, a foot — is aimed along where it
+		// points, so moving the target bends it; one standing up, a head on its
+		// neck, looks out its front.
+		Vec3 along;
+		foreach (dot : dots)
+		{
+			sz joint = view.joint_of(dot);
+			int parent = joint >= 0 ? view.skeleton.parents[(usz)joint] : -1;
+			Vec3 from;
+			Quaternionf ignored;
+			if (parent < 0 || !aim_frame(view, pose, (usz)parent, &from, &ignored)) continue;
+			Vec3 to;
+			if (!aim_frame(view, pose, (usz)joint, &to, &ignored)) continue;
+			if ((to - from).length_sq() > 1.0e-12f) along += (to - from).normalize();
+		}
+		if (along.length_sq() > 1.0e-6f && math::abs(along.normalize().y) < AIM_UPRIGHT)
+		{
+			front = along.normalize();
+		}
+	}
+	else
+	{
+		// Nothing selected: in front of the root, up about chest height.
+		usz root;
+		foreach (usz j, parent : view.skeleton.parents) if (parent < 0) { root = j; break; }
+		Quaternionf ignored;
+		if (!aim_frame(view, pose, root, &centre, &ignored)) return false;
+		centre.y += 0.2f * height;
+	}
+	*at = (centre + front * (AIM_FRONT_REACH * height)) / height;
+	return true;
+}
+
+<*
+ One lock per joint on `target`: an existing lock keeps its settings and takes the
+ new target and forward axis.
+
+ @param aims : `The clip's locks.`
+ @param names : `Each joint's name in the clip.`
+ @param positions : `Each joint's world position.`
+ @param worlds : `Each joint's world rotation.`
+ @param dots : `Each joint's dot.`
+ @param at : `The target, as a fraction of rig height.`
+ @return `Owned by the caller.`
+*>
+fn AnimAim[] aim_locks_for(Allocator allocator, RigView* view, AnimAim[] aims, String[] names, Vec3[] positions,
+	Quaternionf[] worlds, uint[] dots, String target, Vec3 at)
+{
+	float height = view.skeleton.height();
+	AnimAim[] locks = alloc::new_array(allocator, AnimAim, (sz)names.len);
+	foreach (i, &lock : locks)
+	{
+		Vec3 forward = aim_forward_for(positions[i], worlds[i], height, at);
+		sz held = aim_index_of(aims, names[i]);
+		if (held >= 0)
+		{
+			*lock = aims[(usz)held].copy(allocator);
+			alloc::free(allocator, lock.target.ptr);
+			lock.target = target.copy(allocator);
+			lock.forward = forward;
+		}
+		else
+		{
+			*lock = aim_defaults(allocator, names[i], target, forward);
+			fresh_aim_spread(view, dots, (usz)i, lock);
+		}
+	}
+	return locks;
+}

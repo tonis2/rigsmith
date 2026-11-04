@@ -364,45 +364,7 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 	String made;
 	if (create)
 	{
-		Vec3 centre;
-		Vec3 front = { 0, 0, 1 };
-		if (count > 0)
-		{
-			foreach (point : positions[:count]) centre += point;
-			centre = centre / (float)count;
-			front = worlds[0].rotate_vec3({ 0, 0, 1 });
-			if (front.length_sq() < 1.0e-12f) front = { 0, 0, 1 };
-			front = front.normalize();
-			// A limb held out — fingers, a hand, a foot — is aimed along where it
-			// points, so moving the target bends it; one standing up, a head on its
-			// neck, looks out its front.
-			Vec3 along;
-			foreach (dot : kept[:count])
-			{
-				sz joint = view.joint_of(dot);
-				int parent = joint >= 0 ? view.skeleton.parents[(usz)joint] : -1;
-				Vec3 from;
-				Quaternionf ignored;
-				if (parent < 0 || !aim_frame(&view, pose, (usz)parent, &from, &ignored)) continue;
-				Vec3 to;
-				if (!aim_frame(&view, pose, (usz)joint, &to, &ignored)) continue;
-				if ((to - from).length_sq() > 1.0e-12f) along += (to - from).normalize();
-			}
-			if (along.length_sq() > 1.0e-6f && math::abs(along.normalize().y) < AIM_UPRIGHT)
-			{
-				front = along.normalize();
-			}
-		}
-		else
-		{
-			// Nothing selected: in front of the root, up about chest height.
-			usz root;
-			foreach (usz j, parent : view.skeleton.parents) if (parent < 0) { root = j; break; }
-			Quaternionf ignored;
-			if (!aim_frame(&view, pose, root, &centre, &ignored)) return false;
-			centre.y += 0.2f * height;
-		}
-		at = (centre + front * (AIM_FRONT_REACH * height)) / height;
+		if (!aim_spot_for(&view, pose, kept[:count], positions[:count], worlds[:count], &at)) return false;
 		made = next_target_name(mem, clip.aim_targets);
 	}
 	else
@@ -412,24 +374,7 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 	}
 	defer alloc::free(mem, made.ptr);
 
-	AnimAim[] locks = alloc::new_array(mem, AnimAim, (sz)count);
-	foreach (i, &lock : locks)
-	{
-		Vec3 forward = aim_forward_for(positions[i], worlds[i], height, at);
-		sz held = aim_index_of(clip.aims, vocabulary[i]);
-		if (held >= 0)
-		{
-			*lock = clip.aims[(usz)held].copy(mem);
-			alloc::free(mem, lock.target.ptr);
-			lock.target = made.copy(mem);
-			lock.forward = forward;
-		}
-		else
-		{
-			*lock = aim_defaults(mem, vocabulary[i], made, forward);
-			fresh_aim_spread(&view, kept[:count], (usz)i, lock);
-		}
-	}
+	AnimAim[] locks = aim_locks_for(mem, &view, clip.aims, vocabulary[:count], positions[:count], worlds[:count], kept[:count], made, at);
 
 	AnimTemplate base = create
 		? clip_with_aim_target(mem, *clip, aim_target_defaults(mem, made, at, self.edit_time))
