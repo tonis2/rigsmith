@@ -757,111 +757,26 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	defer drafted.free(mem);
 	rig::Pose wanted = drafted.copy(mem);
 	defer wanted.free(mem);
-	bool above = soloed || (usz)at + 1 < clip.layers.len;
-	if (above)
-	{
-		foreach (usz j, turn : wanted.rotations)
-		{
-			if (j >= full.rotations.len) break;
-			wanted.rotations[j] = (drafted.rotations[j].v - full.rotations[j].v).length_sq() < 1.0e-14f ? incl.rotations[j]
-				: incl.rotations[j].mul(full.rotations[j].invert().mul(drafted.rotations[j])).normalize();
-			wanted.offsets[j] = incl.offsets[j] + (drafted.offsets[j] - full.offsets[j]);
-		}
-	}
+	if (soloed || (usz)at + 1 < clip.layers.len) take_out_layers_above(&wanted, drafted, full, incl);
 
-	// What the layer has to hold for the stack to reach `wanted`. A layer turns a
-	// joint before the limits hold it and before it is carried onto the rig's
-	// bones, so the gap is read against the stack below as keyed, and stated in
-	// the bone frame the joint is carried from (see `AnimTemplate.pose`).
-	rig::Pose below_raw = below_clip.pose(mem, &view.skeleton, names, time, false);
-	defer below_raw.free(mem);
-	LayerStack under = below_clip.layer_stack(mem, &view.skeleton, names, time);
-	defer under.free(mem);
-	Vec3[] bones = view.skeleton.bone_directions(mem);
-	defer if (bones.len > 0) alloc::free(mem, bones);
-	Vec3[] sources = alloc::new_array(mem, Vec3, (sz)view.len());
-	defer alloc::free(mem, sources);
-	// Whether the joint differs on screen from the stack below: what decides it is keyed.
-	bool[] differs = alloc::new_array(mem, bool, (sz)view.len());
-	defer alloc::free(mem, differs);
-	rig::Pose delta = rig::rest_pose(mem, view.len());
-	defer delta.free(mem);
-	float inverse_gain = 1.0f / gain;
-	foreach (usz j, turn : delta.rotations)
-	{
-		String name = j < names.len ? names[j] : "";
-		Vec3 target = j < bones.len ? bones[j] : (Vec3){};
-		Vec3 source;
-		Quaternionf kept_turn = name.len > 0 ? clip.rotation_and_bone_at(name, time, &source) : quaternion::IDENTITY;
-		Vec3 kept_slide;
-		bool rotates, translates;
-		under.apply(j, &kept_turn, &kept_slide, &rotates, &translates);
-		if (source.length_sq() < 1.0e-12f) source = under.bone(j);
-		if (source.length_sq() < 1.0e-12f) source = target;
-		sources[j] = source;
-		Quaternionf onto = bone_carry(source, target);
-		differs[j] = angle_between_turns(below.rotations[j], wanted.rotations[j]) > 1.0e-5f;
-		Quaternionf gap = below_raw.rotations[j].invert().mul(wanted.rotations[j]).normalize();
-		Quaternionf step = onto.invert().mul(scaled_turn(gap, inverse_gain)).mul(onto).normalize();
-		Vec3 slide = (wanted.offsets[j] - below.offsets[j]) * inverse_gain;
-		if (layer.mode == ADDITIVE)
-		{
-			delta.rotations[j] = step;
-			delta.offsets[j] = slide;
-		}
-		else
-		{
-			delta.rotations[j] = kept_turn.mul(step).normalize();
-			delta.offsets[j] = below.offsets[j] + slide;
-		}
-	}
-	AnimKeyframe key = keyframe_of_pose(mem, delta, names, bones, view.skeleton.height(), time);
-	foreach (&dot : key.dots)
-	{
-		sz j = array::index_of(names, dot.joint_name) ?? -1;
-		if (j >= 0) dot.bone = sources[(usz)j];
-	}
-
-	// Which joints and channels are written. A sparse layer stays sparse: a
-	// joint enters it by differing from the stack below, and stays in once keyed.
-	// Nothing outside its mask, which would only be keys the layer never plays.
-	bool[] inside = alloc::new_array(mem, bool, (sz)view.len());
-	defer alloc::free(mem, inside);
-	layer.mask_inside(&view.skeleton, names, inside);
-	AnimDotList kept;
-	kept.init(mem);
-	defer kept.free();
-	foreach (dot : key.dots)
-	{
-		sz j = array::index_of(names, dot.joint_name) ?? -1;
-		bool rotation, translation;
-		if (j >= 0 && (usz)j < view.dot_ids.len && inside[(usz)j])
-		{
-			bool moved_rotation = differs[(usz)j];
-			bool moved_translation = dot.move.length_sq() > 1.0e-12f;
-			switch (scope)
-			{
-				case ALL:
-					rotation = moved_rotation || layer_keys_channel(layer, dot.joint_name, true);
-					translation = moved_translation || layer_keys_channel(layer, dot.joint_name, false);
-				case SELECTED:
-					rotation = translation = self.is_selected(view.dot_ids[(usz)j]);
-				case CHANGED:
-					rotation = 1.0f - math::abs(wanted.rotations[(usz)j].v.dot(incl.rotations[(usz)j].v)) > 1.0e-7f;
-					translation = (wanted.offsets[(usz)j] - incl.offsets[(usz)j]).length_sq() > 1.0e-12f;
-			}
-		}
-		if (!rotation && !translation)
-		{
-			if (dot.joint_name.len > 0) alloc::free(mem, dot.joint_name.ptr);
-			continue;
-		}
-		AnimKeyDot written = dot;
-		written.channels = rotation && translation ? BOTH : (rotation ? ROTATION : TRANSLATION);
-		kept.push(written);
-	}
-	if (key.dots.len > 0) alloc::free(mem, key.dots);
-	key.dots = kept.to_array(mem);
+	bool[] selected = alloc::new_array(mem, bool, (sz)view.dot_ids.len);
+	defer alloc::free(mem, selected);
+	foreach (usz k, dot : view.dot_ids) selected[k] = self.is_selected(dot);
+	LayerKeyAsk ask = {
+		.skeleton = &view.skeleton,
+		.names = names,
+		.clip = clip,
+		.below_clip = &below_clip,
+		.layer = layer,
+		.time = time,
+		.gain = gain,
+		.below = below,
+		.incl = incl,
+		.wanted = wanted,
+		.scope = scope,
+		.selected = selected,
+	};
+	AnimKeyframe key = layer_key_for(&ask);
 	if (key.dots.len == 0)
 	{
 		key.free(mem);
@@ -869,28 +784,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 		return NO_ANIM;
 	}
 
-	// The layer's keys with this one put in, on a real copy of the clip. A shared
-	// layer keeps its own seconds: the key goes where the playhead falls among
-	// them, and a kept layer grows to hold one past its end.
-	key.time = layer.key_time(clip, time);
-	AnimTemplate keys = layer.keys_view(clip);
-	key.ease_new_channels(&keys);
-	AnimTemplate grown = clip_with_key(mem, keys, key);
-	AnimTemplate full_clip = clip_copy(mem, *clip);
-	AnimLayer* target = &full_clip.layers[(usz)at];
-	foreach (&frame : target.keyframes) frame.free(mem);
-	if (target.keyframes.len > 0) alloc::free(mem, target.keyframes);
-	target.keyframes = grown.keyframes;
-	grown.keyframes = {};
-	if (target.own_clock())
-	{
-		if (target.fit == KEEP) target.length = math::max(target.length, grown.duration);
-	}
-	else
-	{
-		full_clip.duration = math::max(full_clip.duration, grown.duration);
-	}
-	grown.free(mem);
+	AnimTemplate full_clip = clip_with_layer_key(mem, clip, (usz)at, key, time);
 
 	// As `key_here` does: the draft belongs to this editing transaction, not to
 	// the playback restart the landing causes.

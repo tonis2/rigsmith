@@ -129,13 +129,6 @@ fn void AppState.refresh_shown_pose(&self)
 	}
 }
 
-enum AnimKeyScope
-{
-	ALL,
-	SELECTED,
-	CHANGED,
-}
-
 <*
  Key the pose being edited, where the Apply to switch says (`key_reach`): at the
  playhead, or as an offset onto the selected keys or every key of the clip
