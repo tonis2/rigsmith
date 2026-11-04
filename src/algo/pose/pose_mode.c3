@@ -7,6 +7,7 @@ import std::math;
 import std::math::matrix;
 import std::math::quaternion;
 import std::collections::list;
+import collision::ik;
 
 <*
  The longest run of joints one gesture may turn, and the snapshot that holds
@@ -485,4 +486,91 @@ fn void chain_points(RigView* view, PoseChain chain, rig::Pose pose, Vec3 ground
 		points[t] = view.skeleton.joints[j].transform(palette[j]) + ground_shift;
 	}
 	points[chain.count] = view.skeleton.joints[chain.effector].transform(palette[chain.effector]) + ground_shift;
+}
+
+<*
+ Twist a limb's bend so its elbow or knee points toward `pole`.
+
+ 	`PoleAim done = app.aim_chain_pole(&view, &pose, chain, pole);`
+
+ Which way a two-bone limb bends is free once it has reached its target: every
+ turn of the limb about the line from its root to the effector reaches the same
+ point, and only swings the elbow or knee round that line. This is the pole
+ vector a game rig gives — it turns the chain's root pivot about that line until
+ the first bend lies in the plane the pole names. The effector is *on* the line,
+ so it does not move; only the bend swings. One turn, not a search: the reach it
+ follows (`solve_limited_pose_chain`) owns the iteration budget; this is a single
+ shortest arc, so the same request gives the same bend every time.
+
+ Run after the reach, on the pose it left. Constrained through the root pivot's
+ own limits, so the twist never lands it out of range; when a limit clamps it
+ short the effector can drift, and the answer is `AIMED_TO_LIMIT` so the caller
+ says so alongside the residual.
+
+ The `PoleAim` says what happened. Every degeneracy is measured relative to the
+ arm it turns on (`POLE_MIN_SINE`), never an absolute distance, so the reading
+ holds at any scale of rig: a chain with one bend or none is `NO_BEND`, a folded
+ chain whose effector has met its root is `COINCIDENT`, a straight limb is
+ `STRAIGHT`, and a pole on the root-effector line is `POLE_ON_LINE`. Only `AIMED`
+ and `AIMED_TO_LIMIT` write into `pose`; the subtree follows through
+ `joint_palette`.
+*>
+fn PoleAim aim_chain_pole(RigDocument* doc, RigView* view, rig::Pose* pose, PoseChain chain, Vec3 pole)
+{
+	if (chain.count < 2) return NO_BEND;
+
+	Vec3[IK_MAX_CHAIN + 1] points;
+	chain_points(view, chain, *pose, {}, points[:chain.count + 1]);
+	Vec3 root = points[0];
+	Vec3 mid = points[1];
+	Vec3 tip = points[chain.count];
+
+	// The upper bone is the scale every test below reads against: a perpendicular
+	// offset shorter than `POLE_MIN_SINE` of it is no bend, or a pole with no side,
+	// whether the rig is a centimetre or a kilometre.
+	float arm = (mid - root).length();
+	if (arm <= 0.0f) return STRAIGHT;
+	float floor = arm * POLE_MIN_SINE;
+
+	Vec3 axis = tip - root;
+	if (axis.length() <= floor) return COINCIDENT;
+	Vec3 line = axis.normalize();
+
+	// Each joint's offset from the root, with the part along the line removed: the
+	// bend as it stands, and the side the pole names. Either being small against
+	// its own arm means there is no plane to turn — a straight limb, or a pole on
+	// the line.
+	Vec3 have = mid - root;
+	have = have - line * have.dot(line);
+	if (have.length() <= floor) return STRAIGHT;
+	Vec3 want = pole - root;
+	float reach = (pole - root).length();
+	want = want - line * want.dot(line);
+	if (want.length() <= reach * POLE_MIN_SINE) return POLE_ON_LINE;
+
+	// The turn about the line that carries the bend onto the pole's side — both
+	// perpendicular to the line, so the shortest arc between them is about it.
+	Quaternionf turn = ik::shortest_arc(have, want);
+
+	Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
+	if (catch read) return NO_BEND;
+	Quaternionf[] world = read;
+	defer alloc::free(mem, world);
+
+	usz joint = pose_chain_joint(chain, 0);
+	int parent = view.skeleton.parents[joint];
+	Quaternionf parent_world = parent >= 0
+		? world[(usz)parent]
+		: (Quaternionf)quaternion::IDENTITY;
+	Quaternionf candidate = parent_world.invert().mul(turn).mul(world[joint]).normalize();
+
+	JointRotationLimits limits = doc.rotation_limits_of(view.dot_ids[joint]);
+	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+	Quaternionf constrained = constrain_joint_rotation(frame, limits, candidate);
+	pose.rotations[joint] = constrained;
+
+	// The turn survived its limits when the constrained rotation still matches the
+	// one the pole wanted, up to sign (the quaternion double cover). Short of that,
+	// a limit cut it and the effector may have drifted.
+	return math::abs(constrained.v.dot(candidate.v)) > 0.9999999f ? AIMED : AIMED_TO_LIMIT;
 }
