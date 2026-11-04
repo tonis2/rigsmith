@@ -1290,14 +1290,14 @@ fn MenuItemFlags query_joint_names(Ui* ui)
 const String CONTROLS_DIALOG_ID = "controls-dialog";
 
 MenuItem[12] file_items = {
-	{ .label = "New scene", .shortcut = "Ctrl+N", .on_select = &menu_new_scene },
-	{ .label = "Open scene…", .shortcut = "Ctrl+O", .on_select = &menu_open_scene },
+	{ .label = "New scene", .shortcut = Shortcut.NEW_SCENE.label, .on_select = &menu_new_scene },
+	{ .label = "Open scene…", .shortcut = Shortcut.OPEN_SCENE.label, .on_select = &menu_open_scene },
 	{ .separator = true },
-	{ .label = "Import .glb…", .shortcut = "Ctrl+I", .on_select = &menu_import },
+	{ .label = "Import .glb…", .shortcut = Shortcut.IMPORT_GLB.label, .on_select = &menu_import },
 	{ .separator = true },
-	{ .label = "Save", .shortcut = "Ctrl+S", .on_select = &menu_save, .state = &query_scene_has_characters },
-	{ .label = "Save as…", .shortcut = "Ctrl+Shift+S", .on_select = &menu_save_as, .state = &query_scene_has_characters },
-	{ .label = "Export .glb…", .shortcut = "Ctrl+E", .on_select = &menu_export, .state = &query_scene_has_characters },
+	{ .label = "Save", .shortcut = Shortcut.SAVE.label, .on_select = &menu_save, .state = &query_scene_has_characters },
+	{ .label = "Save as…", .shortcut = Shortcut.SAVE_AS.label, .on_select = &menu_save_as, .state = &query_scene_has_characters },
+	{ .label = "Export .glb…", .shortcut = Shortcut.EXPORT_GLB.label, .on_select = &menu_export, .state = &query_scene_has_characters },
 	{ .separator = true },
 	// Above Quit rather than in a menu of its own: one panel of settings does not
 	// earn a top-level title, and the asset libraries it holds are the same kind
@@ -1311,12 +1311,12 @@ MenuItem[12] file_items = {
 // order they are used in. It greys on an empty document rather than on an empty
 // selection: it is the item that *makes* one.
 MenuItem[6] edit_items = {
-	{ .label = "Undo", .shortcut = "Ctrl+Z", .on_select = &menu_undo, .state = &query_undo },
-	{ .label = "Redo", .shortcut = "Ctrl+Y", .on_select = &menu_redo, .state = &query_redo },
+	{ .label = "Undo", .shortcut = Shortcut.UNDO.label, .on_select = &menu_undo, .state = &query_undo },
+	{ .label = "Redo", .shortcut = Shortcut.REDO.label, .on_select = &menu_redo, .state = &query_redo },
 	{ .separator = true },
-	{ .label = "Select all", .shortcut = "Ctrl+A", .on_select = &menu_select_all, .state = &query_any_dots },
-	{ .label = "Delete selected", .shortcut = "X", .on_select = &menu_delete, .state = &query_selection },
-	{ .label = "Set root", .shortcut = "Ctrl+R", .on_select = &menu_set_root, .state = &query_set_root },
+	{ .label = "Select all", .shortcut = Shortcut.SELECT_ALL.label, .on_select = &menu_select_all, .state = &query_any_dots },
+	{ .label = "Delete selected", .shortcut = Shortcut.DELETE.label, .on_select = &menu_delete, .state = &query_selection },
+	{ .label = "Set root", .shortcut = Shortcut.SET_ROOT.label, .on_select = &menu_set_root, .state = &query_set_root },
 };
 
 // The Rig menu holds the modes and the whole-model weight verbs, and — first —
@@ -1336,27 +1336,27 @@ MenuItem[15] rig_items = {
 	{ .label = "Rotate skeleton…", .on_select = &open_skeleton_rotation_dialog, .state = &query_any_dots },
 	{ .label = "Re-apply plan limits", .on_select = &menu_reapply_plan_limits, .state = &query_any_dots },
 	{ .separator = true },
-	{ .label = "Connect selected", .shortcut = "C", .on_select = &menu_connect_selection, .state = &query_connectable },
+	{ .label = "Connect selected", .shortcut = Shortcut.CONNECT.label, .on_select = &menu_connect_selection, .state = &query_connectable },
 	// The two jobs of one tool, adjacent and in the order the plain letter walks
 	// them. Both are listed even though a single cell in the tool column covers
 	// them both: a glyph says which job is running, and only a name says what the
 	// job is.
-	{ .label = "Lasso select", .shortcut = "T", .on_select = &menu_lasso_select, .state = &query_lasso_select },
+	{ .label = "Lasso select", .shortcut = Shortcut.LASSO_SELECT.label, .on_select = &menu_lasso_select, .state = &query_lasso_select },
 	// Above the brush rather than beside it, because it is a pin, not a weight:
 	// it hands whichever vertices you draw around to the selected dot for good.
 	// It keeps shift+T from when a coarser pin — a whole piece of the mesh on a
 	// click, later a Shells pane's row — had the plain letter; that pane is gone
 	// for now and the piece-sized pin is the MCP wire's alone.
-	{ .label = "Lasso pin", .shortcut = "shift+T", .on_select = &menu_lasso_mode, .state = &query_lasso },
-	{ .label = "Weights panel", .shortcut = "W", .on_select = &menu_weights_panel, .state = &query_weights_panel },
-	{ .label = "Weight brush", .shortcut = "shift+W", .on_select = &menu_weight_brush, .state = &query_brushing },
+	{ .label = "Lasso pin", .shortcut = Shortcut.LASSO_PIN.label, .on_select = &menu_lasso_mode, .state = &query_lasso },
+	{ .label = "Weights panel", .shortcut = Shortcut.AREA_TOOL.label, .on_select = &menu_weights_panel, .state = &query_weights_panel },
+	{ .label = "Weight brush", .shortcut = Shortcut.WEIGHT_BRUSH.label, .on_select = &menu_weight_brush, .state = &query_brushing },
 	// The whole model's weights at once, either way: every joint given the model
 	// file's own column, or every joint let go back to crig's automatic weights —
 	// the way out of weights that no longer fit joints moved since.
 	{ .label = "Use the model's own weights", .on_select = &menu_model_weights, .state = &query_model_weights },
 	{ .label = "Reset all weights to automatic", .on_select = &menu_reset_all_weights, .state = &query_reset_all_weights },
-	{ .label = "Auto-connect", .shortcut = "A", .on_select = &menu_auto_connect, .state = &query_auto_connect },
-	{ .label = "Symmetrize selected", .shortcut = "M", .on_select = &menu_mirror_selection, .state = &query_mirror_selection },
+	{ .label = "Auto-connect", .shortcut = Shortcut.AUTO_CONNECT.label, .on_select = &menu_auto_connect, .state = &query_auto_connect },
+	{ .label = "Symmetrize selected", .shortcut = Shortcut.MIRROR.label, .on_select = &menu_mirror_selection, .state = &query_mirror_selection },
 	// Both name joints, and they are the two halves of it: the plan names what it
 	// has a joint for, and this names everything it does not — a tail, a prop, a
 	// third arm. Beside each other because a user who has just been told "3 dots
@@ -1377,31 +1377,31 @@ MenuItem[15] rig_items = {
 // B for the mesh because M is already the mirror. S is free and is the letter
 // the item starts with, which is as much as either key can claim.
 MenuItem[28] view_items = {
-	{ .label = "Front", .shortcut = "1", .on_select = &menu_view_front, .state = &query_has_view },
-	{ .label = "Back", .shortcut = "Ctrl+1", .on_select = &menu_view_back, .state = &query_has_view },
-	{ .label = "Right", .shortcut = "3", .on_select = &menu_view_right, .state = &query_has_view },
-	{ .label = "Left", .shortcut = "Ctrl+3", .on_select = &menu_view_left, .state = &query_has_view },
-	{ .label = "Top", .shortcut = "7", .on_select = &menu_view_top, .state = &query_has_view },
-	{ .label = "Bottom", .shortcut = "Ctrl+7", .on_select = &menu_view_bottom, .state = &query_has_view },
+	{ .label = "Front", .shortcut = Shortcut.VIEW_FRONT.label, .on_select = &menu_view_front, .state = &query_has_view },
+	{ .label = "Back", .shortcut = Shortcut.VIEW_BACK.label, .on_select = &menu_view_back, .state = &query_has_view },
+	{ .label = "Right", .shortcut = Shortcut.VIEW_RIGHT.label, .on_select = &menu_view_right, .state = &query_has_view },
+	{ .label = "Left", .shortcut = Shortcut.VIEW_LEFT.label, .on_select = &menu_view_left, .state = &query_has_view },
+	{ .label = "Top", .shortcut = Shortcut.VIEW_TOP.label, .on_select = &menu_view_top, .state = &query_has_view },
+	{ .label = "Bottom", .shortcut = Shortcut.VIEW_BOTTOM.label, .on_select = &menu_view_bottom, .state = &query_has_view },
 	{ .separator = true },
-	{ .label = "Mesh", .shortcut = "B", .on_select = &menu_show_mesh, .state = &query_show_mesh },
-	{ .label = "Skeleton", .shortcut = "S", .on_select = &menu_show_rig, .state = &query_show_rig },
+	{ .label = "Mesh", .shortcut = Shortcut.SHOW_MESH.label, .on_select = &menu_show_mesh, .state = &query_show_mesh },
+	{ .label = "Skeleton", .shortcut = Shortcut.SHOW_RIG.label, .on_select = &menu_show_rig, .state = &query_show_rig },
 	{ .label = "Solid", .on_select = &menu_shading_solid, .state = &query_shading_solid },
 	{ .label = "Textured", .on_select = &menu_shading_textured, .state = &query_shading_textured },
-	{ .label = "Wireframe", .shortcut = "Z", .on_select = &menu_wireframe, .state = &query_wireframe },
+	{ .label = "Wireframe", .shortcut = Shortcut.WIREFRAME.label, .on_select = &menu_wireframe, .state = &query_wireframe },
 	{ .label = "Floor", .on_select = &menu_show_floor, .state = &query_show_floor },
 	{ .label = "Facing arrow", .on_select = &menu_show_facing, .state = &query_show_facing },
 	{ .label = "Ghosts", .on_select = &menu_ghosts, .state = &query_ghosts },
 	{ .label = "Ghost settings...", .on_select = &menu_ghost_settings },
 	{ .label = "Motion path", .on_select = &menu_motion_path, .state = &query_motion_path },
-	{ .label = "Weight falloff", .shortcut = "F", .on_select = &menu_falloff, .state = &query_falloff },
+	{ .label = "Weight falloff", .shortcut = Shortcut.FALLOFF.label, .on_select = &menu_falloff, .state = &query_falloff },
 	{ .label = "Unused weights", .on_select = &menu_unused, .state = &query_unused },
 	// With the tint views rather than beside the mesh toggles: like them it
 	// paints an answer onto a rig that is already on screen, and like them it is
 	// meaningless until the document has something to say.
 	{ .label = "Physics overlay", .on_select = &menu_show_physics, .state = &query_show_physics },
 	{ .separator = true },
-	{ .label = "Joint panel", .shortcut = "N", .on_select = &menu_show_joint_panel, .state = &query_show_joint_panel },
+	{ .label = "Joint panel", .shortcut = Shortcut.JOINT_PANEL.label, .on_select = &menu_show_joint_panel, .state = &query_show_joint_panel },
 	{ .label = "Joint names", .on_select = &menu_joint_names, .state = &query_joint_names },
 	{ .label = "Workflow guide", .on_select = &menu_workflow_guide, .state = &query_workflow_guide },
 	{ .label = "Nodes: generate & capture", .on_select = &menu_nodes, .state = &query_nodes },
@@ -1739,6 +1739,8 @@ struct AppRoot (Widget)
 	Vec2 size;
 	// A held arrow or , / . stepping through the open clip; see `TransportRepeat`.
 	TransportRepeat step_repeat;
+	// The plain command the last key ran, for the tests that press every one.
+	Shortcut last_shortcut;
 }
 
 <*
@@ -1849,6 +1851,7 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 		.ctrl = input.ctrl_down(),
 		.shift = input.shift_down(),
 		.repeat = &self.step_repeat,
+		.ran = &self.last_shortcut,
 	};
 	KeyAnswer answer = PASS;
 	foreach (stage : KEY_STAGES)

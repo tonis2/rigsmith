@@ -9,10 +9,8 @@
  what survived was a list of letters. A panel has room for every binding and a
  sentence beside it, and it is out of the way when it is not wanted.
 
- The table is the only copy of this text. It is not, however, the only copy of
- the bindings themselves: those are `AppRoot.on_key` and the menus, so a key
- added there has to be added here by hand. Nothing checks that, which is the
- price of a reference written for a reader rather than generated from a switch.
+ A key's row reads its text from the shortcut table (`shortcuts.c3`), which the key
+ stages and the menus read too. `every_shortcut_is_listed` keeps this in step.
 
  The keys of a *running* tool are also on the hint bar at the bottom of the
  viewport — `hint_line` — which shows a handful of them while they apply. This
@@ -52,9 +50,13 @@ const float CONTROLS_SHEET_W = 700.0;
 struct ControlRow
 {
 	String heading;
-	String binding;
+	Shortcut key;   // a key: its text comes from the table
+	String binding; // anything else
 	String action;
 }
+
+fn String ControlRow.shown_binding(self) => self.key != NONE ? self.key.label : self.binding;
+fn String ControlRow.shown_action(self) => self.key != NONE ? self.key.action : self.action;
 
 <*
  Everything crig answers to, grouped the way the interface is: what the pointer
@@ -78,8 +80,8 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "trackpad swipe", .action = "orbit — ctrl to zoom, shift to pan" },
 
 	{ .heading = "While a joint is being moved" },
-	{ .binding = "X / Y / Z", .action = "confine the move to that axis" },
-	{ .binding = "esc", .action = "put the joint back where it was" },
+	{ .key = Shortcut.MOVE_AXIS },
+	{ .key = Shortcut.MOVE_CANCEL },
 
 	{ .heading = "While the Weights card is open" },
 	{ .binding = "Grow / Shrink", .action = "push the joint's edge out or in, a tenth of its bone, live — no Apply" },
@@ -91,8 +93,8 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "Part menu", .action = "With children or UV islands: a part on show for Apply" },
 	{ .binding = "click, on UV islands", .action = "add the island clicked to the part, or take it out" },
 	{ .binding = "dark grey mesh", .action = "off the joint's limb: Apply leaves it, but UV islands go whole" },
-	{ .binding = "enter", .action = "apply the part on show" },
-	{ .binding = "esc", .action = "drop the part, then close the tool" },
+	{ .key = Shortcut.AREA_APPLY },
+	{ .key = Shortcut.AREA_BACK },
 
 	{ .heading = "While the weight brush is open" },
 	{ .binding = "drag the mesh", .action = "paint — Add or Remove, as the strip at the top says" },
@@ -106,16 +108,16 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "swipe / wheel", .action = "orbit and zoom, as always" },
 	{ .binding = "shift-drag", .action = "pan, as always — the brush leaves it alone" },
 	{ .binding = "dark grey mesh", .action = "off the joint's limb: the brush leaves it, Lasso pin hands it over" },
-	{ .binding = "shift+W / esc", .action = "close it; strokes are already on the ledger" },
+	{ .key = Shortcut.BRUSH_CLOSE },
 
 	{ .heading = "Rig" },
-	{ .binding = "C", .action = "bond the selected joints into a chain, in the order picked — again to unbond" },
+	{ .key = Shortcut.CONNECT },
 	// One tool with two jobs, and two rows for it: the plain letter walks along
 	// them, the shifted one names the far one. The modifiers are on the hint bar
 	// for as long as it is open, which is the only time they mean anything — see
 	// `hint_line`.
-	{ .binding = "T", .action = "lasso: draw around joints to select them — again to switch it to pinning" },
-	{ .binding = "shift+T", .action = "the same lasso, straight to pinning vertices to the selected joint" },
+	{ .key = Shortcut.LASSO_SELECT },
+	{ .key = Shortcut.LASSO_PIN },
 	// The tool column shows the one tool that has an icon; everything else in this
 	// section is a key or a menu item, which is why the column is small.
 	{ .binding = "tool column", .action = "top-left of the view: tweak, move, rotate, scale, lasso and sketch" },
@@ -123,60 +125,63 @@ const ControlRow[*] CONTROLS = {
 	// No key of its own — a pane rather than a mode — and the only route to a
 	// whole piece at once, so it is also the only way to see which pieces a model
 	// has at all.
-	{ .binding = "W", .action = "area: pick exactly which part of the mesh the selected joint moves" },
-	{ .binding = "shift+W", .action = "weight brush: correct the bind by hand — on the rest mesh or a parked pose" },
-	{ .binding = "] / [", .action = "sharpen or soften every blend at once — keys instead while posing a clip" },
-	{ .binding = "A", .action = "auto-connect: chain each new joint to the last" },
-	{ .binding = "M", .action = "symmetrize: line the other side up with the selection — never adds joints" },
+	{ .key = Shortcut.AREA_TOOL },
+	{ .key = Shortcut.WEIGHT_BRUSH },
+	{ .key = Shortcut.SHARPEN },
+	{ .key = Shortcut.SOFTEN },
+	{ .key = Shortcut.AUTO_CONNECT },
+	{ .key = Shortcut.MIRROR },
 	{ .binding = "Rig menu", .action = "rotate the whole skeleton when a body plan faces the wrong way" },
-	{ .binding = "ctrl+R", .action = "make the selected joint the root — refused while editing animation" },
+	{ .key = Shortcut.SET_ROOT },
 	{ .binding = "Joint card", .action = "Rename: name the selected joint — what clips, plans and the .glb address it by" },
 	{ .binding = "Rig menu", .action = "auto-name joints: name what a body plan has a joint for" },
-	{ .binding = "ctrl+A", .action = "select every joint" },
-	{ .binding = "X / del", .action = "delete every selected joint — one undo takes them all back" },
+	{ .key = Shortcut.SELECT_ALL },
+	{ .key = Shortcut.DELETE },
+	{ .key = Shortcut.DELETE_KEY },
 	{ .binding = "Joint panel", .action = "Align X/Y/Z: line joints up with the first-selected one (on Pose, in the clip)" },
 	{ .binding = "Joint panel", .action = "Centre on mesh: drop a lone joint to the middle" },
 	{ .binding = "right-click a joint", .action = "move, rotate, select children or whole skeleton, mirror, delete" },
 	{ .binding = "right-click a Scene row", .action = "move or rotate that Skeleton, Model or joint · Move by…" },
-	{ .binding = "esc", .action = "clear the selection" },
+	{ .key = Shortcut.CLEAR_SELECTION },
 
 	{ .heading = "Display" },
-	{ .binding = "B", .action = "show or hide the mesh" },
-	{ .binding = "S", .action = "show or hide the skeleton" },
-	{ .binding = "Z", .action = "wireframe" },
+	{ .key = Shortcut.SHOW_MESH },
+	{ .key = Shortcut.SHOW_RIG },
+	{ .key = Shortcut.WIREFRAME },
 	{ .binding = "Rig menu", .action = "weight preview: colour each vertex by its joint" },
-	{ .binding = "F", .action = "weight falloff of the selected joint" },
-	{ .binding = "N", .action = "show or hide the joint panel" },
+	{ .key = Shortcut.FALLOFF },
+	{ .key = Shortcut.JOINT_PANEL },
 	{ .binding = "View menu", .action = "joint names, and where the plan wants the selected joint" },
 	// The one group here that is about the program rather than the model, and it
 	// is in Display because that is where a person looks for "everything is too
 	// small". File > Settings has the same setting on a slider.
-	{ .binding = "ctrl+= / ctrl+-", .action = "draw the whole interface bigger or smaller" },
-	{ .binding = "ctrl+0", .action = "back to the size the display asks for" },
+	{ .key = Shortcut.UI_BIGGER },
+	{ .key = Shortcut.UI_SMALLER },
+	{ .key = Shortcut.UI_DEFAULT },
 
 	{ .heading = "Posing" },
 	{ .binding = "Joints | Pose", .action = "top of the 3D view: whether a drag moves or poses" },
 	{ .binding = "drag a joint", .action = "on Pose: pose it through IK, the same as G" },
-	{ .binding = "G", .action = "pose the selected joint — sweep the pointer, click to confirm" },
-	{ .binding = "R", .action = "turn the selected joint — sweep the pointer around it, click to confirm" },
+	{ .key = Shortcut.POSE_MOVE },
+	{ .key = Shortcut.POSE_TURN },
 	{ .binding = "Joint card dials", .action = "turn the selected joint about one bone-local axis, off the model" },
-	{ .binding = "X / Y / Z", .action = "lock a move to one axis, or turn about that axis" },
-	{ .binding = "esc", .action = "put the pose back where the gesture found it" },
-	{ .binding = "L", .action = "anchor the selected joints' position, so other moves bend around them" },
-	{ .binding = "shift+L", .action = "anchor their rotation instead" },
+	{ .key = Shortcut.POSE_AXIS },
+	{ .key = Shortcut.POSE_CANCEL },
+	{ .key = Shortcut.ANCHOR },
+	{ .key = Shortcut.ANCHOR_TURN },
 	{ .binding = "Anim panel", .action = "Rest pose: show the rest shape, without changing the clip" },
 	// The pose clipboard, as against the timeline's key clipboard: the same
 	// chords, told apart by where the pointer's focus is. See pose_clipboard.c3.
-	{ .binding = "ctrl+C", .action = "copy the pose of the selected joints — all of them when none is selected" },
-	{ .binding = "ctrl+V", .action = "paste that pose at the playhead, as keys — one undo takes it back" },
-	{ .binding = "ctrl+shift+V", .action = "paste it mirrored: each joint onto its twin, reflected" },
-	{ .binding = "shift+M", .action = "mirror the selected joints' pose (all if none) on the keys Apply to reaches" },
+	{ .key = Shortcut.COPY_POSE },
+	{ .key = Shortcut.PASTE_POSE },
+	{ .key = Shortcut.PASTE_MIRRORED },
+	{ .key = Shortcut.MIRROR_POSE },
 	{ .binding = "Poses", .action = "save named poses; apply one whole, mirrored or to selected joints" },
 	// The key clipboard lives on the sheet itself: the menu on a key copies it,
 	// the menu on empty sheet pastes at that time. The chords do the same while
 	// the sheet has the focus.
 	{ .binding = "right-click a key", .action = "copy or delete keys; set their interpolation, ease or tangent" },
-	{ .binding = "esc", .action = "let go of the selected keys — again clears the joint selection" },
+	{ .key = Shortcut.KEYS_CLEAR },
 	{ .binding = "Apply to", .action = "key a pose edit on this frame, on the selected keys, or across the whole clip" },
 	{ .binding = "Keys / Curves", .action = "Curves plots the selected joints' rotation and position over time" },
 	{ .binding = "curve list", .action = "eye shows or hides a curve; click a name to solo it, shift adds, ctrl toggles" },
@@ -196,14 +201,26 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "Clip tools", .action = "check, trim, loop; remove the selected joints' keys or move them to a layer" },
 
 	{ .heading = "Timeline (while an animation is open)" },
-	{ .binding = "space", .action = "play or pause" },
-	{ .binding = "left / right, or , / .", .action = "step one frame back or forward; hold to keep going" },
-	{ .binding = "[ / ]", .action = "jump to the previous or next key" },
-	{ .binding = "home / end", .action = "go to the first or last frame" },
+	{ .key = Shortcut.PLAY },
+	{ .key = Shortcut.STEP },
+	{ .key = Shortcut.JUMP_KEY },
+	{ .key = Shortcut.ENDS },
+	{ .key = Shortcut.INTERPOLATION },
+	{ .key = Shortcut.KEY_POSE },
+	{ .key = Shortcut.AUTO_KEY },
+
+	{ .heading = "While a path is drawn" },
+	{ .key = Shortcut.PATH_FINISH },
+	{ .key = Shortcut.PATH_CANCEL },
+	{ .key = Shortcut.PATH_DELETE },
 
 	{ .heading = "Camera" },
-	{ .binding = "1 / 3 / 7", .action = "front / right / top" },
-	{ .binding = "ctrl+1 / 3 / 7", .action = "back / left / bottom" },
+	{ .key = Shortcut.VIEW_FRONT },
+	{ .key = Shortcut.VIEW_RIGHT },
+	{ .key = Shortcut.VIEW_TOP },
+	{ .key = Shortcut.VIEW_BACK },
+	{ .key = Shortcut.VIEW_LEFT },
+	{ .key = Shortcut.VIEW_BOTTOM },
 
 	{ .heading = "Assets" },
 	{ .binding = "the + on a clip", .action = "adds it to the character — the Animations pane plays it" },
@@ -213,14 +230,14 @@ const ControlRow[*] CONTROLS = {
 	{ .binding = "File > Settings", .action = "which folders the browser reads" },
 
 	{ .heading = "Document" },
-	{ .binding = "ctrl+N", .action = "a new, empty scene" },
-	{ .binding = "ctrl+O", .action = "open a scene" },
-	{ .binding = "ctrl+I", .action = "import a .glb into the scene as a character" },
-	{ .binding = "ctrl+E", .action = "export as .glb — the clips you tick, or the whole scene" },
-	{ .binding = "ctrl+Z", .action = "undo" },
-	{ .binding = "ctrl+Y", .action = "redo" },
-	{ .binding = "ctrl+S", .action = "save each character into its model, and the scene file" },
-	{ .binding = "ctrl+shift+S", .action = "save the scene under another name" },
+	{ .key = Shortcut.NEW_SCENE },
+	{ .key = Shortcut.OPEN_SCENE },
+	{ .key = Shortcut.IMPORT_GLB },
+	{ .key = Shortcut.EXPORT_GLB },
+	{ .key = Shortcut.UNDO },
+	{ .key = Shortcut.REDO },
+	{ .key = Shortcut.SAVE },
+	{ .key = Shortcut.SAVE_AS },
 };
 
 <*
@@ -299,8 +316,8 @@ fn Vec2 ControlsSheet.layout(&self, Element* elem, Constraints constraints) @dyn
 	foreach (row : CONTROLS)
 	{
 		if (row.heading.len > 0) continue;
-		bindings = math::max(bindings, elem.ui.text.measure(0, row.binding, CONTROLS_TEXT_SIZE).x);
-		actions = math::max(actions, elem.ui.text.measure(0, row.action, CONTROLS_TEXT_SIZE).x);
+		bindings = math::max(bindings, elem.ui.text.measure(0, row.shown_binding(), CONTROLS_TEXT_SIZE).x);
+		actions = math::max(actions, elem.ui.text.measure(0, row.shown_action(), CONTROLS_TEXT_SIZE).x);
 	}
 
 	self.column = bindings + CONTROLS_GUTTER;
@@ -325,8 +342,8 @@ fn void ControlsSheet.paint(&self, Element* elem, Painter* painter) @dynamic
 			continue;
 		}
 
-		painter.text({ 0, y }, row.binding, { .size = CONTROLS_TEXT_SIZE, .color = TEXT });
-		painter.text({ self.column, y }, row.action, { .size = CONTROLS_TEXT_SIZE, .color = TEXT_DIM });
+		painter.text({ 0, y }, row.shown_binding(), { .size = CONTROLS_TEXT_SIZE, .color = TEXT });
+		painter.text({ self.column, y }, row.shown_action(), { .size = CONTROLS_TEXT_SIZE, .color = TEXT_DIM });
 		y += h;
 	}
 }

@@ -52,9 +52,9 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 	{
 		usz count = app.selection_count();
 		bool many = count > 1;
-		rows[n++] = { .label = many ? "Move joints" : "Move joint", .shortcut = "G",
+		rows[n++] = { .label = many ? "Move joints" : "Move joint", .shortcut = Shortcut.POSE_MOVE.label,
 			.on_select = &scene_context_move, .id = "viewport-context-move" };
-		rows[n++] = { .label = "Rotate", .shortcut = "R",
+		rows[n++] = { .label = "Rotate", .shortcut = Shortcut.POSE_TURN.label,
 			.on_select = &scene_context_rotate, .id = "viewport-context-rotate" };
 		rows[n++] = { .label = "Move by…",
 			.on_select = &scene_context_move_by, .id = "viewport-context-move-by" };
@@ -73,7 +73,7 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 		}
 		rows[n++] = { .label = many ? "Mirror joints to other side" : "Mirror joint to other side",
 			.separator_before = true, .on_select = &viewport_context_mirror, .id = "viewport-context-mirror" };
-		rows[n++] = { .label = many ? "Delete joints" : "Delete joint", .shortcut = "X",
+		rows[n++] = { .label = many ? "Delete joints" : "Delete joint", .shortcut = Shortcut.DELETE.label,
 			.separator_before = true, .on_select = &viewport_context_delete, .id = "viewport-context-delete" };
 		return rows[:n];
 	}
@@ -81,20 +81,20 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 	switch (app.scene_selection)
 	{
 		case SKELETON:
-			rows[n++] = { .label = "Move skeleton", .shortcut = "G",
+			rows[n++] = { .label = "Move skeleton", .shortcut = Shortcut.POSE_MOVE.label,
 				.on_select = &scene_context_move, .id = "viewport-context-move" };
-			rows[n++] = { .label = "Rotate skeleton", .shortcut = "R",
+			rows[n++] = { .label = "Rotate skeleton", .shortcut = Shortcut.POSE_TURN.label,
 				.on_select = &scene_context_rotate, .id = "viewport-context-rotate" };
 			rows[n++] = { .label = "Move skeleton by…",
 				.on_select = &scene_context_move_by, .id = "viewport-context-move-by" };
 			rows[n++] = { .label = "Rotate skeleton by…",
 				.on_select = &scene_context_rotate_by, .id = "viewport-context-rotate-by" };
-			rows[n++] = { .label = "Select all joints", .shortcut = "Ctrl+A", .separator_before = true,
+			rows[n++] = { .label = "Select all joints", .shortcut = Shortcut.SELECT_ALL.label, .separator_before = true,
 				.on_select = &scene_context_select_joints, .id = "viewport-context-select-joints" };
 		case MODEL:
-			rows[n++] = { .label = "Move model", .shortcut = "G",
+			rows[n++] = { .label = "Move model", .shortcut = Shortcut.POSE_MOVE.label,
 				.on_select = &scene_context_move, .id = "viewport-context-move" };
-			rows[n++] = { .label = "Rotate model", .shortcut = "R",
+			rows[n++] = { .label = "Rotate model", .shortcut = Shortcut.POSE_TURN.label,
 				.on_select = &scene_context_rotate, .id = "viewport-context-rotate" };
 			rows[n++] = { .label = "Move model by…",
 				.on_select = &scene_context_move_by, .id = "viewport-context-move-by" };
@@ -125,7 +125,7 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 			{
 				rows[n++] = { .label = "Select skeleton",
 					.on_select = &scene_context_select_skeleton, .id = "viewport-context-select-skeleton" };
-				rows[n++] = { .label = "Select all joints", .shortcut = "Ctrl+A",
+				rows[n++] = { .label = "Select all joints", .shortcut = Shortcut.SELECT_ALL.label,
 					.on_select = &scene_context_select_joints, .id = "viewport-context-select-joints" };
 			}
 	}

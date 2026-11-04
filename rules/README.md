@@ -18,5 +18,6 @@ rule test changed, that is a rule change: stop and ask the owner.
 - [Editing](editing.md)
 - [Weights](weights.md)
 - [Files](files.md)
+- [Shortcuts](shortcuts.md)
 - [Posing](posing.md)
 - [Rigging](rigging.md)

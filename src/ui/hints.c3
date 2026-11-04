@@ -39,8 +39,8 @@ char[192] chain_hint_buffer;
 
  Ordered by what actually has the keyboard, not by importance: a move in
  progress claims X/Y/Z and escape before any mode is asked, and the brush claims
- the plain drag and escape before the lasso is. `AppRoot.on_key` and
- `Viewport.on_event` resolve them in this order, and a bar that listed them in
+ the plain drag and escape before the lasso is. The key stages and
+ `Viewport.on_mouse` resolve them in this order, and a bar that listed them in
  any other would promise a key that the layer above it is going to eat.
 
  The returned strings are printed verbatim, so the wording here is the wording
