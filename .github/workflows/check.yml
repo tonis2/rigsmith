@@ -1,0 +1,35 @@
+# Checks every push. Runners have no GPU, so this runs the layer check and the
+# algorithm tests, which need neither a window nor Vulkan.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  C3C_VERSION: v0.8.4
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # .gitmodules names three.c3 by its SSH URL, which a runner has no key for.
+      - name: Submodules
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive --depth 1
+
+      - name: Install c3c
+        run: |
+          set -euo pipefail
+          url="https://github.com/c3lang/c3c/releases/download/${C3C_VERSION}/c3-linux-static.tar.gz"
+          curl -fsSL -o c3c-dist "$url"
+          mkdir -p "$HOME/c3c"
+          tar -xzf c3c-dist -C "$HOME/c3c"
+          echo "$(dirname "$(find "$HOME/c3c" -type f -name c3c | head -1)")" >> "$GITHUB_PATH"
+
+      - run: tools/check_layers.sh
+      - run: tools/test_algo.sh

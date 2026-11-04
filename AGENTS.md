@@ -14,6 +14,27 @@ Only run c3c test full leak checks when told directly.
 
 The tests should only use .glb files in the assets folder, no fixtures
 
+Algorithm tests go in test/algo and need no editor: tools/test_algo.sh runs them in seconds.
+
+# Layers
+
+src/core, src/anim, src/rig and src/gltf must compile without app, ui or mcp. tools/check_layers.sh checks this, and the pre-commit hook runs it. Keep algorithms free of AppState, UI, GPU, files and notices: take inputs, return results, and let app record them. Install the hook once with:
+
+    echo 'tools/pre-commit.sh || exit 1' >> .git/hooks/pre-commit
+
+# Fixing a bug
+
+1. Find the rule in rules/. If there isn't one, add it.
+2. Write a test that fails first, at the level of the algorithm.
+3. Look for every other door to the same behaviour, and make them share one function.
+4. Name the rule and the case in the commit message, not "Fixes".
+
+If a fix needs a test in test/rules changed, that is a rule changing: stop and ask the owner. Don't rewrite or delete a test just to get to green.
+
+# Naming
+
+Don't use third-party product or rig names in code, comments or test data. Write "a downloaded rig", and `armature:LeftHand` for a prefixed joint name.
+
 # Build and run
 
 When c3c build gives warnings on build time, fix those too
