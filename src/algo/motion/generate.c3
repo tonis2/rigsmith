@@ -187,3 +187,70 @@ fn String next_generated_name(RigDocument* doc, Allocator allocator)
 		if (!has_bound_clip_named(doc, name)) return name.copy(allocator);
 	}
 }
+
+const String[4] KIMODO_EFFECTORS = { "LeftHand", "RightHand", "LeftFoot", "RightFoot" };
+
+<*
+ The hands and feet a guide clip's keys at `time` touch, when that is all they
+ touch: `held[k]` for KIMODO_EFFECTORS[k]. False when any key there is on a
+ joint outside the four limbs — the hips, the spine, the head — or on a joint
+ with no Kimodo joint above it, which makes it a whole-body pose.
+
+ A key's joint counts as the nearest joint at or above it that answers to a
+ Kimodo joint (`sent`), so a finger keyed on its own holds its hand.
+*>
+fn bool guide_effectors(
+	AnimTemplate* clip,
+	float time,
+	RigView* view,
+	PackReach* reach,
+	bool[] sent,
+	bool[4]* held
+)
+{
+	*held = { };
+	bool touched;
+	foreach (key : clip.keyframes)
+	{
+		if (math::abs(key.time - time) > GHOST_KEY_EPSILON) continue;
+		foreach (dot : key.dots)
+		{
+			int joint = -1;
+			foreach (usz i, name : view.names)
+			{
+				if (name.len > 0 && name == dot.joint_name)
+				{
+					joint = (int)i;
+					break;
+				}
+			}
+			while (joint >= 0 && !sent[joint]) joint = view.skeleton.parents[joint];
+			if (joint < 0) return false;
+			String limb = kimodo_limb(reach.names[joint]);
+			if (limb.len == 0) return false;
+			foreach (usz k, name : KIMODO_EFFECTORS) if (name == limb) (*held)[k] = true;
+			touched = true;
+		}
+	}
+	return touched;
+}
+
+<*
+ Which rig joints a guide sends: those answering to a pack joint, each pack joint once.
+
+ @param sent : `Receives one flag per joint.`
+ @return `How many are sent.`
+*>
+fn usz guide_sent_joints(AnimPack* pack, PackReach* reach, bool[] sent)
+{
+	usz answered;
+	for (usz i = 0; i < sent.len && i < reach.names.len; i++)
+	{
+		if (pack_joint_index(pack, reach.names[i]) < 0) continue;
+		bool twice;
+		for (usz k = 0; k < i; k++) if (sent[k] && reach.names[k] == reach.names[i]) twice = true;
+		sent[i] = !twice;
+		if (sent[i]) answered++;
+	}
+	return answered;
+}

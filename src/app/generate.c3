@@ -332,54 +332,6 @@ fn AnimTemplate* AppState.bound_clip_named(&self, String name, AnimRef* ref)
 	return null;
 }
 
-const String[4] KIMODO_EFFECTORS = { "LeftHand", "RightHand", "LeftFoot", "RightFoot" };
-
-<*
- The hands and feet a guide clip's keys at `time` touch, when that is all they
- touch: `held[k]` for KIMODO_EFFECTORS[k]. False when any key there is on a
- joint outside the four limbs — the hips, the spine, the head — or on a joint
- with no Kimodo joint above it, which makes it a whole-body pose.
-
- A key's joint counts as the nearest joint at or above it that answers to a
- Kimodo joint (`sent`), so a finger keyed on its own holds its hand.
-*>
-fn bool AppState.guide_effectors(
-	&self,
-	AnimTemplate* clip,
-	float time,
-	RigView* view,
-	PackReach* reach,
-	bool[] sent,
-	bool[4]* held
-)
-{
-	*held = { };
-	bool touched;
-	foreach (key : clip.keyframes)
-	{
-		if (math::abs(key.time - time) > GHOST_KEY_EPSILON) continue;
-		foreach (dot : key.dots)
-		{
-			int joint = -1;
-			foreach (usz i, name : view.names)
-			{
-				if (name.len > 0 && name == dot.joint_name)
-				{
-					joint = (int)i;
-					break;
-				}
-			}
-			while (joint >= 0 && !sent[joint]) joint = view.skeleton.parents[joint];
-			if (joint < 0) return false;
-			String limb = kimodo_limb(reach.names[joint]);
-			if (limb.len == 0) return false;
-			foreach (usz k, name : KIMODO_EFFECTORS) if (name == limb) (*held)[k] = true;
-			touched = true;
-		}
-	}
-	return touched;
-}
-
 <*
  The guide poses of bound clip `guide` for a job of `frames` frames, as the
  pipeline's `poses` JSON (see llm-runner's plugins/kimodo/poses.js): the rig
@@ -437,18 +389,9 @@ fn String? AppState.motion_guide_json(
 
 	// Which rig joints are sent: those answering to a Kimodo joint, each Kimodo
 	// joint once.
-	usz joints  = view.skeleton.len();
-	bool[] sent = mem::new_array(bool, (sz)joints);
+	bool[] sent = mem::new_array(bool, (sz)view.skeleton.len());
 	defer alloc::free(mem, sent);
-	usz answered;
-	for (usz i = 0; i < joints && i < reach.names.len; i++)
-	{
-		if (pack_joint_index(&kimodo, reach.names[i]) < 0) continue;
-		bool twice;
-		for (usz k = 0; k < i; k++) if (sent[k] && reach.names[k] == reach.names[i]) twice = true;
-		sent[i] = !twice;
-		if (sent[i]) answered++;
-	}
+	usz answered = guide_sent_joints(&kimodo, &reach, sent);
 	if (answered < 2) return MOTION_GUIDE_UNMATCHED~;
 
 	float[] times = distinct_key_times(clip);
@@ -458,17 +401,7 @@ fn String? AppState.motion_guide_json(
 	DString out;
 	out.init(mem);
 	defer out.free();
-	out.append_string("{\n    \"rest\": {");
-	bool first = true;
-	foreach (usz i, rest : view.skeleton.joints)
-	{
-		if (!sent[i]) continue;
-		out.appendf("%s\n      ", first ? "" : ",");
-		gltf_edit::escape_json_string(&out, reach.names[i]);
-		out.append_string(": ");
-		append_json_point(&out, turned_about_y(rest, facing));
-		first = false;
-	}
+	guide_write_rest(&out, &view.skeleton, reach.names, sent, facing);
 	out.append_string("\n    },\n    \"keys\": [");
 	foreach (t : times)
 	{
@@ -483,33 +416,10 @@ fn String? AppState.motion_guide_json(
 		Matrix4f[]? palette = rig::joint_palette(mem, &view.skeleton, pose);
 		if (catch palette) continue;
 		defer alloc::free(mem, palette);
-		out.appendf("%s\n      { \"frame\": %d, \"joints\": {", *keyed > 0 ? "," : "", frame);
-		first = true;
-		foreach (usz i, rest : view.skeleton.joints)
-		{
-			if (!sent[i]) continue;
-			out.appendf("%s ", first ? "" : ",");
-			gltf_edit::escape_json_string(&out, reach.names[i]);
-			out.append_string(": ");
-			append_json_point(&out, turned_about_y(rest.transform(palette[i]), facing));
-			first = false;
-		}
-		out.append_string(" }");
 		bool[4] held;
-		if (self.guide_effectors(clip, t, &view, &reach, sent, &held))
-		{
-			out.append_string(", \"effectors\": [");
-			first = true;
-			foreach (usz k, name : KIMODO_EFFECTORS)
-			{
-				if (!held[k]) continue;
-				out.appendf(`%s"%s"`, first ? "" : ", ", name);
-				first = false;
-			}
-			out.append_string("]");
-			if (partial) (*partial)++;
-		}
-		out.append_string(" }");
+		bool limbs = guide_effectors(clip, t, &view, &reach, sent, &held);
+		guide_write_key(&out, &view.skeleton, palette, reach.names, sent, facing, frame, *keyed == 0, limbs ? &held : null);
+		if (limbs && partial) (*partial)++;
 		(*keyed)++;
 	}
 	out.append_string("\n    ]\n  }");
