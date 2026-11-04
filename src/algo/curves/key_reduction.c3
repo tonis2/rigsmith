@@ -144,7 +144,13 @@ fn void pose_positions(rig::Skeleton* skeleton, rig::Pose* pose, Vec3[] at, Quat
 	}
 }
 
-fn float turn_gap(Quaternionf a, Quaternionf b) @local => angle_between_turns(a, b);
+// acos, not `angle_between_turns`: its rounding keeps keys the exact angle would
+// drop. Changing it cuts an imported clip's keys by two thirds; see bugs.md.
+fn float turn_gap(Quaternionf a, Quaternionf b) @local
+{
+	float d = math::min(math::abs(a.v.dot(b.v)), 1.0f);
+	return 2.0f * math::acos(d);
+}
 
 // The most samples one kept span may skip, which bounds the check's cost.
 const usz REDUCTION_LONGEST_SPAN @local = 240;

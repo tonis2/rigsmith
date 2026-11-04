@@ -14,3 +14,8 @@
 - **Rule:** keys, tangents, the gait and the ground survive a round trip, a floor with no feet included.
 - **Why:** a round trip flattened tangents and lost the gait. Files lost a stated floor unless it had feet.
 - **Tests:** `test/rules/clip_round_trip_test.c3`.
+
+## Import keeps its keys
+- **Rule:** how many keys an imported clip keeps is a deliberate setting. The humanoid's Walk_slow imports with 6,435 joint keys.
+- **Why:** tidying an angle helper cut that to 2,099 and no test noticed, because the pose barely moved. Fewer keys changes what a user edits.
+- **Tests:** `an_imported_clip_keeps_its_keys`.

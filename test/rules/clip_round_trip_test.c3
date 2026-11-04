@@ -57,3 +57,19 @@ fn void a_floor_alone_round_trips() @test
 	AnimTemplate* back = round_tripped(f, "Base", "Back");
 	test::@check(back != null && back.ground.floor_set, "the floor was lost");
 }
+
+// Key reduction is a choice about what a user edits, so it can't drift unseen.
+fn void an_imported_clip_keeps_its_keys() @test
+{
+	Fixture* f = mem::new(Fixture);
+	defer free(f);
+	if (!f.open_model("assets/animations/humanoid.glb")) return;
+	defer f.close();
+	String? made = f.call_tool_text("import_clip", `{"path":"assets/animations/humanoid.glb","clip":"Walk_slow","name":"Base"}`);
+	test::@check(@ok(made), "the clip imported");
+	if (try made) made.free(mem);
+	AnimTemplate* clip = f.app.clip(f.app.clip_named_in_authored("Base"));
+	usz keys;
+	foreach (frame : clip.keyframes) keys += frame.dots.len;
+	test::@check(keys == 6435, "Walk_slow imports with %s joint keys", keys);
+}

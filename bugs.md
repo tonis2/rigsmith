@@ -13,6 +13,9 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `foot_ids` (`locks.c3`) still reads only `ankle_L` and `ankle_R`. Only tests reach it.
 - Stdlib `slerp` falls back to lerp near identity, unlike `curve_slerp`, so viewport and glTF readers differ slightly. Read.
 
+## Decisions for the owner
+- Key reduction measures angles with `acos`, whose float rounding keeps keys an exact angle would drop. Using `angle_between_turns` cut the humanoid's imported Walk_slow from 6,435 joint keys to 2,099. The worst pose change across three clips was 1.6 mm at a fingertip and 0.16°. Smaller clips, but fewer keys to edit, so it stays as it was until decided.
+
 ## Weights
 - `lasso_mirror` and `limb_mask` lost their tests in `9fdd74a` and have no direct test now.
 - `normalise_rows`, `top_row`, `strongest_shares` and `guide.c3:110` keep the strongest shares by different rules. Whether all the differences are intended isn't known.
