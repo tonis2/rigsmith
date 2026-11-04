@@ -812,12 +812,7 @@ fn Vec4 AnimSpan.rotation_slope(self, AnimTangents tangents, bool outgoing, Quat
 			// vector: the same for both ends of the segment.
 			Quaternionf from = outgoing ? at : across;
 			Quaternionf to = outgoing ? across : at;
-			Quaternionf carry = to * from.conjugate();
-			if (carry.v.w < 0.0f) carry = -carry;
-			Vec3 vector = carry.v.xyz;
-			float sine = vector.length();
-			Vec3 turn = sine < 1.0e-6f ? vector * 2.0f : vector / sine * (2.0f * math::atan2(sine, carry.v.w));
-			return rotation_slope(turn, 1.0f, at);
+			return rotation_slope(rotation_vector(to * from.conjugate()), 1.0f, at);
 		case FREE:
 		case BROKEN:
 			return rotation_slope(outgoing ? tangents.outgoing : tangents.incoming, self.span, at) + at.v * auto.dot(at.v);
@@ -1547,6 +1542,31 @@ fn AnimKeyDot AnimTemplate.entry_at(self, String joint, float time)
 	return out;
 }
 
+// A unit quaternion's turn as a rotation vector: the axis times the angle.
+fn Vec3 rotation_vector(Quaternionf q)
+{
+	if (q.v.w < 0.0f) q = -q;
+	Vec3 axis = { q.v.x, q.v.y, q.v.z };
+	float s = axis.length();
+	if (s < 1.0e-9f) return axis * 2.0f;
+	float angle = 2.0f * (float)math::atan2(s, q.v.w);
+	return axis * (angle / s);
+}
+
+// A phase folded into 0..1.
+fn float phase_wrapped(float phase) => phase - math::floor(phase);
+
+<*
+ Where time `t` lands in the clip. A loop goes round again; a one-shot holds its
+ ends. This is the one rule: see rules/posing.md.
+*>
+fn float AnimTemplate.local_time(self, float t)
+{
+	if (self.duration <= 0.0f || t <= 0.0f) return 0.0f;
+	if (self.loop) return t - math::floor(t / self.duration) * self.duration;
+	return math::min(t, self.duration);
+}
+
 <*
  Where in the cycle `time` falls, as a fraction from 0 to 1.
 
@@ -1567,8 +1587,4 @@ fn float AnimTemplate.phase_at(self, float time)
 }
 
 // The angle one rotation turns through to become another.
-fn float rotation_angle_between(Quaternionf from, Quaternionf to)
-{
-	float cosine = math::abs(from.v.dot(to.v));
-	return 2.0f * (float)math::acos(math::min(cosine, 1.0f));
-}
+fn float rotation_angle_between(Quaternionf from, Quaternionf to) => angle_between_turns(from, to);

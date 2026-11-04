@@ -168,17 +168,6 @@ fn bool smooth_holds(AnimTemplate clip, String joint, float time) @local
 	return false;
 }
 
-// A unit quaternion's turn as a rotation vector: the axis times the angle.
-fn Vec3 rotation_vector(Quaternionf q) @local
-{
-	if (q.v.w < 0.0f) q = -q;
-	Vec3 axis = { q.v.x, q.v.y, q.v.z };
-	float s = axis.length();
-	if (s < 1.0e-9f) return axis * 2.0f;
-	float angle = 2.0f * (float)math::atan2(s, q.v.w);
-	return axis * (angle / s);
-}
-
 // The inverse of `rotation_vector`.
 fn Quaternionf from_rotation_vector(Vec3 v) @local
 {

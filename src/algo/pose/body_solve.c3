@@ -335,19 +335,7 @@ fn void BodySolveState.copy_from(&self, BodySolveState* other)
  The turn that is `q`, as axis times angle and the short way round: the log of a
  unit quaternion, near zero when `q` is near the identity.
 *>
-fn Vec3 body_solve_log(Quaternionf q) @local
-{
-	Vec3 v = { q.v.x, q.v.y, q.v.z };
-	float w = q.v.w;
-	if (w < 0.0f)
-	{
-		w = -w;
-		v = -v;
-	}
-	float s = v.length();
-	if (s < 1.0e-9f) return v * 2.0f;
-	return v * (2.0f * (float)math::atan2(s, w) / s);
-}
+fn Vec3 body_solve_log(Quaternionf q) @local => rotation_vector(q);
 
 // A unit rotation as a matrix, by rows.
 fn Vec3[3] body_solve_matrix(Quaternionf q) @local

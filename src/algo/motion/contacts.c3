@@ -22,7 +22,6 @@ const float CONTACT_LIFT_MOST = 0.05f;
 // A new contact covers this much of the cycle.
 const float CONTACT_NEW_SPAN = 0.25f;
 
-fn float phase_wrapped(float phase) => phase - math::floor(phase);
 
 // The first window naming this joint, or the window count when none does.
 fn usz contact_first_of(AnimGround ground, String joint)

@@ -12,11 +12,9 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `clip_aims_flattened` (`aim.c3:917`) has no limit stage before ground. Read.
 - `bake_keyframe` (`bake.c3:391`) solves pins and aims without the floor. Likely misplaces pinned limbs. Not run.
 - `played_pose` claims "as it plays and as it exports", which disagree on solo layers. Read.
-- `render_poses.c3:490,553` and `render_studio.c3:564` wrap time even when the clip doesn't loop. Read.
-- `phase_at` returns 1 at a one-shot's end; `phase_wrapped`, `wrapped` and `wrapped_phase` don't. Read.
 - Viewport clamps a joint with a saved frame and unusable base; export leaves it free (`constraint_rig.c3:363`). Needs a decision.
 - What counts as a foot differs: `locks.c3:309` and `mcp/pins.c3:546` use hard-coded names, and height bands are 12% and a fifth of rig height. `derived_contacts` samples grounded with no limits; `contact_runs` samples limited, ungrounded. Read.
-- Rotation helpers differ: `curve_cleanup.c3:140` has no `w<0` flip and is half length; `acos` loses small angles where `atan2` doesn't; stdlib `slerp` falls back to lerp near identity, unlike `curve_slerp`. Read.
+- Stdlib `slerp` falls back to lerp near identity, unlike `curve_slerp`, so viewport and glTF readers differ slightly. Read.
 
 ## Weights
 - `lasso_mirror` and `limb_mask` lost their tests in `9fdd74a` and have no direct test now.

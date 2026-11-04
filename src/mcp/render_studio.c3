@@ -269,8 +269,7 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 			detail.appendf(`clip "%s" has no keys to play.`, ask.clip);
 			return RENDER_STUDIO_REFUSED~;
 		}
-		float time = ask.time;
-		if (clip.duration > 0.0f) time -= clip.duration * (float)math::floor(time / clip.duration);
+		float time = clip.local_time(ask.time);
 		pose = app.evaluated_clip_pose(mem, &view, *clip, named, time);
 		foreach (usz j, parent : view.skeleton.parents)
 		{

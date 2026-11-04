@@ -19,3 +19,8 @@
 ## Renders show what plays
 - **Rule:** studio pictures and training renders show pins and aims, matching the player.
 - **Why:** the owner's decision (2026-11-04). Not implemented yet; see `bugs.md`.
+
+## A time lands in a clip by one rule
+- **Rule:** a loop goes round again; a one-shot holds its ends, so the end of a one-shot has phase 1, not 0. Use `AnimTemplate.local_time` and `phase_at`.
+- **Why:** renders wrapped a one-shot back to its start while the player and export held its end.
+- **Tests:** `test/rules/clip_time_test.c3`.

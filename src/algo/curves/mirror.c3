@@ -328,7 +328,7 @@ fn AnimGround mirror_ground(Allocator allocator, AnimGround ground, float phase)
 			continue;
 		}
 
-		feet.push({ .joint = twin, .down = wrapped(foot.down + phase), .up = wrapped(foot.up + phase),
+		feet.push({ .joint = twin, .down = phase_wrapped(foot.down + phase), .up = phase_wrapped(foot.up + phase),
 			.off_floor = foot.off_floor });
 	}
 
@@ -341,8 +341,6 @@ alias AnimFootList = List{AnimFoot};
 
 // A phase folded back into [0, 1). A window whose end wraps past the loop point
 // is the ordinary case, and `AnimFoot.planted` reads it correctly.
-fn float wrapped(float phase) @local => phase - math::floor(phase);
-
 // A time folded into the clip's own cycle. Left alone for a clip that does not
 // loop: there is no other turn of it to have come from, and a lag off the front
 // of a one-shot is the start of it.

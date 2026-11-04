@@ -1085,7 +1085,7 @@ fn usz motion_issues(
 		into[count++] = {
 			.kind = POP,
 			.joint = j < names.len ? names[j] : "",
-			.phase = wrapped_phase(worst_time[j], duration),
+			.phase = template.phase_at(worst_time[j]),
 			.magnitude = worst[j],
 			.axis = -1,
 			.key = key_at(template, worst_time[j]),
@@ -1096,7 +1096,7 @@ fn usz motion_issues(
 		into[count++] = {
 			.kind = ROOT_POP,
 			.joint = root < names.len ? names[root] : "",
-			.phase = wrapped_phase(root_time, duration),
+			.phase = template.phase_at(root_time),
 			.magnitude = root_worst / height,
 			.axis = -1,
 			.key = key_at(template, root_time),
@@ -1248,15 +1248,5 @@ fn int key_at(AnimTemplate template, float time) @local
 	return best;
 }
 
-fn float wrapped_phase(float time, float duration) @local
-{
-	float phase = time / duration;
-	return phase - math::floor(phase);
-}
-
 // The angle one rotation stands from another, the short way round.
-fn float rotation_gap(Quaternionf a, Quaternionf b) @local
-{
-	float dot = math::abs(a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w);
-	return 2.0f * math::acos(math::min(dot, 1.0f));
-}
+fn float rotation_gap(Quaternionf a, Quaternionf b) @local => angle_between_turns(a, b);

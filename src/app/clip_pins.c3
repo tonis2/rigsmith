@@ -646,8 +646,7 @@ fn usz AppState.unpin_clip_joints(&self, AnimRef ref, String[] joints)
 // solve applied, pins not. A time past the end of a looping clip wraps round.
 fn Vec3 AppState.clip_joint_at(&self, RigView* view, AnimTemplate clip, AnimRef ref, usz j, float time)
 {
-	if (clip.loop && clip.duration > 0.0f) time = time - math::floor(time / clip.duration) * clip.duration;
-	rig::Pose pose = self.evaluated_clip_pose(mem, view, clip, ref, math::clamp(time, 0.0f, clip.duration));
+	rig::Pose pose = self.evaluated_clip_pose(mem, view, clip, ref, clip.local_time(time));
 	defer pose.free(mem);
 	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
 	if (catch built) return view.skeleton.joints[j];

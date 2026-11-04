@@ -28,12 +28,7 @@ import std::collections::object;
 // `from` to `to`, both unit.
 fn Vec3 turn_between(Quaternionf from, Quaternionf to) @local
 {
-	Quaternionf carry = to * from.conjugate();
-	if (carry.v.w < 0.0f) carry = -carry;
-	Vec3 vector = carry.v.xyz;
-	float sine = vector.length();
-	if (sine < 1.0e-6f) return vector * 2.0f;
-	return vector / sine * (2.0f * math::atan2(sine, carry.v.w));
+	return rotation_vector(to * from.conjugate());
 }
 
 // The angular rate a quaternion slope per second stands for at `at`:

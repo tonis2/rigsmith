@@ -1447,12 +1447,7 @@ fn float[] SceneTiming.grid(self, Allocator allocator)
 }
 
 // Where in its own clip a character stands at scene time `t`.
-fn float SceneTiming.local(self, AnimTemplate template, float t)
-{
-	if (template.duration <= 0.0f || t <= 0.0f) return 0.0f;
-	if (template.loop) return t - math::floor(t / template.duration) * template.duration;
-	return math::min(t, template.duration);
-}
+fn float SceneTiming.local(self, AnimTemplate template, float t) => template.local_time(t);
 
 <*
  One character of a combined scene export: its body, its skeleton and the clip
