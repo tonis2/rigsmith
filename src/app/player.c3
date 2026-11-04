@@ -650,22 +650,8 @@ fn rig::Pose AppState.evaluated_clip_pose(
 	{
 		if (AnimTemplate* real = self.clip(ref)) clip = *real;
 	}
-	String[] names = self.names_for(view, ref);
-	rig::Pose pose = clip.pose(allocator, &view.skeleton, names, time, false);
-	constrain_pose_to_joint_limits(&self.doc, &view.skeleton, view.dot_ids, &pose);
-	if (grounded)
-	{
-		ground_pose(allocator, &view.skeleton, names, clip.ground, &pose,
-			clip.phase_at(time));
-	}
-	// Last of all, pins and then aims: neither feeds back into a limit or the floor,
-	// and a head looks from where the body is held.
-	if (aimed)
-	{
-		self.apply_clip_pins(view, clip, ref, time, &pose);
-		self.apply_clip_aims(view, clip, ref, time, &pose);
-	}
-	return pose;
+	PoseStages stages = self.edit_stages(view, &clip, ref);
+	return stages.pose(allocator, clip, time, grounded, aimed);
 }
 
 <*
@@ -720,9 +706,10 @@ fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 	// Limits describe the pose that reaches the renderer, including the midpoint
 	// of a crossfade. Clamping the two endpoints only would not guarantee their
 	// quaternion blend remains inside the independent swing and twist ranges.
-	constrain_pose_to_joint_limits(&self.doc, &view.skeleton, view.dot_ids, &out);
+	PoseStages stages = self.stages_for(view, self.current_ref);
+	stages.limit(&out);
 	AnimGround floor = anim.ground.solves() ? anim.ground : from.ground;
-	ground_pose(allocator, &view.skeleton, names, floor, &out, anim.phase_at(self.anim_time));
+	stages.ground(allocator, anim, self.anim_time, &out, &floor);
 	// Each clip's pins and then targets in proportion to how much of it is showing.
 	self.apply_clip_pins(view, from, self.fade_from_ref, self.fade_from_time, &out, 1.0f - t);
 	self.apply_clip_pins(view, anim, self.current_ref, self.anim_time, &out, t);

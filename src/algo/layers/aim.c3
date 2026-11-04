@@ -909,21 +909,15 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 
 	pin_mark_turned(skeleton, names, &source, turned);
 
-	ConstraintRig held = constraints;
-	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
+	PoseStages stages = { .skeleton = skeleton, .names = names, .constraints = &constraints, .ignore_solo = true };
 	Vec3[] bones = skeleton.bone_directions(allocator);
 	defer alloc::free(allocator, bones);
 
 	AnimKeyframe[] frames = alloc::new_array(allocator, AnimKeyframe, (sz)count);
 	foreach (usz s, time : at[:count])
 	{
-		rig::Pose pose = source.pose(allocator, skeleton, names, time, false, honor_solo: false);
+		rig::Pose pose = stages.pose(allocator, source, time);
 		defer pose.free(allocator);
-		if (source.ground.solves()) ground_pose(allocator, skeleton, names, source.ground, &pose, source.phase_at(time));
-		pin_pose(allocator, skeleton, names, clip_live_pins(tmem, &source, time), time, source.duration, source.loop, &pose,
-			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
-		aim_pose(allocator, skeleton, names, source.aims, source.aim_targets, time, source.duration, source.loop, &pose,
-			skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
 
 		AnimDotList dots;
 		dots.init(allocator);
@@ -976,24 +970,3 @@ fn AnimTemplate clip_aims_flattened(Allocator allocator, AnimTemplate source,
 	return out;
 }
 
-// The clip's aims laid over an exported pose, after constraints and grounding as
-// in the viewport, held inside the constraint table when there is one.
-fn void aim_export_pose(
-	Allocator allocator,
-	rig::Skeleton* skeleton,
-	String[] names,
-	AnimTemplate template,
-	float time,
-	ConstraintRig constraints,
-	rig::Pose* pose)
-{
-	if (!template.plays_live_layers()) return;
-	ConstraintRig held = constraints;
-	ConstraintAimContext ctx = { .skeleton = skeleton, .constraints = &held };
-	// Pins before aims, the viewport's order.
-	pin_pose(allocator, skeleton, names, clip_live_pins(tmem, &template, time), time, template.duration, template.loop,
-		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
-	if (!template.plays_aims()) return;
-	aim_pose(allocator, skeleton, names, template.aims, template.aim_targets, time, template.duration, template.loop,
-		pose, skeleton.height(), constraints.constrains_pose() ? &constraint_rig_aim_clamp : null, &ctx);
-}

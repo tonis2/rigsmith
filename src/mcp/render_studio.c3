@@ -270,7 +270,7 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 			return RENDER_STUDIO_REFUSED~;
 		}
 		float time = clip.local_time(ask.time);
-		pose = app.evaluated_clip_pose(mem, &view, *clip, named, time);
+		pose = app.evaluated_clip_pose(mem, &view, *clip, named, time, aimed: true);
 		foreach (usz j, parent : view.skeleton.parents)
 		{
 			if (parent >= 0 || j >= pose.offsets.len) continue;

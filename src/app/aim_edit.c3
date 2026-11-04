@@ -14,31 +14,6 @@ import std::math;
 import std::math::vector;
 import std::math::quaternion;
 
-// What `doc_aim_clamp` reads: the document that holds the limits, and the build
-// whose joints it is indexed by.
-struct AimClampContext
-{
-	AppState* app;
-	RigView* view;
-}
-
-<*
- Hold one joint's candidate local rotation inside the document's limits, the same
- rule `hold_world_rotation` applies: constrained through the joint's frame when
- it has limits, free otherwise. An `AimClamp` over an `AimClampContext`.
-*>
-fn Quaternionf doc_aim_clamp(void* ctx, usz joint, Quaternionf local)
-{
-	AimClampContext* held = (AimClampContext*)ctx;
-	RigView* view = held.view;
-	if (joint >= view.dot_ids.len) return local;
-	JointRotationLimits limits = held.app.doc.rotation_limits_of(view.dot_ids[joint]);
-	if (!limits.constrained) return local;
-	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-	if (!frame.usable()) return local;
-	return constrain_joint_rotation(frame, limits, local);
-}
-
 <*
  The clip's aims laid over `pose`, which has had its limits and its ground solve.
 
@@ -58,33 +33,8 @@ fn void AppState.apply_clip_aims(
 	AimAppliedSet* applied = null,
 	float gain = 1.0f)
 {
-	if (clip.aims.len == 0) return;
-	String[] names = self.names_for(view, ref);
-
-	AnimAimTarget[] targets = clip.aim_targets;
-	AnimAimTarget[] staged;
-	AnimAimKey[] held;
-	if (self.aim_draft.len > 0 && ref.same(self.editing))
-	{
-		// Shallow copies: the drafts replace the keys, the rest is the clip's own.
-		staged = alloc::new_array(tmem, AnimAimTarget, (sz)clip.aim_targets.len);
-		held = alloc::new_array(tmem, AnimAimKey, (sz)clip.aim_targets.len);
-		foreach (usz i, target : clip.aim_targets)
-		{
-			staged[i] = target;
-			foreach (draft : self.aim_draft)
-			{
-				if (draft.target != target.name) continue;
-				held[i] = { .time = 0.0f, .at = draft.at, .interpolation = LINEAR };
-				staged[i].keys = held[i:1];
-			}
-		}
-		targets = staged;
-	}
-
-	AimClampContext ctx = { .app = self, .view = view };
-	aim_pose(mem, &view.skeleton, names, clip.aims, targets, time, clip.duration, clip.loop, pose,
-		view.skeleton.height(), &doc_aim_clamp, &ctx, applied, gain);
+	PoseStages stages = self.edit_stages(view, &clip, ref);
+	stages.aims(mem, clip, time, pose, applied, gain);
 }
 
 <*
@@ -105,27 +55,50 @@ fn void AppState.apply_clip_pins(
 	rig::Pose* pose,
 	float gain = 1.0f)
 {
-	if (!clip.plays_holds()) return;
-	String[] names = self.names_for(view, ref);
-	AimClampContext ctx = { .app = self, .view = view };
+	PoseStages stages = self.edit_stages(view, &clip, ref);
+	stages.pins(mem, clip, time, pose, gain);
+}
 
-	// The joint being grabbed is moving on purpose: its own pin stands aside for the
-	// drag (as its gesture pin does in `pose_body`) and follows it when
-	// it lets go (`refresh_clip_pin_target`), or the pin would hold the grab in place.
-	// A path being dragged plays as it is drawn (path_edit.c3).
-	if (self.path_draft_active && ref.same(self.editing)) clip.paths = self.path_draft;
-	AnimPin[] live = clip_live_pins(tmem, &clip, time);
-	AnimPin[] pins = live;
-	sz grabbed = self.drag.dot != 0 && ref.same(self.editing) ? view.joint_of(self.drag.dot) : -1;
-	if (grabbed >= 0 && (usz)grabbed < names.len)
+// The stages for a clip on this rig, with no edit open.
+fn PoseStages AppState.stages_for(&self, RigView* view, AnimRef ref)
+{
+	return { .skeleton = &view.skeleton, .names = self.names_for(view, ref), .limits = &self.doc, .dot_ids = view.dot_ids };
+}
+
+<*
+ The stages with the open edit standing in. The joint being grabbed is moving on
+ purpose, so its own pin stands aside for the drag (as its gesture pin does in
+ `pose_body`) and follows it on release (`refresh_clip_pin_target`). A path being
+ dragged plays as it is drawn, and a target being dragged turns the head before
+ it is keyed.
+
+ @param clip : `The caller's copy; a dragged path is written onto it.`
+*>
+fn PoseStages AppState.edit_stages(&self, RigView* view, AnimTemplate* clip, AnimRef ref)
+{
+	PoseStages stages = self.stages_for(view, ref);
+	if (!ref.same(self.editing)) return stages;
+	if (self.path_draft_active) clip.paths = self.path_draft;
+	sz grabbed = self.drag.dot != 0 ? view.joint_of(self.drag.dot) : -1;
+	if (grabbed >= 0 && (usz)grabbed < stages.names.len) stages.pin_skipped = stages.names[(usz)grabbed];
+	if (self.aim_draft.len == 0) return stages;
+
+	// Shallow copies: the drafts replace the keys, the rest is the clip's own.
+	AnimAimTarget[] staged = alloc::new_array(tmem, AnimAimTarget, (sz)clip.aim_targets.len);
+	AnimAimKey[] held = alloc::new_array(tmem, AnimAimKey, (sz)clip.aim_targets.len);
+	foreach (usz i, target : clip.aim_targets)
 	{
-		pins = alloc::new_array(tmem, AnimPin, (sz)live.len);
-		usz kept;
-		foreach (pin : live) if (pin.joint != names[(usz)grabbed]) pins[kept++] = pin;
-		pins = pins[:kept];
+		staged[i] = target;
+		foreach (draft : self.aim_draft)
+		{
+			if (draft.target != target.name) continue;
+			held[i] = { .time = 0.0f, .at = draft.at, .interpolation = LINEAR };
+			staged[i].keys = held[i:1];
+		}
 	}
-	pin_pose(mem, &view.skeleton, names, pins, time, clip.duration, clip.loop, pose,
-		view.skeleton.height(), &doc_aim_clamp, &ctx, gain);
+	stages.aim_targets = staged;
+	stages.targets_staged = true;
+	return stages;
 }
 
 <*
@@ -387,8 +360,7 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 	rig::Pose pose = self.draft_pose(mem, &view);
 	defer pose.free(mem);
 	String[] names = self.names_for(&view, ref);
-	ground_pose(mem, &view.skeleton, names, clip.ground, &pose, clip.phase_at(self.edit_time));
-	self.apply_clip_aims(&view, *clip, ref, self.edit_time, &pose);
+	self.finish_shown(&view, *clip, ref, self.edit_time, &pose);
 
 	usz count;
 	String[] vocabulary = alloc::new_array(tmem, String, (sz)dots.len);

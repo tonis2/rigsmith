@@ -425,7 +425,7 @@ fn rig::Pose AppState.pose_shown_at(&self, RigView* view, float time, bool draft
 	rig::Pose pose = drafted
 		? self.draft_pose(mem, view)
 		: self.evaluated_clip_pose(mem, view, *clip, self.editing, time, false);
-	self.lay_clip_holds_over(view, *clip, &pose, time);
+	self.lay_clip_holds_over(view, *clip, self.editing, &pose, time);
 	return pose;
 }
 
@@ -443,18 +443,24 @@ fn rig::Pose AppState.pose_shown_at(&self, RigView* view, float time, bool draft
  Keying the aimed rotation onto a joint that is itself still aimed costs nothing:
  the target finds it already turned and adds no more.
 *>
-fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, rig::Pose* pose, float time)
+fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, AnimRef ref, rig::Pose* pose, float time)
 {
 	if (clip.aims.len == 0 && clip.pins.len == 0) return;
 	Vec3[] offsets = alloc::new_array(mem, Vec3, pose.offsets.len);
 	defer alloc::free(mem, offsets);
 	foreach (i, o : pose.offsets) offsets[i] = o;
-
-	String[] names = self.names_for(view, self.editing);
-	ground_pose(mem, &view.skeleton, names, clip.ground, pose, clip.phase_at(time));
-	self.apply_clip_pins(view, clip, self.editing, time, pose);
-	self.apply_clip_aims(view, clip, self.editing, time, pose);
+	self.finish_shown(view, clip, ref, time, pose);
 	foreach (i, o : offsets) pose.offsets[i] = o;
+}
+
+// The stages after limits, over a pose from a draft or a gesture: the floor, the
+// pins, then the aims.
+fn void AppState.finish_shown(&self, RigView* view, AnimTemplate clip, AnimRef ref, float time, rig::Pose* pose)
+{
+	PoseStages stages = self.edit_stages(view, &clip, ref);
+	stages.ground(mem, clip, time, pose);
+	stages.pins(mem, clip, time, pose);
+	stages.aims(mem, clip, time, pose);
 }
 
 <*

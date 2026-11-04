@@ -481,20 +481,8 @@ fn rig::Pose[] poses_at_times(
 	ConstraintRig constraints = {}) @local
 {
 	rig::Pose[] posed = alloc::new_array(allocator, rig::Pose, (sz)times.len);
-	foreach (usz k, time : times)
-	{
-		posed[k] = template.pose(allocator, skeleton, names, time, false, honor_solo: false);
-		if (constraints.constrains_pose())
-		{
-			constrain_pose_to_constraint_rig(skeleton, constraints, &posed[k]);
-		}
-		if (grounded)
-		{
-			ground_pose(allocator, skeleton, names, template.ground, &posed[k],
-				template.phase_at(time));
-		}
-		aim_export_pose(allocator, skeleton, names, template, time, constraints, &posed[k]);
-	}
+	PoseStages stages = { .skeleton = skeleton, .names = names, .constraints = &constraints, .ignore_solo = true };
+	foreach (usz k, time : times) posed[k] = stages.pose(allocator, template, time, grounded);
 	return posed;
 }
 
@@ -669,15 +657,8 @@ fn rig::Pose evaluated_export_pose(
 	bool grounded,
 	ConstraintRig constraints) @local
 {
-	rig::Pose pose = template.pose(allocator, skeleton, names, time, false, honor_solo: false);
-	constrain_pose_to_constraint_rig(skeleton, constraints, &pose);
-	if (grounded)
-	{
-		ground_pose(allocator, skeleton, names, template.ground, &pose,
-			template.phase_at(time));
-	}
-	aim_export_pose(allocator, skeleton, names, template, time, constraints, &pose);
-	return pose;
+	PoseStages stages = { .skeleton = skeleton, .names = names, .constraints = &constraints, .ignore_solo = true };
+	return stages.pose(allocator, template, time, grounded);
 }
 
 // Whether linear glTF interpolation between the two exported endpoint poses

@@ -728,7 +728,7 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	String first = string::tformat("%s/poses_000000.json", dir);
 	String camera = `{"pitch": 4}`;
 	String cameras = string::tformat("[%s, %s, %s, %s]", camera, camera, camera, camera);
-	(void)file::save(first, string::tformat(`{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras));
+	(void)file::save(first, string::tformat(`{"draw": 3, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras));
 	crig::fit_renders_to(dir, 448);
 	test::@check(file::exists(first), "a set at the same size is kept, to carry on");
 	crig::fit_renders_to(dir, 640);
@@ -737,10 +737,10 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	// Drawn from fewer cameras, with other settings or in other chunks: drawn again too.
 	String level = `[{"pitch": 8}, {"pitch": 8}, {"pitch": 8}, {"pitch": 8}]`;
 	String[2][*] stale = {
-		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, `[{"pitch": 4}]` },
-		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0.3, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
-		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, level },
-		{ `{"draw": 2, "size": 448, "count": 125, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
+		{ `{"draw": 3, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, `[{"pitch": 4}]` },
+		{ `{"draw": 3, "size": 448, "count": 8, "blur": 0.3, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
+		{ `{"draw": 3, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, level },
+		{ `{"draw": 3, "size": 448, "count": 125, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
 		{ `{"size": 448, "cameras": %s, "images": []}`, cameras },
 		{ `{"draw": 1, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
 	};

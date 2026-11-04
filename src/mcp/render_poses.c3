@@ -239,7 +239,7 @@ fn rig::Pose exam_pose(AppState* app, RigView* view, PoseShoot* shoot, AnimRef r
 	if (shoot.clip.len == 0) return motion_pose(&app.doc, &view.skeleton, view.dot_ids, shoot, seconds);
 	AnimTemplate* clip = app.clip(ref);
 	float time = clip.local_time(shoot.clip_start + seconds * shoot.clip_speed);
-	rig::Pose pose = app.evaluated_clip_pose(mem, view, *clip, ref, time);
+	rig::Pose pose = app.evaluated_clip_pose(mem, view, *clip, ref, time, aimed: true);
 	if (!shoot.travel)
 	{
 		foreach (usz j, parent : view.skeleton.parents)
@@ -263,7 +263,7 @@ fn rig::Pose clip_drawn_pose(AppState* app, RigView* view, PoseShoot* shoot, Ani
 {
 	AnimTemplate* clip = app.clip(ref);
 	time = clip.local_time(time);
-	rig::Pose pose = app.evaluated_clip_pose(mem, view, *clip, ref, time, false);
+	rig::Pose pose = app.evaluated_clip_pose(mem, view, *clip, ref, time, false, true);
 	PoseDraw draw = pose_draw(shoot.seed, index, DRAW_NUDGE);
 	float noise = math::deg_to_rad(shoot.clip_noise);
 	foreach (usz joint, parent : view.skeleton.parents)

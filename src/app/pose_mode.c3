@@ -268,8 +268,7 @@ fn rig::Pose AppState.gesture_pose(&self, Allocator allocator, RigView* view)
 	defer alloc::free(mem, offsets);
 	foreach (i, o : pose.offsets) offsets[i] = o;
 
-	String[] names = self.names_for(view, self.editing);
-	ground_pose(mem, &view.skeleton, names, clip.ground, &pose, clip.phase_at(self.edit_time));
+	self.stages_for(view, self.editing).ground(mem, *clip, self.edit_time, &pose);
 	self.apply_clip_aims(view, *clip, self.editing, self.edit_time, &pose, &self.gesture_aim);
 	foreach (i, o : offsets) pose.offsets[i] = o;
 
@@ -367,12 +366,7 @@ fn void AppState.refresh_posed(&self)
 		AnimTemplate* clip = self.clip(self.editing);
 		if (clip)
 		{
-			String[] names = self.names_for(&view, self.editing);
-			ground_pose(mem, &view.skeleton, names, clip.ground, &pose,
-				clip.phase_at(self.edit_time));
-			// After the floor, as everywhere: the pins and targets never feed back into it.
-			self.apply_clip_pins(&view, *clip, self.editing, self.edit_time, &pose);
-			self.apply_clip_aims(&view, *clip, self.editing, self.edit_time, &pose);
+			self.finish_shown(&view, *clip, self.editing, self.edit_time, &pose);
 		}
 	}
 
@@ -751,8 +745,7 @@ fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, ui
 		AnimTemplate* clip = self.clip(self.editing);
 		if (clip)
 		{
-			ground_pose(mem, &view.skeleton, self.names_for(view, self.editing), clip.ground, &shown,
-				clip.phase_at(self.edit_time));
+			self.stages_for(view, self.editing).ground(mem, *clip, self.edit_time, &shown);
 			self.apply_clip_pins(view, *clip, self.editing, self.edit_time, &shown);
 		}
 	}
@@ -1226,7 +1219,7 @@ fn Vec3 AppState.gesture_shift(&self, RigView* view, usz joint)
 	defer grounded.free(mem);
 	usz root = tree_root_of(&view.skeleton, joint);
 	Vec3 drafted = grounded.offsets[root];
-	ground_pose(mem, &view.skeleton, self.names_for(view, self.editing), clip.ground, &grounded, clip.phase_at(self.edit_time));
+	self.stages_for(view, self.editing).ground(mem, *clip, self.edit_time, &grounded);
 	return grounded.offsets[root] - drafted;
 }
 

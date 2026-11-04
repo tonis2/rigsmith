@@ -14,11 +14,12 @@
 ## Pose stages run in one order
 - **Rule:** sample, limits, ground, pins, aims. Neither pins nor aims feed back into a limit or the floor, and a head looks from where the body is held. Every reader of a pose gets the same result, except that export ignores solo layers on purpose.
 - **Why:** pins were added to the player, export, bake and pose mode, then mirror lacked them, then position locks did (`f47281d`, `e04cc2d`, `162d515`).
-- **Tests:** none yet that compare readers; see `bugs.md`.
+- **Tests:** `test/rules/pose_readers_test.c3`. `PoseStages` (`src/algo/pose/pose_stages.c3`) is the only caller of the stage functions, and `tools/check_layers.sh` refuses any other.
 
 ## Renders show what plays
 - **Rule:** studio pictures and training renders show pins and aims, matching the player.
-- **Why:** the owner's decision (2026-11-04). Not implemented yet; see `bugs.md`.
+- **Why:** the owner's decision (2026-11-04).
+- **Tests:** `every_reader_sees_the_pose_that_plays`.
 
 ## A time lands in a clip by one rule
 - **Rule:** a loop goes round again; a one-shot holds its ends, so the end of a one-shot has phase 1, not 0. Use `AnimTemplate.local_time` and `phase_at`.

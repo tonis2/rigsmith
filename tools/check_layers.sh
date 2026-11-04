@@ -25,6 +25,14 @@ if grep -rnE 'import std::io|file::|path::' src/model src/algo; then
 	exit 1
 fi
 
+# Pose stages run in one order, so only the evaluator calls them: see rules/posing.md.
+if grep -rnE '(^|[^_.a-z])(ground_pose|pin_pose|aim_pose)\(' src --include='*.c3' \
+	| grep -vE '^src/algo/(pose/pose_stages|motion/ground|layers/pin|layers/aim|curves/animation)\.c3:' \
+	| grep -vE '^[^:]+:[0-9]+:\s*(//|`)'; then
+	echo "check_layers: call the pose stages through PoseStages" >&2
+	exit 1
+fi
+
 # Third-party rig names stay out of the code: see Naming in AGENTS.md.
 if grep -rIil 'mixamo' src test tools --exclude=check_layers.sh; then
 	echo "check_layers: third-party rig name in the files above" >&2

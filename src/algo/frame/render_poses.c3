@@ -26,7 +26,7 @@ const usz POSES_LANDMARKS = 24;
 const float LIMIT_REACH = 2.6f;
 
 // Goes up when the same settings start drawing other poses, so a kept set is drawn again.
-const int POSE_DRAW_VERSION = 2;
+const int POSE_DRAW_VERSION = 3;
 
 struct PoseCamera
 {

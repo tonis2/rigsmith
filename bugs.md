@@ -5,13 +5,9 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 "Read" means both sides of the code were read. "Not run" means the failure was reasoned, not reproduced.
 
 ## Posing
-- `aim_edit.c3:532` says "as it is shown" but leaves out pins, as does `pose_mode.c3:307`. MCP's `aim_forward_at` includes them, so UI and MCP aim setup read different poses. Read.
-- `exam_pose` and the studio (`render_poses.c3:491`, `render_studio.c3:565`) skip pins and aims. Read.
-- `tool_save_pose` (`mcp/poses.c3:125`) saves limits only; the UI save includes holds. Read.
-- `targets.c3:150` reads raw keys with no limits; `patch.c3:466` reads raw rotation with no layers or limits. Read.
-- `clip_aims_flattened` (`aim.c3:917`) has no limit stage before ground. Read.
+- `patch.c3:466` reads raw rotation with no layers or limits. It may be right for a patch, which edits keys. Unconfirmed.
+- `gesture_pose` in `pose_mode.c3` lays the floor and aims but not pins, while a drag solves its own pins. It may be deliberate. Unconfirmed.
 - `bake_keyframe` (`bake.c3:391`) solves pins and aims without the floor. Likely misplaces pinned limbs. Not run.
-- `played_pose` claims "as it plays and as it exports", which disagree on solo layers. Read.
 - Viewport clamps a joint with a saved frame and unusable base; export leaves it free (`constraint_rig.c3:363`). Needs a decision.
 - What counts as a foot differs: `locks.c3:309` and `mcp/pins.c3:546` use hard-coded names, and height bands are 12% and a fifth of rig height. `derived_contacts` samples grounded with no limits; `contact_runs` samples limited, ungrounded. Read.
 - Stdlib `slerp` falls back to lerp near identity, unlike `curve_slerp`, so viewport and glTF readers differ slightly. Read.

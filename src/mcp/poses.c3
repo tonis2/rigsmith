@@ -124,6 +124,7 @@ fn String? tool_save_pose(Object* args, void* user_data, DString* detail) @priva
 
 	rig::Pose pose = app.evaluated_clip_pose(mem, &view, *template, ref, (float)t, false);
 	defer pose.free(mem);
+	app.lay_clip_holds_over(&view, *template, ref, &pose, (float)t);
 	Vec3[] bones = view.skeleton.bone_directions(mem);
 	defer if (bones.len > 0) alloc::free(mem, bones);
 	AnimKeyframe every = keyframe_of_pose(mem, pose, view.names, bones, view.skeleton.height(), (float)t);

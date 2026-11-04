@@ -942,11 +942,10 @@ fn rig::Pose played_pose(
 	ConstraintRig constraints,
 	rig::Pose* authored = null)
 {
-	rig::Pose pose = template.pose(allocator, skeleton, names, time, false);
+	PoseStages stages = { .skeleton = skeleton, .names = names, .constraints = &constraints };
+	rig::Pose pose = stages.sample(allocator, template, time);
 	if (authored) *authored = pose.copy(allocator);
-	constrain_pose_to_constraint_rig(skeleton, constraints, &pose);
-	ground_pose(allocator, skeleton, names, template.ground, &pose, template.phase_at(time));
-	aim_export_pose(allocator, skeleton, names, template, time, constraints, &pose);
+	stages.finish(allocator, template, time, &pose);
 	return pose;
 }
 
