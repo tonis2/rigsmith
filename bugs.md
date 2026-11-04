@@ -18,12 +18,6 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `normalise_rows`, `top_row`, `strongest_shares` and `guide.c3:110` keep the strongest shares by different rules. Whether all the differences are intended isn't known.
 
 ## Clips
-- MCP patch and layer edits on a library clip (`mcp/patch.c3:358`, `mcp/layers.c3:374,638`) use `author_clip`, which adds a second row with the same name. `model_clips` keeps the first row, so saving would keep the unpatched original. Read, not run.
-- `author_clip` overwrites an unrelated authored clip on a name clash; `land_clip` makes the name unique. Read.
-- MCP `merge_layers` in place never respells the clip. Read.
-- UI bake (`physics_panel.c3:1029`) uses `put_authored_clip`, leaving the clip unbound. Read.
-- UI Duplicate (`animation_actions.c3:527`) passes `NO_ANIM`, so a library clip keeps library names and those joints stop moving, and even an authored clip gets the "now uses a copy" notice. Read.
-- MCP edits don't redisplay a clip that isn't playing; `show_edited` is UI only. Read.
 - `get_clip` then `parse_clip` loses tangents and gait. A ground with `floor_set` and no feet survives only in the session writer. Read.
 - `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
 

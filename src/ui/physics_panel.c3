@@ -1026,8 +1026,7 @@ fn void physics_bake_clicked(Ui* ui)
 	}
 
 	bool replaced;
-	AnimRef landed = app.put_authored_clip(made, &replaced);
-	app.undo_stack.commit();
+	AnimRef landed = app.author_clip(made, &replaced);
 
 	AnimTemplate* baked = app.clip(landed);
 	app.@notice("%s \"%s\" — %d keyframes",

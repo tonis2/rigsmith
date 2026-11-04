@@ -336,9 +336,9 @@ fn String? patch_clip_json(AppState* app, Object* args, DString* detail)
 		return patch_report(app, clip_name, start, end, duration, whole, joints[:jn], 0, ref, false, false);
 	}
 
-	bool replaced;
-	AnimRef landed = app.author_clip(current, &replaced);
-	app.refresh_ui();
+	bool replaced = ref.pack == app.authored_pack;
+	AnimRef landed = app.land_clip(ref, current);
+	app.show_edited();
 	return patch_report(app, clip_name, start, end, duration, whole, joints[:jn], folds, landed, replaced, true);
 }
 

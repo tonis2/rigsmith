@@ -1721,21 +1721,6 @@ fn void move_selected_anim(Ui* ui, sz step) @private
 // The sheet's own callbacks
 
 <*
- Rebuild the tracks for whatever is being edited, and put it on screen at the
- playhead.
-
- Called after anything that changes the clip. The park is what makes the figure
- show the edit: a rewritten clip is a different `AnimTemplate`, and the player is
- holding a copy of the old one.
-*>
-fn void AppState.show_edited(&self)
-{
-	self.refresh_timeline_tracks(self.editing);
-	if (self.editing.valid()) self.park_clip(self.editing, self.edit_time);
-	self.refresh_ui();
-}
-
-<*
  Start editing the bound clip at `anim_selected`, the row the chooser picked.
 *>
 fn void anim_edit_selected(Ui* ui)

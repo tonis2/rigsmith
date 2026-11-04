@@ -371,8 +371,8 @@ fn String? set_layer_json(AppState* app, Object* args, DString* detail)
 	AnimTemplate clip = clip_with_layers(mem, *src, next);
 	landed = true;
 
-	AnimRef written = app.author_clip(clip);
-	app.refresh_ui();
+	AnimRef written = app.land_clip(ref, clip);
+	app.show_edited();
 	return layers_answer(app, written, op);
 }
 
@@ -635,8 +635,8 @@ fn String? merge_layers_json(AppState* app, Object* args, DString* detail)
 		flat = app.in_rig_words(flat, ref);
 	}
 	usz keys = flat.keyframes.len;
-	AnimRef written = app.author_clip(flat);
-	app.refresh_ui();
+	AnimRef written = into.len > 0 ? app.author_clip(flat) : app.land_clip(ref, flat);
+	app.show_edited();
 
 	DString out = dstring::new(mem);
 	defer out.free();

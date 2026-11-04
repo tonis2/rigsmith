@@ -149,7 +149,7 @@ fn String? landed_rewrite_json(AppState* app, AnimRef ref, AnimTemplate built, S
 	}
 	app.editing = landed;
 	app.edit_time = math::min(app.edit_time, app.clip(landed).duration);
-	app.refresh_ui();
+	app.show_edited();
 	return rewrite_answer(app, landed, done, detail);
 }
 

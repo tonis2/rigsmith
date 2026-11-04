@@ -14,6 +14,7 @@ so. Rules can change; they just can't change by accident.
 Before changing a rule, read its "Tried and rejected" lines. If a fix needs a
 rule test changed, that is a rule change: stop and ask the owner.
 
+- [Clips](clips.md)
 - [Editing](editing.md)
 - [Weights](weights.md)
 - [Posing](posing.md)

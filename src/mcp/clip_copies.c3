@@ -60,10 +60,7 @@ fn String? duplicate_clip_json(AppState* app, Object* args, DString* detail)
 	}
 	defer name.free(mem);
 
-	// In this rig's joint names, so the copy of a library clip is addressable by
-	// the names the rig reports.
-	AnimTemplate copy = app.in_rig_words(clip_copy(mem, *src, name), ref);
-	AnimRef landed = app.author_clip(copy);
+	AnimRef landed = app.duplicate_clip(ref, name);
 	if (!landed.valid())
 	{
 		detail.append_string(`the copy did not land in the authored pack.`);

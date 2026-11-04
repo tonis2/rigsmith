@@ -524,7 +524,7 @@ fn void anim_duplicate_clicked(Ui* ui)
 	String name = app.unused_clip_name(mem, string::tformat("%s copy", clip.name));
 	defer name.free(mem);
 	app.clear_animation_key_selection();
-	app.editing = app.land_clip(NO_ANIM, clip_copy(mem, *clip, name));
+	(void)app.duplicate_clip(app.editing, name);
 	anim_clip_menu_closed(ui);
 	app.show_edited();
 }
