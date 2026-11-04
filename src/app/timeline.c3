@@ -718,25 +718,6 @@ fn AnimRef AppState.key_aims_only(&self, AnimRef ref, float time)
 // What the dopesheet draws
 
 <*
- One row of the dopesheet: a joint the clip drives, and where it has keys.
-
- The times are a *copy* rather than a view into the clip, because the clip is
- replaced wholesale by every edit and a widget borrows its rows for the life of
- its element — a slice into the old template would be pointing at freed
- keyframes the moment anything was dragged.
-*>
-struct TimelineTrack
-{
-	String joint; // borrowed from the clip, rebuilt with the rows
-	float[] times; // owned; union retained for the simple pose-row UI
-	float[] rotation_times; // owned
-	float[] translation_times; // owned
-	// How far below the rig's root this joint hangs, for the sheet to indent
-	// by; zero for a joint the rig does not have.
-	uint depth;
-}
-
-<*
  Rebuild the dopesheet's tracks for a clip.
 
  One row per joint the clip names anywhere, ordered as the **rig's tree** reads
@@ -764,116 +745,25 @@ fn void AppState.refresh_timeline_tracks(&self, AnimRef ref)
 	StringList named;
 	named.init(mem);
 	defer named.free();
-
-	foreach (frame : clip.keyframes)
-	{
-		foreach (dot : frame.dots)
-		{
-			bool seen = false;
-			foreach (have : named.array_view())
-			{
-				if (have == dot.joint_name) { seen = true; break; }
-			}
-			if (!seen) named.push(dot.joint_name);
-		}
-	}
+	clip_joint_names(&named, clip);
 	if (named.len() == 0) return;
 
 	// Re-ordered by the rig, when there is one to order by.
 	String[] order = named.array_view();
-	RigView? opened = self.open_rig(mem);
 	StringList sorted;
 	sorted.init(mem);
 	defer sorted.free();
 	List{uint} depths;
 	depths.init(mem);
 	defer depths.free();
-
+	RigView? opened = self.open_rig(mem);
 	if (try RigView view = opened)
 	{
 		defer view.free(mem);
-		String[] words = self.clip_names(&view);
-		// The tree, read root first and each subtree whole: the builder's joints
-		// are parents-before-children, so a stack of "next child to visit" per
-		// joint walks it without recursion. Children come in joint order, which
-		// is the order the builder found them in.
-		usz count = view.skeleton.len();
-		usz[] stack = alloc::new_array(mem, usz, (sz)count);
-		uint[] depth = alloc::new_array(mem, uint, (sz)count);
-		defer alloc::free(mem, stack);
-		defer alloc::free(mem, depth);
-		usz top;
-		for (usz root = 0; root < count; root++)
-		{
-			if (view.skeleton.parents[root] >= 0) continue;
-			stack[top++] = root;
-			while (top > 0)
-			{
-				usz joint = stack[--top];
-				String word = joint < words.len ? words[joint] : "";
-				if (word.len > 0)
-				{
-					foreach (have : order)
-					{
-						if (have != word) continue;
-						sorted.push(have);
-						depths.push(depth[joint]);
-						break;
-					}
-				}
-				// Pushed last-first so the first child is visited next.
-				for (usz child = count; child-- > joint + 1;)
-				{
-					if (view.skeleton.parents[child] != (int)joint) continue;
-					depth[child] = depth[joint] + 1;
-					stack[top++] = child;
-				}
-			}
-		}
-		// Then whatever the clip drives that this rig has no joint for.
-		foreach (have : order)
-		{
-			bool placed = false;
-			foreach (already : sorted.array_view())
-			{
-				if (already == have) { placed = true; break; }
-			}
-			if (!placed)
-			{
-				sorted.push(have);
-				depths.push(0);
-			}
-		}
+		joints_in_rig_order(&sorted, &depths, &view.skeleton, self.clip_names(&view), order);
 		order = sorted.array_view();
 	}
-
-	self.timeline_tracks = alloc::new_array(mem, TimelineTrack, (sz)order.len);
-	foreach (usz i, joint : order)
-	{
-		usz count = 0;
-		usz rotations, translations;
-		foreach (frame : clip.keyframes)
-		{
-			if (frame.names(joint)) count++;
-			if (frame.has_channel(joint, ROTATION)) rotations++;
-			if (frame.has_channel(joint, TRANSLATION)) translations++;
-		}
-
-		float[] times = alloc::new_array(mem, float, (sz)count);
-		float[] rotation_times = alloc::new_array(mem, float, (sz)rotations);
-		float[] translation_times = alloc::new_array(mem, float, (sz)translations);
-		usz write = 0;
-		usz rotation_write, translation_write;
-		foreach (frame : clip.keyframes)
-		{
-			if (frame.names(joint)) times[write++] = frame.time;
-			if (frame.has_channel(joint, ROTATION)) rotation_times[rotation_write++] = frame.time;
-			if (frame.has_channel(joint, TRANSLATION)) translation_times[translation_write++] = frame.time;
-		}
-		self.timeline_tracks[i] = { .joint = joint, .times = times,
-			.rotation_times = rotation_times, .translation_times = translation_times,
-			.depth = i < (usz)depths.len() ? depths[(sz)i] : 0 };
-	}
+	self.timeline_tracks = timeline_tracks_of(mem, clip, order, depths.array_view());
 }
 
 fn void AppState.free_timeline_tracks(&self)
