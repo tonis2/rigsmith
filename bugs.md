@@ -18,7 +18,6 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `normalise_rows`, `top_row`, `strongest_shares` and `guide.c3:110` keep the strongest shares by different rules. Whether all the differences are intended isn't known.
 
 ## Clips
-- `get_clip` then `parse_clip` loses tangents and gait. A ground with `floor_set` and no feet survives only in the session writer. Read.
 - `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
 
 ## Files

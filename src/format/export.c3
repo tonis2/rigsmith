@@ -1007,7 +1007,7 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 			out.append_string(`,"blend":"smooth"`);
 			fields++;
 		}
-		if (template.ground.solves())
+		if (template.ground.solves() || template.ground.floor_set)
 		{
 			if (fields++ > 0) out.append_char(',');
 			out.append_string(`"ground":{`);

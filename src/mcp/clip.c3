@@ -288,6 +288,15 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 				return CLIP_INVALID~;
 			}
 
+			AnimTangents rotation_tangents;
+			AnimTangents translation_tangents;
+			if (!read_tangent_field(entry, "rotation_tangents", &rotation_tangents)
+				|| !read_tangent_field(entry, "translation_tangents", &translation_tangents))
+			{
+				detail.appendf(`keyframes[%d].joints[%d] has a tangent that isn't {"mode":…}.`, f, d);
+				return CLIP_INVALID~;
+			}
+
 			clip.keyframes[f].dots[d] = {
 				.joint_name = joint.copy(mem),
 				.axis = axis,
@@ -299,6 +308,8 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 				.translation_interpolation = translation_interpolation,
 				.rotation_ease = rotation_ease,
 				.translation_ease = translation_ease,
+				.rotation_tangents = rotation_tangents,
+				.translation_tangents = translation_tangents,
 			};
 		}
 
@@ -380,6 +391,12 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 	}
 
 	if (!parse_ground(app, member(args, "ground"), &clip.ground, detail)) return CLIP_INVALID~;
+	Object* gait = member(args, "gait");
+	if (gait != null && !read_gait_preset(gait, mem, &clip.gait))
+	{
+		detail.append_string(`"gait" isn't the shape get_clip writes.`);
+		return CLIP_INVALID~;
+	}
 	if (rig_open) sparse_to_parent_frame(&view, &clip, world_flags);
 	if (!apply_root_pivots(app, args, &clip, detail)) return CLIP_INVALID~;
 
@@ -430,6 +447,7 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 			clip.ground.free(mem);
 			clip.ground = ground_copy(mem, held.ground);
 		}
+		if (gait == null) clip.gait = held.gait.copy(mem);
 		free_aims(mem, clip.aims);
 		clip.aims = aims_copy(mem, held.aims);
 		free_aim_targets(mem, clip.aim_targets);
@@ -467,6 +485,13 @@ fn bool parse_ground(AppState* app, Object* ground, AnimGround* into, DString* d
 	Object* feet = member(ground, "feet");
 	if (feet == null || !feet.is_array() || feet.get_len() == 0)
 	{
+		// A floor on its own is a stated height with no contacts.
+		if (try double floor = ground.get_float("floor"))
+		{
+			into.floor = (float)floor;
+			into.floor_set = true;
+			return true;
+		}
 		detail.append_string(`"ground" needs "feet": a non-empty array of {"joint": dot, "down": phase, "up": phase}. Without one there is nothing to stand the figure on.`);
 		return false;
 	}
@@ -869,7 +894,7 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 
 	out.append_string(`,"keyframes":`);
 	append_keyframes_json(&out, clip.keyframes);
-	if (clip.ground.solves())
+	if (clip.ground.solves() || clip.ground.floor_set)
 	{
 		out.append_string(`,"ground":`);
 		append_ground_json(&out, clip.ground);
@@ -1027,6 +1052,8 @@ fn void append_keyframes_json(DString* out, AnimKeyframe[] frames)
 			{
 				out.appendf(`,"bone":%s`, (JsonVec3)dot.bone)!!;
 			}
+			if (dot.keys_rotation()) append_tangent_field(out, "rotation_tangents", dot.rotation_tangents);
+			if (dot.keys_translation()) append_tangent_field(out, "translation_tangents", dot.translation_tangents);
 			out.append_char('}');
 		}
 		out.append_string(`]}`);

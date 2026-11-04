@@ -9,3 +9,8 @@
 - **Rule:** `AppState.duplicate_clip` makes every copy, so a copy of a library clip keeps moving its joints.
 - **Why:** the UI's Duplicate skipped the respelling, and those joints stopped moving.
 - **Tests:** `a_copy_of_a_library_clip_keeps_moving_its_joints`.
+
+## What get_clip writes, apply_clip reads back whole
+- **Rule:** keys, tangents, the gait and the ground survive a round trip, a floor with no feet included.
+- **Why:** a round trip flattened tangents and lost the gait. Files lost a stated floor unless it had feet.
+- **Tests:** `test/rules/clip_round_trip_test.c3`.

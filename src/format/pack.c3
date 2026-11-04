@@ -811,7 +811,11 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 
 		Object*? feet = ground.get("feet");
 		if (catch feet) continue;
-		if (!feet.is_array() || feet.get_len() == 0) continue;
+		if (!feet.is_array() || feet.get_len() == 0)
+		{
+			if (try double floor = ground.get_float("floor")) clip.ground = { .floor = (float)floor, .floor_set = true };
+			continue;
+		}
 
 		AnimFoot[] planted = alloc::new_array(allocator, AnimFoot, feet.get_len());
 		usz kept = 0;
