@@ -513,64 +513,629 @@ fn void refresh_joint_degree_fields(Ui* ui, AppState* app)
 	for (usz i = 0; i < 3; i++) set_joint_degree_field(body, JOINT_ROTATION_IDS[i], angles[i]);
 }
 
-fn Element* JointPanel.build(&self, Element* elem) @dynamic
+// What the Joint tab reads, loaded once before the tree is built.
+struct JointCard @private
 {
-	AppState* app = elem.inherit(AppState)!!;
-	self.shown = joint_panel_snapshot(app);
+	Dot* dot;
+	bool renaming;
+	bool rig_ok;
+	JointRotationLimits limits;
+	JointLimitFrame frame;
+	Vec3 angles;
+	JointRotationAxis[3] posable;
+	usz posable_count;
+	uint follow;
+	String follow_note;
+	String follow_label;
+	bool saved_apart;
+}
 
+fn JointCard JointPanel.read_card(&self, AppState* app)
+{
 	Dot* dot = app.doc.find(app.selected);
-	bool renaming = dot != null && app.renaming_dot == dot.id;
+	JointCard card = { .dot = dot, .renaming = dot != null && app.renaming_dot == dot.id };
 
 	// The Joint section's detail is looked up only when a real joint is selected;
 	// opening the rig for a card showing a prompt is wasted work.
-	bool rig_ok = false;
-	RigView view;
-	bool view_open = false;
-	usz joint = 0;
-	JointRotationLimits limits = {};
-	JointLimitFrame frame = {};
-	Vec3 angles = {};
-	JointRotationAxis[3] posable;
-	usz posable_count = 0;
-	uint follow = 0;
-	String follow_note;
-	String follow_label;
-	bool saved_apart = false;
-
 	if (app.show_joint_panel && app.joint_panel_tab == JointPanelTab.JOINT && dot)
 	{
 		RigView? opened = app.open_rig(mem);
 		if (try opened)
 		{
-			view = opened;
-			view_open = true;
+			RigView view = opened;
+			defer view.free(mem);
 			sz found = view.joint_of(dot.id);
 			if (found >= 0)
 			{
-				joint = (usz)found;
-				rig_ok = true;
-				limits = app.doc.rotation_limits_of(dot.id);
-				frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-				follow = joint_axes_automatic_child(&view, limits);
-				saved_apart = saved_frame_apart(&view.skeleton, view.dot_ids, limits);
-				if (follow != 0)
+				card.rig_ok = true;
+				card.limits = app.doc.rotation_limits_of(dot.id);
+				card.frame = joint_limit_frame(&view.skeleton, view.dot_ids, card.limits);
+				card.follow = joint_axes_automatic_child(&view, card.limits);
+				card.saved_apart = saved_frame_apart(&view.skeleton, view.dot_ids, card.limits);
+				if (card.follow != 0)
 				{
-					Dot* held = app.doc.find(limits.primary_child);
-					Dot* automatic = app.doc.find(follow);
-					follow_note = string::bformat(self.follow_note[..], "Bone axes follow %s",
+					Dot* held = app.doc.find(card.limits.primary_child);
+					Dot* automatic = app.doc.find(card.follow);
+					card.follow_note = string::bformat(self.follow_note[..], "Bone axes follow %s",
 						held && held.name.len > 0 ? held.name : "a removed joint");
-					follow_label = string::bformat(self.follow_label[..], "Follow %s",
+					card.follow_label = string::bformat(self.follow_label[..], "Follow %s",
 						automatic && automatic.name.len > 0 ? automatic.name : "its bone");
 				}
 				PosedJoint pose = joint_panel_pose(app, &view, dot.id);
-				angles = joint_angles_from_rotation(frame, pose.rotation);
+				card.angles = joint_angles_from_rotation(card.frame, pose.rotation);
 				// Only the axes the joint may turn about get a dial and a field. A
 				// locked axis has one number, held in the limits table below.
-				posable_count = posable_axes(limits, posable[..]);
+				card.posable_count = posable_axes(card.limits, card.posable[..]);
 			}
 		}
 	}
-	defer if (view_open) view.free(mem);
+	return card;
+}
+
+// The Joint tab: the selected joint's name, axes, pins, dials and limits.
+fn void JointPanel.build_joint_tab(&self, AppState* app, JointCard* card)
+{
+		Element* joint_section = @tree((Disclosure) {
+			.label = "Joint", .expanded = !app.joint_info_collapsed,
+			.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &joint_section_changed })
+		{
+			@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				if (!card.dot)
+				{
+					@node((Label) { .text = "Select a joint to edit it — click one in the view.",
+						.size = 12.0f, .color = TEXT_DIM });
+				}
+				else if (!card.rig_ok)
+				{
+					@node((Label) { .text = "The selected joint is not part of a usable rig.",
+						.size = 13.0f, .color = TEXT_DIM });
+				}
+				else
+				{
+					if (card.renaming)
+					{
+						@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER,
+							.size = { JOINT_PANEL_W, 0 } })
+						{
+							@node((TextField) { .placeholder = "thigh_L", .style = TEXT_FIELD_STYLE,
+								.width = JOINT_NAME_FIELD_W, .on_submit = &joint_name_submitted })
+								.with_id(JOINT_NAME_FIELD_ID);
+							@node(accent_button("Rename", &joint_rename_confirmed));
+							@node(panel_button("Cancel", &joint_rename_cancelled));
+						};
+						@node((Label) { .text = "Used in clips. Blank un-names it.", .size = 12.0f,
+							.color = TEXT_DIM });
+					}
+					else
+					{
+						@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
+							.size = { JOINT_PANEL_W, 0 } })
+						{
+							@node((Label) { .text = card.dot.name.len > 0 ? card.dot.name : "Unnamed joint",
+								.size = 17.0f, .color = TEXT });
+							@node(panel_button("Rename", &joint_rename_pressed)).with_id(JOINT_RENAME_ID);
+						};
+					}
+
+					if (card.follow != 0)
+					{
+						@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
+							.size = { JOINT_PANEL_W, 0 } })
+						{
+							@node((Label) { .text = card.follow_note,
+								.size = 12.0f, .color = TEXT_DIM });
+							@node(panel_button(card.follow_label,
+								&joint_axes_follow_bone)).with_id(JOINT_AXES_FOLLOW_ID);
+						};
+					}
+
+					// A table pinned to axes of its own — by an older file, a move or a
+					// mirror — can be moved onto the ones its bone derives, which for a
+					// finger are its hand's: the way back to axes that agree with its
+					// neighbours'.
+					if (card.saved_apart)
+					{
+						@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
+							.size = { JOINT_PANEL_W, 0 } })
+						{
+							@node((Label) { .text = "Axes saved apart from the bone",
+								.size = 12.0f, .color = TEXT_DIM });
+							@node(panel_button("Use bone axes",
+								&joint_axes_use_bone)).with_id(JOINT_AXES_BONE_ID);
+						};
+					}
+
+					// The anchors live with the pose controls, and appear when posing is
+					// possible: they hold a joint's world position and orientation while
+					// another moves, which only has meaning against a clip. They need no
+					// bone-local frame — a foot is held by its own place and tilt, not by a
+					// turn — so they are not inside the `frame.usable()` gate the dials and
+					// limits are. Two padlocks: move, and rotate; see `lock_toggles.c3`.
+					if (app.animation_pose_ready())
+					{
+						@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
+						@node((Label) { .text = "Pin · held in place while you pose another joint",
+							.size = 12.0f, .color = TEXT_DIM });
+						@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+
+						// What this joint does when it is the one dragged. The trunk always
+						// keeps its world angle, so the cell is for limbs only.
+						if (app.pose_hold(app.selected) != TRUNK)
+						{
+							bool keeps = app.pose_keeps_angle(app.selected);
+							@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+							{
+								@card_icon(KEEP_ANGLE_GLYPH, keeps
+									? "Keep angle is on — dragged, this joint keeps its angle to its parent, as a hand stays in line with its forearm. Click to keep its world facing instead; Alt-drag swaps it for one drag"
+									: "Keep angle is off — dragged, this joint keeps the way it faces in the world, as a foot stays flat. Click to keep its angle to its parent instead; Alt-drag swaps it for one drag",
+									&joint_keep_angle_pressed, keeps ? LIT : PLAIN).with_id(JOINT_KEEP_ANGLE_ID);
+							};
+						}
+
+						// A pin on the open clip is the clip's: held while it plays, over a
+						// window. Seconds into the clip; one undo step per commit.
+						AnimPin* clip_pin = app.clip_pin_of(app.selected);
+						AnimTemplate* pin_clip = app.clip(app.editing);
+						if (clip_pin && pin_clip)
+						{
+							float span = math::max(pin_clip.duration, 0.01f);
+							@node((Label) { .text = "Holds from · to · blend (seconds)", .size = 12.0f,
+								.color = TEXT_DIM });
+							@node((Slider) { .label = "From", .value = clip_pin.from, .max = span, .step = 0.01f,
+								.decimals = 2, .suffix = " s", .on_commit = &joint_pin_from_committed,
+								.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_FROM_ID);
+							@node((Slider) { .label = "To", .value = clip_pin.to, .max = span, .step = 0.01f,
+								.decimals = 2, .suffix = " s", .on_commit = &joint_pin_to_committed,
+								.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_TO_ID);
+							@node((Slider) { .label = "Blend", .value = clip_pin.blend, .max = span, .step = 0.01f,
+								.decimals = 2, .suffix = " s", .on_commit = &joint_pin_blend_committed,
+								.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_BLEND_ID);
+						}
+					}
+
+					if (!card.frame.usable())
+					{
+						@node((Label) { .text = joint_frame_note(card.frame.status), .size = 12.0f, .color = TEXT_DIM });
+					}
+					else
+					{
+						if (app.animation_pose_ready() && card.posable_count == 0)
+						{
+							@node((Label) { .text = "Rotation · bone local", .size = 13.0f, .color = TEXT_DIM });
+							@node((Label) { .text = "Every axis is locked. Allow one below to pose this joint.",
+								.size = 12.0f, .color = TEXT_DIM });
+						}
+						else if (app.animation_pose_ready())
+						{
+							@node((Label) { .text = "Rotation · bone local", .size = 13.0f, .color = TEXT_DIM });
+							// The dials over the fields they drive, one column each.
+							// This is where the joint is turned by hand: off the
+							// model, so a wrist or a head is not hidden under its
+							// own control while it turns.
+							@node((JointDials) { .axes = card.posable, .count = card.posable_count }).with_id(JOINT_DIALS_ID);
+							@tree((Grid) { .cell = { JOINT_ROTATION_CELL_W, 50.0f },
+								.gap_x = JOINT_PANEL_GRID_GAP,
+								.size = { JOINT_PANEL_W, 0 } })
+							{
+								for (usz i = 0; i < card.posable_count; i++)
+								{
+									JointRotationAxis axis = card.posable[i];
+									@tree((Column) { .gap = 3.0f })
+									{
+										@node((Label) { .text = JOINT_ROTATION_CAPTIONS[axis.component()], .size = 11.0f,
+											.color = joint_axis_color(axis.component()) });
+										@node((TextField) { .style = TEXT_FIELD_STYLE,
+											.on_submit = JOINT_ROTATION_ENTRIES[axis.component()] })
+											.with_id(JOINT_ROTATION_IDS[axis.component()]);
+									};
+								}
+							};
+							@node((Label) { .text = joint_pose_note(app), .size = 12.0f, .color = TEXT_DIM });
+						}
+
+						@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
+						@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+						{
+							@node((Checkbox) { .label = "Limit rotation", .checked = card.limits.constrained,
+								.on_change = &joint_limits_toggled, .style = CHECKBOX_STYLE })
+								.with_id(JOINT_LIMITS_ACTIVE_ID);
+							if (card.limits.constrained)
+							{
+								@node(panel_button("Reset", &joint_limits_reset)).with_id(JOINT_LIMITS_RESET_ID);
+							}
+						};
+
+						if (card.limits.constrained)
+						{
+							@tree((Grid) { .cell = { JOINT_PANEL_CELL_W, JOINT_PANEL_CELL_H },
+								.gap_x = JOINT_PANEL_GRID_GAP, .gap_y = JOINT_PANEL_GRID_GAP,
+								.size = { JOINT_PANEL_W, 0 } })
+							{
+								@node((Label) { .text = "Axis", .size = 11.0f, .color = TEXT_DIM });
+								@node((Label) { .text = "Allow", .size = 11.0f, .color = TEXT_DIM });
+								@node((Label) { .text = "Min °", .size = 11.0f, .color = TEXT_DIM });
+								@node((Label) { .text = "Max °", .size = 11.0f, .color = TEXT_DIM });
+
+								for (usz i = 0; i < 3; i++)
+								{
+									@node((Label) { .text = JOINT_LIMIT_NAMES[i], .size = 13.0f,
+										.color = joint_axis_color(i) });
+									@node((Checkbox) { .label = "", .checked = card.limits.axes[i].allowed,
+										.on_change = JOINT_LIMIT_ALLOWED[i], .style = CHECKBOX_STYLE })
+										.with_id(JOINT_LIMIT_ALLOW_IDS[i]);
+									if (card.limits.axes[i].allowed)
+									{
+										@node((TextField) { .style = TEXT_FIELD_STYLE,
+											.on_submit = JOINT_LIMIT_MIN_ENTERED[i] }).with_id(JOINT_LIMIT_MIN_IDS[i]);
+										@node((TextField) { .style = TEXT_FIELD_STYLE,
+											.on_submit = JOINT_LIMIT_MAX_ENTERED[i] }).with_id(JOINT_LIMIT_MAX_IDS[i]);
+									}
+									else
+									{
+										// A locked axis cannot rotate about itself, so it has no
+										// angle to type: both value cells read "Locked", and the
+										// joint is held at rest about this axis.
+										@node((Label) { .text = "Locked", .size = 12.0f, .color = TEXT_DIM });
+										@node((Label) { .text = "Locked", .size = 12.0f, .color = TEXT_DIM });
+									}
+								}
+							};
+						}
+					}
+				}
+			};
+		};
+		joint_section.with_id(JOINT_SECTION_ID);
+}
+
+// The Weights tab: the selected joint's part of the bind and the tools for it.
+fn void JointPanel.build_weights_tab(&self, AppState* app, JointCard* card)
+{
+		// The joint's name rides in the header: a row of its own was the
+		// tallest thing on a card this short.
+		String title = "Weights";
+		if (card.dot) title = string::bformat(self.weights_title[..], "Weights · %s",
+			card.dot.name.len > 0 ? card.dot.name : "unnamed joint");
+		Element* weights_section = @tree((Disclosure) {
+			.label = title, .expanded = !app.weights_info_collapsed,
+			.width = WEIGHTS_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &weights_section_changed })
+		{
+			@tree((Column) { .size = { WEIGHTS_CARD_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				if (!card.dot)
+				{
+					@node((Label) { .text = "Select a joint to pick the part of the mesh it moves.",
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
+					weights_stray_icons(app);
+				}
+				else
+				{
+					// The part, and the joint's edge pushed out or pulled in.
+					@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+					{
+						@tree(widgets::tip("Part — Own bone is changed live by Grow, Shrink and Soft edge; With children or UV islands you click are a part Apply gives this joint"))
+						{
+							@node((Select) { .options = weights_part_labels[..],
+								.selected = (usz)(app.areaing ? app.area_origin : AreaPart.OWN),
+								.width = WEIGHTS_PART_W, .style = VIEW_MENU_STYLE,
+								.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
+						};
+						@card_icon(GROW_GLYPH, "Grow — push this joint's edge out by a tenth of its bone; only this joint's weights change, Reset puts it back",
+							&weights_grow_pressed).with_id(WEIGHTS_GROW_ID);
+						@card_icon(SHRINK_GLYPH, "Shrink — pull this joint's edge in by a tenth of its bone; only this joint's weights change, Reset puts it back",
+							&weights_shrink_pressed).with_id(WEIGHTS_SHRINK_ID);
+						@card_icon(MIRROR_GLYPH, app.area_mirrors()
+							? "Mirror is on — Grow, Shrink, Soft edge, the brush, the lasso, Apply and Reset change the twin joint on the other side too. Click for this side only"
+							: "Mirror is off — every weight tool changes this side only. Click to do the twin joint too",
+							&weights_mirror_pressed, app.area_mirrors() ? LIT : PLAIN).with_id(WEIGHTS_MIRROR_ID);
+					};
+					if (app.areaing && app.area_islands)
+					{
+						// Islands picked by hand: start from none, or flip to the rest.
+						@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+						{
+							@card_icon(CLEAR_GLYPH, "Clear — pick no islands, then click the ones you want",
+								&weights_clear_pressed).with_id(WEIGHTS_CLEAR_ID);
+							@card_icon(INVERT_GLYPH, "Invert — swap the picked islands for the rest",
+								&weights_invert_pressed).with_id(WEIGHTS_INVERT_ID);
+						};
+					}
+					@tree(widgets::tip("Soft edge — how far this joint blends with its neighbours, as a share of its bone; an Apply's part fades over the same edge"))
+					{
+						@node((Slider) {
+							.label = "Soft edge",
+							.suffix = "%",
+							.value = app.band_share(card.dot.id) * 100.0f,
+							.min = SOFT_EDGE_MIN * 100.0f,
+							.max = BAND_SHARE_MAX * 100.0f,
+							.step = 5.0f,
+							.on_change = &weights_soft_moved,
+							.on_commit = &weights_soft_committed,
+							.style = PHYSICS_SLIDER_STYLE,
+						}).with_id(WEIGHTS_SOFT_ID);
+					};
+					// The model's, not the joint's: shown on the joints it decides.
+					if (app.knuckle_blend_applies(card.dot.id))
+					{
+						@tree(widgets::tip("Knuckle blend — the whole model's: how much of each finger segment fades into the next knuckle"))
+						{
+							@node((Slider) {
+								.label = "Knuckles",
+								.suffix = "%",
+								.value = app.doc.knuckle_blend_fraction() * 100.0f,
+								.max = KNUCKLE_BLEND_MAX * 100.0f,
+								.step = 5.0f,
+									.on_change = &weights_knuckle_moved,
+								.on_commit = &weights_knuckle_committed,
+								.style = PHYSICS_SLIDER_STYLE,
+							}).with_id(WEIGHTS_KNUCKLE_ID);
+						};
+					}
+					// The hand tools — brush, lasso, and a look at the weights without
+					// them — and the model's strays at the far end, a different job.
+					@tree((Row) { .size = { WEIGHTS_CARD_W, 0 }, .main_align = SPACE_BETWEEN,
+						.cross_align = CENTER })
+					{
+						@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+						{
+							@card_icon(BRUSH_GLYPH, app.brushing
+								? "Stop painting (Shift+W) — put the brush away"
+								: "Paint brush (Shift+W) — paint this joint's weights by hand",
+								&menu_weight_brush, app.brushing ? LIT : PLAIN,
+								"Paint brush · shift+W     drag the mesh · paint     ctrl-drag · put on     ctrl+shift-drag · take off     hold F · size")
+								.with_id(WEIGHTS_BRUSH_ID);
+							bool pinning = app.lassoing && app.lasso_job == LassoJob.PIN;
+							@card_icon(LASSO_GLYPH, pinning
+								? "Stop pinning (Shift+T) — put the lasso away"
+								: "Lasso pin (Shift+T) — draw round vertices to give this joint its full weight there; other joints keep theirs",
+								&menu_lasso_mode, pinning ? LIT : PLAIN,
+								"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
+								.with_id(WEIGHTS_LASSO_ID);
+						};
+						weights_stray_icons(app);
+					};
+					// What is written to the joint, on a row of its own: the commit and
+					// its undoing are the last step, and the ones not to hit by mistake.
+					@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
+					{
+						@card_icon(APPLY_GLYPH, app.areaing && app.area_pending()
+							? "Apply (Enter) — give this joint the part on show; it replaces this joint's weights, and no other joint's"
+							: "Apply (Enter) — nothing waits: the joint's own bone changes live. Pick With children or UV islands for a part to apply",
+							&weights_apply_pressed, app.areaing && app.area_pending() ? COMMIT : PLAIN).with_id(WEIGHTS_APPLY_ID);
+						@card_icon(RESET_GLYPH,
+							"Reset to automatic — this joint follows the automatic weights again: its grow, soft edge, parts and strokes let go",
+							&weights_reset_pressed).with_id(WEIGHTS_RESET_ID);
+					};
+					@node((Label) { .text = weights_readout(app, &self.readout),
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
+				}
+				if (app.strays_current())
+				{
+					@node((Label) { .text = strays_readout(app, &self.strays_text),
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
+				}
+				if (app.tears_current())
+				{
+					@node((Label) { .text = tears_readout(app, &self.tears_text),
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_TEARS_ID);
+				}
+			};
+		};
+		weights_section.with_id(WEIGHTS_SECTION_ID);
+}
+
+// The Pose tab: the pose, its options and the library.
+fn void JointPanel.build_pose_tab(&self, AppState* app, JointCard* card)
+{
+		// What is done to the pose on show. The dock keeps the clip; this
+		// keeps the pose (pose_panel.c3).
+		Element* pose_section = @tree((Disclosure) {
+			.label = "Pose", .expanded = !app.pose_info_collapsed,
+			.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &pose_section_changed })
+		{
+			@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				@tree((Wrap) { .gap_x = JOINT_PANEL_GRID_GAP, .gap_y = JOINT_PANEL_GRID_GAP, .cross_align = CENTER })
+				{
+					// Shows the rest pose without touching a key; scrubbing or Play
+					// brings the animation back.
+					@node(panel_button("Rest pose", &anim_reset_pose_clicked)).with_id("anim-reset-pose");
+					@node(panel_button("Mirror pose", &anim_mirror_pose_clicked)).with_id(ANIM_MIRROR_POSE_ID);
+					@node(panel_button("Copy", &anim_copy_pose_clicked)).with_id(ANIM_COPY_POSE_ID);
+					@node(panel_button("Paste", &anim_paste_pose_clicked)).with_id(ANIM_PASTE_POSE_ID);
+					@node(panel_button("Paste mirrored", &anim_paste_pose_mirrored_clicked)).with_id(ANIM_PASTE_MIRRORED_ID);
+				};
+				@node((Label) { .text = app.clip(app.editing) ? "Acts on the pose at the playhead."
+					: "Choose an animation to copy, mirror or paste a pose.",
+					.size = 12.0f, .color = TEXT_DIM });
+			};
+		};
+		pose_section.with_id(POSE_SECTION_ID);
+
+		Element* options_section = @tree((Disclosure) {
+			.label = "Posing options", .expanded = !app.pose_options_collapsed,
+			.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &pose_options_section_changed })
+		{
+			@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				// Over pinned feet, the body leans to keep its weight on them. Off for a
+				// pose that is held up by something else — a chair, a wall.
+				@node((ToggleButton) { .label = "Balance", .on = !app.balance_off,
+					.on_change = &anim_balance_toggled, .style = SEGMENTED_STYLE }).with_id(ANIM_BALANCE_ID);
+				// How much the selected joints' body parts hold their ground when a
+				// pose is pulled: weighed off the mesh, scaled here.
+				if (app.selected != 0)
+				{
+					@node((Slider) {
+						.label = "Weight",
+						.suffix = "×",
+						.value = app.selected_pose_weight(),
+						.min = POSE_WEIGHT_MIN,
+						.max = POSE_WEIGHT_MAX,
+						.step = 0.05f,
+						.curve = 2.0f,
+						.decimals = 2,
+						.on_commit = &joint_pose_weight_committed,
+						.style = PHYSICS_SLIDER_STYLE,
+					}).with_id(JOINT_POSE_WEIGHT_ID);
+					@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
+					{
+						@node((Label) { .text = app.pose_weight_note(), .size = 12.0f, .color = TEXT_DIM });
+						if (app.selected_pose_weight() != 1.0f)
+						{
+							@node(panel_button("Auto", &joint_pose_weight_auto)).with_id(JOINT_POSE_WEIGHT_AUTO_ID);
+						}
+					};
+				}
+				@node((Label) { .text = "Pinned joints", .size = 12.0f, .color = TEXT_DIM });
+				@node((PosePinList) { }).with_id(POSE_PINS_ID);
+			};
+		};
+		options_section.with_id(POSE_OPTIONS_SECTION_ID);
+
+		Element* library_section = @tree((Disclosure) {
+			.label = "Pose library", .expanded = !app.pose_library_collapsed,
+			.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &pose_library_section_changed })
+		{
+			@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				@node((AnimPosesPanel) { }).with_id(ANIM_POSE_PANEL_ID);
+			};
+		};
+		library_section.with_id(POSE_LIBRARY_SECTION_ID);
+}
+
+// The Align tab.
+fn void JointPanel.build_align_tab(&self, AppState* app, JointCard* card)
+{
+		Element* align_section = @tree((Disclosure) {
+			.label = "Align Tools", .expanded = !app.align_info_collapsed,
+			.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
+			.on_change = &align_section_changed })
+		{
+			@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
+			{
+				// A group lines up on an axis with the first-selected joint; a lone
+				// joint drops onto the mesh centre.
+				if (app.selection_count() > 1)
+				{
+					@node((Label) { .text = "Align to first-selected", .size = 12.0f, .color = TEXT_DIM });
+					@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER,
+						.size = { JOINT_PANEL_W, 0 } })
+					{
+						@node(panel_button("X", &joint_align_x)).with_id("joint-align-x");
+						@node(panel_button("Y", &joint_align_y)).with_id("joint-align-y");
+						@node(panel_button("Z", &joint_align_z)).with_id("joint-align-z");
+					};
+					@node((Label) { .text = app.stage == POSE_STAGE
+						? "Turns bones so each joint takes the first-selected one's X, Y or Z in the pose, keyed where Apply to reaches. Pick a chain from its base."
+						: "Each takes the first-selected joint's X, Y or Z on the model.",
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
+				}
+				else if (app.selected != 0)
+				{
+					@node(panel_button("Centre on mesh", &joint_center_on_mesh)).with_id("joint-center-mesh");
+					@node((Label) { .text = "Drops this joint onto the mesh middle. Pick two or more to line up on an axis.",
+						.size = 12.0f, .color = TEXT_DIM });
+				}
+				else
+				{
+					@node((Label) { .text = "Select one joint to centre it on the mesh, or two or more to line them up on X, Y or Z.",
+						.size = 12.0f, .color = TEXT_DIM });
+				}
+			};
+		};
+		align_section.with_id(ALIGN_SECTION_ID);
+}
+
+struct JointTabEntry @local
+{
+	JointPanelTab tab;
+	String tip;
+	OnClick press;
+	String id;
+}
+
+// The tabs down the panel's side, in order.
+fn void joint_tab_rail(AppState* app) @private
+{
+	JointTabEntry[4] entries = {
+		{ JointPanelTab.JOINT, "Joint (N) — pose, limits and pins for the selected joint", &joint_tab_pressed, JOINT_TAB_JOINT_ID },
+		{ JointPanelTab.ALIGN, "Align (N) — centre a joint on the mesh, or line several up on an axis", &align_tab_pressed, JOINT_TAB_ALIGN_ID },
+		{ JointPanelTab.WEIGHTS, "Weights (N) — how the selected joint's bind is shared over the mesh", &weights_tab_pressed, JOINT_TAB_WEIGHTS_ID },
+		{ JointPanelTab.POSE, "Pose (N) — rest, mirror, copy and paste the pose, balance, pins and the pose library", &pose_tab_pressed, JOINT_TAB_POSE_ID },
+	};
+	@tree((Column) { .gap = JOINT_TAB_GAP, .size = { JOINT_TAB_W, 0 } })
+	{
+		foreach (entry : entries)
+		{
+			bool active = app.show_joint_panel && app.joint_panel_tab == entry.tab;
+			Element* button;
+			@tree(widgets::tip(entry.tip))
+			{
+				button = @tree(joint_panel_tab_button(active, entry.press))
+				{
+					@node((JointPanelTabFace) { .tab = entry.tab, .active = active });
+				};
+			};
+			button.with_id(entry.id);
+		}
+	};
+}
+
+fn void fill_joint_fields(Element* body, JointCard* card) @private
+{
+	// Through the subtree, not the Ui: none of this is attached yet, so the
+	// tree-wide lookup cannot see it. Filled and focused here rather than by the
+	// button that asked for it, because the field does not exist until this
+	// build runs.
+	if (card.renaming && card.rig_ok) if (try Element* field = body.find_id(JOINT_NAME_FIELD_ID))
+	{
+		// An empty name is left on the placeholder, the way `fill_field` does it
+		// next door: a field holding "" and one holding nothing look the same.
+		if (card.dot.name.len > 0)
+		{
+			TextField* text = field.widget_as(TextField);
+			text.set_text(field, card.dot.name);
+
+			// Selected, not just filled. The commonest rename replaces the name
+			// outright — a plan named a limb the wrong side round, or a dot came
+			// in as `joint_7` — and a caret parked at the end would make every one
+			// of those start with a held backspace.
+			text.select_all(field);
+		}
+		field.request_focus();
+	}
+
+	if (card.rig_ok && card.frame.usable())
+	{
+		for (usz i = 0; i < 3; i++) set_joint_degree_field(body, JOINT_ROTATION_IDS[i], card.angles[i]);
+	}
+	if (card.rig_ok && card.limits.constrained)
+	{
+		// Only the allowed axes have fields to fill — a locked row is two "Locked"
+		// labels and holds no number of its own.
+		foreach (usz i, axis : card.limits.axes)
+		{
+			if (!axis.allowed) continue;
+			set_joint_degree_field(body, JOINT_LIMIT_MIN_IDS[i], axis.minimum);
+			set_joint_degree_field(body, JOINT_LIMIT_MAX_IDS[i], axis.maximum);
+		}
+	}
+}
+
+fn Element* JointPanel.build(&self, Element* elem) @dynamic
+{
+	AppState* app = elem.inherit(AppState)!!;
+	self.shown = joint_panel_snapshot(app);
+
+	JointCard card = self.read_card(app);
 
 	// As wide as the tab on show needs: the Weights card's actions are icons.
 	bool narrow = app.joint_panel_tab == JointPanelTab.WEIGHTS;
@@ -589,571 +1154,23 @@ fn Element* JointPanel.build(&self, Element* elem) @dynamic
 					{
 						@tree((Column) { .size = { section_w, 0 }, .gap = JOINT_PANEL_GAP })
 						{
-							if (app.joint_panel_tab == JointPanelTab.JOINT)
+							switch (app.joint_panel_tab)
 							{
-								Element* joint_section = @tree((Disclosure) {
-									.label = "Joint", .expanded = !app.joint_info_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &joint_section_changed })
-								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										if (!dot)
-										{
-											@node((Label) { .text = "Select a joint to edit it — click one in the view.",
-												.size = 12.0f, .color = TEXT_DIM });
-										}
-										else if (!rig_ok)
-										{
-											@node((Label) { .text = "The selected joint is not part of a usable rig.",
-												.size = 13.0f, .color = TEXT_DIM });
-										}
-										else
-										{
-											if (renaming)
-											{
-												@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER,
-													.size = { JOINT_PANEL_W, 0 } })
-												{
-													@node((TextField) { .placeholder = "thigh_L", .style = TEXT_FIELD_STYLE,
-														.width = JOINT_NAME_FIELD_W, .on_submit = &joint_name_submitted })
-														.with_id(JOINT_NAME_FIELD_ID);
-													@node(accent_button("Rename", &joint_rename_confirmed));
-													@node(panel_button("Cancel", &joint_rename_cancelled));
-												};
-												@node((Label) { .text = "Used in clips. Blank un-names it.", .size = 12.0f,
-													.color = TEXT_DIM });
-											}
-											else
-											{
-												@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
-													.size = { JOINT_PANEL_W, 0 } })
-												{
-													@node((Label) { .text = dot.name.len > 0 ? dot.name : "Unnamed joint",
-														.size = 17.0f, .color = TEXT });
-													@node(panel_button("Rename", &joint_rename_pressed)).with_id(JOINT_RENAME_ID);
-												};
-											}
-
-											if (follow != 0)
-											{
-												@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
-													.size = { JOINT_PANEL_W, 0 } })
-												{
-													@node((Label) { .text = follow_note,
-														.size = 12.0f, .color = TEXT_DIM });
-													@node(panel_button(follow_label,
-														&joint_axes_follow_bone)).with_id(JOINT_AXES_FOLLOW_ID);
-												};
-											}
-
-											// A table pinned to axes of its own — by an older file, a move or a
-											// mirror — can be moved onto the ones its bone derives, which for a
-											// finger are its hand's: the way back to axes that agree with its
-											// neighbours'.
-											if (saved_apart)
-											{
-												@tree((Row) { .cross_align = CENTER, .main_align = SPACE_BETWEEN,
-													.size = { JOINT_PANEL_W, 0 } })
-												{
-													@node((Label) { .text = "Axes saved apart from the bone",
-														.size = 12.0f, .color = TEXT_DIM });
-													@node(panel_button("Use bone axes",
-														&joint_axes_use_bone)).with_id(JOINT_AXES_BONE_ID);
-												};
-											}
-
-											// The anchors live with the pose controls, and appear when posing is
-											// possible: they hold a joint's world position and orientation while
-											// another moves, which only has meaning against a clip. They need no
-											// bone-local frame — a foot is held by its own place and tilt, not by a
-											// turn — so they are not inside the `frame.usable()` gate the dials and
-											// limits are. Two padlocks: move, and rotate; see `lock_toggles.c3`.
-											if (app.animation_pose_ready())
-											{
-												@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
-												@node((Label) { .text = "Pin · held in place while you pose another joint",
-													.size = 12.0f, .color = TEXT_DIM });
-												@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
-
-												// What this joint does when it is the one dragged. The trunk always
-												// keeps its world angle, so the cell is for limbs only.
-												if (app.pose_hold(app.selected) != TRUNK)
-												{
-													bool keeps = app.pose_keeps_angle(app.selected);
-													@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
-													{
-														@card_icon(KEEP_ANGLE_GLYPH, keeps
-															? "Keep angle is on — dragged, this joint keeps its angle to its parent, as a hand stays in line with its forearm. Click to keep its world facing instead; Alt-drag swaps it for one drag"
-															: "Keep angle is off — dragged, this joint keeps the way it faces in the world, as a foot stays flat. Click to keep its angle to its parent instead; Alt-drag swaps it for one drag",
-															&joint_keep_angle_pressed, keeps ? LIT : PLAIN).with_id(JOINT_KEEP_ANGLE_ID);
-													};
-												}
-
-												// A pin on the open clip is the clip's: held while it plays, over a
-												// window. Seconds into the clip; one undo step per commit.
-												AnimPin* clip_pin = app.clip_pin_of(app.selected);
-												AnimTemplate* pin_clip = app.clip(app.editing);
-												if (clip_pin && pin_clip)
-												{
-													float span = math::max(pin_clip.duration, 0.01f);
-													@node((Label) { .text = "Holds from · to · blend (seconds)", .size = 12.0f,
-														.color = TEXT_DIM });
-													@node((Slider) { .label = "From", .value = clip_pin.from, .max = span, .step = 0.01f,
-														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_from_committed,
-														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_FROM_ID);
-													@node((Slider) { .label = "To", .value = clip_pin.to, .max = span, .step = 0.01f,
-														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_to_committed,
-														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_TO_ID);
-													@node((Slider) { .label = "Blend", .value = clip_pin.blend, .max = span, .step = 0.01f,
-														.decimals = 2, .suffix = " s", .on_commit = &joint_pin_blend_committed,
-														.style = PHYSICS_SLIDER_STYLE }).with_id(JOINT_PIN_BLEND_ID);
-												}
-											}
-
-											if (!frame.usable())
-											{
-												@node((Label) { .text = joint_frame_note(frame.status), .size = 12.0f, .color = TEXT_DIM });
-											}
-											else
-											{
-												if (app.animation_pose_ready() && posable_count == 0)
-												{
-													@node((Label) { .text = "Rotation · bone local", .size = 13.0f, .color = TEXT_DIM });
-													@node((Label) { .text = "Every axis is locked. Allow one below to pose this joint.",
-														.size = 12.0f, .color = TEXT_DIM });
-												}
-												else if (app.animation_pose_ready())
-												{
-													@node((Label) { .text = "Rotation · bone local", .size = 13.0f, .color = TEXT_DIM });
-													// The dials over the fields they drive, one column each.
-													// This is where the joint is turned by hand: off the
-													// model, so a wrist or a head is not hidden under its
-													// own control while it turns.
-													@node((JointDials) { .axes = posable, .count = posable_count }).with_id(JOINT_DIALS_ID);
-													@tree((Grid) { .cell = { JOINT_ROTATION_CELL_W, 50.0f },
-														.gap_x = JOINT_PANEL_GRID_GAP,
-														.size = { JOINT_PANEL_W, 0 } })
-													{
-														for (usz i = 0; i < posable_count; i++)
-														{
-															JointRotationAxis axis = posable[i];
-															@tree((Column) { .gap = 3.0f })
-															{
-																@node((Label) { .text = JOINT_ROTATION_CAPTIONS[axis.component()], .size = 11.0f,
-																	.color = joint_axis_color(axis.component()) });
-																@node((TextField) { .style = TEXT_FIELD_STYLE,
-																	.on_submit = JOINT_ROTATION_ENTRIES[axis.component()] })
-																	.with_id(JOINT_ROTATION_IDS[axis.component()]);
-															};
-														}
-													};
-													@node((Label) { .text = joint_pose_note(app), .size = 12.0f, .color = TEXT_DIM });
-												}
-
-												@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
-												@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
-												{
-													@node((Checkbox) { .label = "Limit rotation", .checked = limits.constrained,
-														.on_change = &joint_limits_toggled, .style = CHECKBOX_STYLE })
-														.with_id(JOINT_LIMITS_ACTIVE_ID);
-													if (limits.constrained)
-													{
-														@node(panel_button("Reset", &joint_limits_reset)).with_id(JOINT_LIMITS_RESET_ID);
-													}
-												};
-
-												if (limits.constrained)
-												{
-													@tree((Grid) { .cell = { JOINT_PANEL_CELL_W, JOINT_PANEL_CELL_H },
-														.gap_x = JOINT_PANEL_GRID_GAP, .gap_y = JOINT_PANEL_GRID_GAP,
-														.size = { JOINT_PANEL_W, 0 } })
-													{
-														@node((Label) { .text = "Axis", .size = 11.0f, .color = TEXT_DIM });
-														@node((Label) { .text = "Allow", .size = 11.0f, .color = TEXT_DIM });
-														@node((Label) { .text = "Min °", .size = 11.0f, .color = TEXT_DIM });
-														@node((Label) { .text = "Max °", .size = 11.0f, .color = TEXT_DIM });
-
-														for (usz i = 0; i < 3; i++)
-														{
-															@node((Label) { .text = JOINT_LIMIT_NAMES[i], .size = 13.0f,
-																.color = joint_axis_color(i) });
-															@node((Checkbox) { .label = "", .checked = limits.axes[i].allowed,
-																.on_change = JOINT_LIMIT_ALLOWED[i], .style = CHECKBOX_STYLE })
-																.with_id(JOINT_LIMIT_ALLOW_IDS[i]);
-															if (limits.axes[i].allowed)
-															{
-																@node((TextField) { .style = TEXT_FIELD_STYLE,
-																	.on_submit = JOINT_LIMIT_MIN_ENTERED[i] }).with_id(JOINT_LIMIT_MIN_IDS[i]);
-																@node((TextField) { .style = TEXT_FIELD_STYLE,
-																	.on_submit = JOINT_LIMIT_MAX_ENTERED[i] }).with_id(JOINT_LIMIT_MAX_IDS[i]);
-															}
-															else
-															{
-																// A locked axis cannot rotate about itself, so it has no
-																// angle to type: both value cells read "Locked", and the
-																// joint is held at rest about this axis.
-																@node((Label) { .text = "Locked", .size = 12.0f, .color = TEXT_DIM });
-																@node((Label) { .text = "Locked", .size = 12.0f, .color = TEXT_DIM });
-															}
-														}
-													};
-												}
-											}
-										}
-									};
-								};
-								joint_section.with_id(JOINT_SECTION_ID);
-							}
-							else if (app.joint_panel_tab == JointPanelTab.WEIGHTS)
-							{
-								// The joint's name rides in the header: a row of its own was the
-								// tallest thing on a card this short.
-								String title = "Weights";
-								if (dot) title = string::bformat(self.weights_title[..], "Weights · %s",
-									dot.name.len > 0 ? dot.name : "unnamed joint");
-								Element* weights_section = @tree((Disclosure) {
-									.label = title, .expanded = !app.weights_info_collapsed,
-									.width = WEIGHTS_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &weights_section_changed })
-								{
-									@tree((Column) { .size = { WEIGHTS_CARD_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										if (!dot)
-										{
-											@node((Label) { .text = "Select a joint to pick the part of the mesh it moves.",
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
-											weights_stray_icons(app);
-										}
-										else
-										{
-											// The part, and the joint's edge pushed out or pulled in.
-											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
-											{
-												@tree(widgets::tip("Part — Own bone is changed live by Grow, Shrink and Soft edge; With children or UV islands you click are a part Apply gives this joint"))
-												{
-													@node((Select) { .options = weights_part_labels[..],
-														.selected = (usz)(app.areaing ? app.area_origin : AreaPart.OWN),
-														.width = WEIGHTS_PART_W, .style = VIEW_MENU_STYLE,
-														.on_change = &weights_part_chosen }).with_id(WEIGHTS_PART_ID);
-												};
-												@card_icon(GROW_GLYPH, "Grow — push this joint's edge out by a tenth of its bone; only this joint's weights change, Reset puts it back",
-													&weights_grow_pressed).with_id(WEIGHTS_GROW_ID);
-												@card_icon(SHRINK_GLYPH, "Shrink — pull this joint's edge in by a tenth of its bone; only this joint's weights change, Reset puts it back",
-													&weights_shrink_pressed).with_id(WEIGHTS_SHRINK_ID);
-												@card_icon(MIRROR_GLYPH, app.area_mirrors()
-													? "Mirror is on — Grow, Shrink, Soft edge, the brush, the lasso, Apply and Reset change the twin joint on the other side too. Click for this side only"
-													: "Mirror is off — every weight tool changes this side only. Click to do the twin joint too",
-													&weights_mirror_pressed, app.area_mirrors() ? LIT : PLAIN).with_id(WEIGHTS_MIRROR_ID);
-											};
-											if (app.areaing && app.area_islands)
-											{
-												// Islands picked by hand: start from none, or flip to the rest.
-												@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
-												{
-													@card_icon(CLEAR_GLYPH, "Clear — pick no islands, then click the ones you want",
-														&weights_clear_pressed).with_id(WEIGHTS_CLEAR_ID);
-													@card_icon(INVERT_GLYPH, "Invert — swap the picked islands for the rest",
-														&weights_invert_pressed).with_id(WEIGHTS_INVERT_ID);
-												};
-											}
-											@tree(widgets::tip("Soft edge — how far this joint blends with its neighbours, as a share of its bone; an Apply's part fades over the same edge"))
-											{
-												@node((Slider) {
-													.label = "Soft edge",
-													.suffix = "%",
-													.value = app.band_share(dot.id) * 100.0f,
-													.min = SOFT_EDGE_MIN * 100.0f,
-													.max = BAND_SHARE_MAX * 100.0f,
-													.step = 5.0f,
-													.on_change = &weights_soft_moved,
-													.on_commit = &weights_soft_committed,
-													.style = PHYSICS_SLIDER_STYLE,
-												}).with_id(WEIGHTS_SOFT_ID);
-											};
-											// The model's, not the joint's: shown on the joints it decides.
-											if (app.knuckle_blend_applies(dot.id))
-											{
-												@tree(widgets::tip("Knuckle blend — the whole model's: how much of each finger segment fades into the next knuckle"))
-												{
-													@node((Slider) {
-														.label = "Knuckles",
-														.suffix = "%",
-														.value = app.doc.knuckle_blend_fraction() * 100.0f,
-														.max = KNUCKLE_BLEND_MAX * 100.0f,
-														.step = 5.0f,
-															.on_change = &weights_knuckle_moved,
-														.on_commit = &weights_knuckle_committed,
-														.style = PHYSICS_SLIDER_STYLE,
-													}).with_id(WEIGHTS_KNUCKLE_ID);
-												};
-											}
-											// The hand tools — brush, lasso, and a look at the weights without
-											// them — and the model's strays at the far end, a different job.
-											@tree((Row) { .size = { WEIGHTS_CARD_W, 0 }, .main_align = SPACE_BETWEEN,
-												.cross_align = CENTER })
-											{
-												@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
-												{
-													@card_icon(BRUSH_GLYPH, app.brushing
-														? "Stop painting (Shift+W) — put the brush away"
-														: "Paint brush (Shift+W) — paint this joint's weights by hand",
-														&menu_weight_brush, app.brushing ? LIT : PLAIN,
-														"Paint brush · shift+W     drag the mesh · paint     ctrl-drag · put on     ctrl+shift-drag · take off     hold F · size")
-														.with_id(WEIGHTS_BRUSH_ID);
-													bool pinning = app.lassoing && app.lasso_job == LassoJob.PIN;
-													@card_icon(LASSO_GLYPH, pinning
-														? "Stop pinning (Shift+T) — put the lasso away"
-														: "Lasso pin (Shift+T) — draw round vertices to give this joint its full weight there; other joints keep theirs",
-														&menu_lasso_mode, pinning ? LIT : PLAIN,
-														"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
-														.with_id(WEIGHTS_LASSO_ID);
-												};
-												weights_stray_icons(app);
-											};
-											// What is written to the joint, on a row of its own: the commit and
-											// its undoing are the last step, and the ones not to hit by mistake.
-											@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
-											{
-												@card_icon(APPLY_GLYPH, app.areaing && app.area_pending()
-													? "Apply (Enter) — give this joint the part on show; it replaces this joint's weights, and no other joint's"
-													: "Apply (Enter) — nothing waits: the joint's own bone changes live. Pick With children or UV islands for a part to apply",
-													&weights_apply_pressed, app.areaing && app.area_pending() ? COMMIT : PLAIN).with_id(WEIGHTS_APPLY_ID);
-												@card_icon(RESET_GLYPH,
-													"Reset to automatic — this joint follows the automatic weights again: its grow, soft edge, parts and strokes let go",
-													&weights_reset_pressed).with_id(WEIGHTS_RESET_ID);
-											};
-											@node((Label) { .text = weights_readout(app, &self.readout),
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
-										}
-										if (app.strays_current())
-										{
-											@node((Label) { .text = strays_readout(app, &self.strays_text),
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
-										}
-										if (app.tears_current())
-										{
-											@node((Label) { .text = tears_readout(app, &self.tears_text),
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_TEARS_ID);
-										}
-									};
-								};
-								weights_section.with_id(WEIGHTS_SECTION_ID);
-							}
-							else if (app.joint_panel_tab == JointPanelTab.POSE)
-							{
-								// What is done to the pose on show. The dock keeps the clip; this
-								// keeps the pose (pose_panel.c3).
-								Element* pose_section = @tree((Disclosure) {
-									.label = "Pose", .expanded = !app.pose_info_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &pose_section_changed })
-								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										@tree((Wrap) { .gap_x = JOINT_PANEL_GRID_GAP, .gap_y = JOINT_PANEL_GRID_GAP, .cross_align = CENTER })
-										{
-											// Shows the rest pose without touching a key; scrubbing or Play
-											// brings the animation back.
-											@node(panel_button("Rest pose", &anim_reset_pose_clicked)).with_id("anim-reset-pose");
-											@node(panel_button("Mirror pose", &anim_mirror_pose_clicked)).with_id(ANIM_MIRROR_POSE_ID);
-											@node(panel_button("Copy", &anim_copy_pose_clicked)).with_id(ANIM_COPY_POSE_ID);
-											@node(panel_button("Paste", &anim_paste_pose_clicked)).with_id(ANIM_PASTE_POSE_ID);
-											@node(panel_button("Paste mirrored", &anim_paste_pose_mirrored_clicked)).with_id(ANIM_PASTE_MIRRORED_ID);
-										};
-										@node((Label) { .text = app.clip(app.editing) ? "Acts on the pose at the playhead."
-											: "Choose an animation to copy, mirror or paste a pose.",
-											.size = 12.0f, .color = TEXT_DIM });
-									};
-								};
-								pose_section.with_id(POSE_SECTION_ID);
-
-								Element* options_section = @tree((Disclosure) {
-									.label = "Posing options", .expanded = !app.pose_options_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &pose_options_section_changed })
-								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										// Over pinned feet, the body leans to keep its weight on them. Off for a
-										// pose that is held up by something else — a chair, a wall.
-										@node((ToggleButton) { .label = "Balance", .on = !app.balance_off,
-											.on_change = &anim_balance_toggled, .style = SEGMENTED_STYLE }).with_id(ANIM_BALANCE_ID);
-										// How much the selected joints' body parts hold their ground when a
-										// pose is pulled: weighed off the mesh, scaled here.
-										if (app.selected != 0)
-										{
-											@node((Slider) {
-												.label = "Weight",
-												.suffix = "×",
-												.value = app.selected_pose_weight(),
-												.min = POSE_WEIGHT_MIN,
-												.max = POSE_WEIGHT_MAX,
-												.step = 0.05f,
-												.curve = 2.0f,
-												.decimals = 2,
-												.on_commit = &joint_pose_weight_committed,
-												.style = PHYSICS_SLIDER_STYLE,
-											}).with_id(JOINT_POSE_WEIGHT_ID);
-											@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER })
-											{
-												@node((Label) { .text = app.pose_weight_note(), .size = 12.0f, .color = TEXT_DIM });
-												if (app.selected_pose_weight() != 1.0f)
-												{
-													@node(panel_button("Auto", &joint_pose_weight_auto)).with_id(JOINT_POSE_WEIGHT_AUTO_ID);
-												}
-											};
-										}
-										@node((Label) { .text = "Pinned joints", .size = 12.0f, .color = TEXT_DIM });
-										@node((PosePinList) { }).with_id(POSE_PINS_ID);
-									};
-								};
-								options_section.with_id(POSE_OPTIONS_SECTION_ID);
-
-								Element* library_section = @tree((Disclosure) {
-									.label = "Pose library", .expanded = !app.pose_library_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &pose_library_section_changed })
-								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										@node((AnimPosesPanel) { }).with_id(ANIM_POSE_PANEL_ID);
-									};
-								};
-								library_section.with_id(POSE_LIBRARY_SECTION_ID);
-							}
-							else
-							{
-								Element* align_section = @tree((Disclosure) {
-									.label = "Align Tools", .expanded = !app.align_info_collapsed,
-									.width = JOINT_SECTION_W, .style = JOINT_SECTION_STYLE,
-									.on_change = &align_section_changed })
-								{
-									@tree((Column) { .size = { JOINT_PANEL_W, 0 }, .gap = JOINT_PANEL_GAP })
-									{
-										// A group lines up on an axis with the first-selected joint; a lone
-										// joint drops onto the mesh centre.
-										if (app.selection_count() > 1)
-										{
-											@node((Label) { .text = "Align to first-selected", .size = 12.0f, .color = TEXT_DIM });
-											@tree((Row) { .gap = JOINT_PANEL_GAP, .cross_align = CENTER,
-												.size = { JOINT_PANEL_W, 0 } })
-											{
-												@node(panel_button("X", &joint_align_x)).with_id("joint-align-x");
-												@node(panel_button("Y", &joint_align_y)).with_id("joint-align-y");
-												@node(panel_button("Z", &joint_align_z)).with_id("joint-align-z");
-											};
-											@node((Label) { .text = app.stage == POSE_STAGE
-												? "Turns bones so each joint takes the first-selected one's X, Y or Z in the pose, keyed where Apply to reaches. Pick a chain from its base."
-												: "Each takes the first-selected joint's X, Y or Z on the model.",
-												.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
-										}
-										else if (app.selected != 0)
-										{
-											@node(panel_button("Centre on mesh", &joint_center_on_mesh)).with_id("joint-center-mesh");
-											@node((Label) { .text = "Drops this joint onto the mesh middle. Pick two or more to line up on an axis.",
-												.size = 12.0f, .color = TEXT_DIM });
-										}
-										else
-										{
-											@node((Label) { .text = "Select one joint to centre it on the mesh, or two or more to line them up on X, Y or Z.",
-												.size = 12.0f, .color = TEXT_DIM });
-										}
-									};
-								};
-								align_section.with_id(ALIGN_SECTION_ID);
+								case JOINT: self.build_joint_tab(app, &card);
+								case WEIGHTS: self.build_weights_tab(app, &card);
+								case POSE: self.build_pose_tab(app, &card);
+								case ALIGN: self.build_align_tab(app, &card);
 							}
 						};
 					};
 				};
 			}
 
-			@tree((Column) { .gap = JOINT_TAB_GAP, .size = { JOINT_TAB_W, 0 } })
-			{
-				bool joint_active = app.show_joint_panel && app.joint_panel_tab == JointPanelTab.JOINT;
-				Element* joint_tab;
-				@tree(widgets::tip("Joint (N) — pose, limits and pins for the selected joint"))
-				{
-					joint_tab = @tree(joint_panel_tab_button(joint_active, &joint_tab_pressed))
-					{
-						@node((JointPanelTabFace) { .tab = JointPanelTab.JOINT, .active = joint_active });
-					};
-				};
-				joint_tab.with_id(JOINT_TAB_JOINT_ID);
-
-				bool align_active = app.show_joint_panel && app.joint_panel_tab == JointPanelTab.ALIGN;
-				Element* align_tab;
-				@tree(widgets::tip("Align (N) — centre a joint on the mesh, or line several up on an axis"))
-				{
-					align_tab = @tree(joint_panel_tab_button(align_active, &align_tab_pressed))
-					{
-						@node((JointPanelTabFace) { .tab = JointPanelTab.ALIGN, .active = align_active });
-					};
-				};
-				align_tab.with_id(JOINT_TAB_ALIGN_ID);
-
-				bool weights_active = app.show_joint_panel && app.joint_panel_tab == JointPanelTab.WEIGHTS;
-				Element* weights_tab;
-				@tree(widgets::tip("Weights (N) — how the selected joint's bind is shared over the mesh"))
-				{
-					weights_tab = @tree(joint_panel_tab_button(weights_active, &weights_tab_pressed))
-					{
-						@node((JointPanelTabFace) { .tab = JointPanelTab.WEIGHTS, .active = weights_active });
-					};
-				};
-				weights_tab.with_id(JOINT_TAB_WEIGHTS_ID);
-
-				bool pose_active = app.show_joint_panel && app.joint_panel_tab == JointPanelTab.POSE;
-				Element* pose_tab;
-				@tree(widgets::tip("Pose (N) — rest, mirror, copy and paste the pose, balance, pins and the pose library"))
-				{
-					pose_tab = @tree(joint_panel_tab_button(pose_active, &pose_tab_pressed))
-					{
-						@node((JointPanelTabFace) { .tab = JointPanelTab.POSE, .active = pose_active });
-					};
-				};
-				pose_tab.with_id(JOINT_TAB_POSE_ID);
-			};
+			joint_tab_rail(app);
 		};
 	};
 
-	// Through the subtree, not the Ui: none of this is attached yet, so the
-	// tree-wide lookup cannot see it. Filled and focused here rather than by the
-	// button that asked for it, because the field does not exist until this
-	// build runs.
-	if (renaming && rig_ok) if (try Element* field = body.find_id(JOINT_NAME_FIELD_ID))
-	{
-		// An empty name is left on the placeholder, the way `fill_field` does it
-		// next door: a field holding "" and one holding nothing look the same.
-		if (dot.name.len > 0)
-		{
-			TextField* text = field.widget_as(TextField);
-			text.set_text(field, dot.name);
-
-			// Selected, not just filled. The commonest rename replaces the name
-			// outright — a plan named a limb the wrong side round, or a dot came
-			// in as `joint_7` — and a caret parked at the end would make every one
-			// of those start with a held backspace.
-			text.select_all(field);
-		}
-		field.request_focus();
-	}
-
-	if (rig_ok && frame.usable())
-	{
-		for (usz i = 0; i < 3; i++) set_joint_degree_field(body, JOINT_ROTATION_IDS[i], angles[i]);
-	}
-	if (rig_ok && limits.constrained)
-	{
-		// Only the allowed axes have fields to fill — a locked row is two "Locked"
-		// labels and holds no number of its own.
-		foreach (usz i, axis : limits.axes)
-		{
-			if (!axis.allowed) continue;
-			set_joint_degree_field(body, JOINT_LIMIT_MIN_IDS[i], axis.minimum);
-			set_joint_degree_field(body, JOINT_LIMIT_MAX_IDS[i], axis.maximum);
-		}
-	}
+	fill_joint_fields(body, &card);
 	return body;
 }
 
