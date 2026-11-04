@@ -31,11 +31,7 @@ import std::math::vector;
 import std::math::quaternion;
 
 // Where this dot's anchor lives in the list, or -1. The one scan the rest share.
-fn sz AppState.lock_index(&self, uint dot_id)
-{
-	foreach (usz i, lock : self.position_locks) if (lock.dot_id == dot_id) return (sz)i;
-	return -1;
-}
+fn sz AppState.lock_index(&self, uint dot_id) => lock_index_of(self.position_locks, dot_id);
 
 // Whether this dot is anchored at all — either half.
 fn bool AppState.is_anchored(&self, uint dot_id) => dot_id != 0 && self.lock_index(dot_id) >= 0;

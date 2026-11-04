@@ -9,6 +9,7 @@ Use AppState* app = ui.inherit(AppState)!!; instead of passing AppState to widge
 
 # Testing
 run c3c test --test-noleak mostly when developing,
+c3c test --test-filter <suite>
 Only run c3c test full leak checks when told directly.
 
 

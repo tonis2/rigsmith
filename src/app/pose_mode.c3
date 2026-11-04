@@ -1362,76 +1362,16 @@ fn float AppState.pose_body(&self, RigView* view, rig::Pose* pose, PointGoal[] g
 	usz[GROUND_CONTACT_MAX] contact;
 	bool[GROUND_CONTACT_MAX] planted;
 	GroundContacts floor_spec = self.gesture_contacts(view, contact[..], planted[..]);
+	usz[] standing = contact[:floor_spec.count];
 	List{PointJoint} joints;
 	joints.init(mem);
 	defer joints.free();
-	for (usz j = 0; j < n; j++)
-	{
-		if (tree_root_of(skeleton, j) != root) continue;
-		JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[j]);
-		joints.push({
-			.joint = j,
-			.inv_mass = inv_mass[j],
-			.trunk = trunk[j],
-			.frozen = self.gesture_aim.has(j),
-			.floored = array::contains(contact[:floor_spec.count], j),
-			.limits = limits,
-			.frame = limits.constrained ? joint_limit_frame(skeleton, view.dot_ids, limits) : (JointLimitFrame){},
-		});
-	}
+	body_joints(&joints, &self.doc, view, root, inv_mass, trunk, &self.gesture_aim, standing);
 
-	// The gesture's goals, then the pins, then the planted feet.
 	List{PointGoal} goals;
 	goals.init(mem);
 	defer goals.free();
-	foreach (goal : gesture) goals.push(goal);
-	// In the rig's own order, so the answer does not depend on which pin was set
-	// first.
-	for (usz j = 0; j < n; j++)
-	{
-		sz i = self.lock_index(view.dot_ids[j]);
-		if (i < 0 || view.dot_ids[j] == self.drag.dot) continue;
-		PositionLock lock = self.position_locks[(usz)i];
-		if (tree_root_of(skeleton, j) != root || body_goal_of(goals.array_view(), j) >= 0) continue;
-		// A pin on the position alone keeps the part's angle too, softly, as the
-		// gesture found it: not `lock.orient`, which is the angle it had when the
-		// pin was set and may be long stale. A pin on the angle holds `lock.orient`
-		// hard, and the body gives way before it does.
-		bool keeps_angle = lock.position && !lock.rotation;
-		goals.push({
-			.joint = j,
-			.position = lock.position,
-			.target = lock.target - shift,
-			.rotation = lock.rotation || keeps_angle,
-			.orient = keeps_angle ? world[j] : lock.orient,
-			.turn_weight = keeps_angle ? POINT_POSE_PIN_SOFT_TURN : 0.0f,
-		});
-	}
-	for (usz i = 0; i < floor_spec.count; i++)
-	{
-		usz foot = contact[i];
-		if (!planted[i] || tree_root_of(skeleton, foot) != root || body_goal_of(goals.array_view(), foot) >= 0) continue;
-		// A foot the gesture itself takes hold of is being lifted, not stood on.
-		if (under_the_gesture(skeleton, gesture, foot)) continue;
-		// A toe under a pinned ankle rides on it when the pin holds the angle too.
-		if (rides_a_pin(skeleton, goals.array_view(), foot)) continue;
-		goals.push({ .joint = foot, .position = true, .target = skeleton.joints[foot].transform(palette[foot]) });
-		// And the end of a short foot bone above a planted toe, so the foot stays flat
-		// rather than pivoting on its toe as the leg folds. The toe and the heel fix
-		// the line between them and leave the foot free to roll about it, so the heel
-		// keeps its angle softly too, as a position pin does.
-		int heel = skeleton.parents[foot];
-		if (heel < 0 || (usz)heel == root || body_goal_of(goals.array_view(), (usz)heel) >= 0) continue;
-		if ((skeleton.joints[foot] - skeleton.joints[(usz)heel]).length() > h * CURL_CHAIN_SHARE) continue;
-		goals.push({
-			.joint = (usz)heel,
-			.position = true,
-			.target = skeleton.joints[(usz)heel].transform(palette[(usz)heel]),
-			.rotation = true,
-			.orient = world[(usz)heel],
-			.turn_weight = POINT_POSE_PIN_SOFT_TURN,
-		});
-	}
+	body_goals(&goals, view, root, gesture, self.position_locks, self.drag.dot, shift, palette, world, standing, planted[..]);
 
 	PointPoseSettings settings = {
 		.height = h,
