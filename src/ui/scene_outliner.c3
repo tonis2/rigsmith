@@ -431,29 +431,6 @@ fn SceneOutlinerSnapshot scene_outliner_snapshot(AppState* app) @private
 	};
 }
 
-fn bool SceneOutlinerSnapshot.differs(self, SceneOutlinerSnapshot other)
-{
-	return self.focus_generation != other.focus_generation
-		|| self.hidden_mask != other.hidden_mask
-		|| self.geometry_generation != other.geometry_generation
-		|| self.revision != other.revision
-		|| self.source_ptr != other.source_ptr
-		|| self.source_len != other.source_len
-		|| self.selected != other.selected
-		|| self.root_id != other.root_id
-		|| self.dots != other.dots
-		|| self.edges != other.edges
-		|| self.selected_count != other.selected_count
-		|| self.collapsed_joints != other.collapsed_joints
-		|| self.selection_sum != other.selection_sum
-		|| self.selection != other.selection
-		|| self.show_mesh != other.show_mesh
-		|| self.show_rig != other.show_rig
-		|| self.scene_collapsed != other.scene_collapsed
-		|| self.model_collapsed != other.model_collapsed
-		|| self.skeleton_collapsed != other.skeleton_collapsed;
-}
-
 struct SceneOutliner (Widget)
 {
 	SceneOutlinerSnapshot shown;
@@ -473,7 +450,7 @@ fn void SceneOutliner.unmount(&self, Element* elem) @dynamic => self.release();
 fn void SceneOutliner.refresh(&self, Element* elem, AppState* app)
 {
 	SceneOutlinerSnapshot now = scene_outliner_snapshot(app);
-	if (!self.shown.differs(now)) return;
+	if (!fields_differ(self.shown, now)) return;
 	elem.request_build();
 }
 

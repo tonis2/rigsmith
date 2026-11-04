@@ -295,55 +295,6 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 	};
 }
 
-fn bool AnimSnapshot.differs(self, AnimSnapshot other)
-{
-	return self.bound != other.bound
-		|| self.dots != other.dots
-		|| self.playing_pack != other.playing_pack
-		|| self.playing_clip != other.playing_clip
-		|| self.animating != other.animating
-		|| self.paused != other.paused
-		|| self.auto_key != other.auto_key
-		|| self.clip_loops != other.clip_loops
-		|| self.self_collision != other.self_collision
-		|| self.prevent != other.prevent
-		|| self.collision_mode != other.collision_mode
-		|| self.show_tracks != other.show_tracks
-		|| self.show_curves != other.show_curves
-		|| self.show_layers != other.show_layers
-		|| self.selected_tracks_only != other.selected_tracks_only
-		|| self.selected_joint != other.selected_joint
-		|| self.selected_joints_hash != other.selected_joints_hash
-		|| self.posing != other.posing
-		|| self.blend_collapsed != other.blend_collapsed
-		|| self.motion_collapsed != other.motion_collapsed
-		|| self.mask_collapsed != other.mask_collapsed
-		|| self.pending_pose != other.pending_pose
-		|| self.pending_asked != other.pending_asked
-		|| self.reach != other.reach
-		|| self.spread != other.spread
-		|| self.picked != other.picked
-		|| self.authored_dirty != other.authored_dirty
-		|| self.revision != other.revision
-		|| self.edit_pack != other.edit_pack
-		|| self.edit_clip != other.edit_clip
-		|| self.active_layer != other.active_layer
-		|| self.layers != other.layers
-		|| self.keys != other.keys
-		|| self.tracks != other.tracks
-		|| self.aims != other.aims
-		|| self.aim_keys != other.aim_keys
-		|| self.pins != other.pins
-		|| self.pin_windows != other.pin_windows
-		|| self.checked != other.checked
-		|| self.issues != other.issues
-		|| self.ghosts != other.ghosts
-		|| self.ghost_past != other.ghost_past
-		|| self.ghost_future != other.ghost_future
-		|| self.ghost_step != other.ghost_step
-		|| self.fps != other.fps;
-}
-
 // ---------------------------------------------------------------------------
 // The dock's frame: a clip manager on the left, a Layers column on the right, a
 // draggable divider between them.
@@ -577,7 +528,7 @@ fn void AnimPanel.update(&self, Element* elem, float dt) @dynamic
 	AppState* app = elem.inherit(AppState)!!;
 	anim_arm_pending(elem.ui);
 	AnimSnapshot now = anim_snapshot(app);
-	if (!now.differs(self.shown)) return;
+	if (!fields_differ(now, self.shown)) return;
 	// A clip picked by any route becomes the clip menu's row, unless the row
 	// picked is one whose source is missing, which stays picked so it can be
 	// removed.

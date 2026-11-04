@@ -180,11 +180,7 @@ fn void GuideBar.fill(&self, AppState* app, GuideStatus g)
 
 fn bool GuideBar.differs(&self, AppState* app, GuideStatus g)
 {
-	GuideStatus s = self.shown;
-	return s.has_mesh != g.has_mesh || s.joints != g.joints || s.unnamed != g.unnamed
-		|| s.skin_known != g.skin_known || s.skin_edited != g.skin_edited
-		|| s.first_unnamed != g.first_unnamed || s.clips != g.clips || s.clips_found != g.clips_found
-		|| s.unsaved != g.unsaved || s.saved != g.saved
+	return fields_differ(self.shown, g)
 		|| self.source != app.source_path.ptr || self.source_len != app.source_path.len
 		|| self.geometry != app.geometry_generation;
 }

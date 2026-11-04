@@ -366,27 +366,6 @@ fn usz physics_limits_stamp(AppState* app) @private
 	return stamp;
 }
 
-fn bool PhysicsSnapshot.differs(self, PhysicsSnapshot other)
-{
-	return self.selected != other.selected
-		|| self.dots != other.dots
-		|| self.chains != other.chains
-		|| self.capsules != other.capsules
-		|| self.root != other.root
-		|| self.tip != other.tip
-		|| self.preset != other.preset
-		|| self.collide != other.collide
-		|| self.capsule != other.capsule
-		|| self.simulating != other.simulating
-		|| self.animating != other.animating
-		|| self.checking != other.checking
-		|| self.preventing != other.preventing
-		|| self.status != other.status
-		|| self.contacts != other.contacts
-		|| self.advanced != other.advanced
-		|| self.limits != other.limits;
-}
-
 struct PhysicsPanel (Widget)
 {
 	// What the last build reflected. `update` diffs against it rather than
@@ -427,7 +406,7 @@ fn void PhysicsPanel.update(&self, Element* elem, float dt) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	PhysicsSnapshot now = physics_snapshot(app);
-	if (!now.differs(self.shown)) return;
+	if (!fields_differ(now, self.shown)) return;
 
 	self.shown = now;
 	elem.request_build();

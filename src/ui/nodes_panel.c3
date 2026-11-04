@@ -115,13 +115,6 @@ fn NodesSnapshot nodes_snapshot(AppState* app) @private
 	};
 }
 
-fn bool NodesSnapshot.differs(self, NodesSnapshot other)
-{
-	return self.has_file != other.has_file || self.skeleton != other.skeleton || self.generating != other.generating
-		|| self.capturing != other.capturing || self.stage != other.stage || self.finished != other.finished
-		|| self.clips != other.clips || self.bound != other.bound || self.template != other.template || self.graph != other.graph;
-}
-
 struct NodesPanel (Widget)
 {
 	NodesSnapshot shown;
@@ -162,7 +155,7 @@ fn void NodesPanel.update(&self, Element* elem, float dt) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	NodesSnapshot now = nodes_snapshot(app);
-	if (now.differs(self.shown))
+	if (fields_differ(now, self.shown))
 	{
 		self.shown = now;
 		elem.request_build();

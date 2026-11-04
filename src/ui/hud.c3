@@ -397,33 +397,6 @@ fn usz hud_lines(AppState* app, HudSnapshot shown, char[] buffer, HudLine[] out)
 	return count;
 }
 
-fn bool HudSnapshot.differs(self, HudSnapshot other)
-{
-	return self.has_mesh != other.has_mesh
-		|| self.dots != other.dots
-		|| self.edges != other.edges
-		|| self.selected != other.selected
-		|| self.selection != other.selection
-		|| self.root != other.root
-		|| self.areaing != other.areaing
-		|| self.auto_connect != other.auto_connect
-		|| self.tint_mode != other.tint_mode
-		|| self.wireframe != other.wireframe
-		|| self.show_mesh != other.show_mesh
-		|| self.show_rig != other.show_rig
-		|| self.anim_name != other.anim_name
-		|| self.notice_length != other.notice_length
-		|| self.drag_dot != other.drag_dot
-		|| self.drag_axis != other.drag_axis
-		|| self.drag_delta != other.drag_delta
-		|| self.drag_verb != other.drag_verb
-		|| self.drag_turn != other.drag_turn
-		|| self.allow_intersections != other.allow_intersections
-		|| self.collision_mode != other.collision_mode
-		|| self.reach != other.reach
-		|| self.held != other.held;
-}
-
 struct HudOverlay (Widget)
 {
 	HudSnapshot shown; // what the last repaint reflected
@@ -449,7 +422,7 @@ fn void HudOverlay.update(&self, Element* elem, float dt) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	HudSnapshot now = snapshot(app);
-	if (now.differs(self.shown))
+	if (fields_differ(now, self.shown))
 	{
 		self.shown = now;
 		elem.request_paint();

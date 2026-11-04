@@ -330,43 +330,6 @@ fn JointPanelSnapshot joint_panel_snapshot(AppState* app) @private
 	};
 }
 
-fn bool JointPanelSnapshot.differs(self, JointPanelSnapshot other)
-{
-	return self.selected != other.selected || self.renaming != other.renaming
-		|| self.dots != other.dots
-		|| self.edges != other.edges || self.rig_generation != other.rig_generation
-		|| self.revision != other.revision
-		|| self.animating != other.animating || self.paused != other.paused
-		|| self.pose_edit_active != other.pose_edit_active
-		|| self.pose_edit_pending != other.pose_edit_pending
-		|| self.drag_dot != other.drag_dot || self.edit_time != other.edit_time
-		|| self.current_pack != other.current_pack || self.current_clip != other.current_clip
-		|| self.edit_pack != other.edit_pack || self.edit_clip != other.edit_clip
-		|| self.show_joint_panel != other.show_joint_panel
-		|| self.tab != other.tab
-		|| self.joint_info_collapsed != other.joint_info_collapsed
-		|| self.align_info_collapsed != other.align_info_collapsed
-		|| self.weights_info_collapsed != other.weights_info_collapsed
-		|| self.pose_info_collapsed != other.pose_info_collapsed
-		|| self.pose_options_collapsed != other.pose_options_collapsed
-		|| self.pose_library_collapsed != other.pose_library_collapsed
-		|| self.balance_off != other.balance_off
-		|| self.locks_hash != other.locks_hash
-		|| self.poses != other.poses
-		|| self.pose_row != other.pose_row || self.captures != other.captures
-		|| self.pose_renaming != other.pose_renaming
-		|| self.pose_selected_only != other.pose_selected_only
-		|| self.selection_count != other.selection_count
-		|| self.areaing != other.areaing
-		|| self.brushing != other.brushing
-		|| self.mirrors != other.mirrors
-		|| self.area_generation != other.area_generation
-		|| self.strays_generation != other.strays_generation
-		|| self.strays_current != other.strays_current
-		|| self.tears_generation != other.tears_generation
-		|| self.tears_current != other.tears_current;
-}
-
 struct JointPanel (Widget)
 {
 	JointPanelSnapshot shown;
@@ -399,7 +362,7 @@ fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
 	// the card it was opened on, written nowhere.
 	if (app.renaming_dot != 0 && app.renaming_dot != app.selected) app.renaming_dot = 0;
 	JointPanelSnapshot now = joint_panel_snapshot(app);
-	if (!now.differs(self.shown)) return;
+	if (!fields_differ(now, self.shown)) return;
 	self.shown = now;
 	elem.request_build();
 }
