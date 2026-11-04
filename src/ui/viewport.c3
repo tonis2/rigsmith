@@ -1344,725 +1344,11 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 	switch (event.kind)
 	{
 		case PRESS:
-			self.activate_camera(elem);
-			// A header's click-catcher only blankets its own pane, so a dropdown
-			// left open in the pane next door never hears about this press. It is
-			// never this pane's own dropdown being closed here: while that one is
-			// open its catcher is over the model and the viewport gets nothing.
-			close_menus(elem.ui);
-
-			if (app.transform_interaction.active)
-			{
-				if (event.button == LEFT)
-				{
-					(void)app.finish_transform_interaction(true);
-					elem.request_paint();
-					return true;
-				}
-				if (event.button == RIGHT)
-				{
-					(void)app.finish_transform_interaction(false);
-					elem.request_paint();
-					return true;
-				}
-			}
-
-			switch (event.button)
-			{
-				case LEFT:
-					if (app.transform_tool != SELECT_TOOL && transform_tool_claims_pointer(app))
-					{
-						TransformGizmoPart part = self.hit_transform_gizmo(elem, event.pos);
-						// The middle over a joint is that joint's own drag below, which
-						// lands it on the model; over nothing it is a free move.
-						// Not for the Scale tool, whose ring has no joint of its own to yield to:
-						// a press inside it is always the whole model's.
-						if (part == GIZMO_FREE && app.transform_tool != SCALE_TOOL
-							&& self.pick_dot(elem, event.pos) != 0) part = NO_GIZMO_PART;
-						if (part != NO_GIZMO_PART && transform_tool_poses(app))
-						{
-							// Posing: the arrow is G held to its axis, the ring R held to its
-							// own, and the release ends it like a joint drag. The joint moves
-							// by what the pointer moves from here, not to the pointer.
-							DragAxis axis = gizmo_axis(part);
-							if (app.transform_tool == MOVE_TOOL)
-							{
-								if (app.begin_pose(true))
-								{
-									if (axis != DragAxis.FREE) (void)app.lock_drag(axis);
-									if (try Vec3 at = self.pose_pointer(elem, app, event.pos)) app.drag.grab = at - app.drag.from;
-								}
-							}
-							else
-							{
-								(void)app.begin_turn(true, axis.is_plane() ? DragAxis.FREE : axis);
-							}
-							app.refresh_ui();
-							elem.request_paint();
-							return true;
-						}
-						if (part != NO_GIZMO_PART)
-						{
-							TransformOperation operation = tool_operation(app.transform_tool);
-							(void)self.begin_transform_interaction(
-								elem, operation, gizmo_axis(part), true, event.pos);
-							return true;
-						}
-					}
-
-					// A gesture begun on a key is holding no button, so it has been
-					// following the pointer on hover and there is nothing to let go
-					// of — a *click* is what confirms it. Tested before the pick, so
-					// a confirming click that happens to land on a dot confirms the
-					// gesture rather than selecting a different joint.
-					if (app.drag.dot != 0 && !app.drag.held)
-					{
-						app.end_drag();
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					// A motion path's handles are over the joints too, and drawing a path
-					// takes every click.
-					if (!(app.sketching || app.weight_tool() != NONE) && app.paths_shown()
-						&& self.press_paths(elem, app, event.pos))
-					{
-						return true;
-					}
-
-					// A look-at target's handle is over the joints: its ring can sit on
-					// one, and the ring is what was aimed at.
-					sz aimed = (app.sketching || app.weight_tool() != NONE || input.shift_down())
-						? -1 : self.pick_aim(elem, event.pos);
-					if (aimed >= 0)
-					{
-						app.select_aim_target(app.posed_aims[(usz)aimed].target);
-						self.maybe_drag_aim = (usz)aimed + 1;
-						self.press_at = event.pos;
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					// The brush looks through the joints: a dot drawn over the mesh is
-					// where the stroke was aimed, and picking it would switch the joint
-					// being painted instead of painting. Another joint is chosen in the
-					// Scene outliner.
-					uint hit = app.brushing ? 0 : self.pick_dot(elem, event.pos);
-
-					// Another character's joint or body under the pointer, in front of
-					// this one's: the click is about that character, so it becomes the
-					// one being edited and the press goes no further.
-					if (hit == 0 && !app.sketching && !app.brushing && !app.lassoing && !app.areaing
-						&& !input.shift_down() && self.pick_cast(elem, event.pos))
-					{
-						self.maybe_place = false;
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					// Shift picks out a *set* to act on rather than one dot to
-					// work with, so it selects and stops there — no drag, no pin.
-					// Deleting and bonding are what a set is for, and a
-					// shift-click that also started a drag would move a dot every
-					// time one was added to the group.
-					bool extend = input.shift_down();
-					if (extend && hit != 0)
-					{
-						app.extend_selection(hit);
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					// The lasso and the Area tool select only for a reason of their
-					// own: they work on the *selected* dot, so switching which one has
-					// to stay possible without leaving the mode — and a press that both
-					// dragged a dot and drew around it would do two things at once,
-					// neither of them asked for.
-					if (app.sketching && !input.shift_down())
-					{
-						self.sketch_now = true;
-						app.sketch_active = true;
-						app.sketch_points.clear();
-						app.sketch_moved(event.pos);
-						if (app.sketch_erasing && app.erase_annotations_along(event.pos, event.pos, elem.size) > 0) app.refresh_ui();
-						self.maybe_place = false;
-						self.orbiting = false;
-						self.panning = false;
-						elem.request_paint();
-						return true;
-					}
-
-					if ((app.lassoing || app.areaing) && hit != 0)
-					{
-						app.select(hit);
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					if (hit != 0)
-					{
-						if (app.transform_tool != SELECT_TOOL)
-						{
-							if (!(app.selection_count() > 1 && app.is_selected(hit))) app.select(hit);
-							// The Move tool's drag on a joint is the Select tool's: it moves
-							// the joint on Joints and poses it on Pose.
-							if (app.transform_tool == MOVE_TOOL)
-							{
-								self.maybe_drag_dot = hit;
-								self.press_at = event.pos;
-							}
-							app.refresh_ui();
-							elem.request_paint();
-							return true;
-						}
-
-						// A press selects immediately, but it commits to no gesture yet.
-						// Waiting for CLICK_SLOP is what lets a plain click choose another
-						// posed joint without stopping the animation that put it there.
-						// Once the pointer genuinely drags, the MOVE handler decides: on
-						// Pose a drag poses this joint (as G does, Alt swapping how a hand
-						// or foot turns), and on Joints it moves the joint on the model.
-						//
-						// A press on a dot already inside a multi-selection keeps the
-						// whole group, so an Alt-drag can move it as one piece — pressing
-						// any other dot selects just that dot, the way it always has. A
-						// plain click that never becomes a drag collapses the group back
-						// to the clicked dot at RELEASE, so keeping it here costs nothing.
-						if (!(app.selection_count() > 1 && app.is_selected(hit))) app.select(hit);
-						self.maybe_drag_dot = hit;
-						self.press_at = event.pos;
-						app.refresh_ui();
-						elem.request_paint();
-						return true;
-					}
-
-					// A transform tool turns a press off the dots into the camera —
-					// unless a weight mode is open, which owns a press on the mesh
-					// whatever tool the column was left on. Opening the Weights card
-					// or the lasso does not reset the tool, so without this every
-					// grow, island click and lasso drag quietly orbited instead.
-					bool weight_mode = app.weight_tool() != NONE;
-					if (app.transform_tool != SELECT_TOOL && !weight_mode)
-					{
-						self.press_at = event.pos;
-						self.maybe_place = false;
-						self.maybe_pick_model = true;
-						bool shift = input.shift_down();
-						self.orbiting = !shift;
-						self.panning = shift;
-						return true;
-					}
-
-					// The Area tool: shift-drag on the mesh grows the part from the
-					// point pressed, ctrl-drag shrinks it. Off the mesh, or ctrl with
-					// nothing picked, the press falls through to the camera.
-					// Picking islands, the same drags paint whole islands in and
-					// out instead, and the press alone is a shift- or ctrl-click.
-					if (app.areaing && (input.shift_down() || input.ctrl_down()))
-					{
-						bool grow = input.shift_down();
-						sz vertex = self.vertex_at(elem, event.pos);
-						bool painting = app.area_islands && app.area_pending();
-						if (vertex >= 0 && (painting ? app.begin_island_paint(vertex, grow) : app.begin_grow_drag()))
-						{
-							self.area_now = true;
-							self.area_painting = painting;
-							self.area_grows = grow;
-							self.area_from = event.pos;
-							self.area_rings = 0;
-							self.maybe_place = false;
-							self.orbiting = false;
-							self.panning = false;
-							app.refresh_ui();
-							elem.request_paint();
-							return true;
-						}
-					}
-
-					// Off the dots. Whether this is a click on the model or an
-					// orbit is not knowable yet — record where it started and
-					// let MOVE or RELEASE decide. What the click would *do* is
-					// the mode's business, not this decision's.
-					self.press_at = event.pos;
-					self.maybe_place = true;
-
-					bool shift = input.shift_down();
-
-					// The brush: a plain drag on the mesh paints the way the options
-					// strip says (Add / Remove); a plain drag off the mesh still
-					// orbits, so the model can be turned to reach the next part.
-					// Ctrl-drag adds and ctrl+shift-drag removes whatever the strip
-					// says, and shift alone is still pan. Alt paints the other way
-					// from the X-ray box. One press is one stroke and one undo entry.
-					bool ctrl = input.ctrl_down();
-					if (app.brushing && (ctrl || !shift) && !input.key_down(Key.F))
-					{
-						self.brushing_now = true;
-						self.brush_adds = ctrl ? !shift : !app.brush_removes;
-						self.brush_xray = app.config.brush_xray != input.alt_down();
-						app.begin_stroke();
-						usz under = self.paint_at(elem, event.pos);
-						if (under > 0 || ctrl)
-						{
-							self.maybe_place = false;
-							self.orbiting = false;
-							self.panning = false;
-							return true;
-						}
-						self.brushing_now = false;
-						app.end_stroke();
-					}
-
-					// The lasso takes the plain drag outright, one slot below the
-					// brush because the two never open together. Ctrl is the
-					// other direction here, whichever job is running.
-					// Alt is the one modifier that means something different on
-					// each: reaching through the model while pinning, adding to
-					// the selection while selecting. All three are read live off
-					// `Input` and latched now, so letting go of one half way does
-					// not turn a region that was unpinning into one that pins —
-					// `brush_adds`' rule.
-					if (app.lassoing && !shift)
-					{
-						bool alt = input.alt_down();
-						self.lasso_now = true;
-						app.lasso_removes = input.ctrl_down();
-						app.lasso_xray = app.lasso_job == LassoJob.PIN && alt;
-						app.lasso_adds = app.lasso_job == LassoJob.SELECT && alt;
-						app.lasso_active = true;
-						app.drop_lasso_stroke();
-						app.lasso_moved(event.pos);
-						self.maybe_place = false;
-						self.orbiting = false;
-						self.panning = false;
-						elem.request_paint();
-						return true;
-					}
-
-					self.orbiting = !shift;
-					self.panning = shift;
-					return true;
-				case MIDDLE:
-					self.panning = true;
-					return true;
-				case RIGHT:
-					// A context menu on the joints: Mirror and Delete. Only a
-					// right-press *on* a dot raises it — a press on empty space is
-					// left to fall through to the pane's own split/merge menu, so this
-					// never eats the layout gesture. A dot not already in the selection
-					// is selected first, so right-clicking a joint acts on it; a press
-					// inside an existing multi-selection leaves the group whole, so the
-					// menu can mirror or delete all of it at once.
-					//
-					// Not while the brush is open: it leaves the joints alone, so a
-					// right-press is the empty-space one wherever it lands.
-					if (app.brushing) return false;
-					sz aimed_here = self.pick_aim(elem, event.pos);
-					if (aimed_here >= 0)
-					{
-						// A ring: select the target and open its rows.
-						app.select_aim_target(app.posed_aims[(usz)aimed_here].target);
-						app.refresh_ui();
-						elem.request_paint();
-						open_viewport_context(elem.ui, elem.absolute + event.pos, true);
-						return true;
-					}
-					uint picked = self.pick_dot(elem, event.pos);
-					if (picked == 0) return false;
-					if (!app.is_selected(picked))
-					{
-						app.select(picked);
-						app.refresh_ui();
-					}
-					open_viewport_context(elem.ui, elem.absolute + event.pos);
-					elem.request_paint();
-					return true;
-				default:
-					return false;
-			}
+			return self.on_press(elem, event, app, input);
 		case MOVE:
-			// Recorded before anything is decided, so the turn ring has a radius
-			// to draw at on the very frame the sweep begins.
-			self.pointer_was = self.pointer_seen ? self.pointer : event.pos;
-			self.pointer = event.pos;
-			self.pointer_seen = true;
-
-			if (app.transform_interaction.active)
-			{
-				app.transform_interaction.free_move = elem.ui.input.ctrl_down();
-				app.update_transform_pointer(event.absolute);
-				return true;
-			}
-
-			if (self.brushing_now)
-			{
-				// The latch cannot outlive the mode: closing the brush with the button still down would
-				// leave a stroke running over a mesh nobody is painting.
-				if (!app.brushing)
-				{
-					self.brushing_now = false;
-				}
-				else
-				{
-					(void)self.paint_at(elem, event.pos);
-					return true;
-				}
-			}
-
-			if (self.sketch_now)
-			{
-				if (!app.sketching || !app.sketch_active)
-				{
-					self.sketch_now = false;
-					app.sketch_active = false;
-				}
-				else
-				{
-					// The eraser takes off what it passes rather than drawing.
-					// The eraser keeps its path in the same list and takes off what the
-					// last step of it crossed.
-					Vec2 was = app.sketch_points.len() > 0 ? app.sketch_points[app.sketch_points.len() - 1] : event.pos;
-					if (app.sketch_moved(event.pos) && app.sketch_erasing
-						&& app.erase_annotations_along(was, event.pos, elem.size) > 0) app.refresh_ui();
-					elem.request_paint();
-					return true;
-				}
-			}
-
-			if (self.lasso_now)
-			{
-				// The latch cannot outlive the mode: closing the lasso with the button still down would
-				// leave a polygon growing that nothing is going to close. Nor the
-				// gesture — escape cancels the region without waiting for the
-				// button, and the outline must not start growing again from
-				// wherever the pointer happens to be next.
-				if (!app.lassoing || !app.lasso_active)
-				{
-					self.lasso_now = false;
-					app.lasso_active = false;
-				}
-				else
-				{
-					// Thinned by distance rather than taken per move — see
-					// `LASSO_STEP`. The repaint is asked for either way, since the
-					// segment under the pointer is redrawn to it.
-					app.lasso_moved(event.pos);
-					elem.request_paint();
-					return true;
-				}
-			}
-
-			if (self.area_now)
-			{
-				if (!app.areaing)
-				{
-					self.area_now = false;
-				}
-				else if (self.area_painting)
-				{
-					sz vertex = self.vertex_at(elem, event.pos);
-					if (vertex >= 0 && app.island_paint_to(vertex)) app.refresh_ui();
-					elem.request_paint();
-					return true;
-				}
-				else
-				{
-					// Steps from the distance travelled, re-derived from where the joint
-					// started, so dragging back takes steps off as it goes.
-					int rings = (int)((event.pos - self.area_from).length() / AREA_RING_PIXELS);
-					if (!self.area_grows) rings = -rings;
-					if (rings != self.area_rings)
-					{
-						self.area_rings = rings;
-						app.grow_drag_to(rings);
-						app.refresh_ui();
-					}
-					elem.request_paint();
-					return true;
-				}
-			}
-
-			if (self.move_paths(elem, app, event.pos)) return true;
-
-			if (self.maybe_drag_aim != 0)
-			{
-				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
-				usz handle = self.maybe_drag_aim - 1;
-				self.maybe_drag_aim = 0;
-				if (app.begin_aim_drag(handle, true))
-				{
-					// The press was on the ring, not at its centre: the target moves by
-					// what the pointer moves from here, rather than jumping to it.
-					if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
-				}
-				if (app.drag.dot != 0) self.drag_dot(elem, event.pos);
-				app.refresh_ui();
-				elem.request_paint();
-				return true;
-			}
-
-			if (self.maybe_drag_dot != 0)
-			{
-				if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
-				uint id = self.maybe_drag_dot;
-				self.maybe_drag_dot = 0;
-				// The header's Joints | Pose switch says what a drag does. On Joints
-				// it moves the joint on the model. On Pose it poses the joint, exactly
-				// as G does, and never moves it on the model — not with Alt held, not
-				// with the Move tool, not with several joints selected: a slip there
-				// would land a rig edit in the history under a pose being built.
-				if (app.stage == JOINTS_STAGE)
-				{
-					app.begin_drag(id);
-				}
-				else if (app.animation_pose_ready())
-				{
-					// The press was beside the joint, not on its centre: the joint moves
-					// by what the pointer moves from there, rather than jumping to it.
-					if (app.begin_pose(true))
-					{
-						if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
-					}
-				}
-				else
-				{
-					// On Pose with nothing that can be posed right now: say why, and
-					// how to move the joint instead, rather than moving it silently.
-					app.@notice(app.animating && !app.anim_paused
-						? "pause the animation to pose · switch to Joints to move the joint"
-						: "choose an animation to pose · switch to Joints to move the joint");
-					app.refresh_ui();
-					elem.request_paint();
-					return true;
-				}
-				if (app.drag.dot != 0) self.drag_dot(elem, event.pos);
-				app.refresh_ui();
-				elem.request_paint();
-				return true;
-			}
-
-			if (app.drag.dot != 0)
-			{
-				self.drag_dot(elem, event.pos);
-				return true;
-			}
-
-			// A press that travels was an orbit all along, so nothing gets
-			// placed when it comes back up.
-			if (self.maybe_place && (event.pos - self.press_at).length() > CLICK_SLOP)
-			{
-				self.maybe_place = false;
-			}
-
-			// The brush circle is drawn where the pointer is, so a pointer that
-			// moved *is* something to redraw — and a hover move otherwise falls
-			// out below unconsumed, asking for no frame at all. That is what left
-			// the circle sitting still until some other event forced a paint.
-			if (app.brushing) elem.request_paint();
-
-			// Sizing, while the key is down. Sideways travel from where the key
-			// went down: right grows, left shrinks, and letting go leaves it there.
-			if (app.brushing && input.key_down(Key.F))
-			{
-				if (!self.sizing_brush)
-				{
-					self.sizing_brush = true;
-					self.brush_anchor = event.pos;
-					self.brush_from = app.brush_radius;
-				}
-				app.set_brush_radius(self.brush_from + (event.pos.x - self.brush_anchor.x));
-				return true;
-			}
-			self.sizing_brush = false;
-
-			if (!self.orbiting && !self.panning)
-			{
-				self.probe_chain(elem, app, event.pos);
-				self.probe_island(elem, app, event.pos);
-				app.aim_ring_hover = self.pick_aim(elem, event.pos) >= 0;
-				return false;
-			}
-
-			if (self.orbiting) app.camera.orbit(input.mouse_delta);
-			if (self.panning) app.camera.pan(input.mouse_delta, elem.size.y);
-			elem.ui.invalidate(OrbitCamera);
-			return true;
+			return self.on_pointer_move(elem, event, app, input);
 		case RELEASE:
-			switch (event.button)
-			{
-				case LEFT:
-					if (app.transform_interaction.active && app.transform_interaction.held)
-					{
-						(void)app.finish_transform_interaction(true);
-						elem.request_paint();
-						return true;
-					}
-					if (self.brushing_now)
-					{
-						// The stroke's rows went on the ledger as it went, with the
-						// group left open — `end_stroke` closes it. What ends is the
-						// gesture, and with it the one thing a
-						// stroke over a posed body defers: the surface rebuild.
-						self.brushing_now = false;
-						app.end_stroke();
-					}
-					else if (self.sketch_now)
-					{
-						self.sketch_now = false;
-						app.sketch_active = false;
-						if (!app.sketch_erasing)
-						{
-							OrbitCamera* camera = self.view_camera(elem);
-							Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
-							app.sketch_commit(vp, elem.size, camera);
-						}
-						app.refresh_ui();
-						elem.request_paint();
-					}
-					else if (self.lasso_now)
-					{
-						// Where the brush has already committed and this has not:
-						// a lasso is one *region*, not a stream the hand is still
-						// adding to, and half a polygon says nothing about which
-						// vertices are inside it. So the whole gesture lands here,
-						// as one entry on the ledger — or, selecting, as no entry
-						// at all, a selection being nothing the ledger holds.
-						//
-						// The one branch where the two jobs part company. Pinning
-						// needs the eye as well, for the visibility test it marches
-						// through the mesh; selecting needs only the pixels, since
-						// the circles it catches are drawn on them.
-						self.lasso_now = false;
-						OrbitCamera* camera = self.view_camera(elem);
-						Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
-						if (app.lasso_job == LassoJob.PIN)
-						{
-							app.lasso_commit(vp, elem.size, app.model_eye(camera));
-						}
-						else
-						{
-							app.lasso_select_commit(vp, elem.size);
-						}
-						app.refresh_ui();
-					}
-					else if (self.area_now)
-					{
-						// A grow drag is one undo step; an island paint stays pending.
-						self.area_now = false;
-						self.area_painting = false;
-						app.end_grow_drag();
-						app.refresh_ui();
-					}
-					else if (self.maybe_path.pending)
-					{
-						// A click on a path's handle picked it on the press.
-						self.maybe_path = {};
-						app.refresh_ui();
-						elem.request_paint();
-					}
-					else if (self.maybe_drag_aim != 0)
-					{
-						// A click on a handle: it selected the target on the press, and that is all.
-						self.maybe_drag_aim = 0;
-						app.refresh_ui();
-						elem.request_paint();
-					}
-					else if (self.maybe_drag_dot != 0)
-					{
-						// A click, not a drag: without enough travel there is
-						// deliberately no rest edit and no animation display to stop.
-						//
-						// If a multi-selection was kept alive on press so it could be
-						// dragged as a group, a plain click on one of its dots means
-						// "just this one" after all — collapse to it now that no drag
-						// followed. A single selection is already exactly that, so this
-						// only fires when a group was held open for a drag that never came.
-						if (app.selection_count() > 1) app.select(self.maybe_drag_dot);
-						self.maybe_drag_dot = 0;
-								app.refresh_ui();
-						elem.request_paint();
-					}
-					else if (app.drag.dot != 0 && app.drag.held)
-					{
-						// One edit for the whole drag. The thing being moved has
-						// been re-solved on every mouse move to get here; recording
-						// each step would bury the history in noise.
-						//
-						// Held gestures only. One begun on a key never took a
-						// button, so a release arriving from some unrelated press
-						// must not end it — the click above is its ending.
-						app.end_drag();
-					}
-					else if (self.maybe_pick_model)
-					{
-						// The tool works on what is selected, and a model just opened has
-						// its root joint selected — so without this, Rotate turned that
-						// joint's branch inside the body and nothing on screen offered the
-						// mesh. Clicking the body is how a user says "this", in every
-						// editor with a transform tool.
-						if ((event.pos - self.press_at).length() <= CLICK_SLOP
-							&& app.show_mesh && self.on_body(elem, self.press_at)
-							&& app.scene_selection != MODEL)
-						{
-							app.select_scene(MODEL);
-							app.@notice("%s", transform_tool_hint(app));
-							app.refresh_ui();
-						}
-					}
-					else if (self.maybe_place && app.areaing)
-					{
-						// A click in the Area tool places no joint and picks no part:
-						// the card's Part menu picks one, and after an Apply the weights
-						// are done. UV islands on show are the exception — a click adds
-						// the island under it, or takes it out.
-						sz vertex = self.vertex_at(elem, self.press_at);
-						if (vertex >= 0 && app.area_click(vertex)) app.refresh_ui();
-					}
-					else if (self.maybe_place && app.brushing)
-					{
-						// A click on the body the brush found nothing under — only
-						// faces out of sight — places nothing: the brush leaves the
-						// rig alone. Said, since a click that did nothing reads as
-						// broken.
-						if (self.on_body(elem, self.press_at))
-						{
-							app.@notice("nothing under the brush here — hold F and drag to make it bigger");
-							app.refresh_ui();
-						}
-					}
-					else if (self.maybe_place)
-					{
-						// Acted on at the press position, not the release one:
-						// under CLICK_SLOP they are the same point to the eye,
-						// and the press is where the user was actually aiming.
-						String refused = placement_refused(app);
-						if (refused.len > 0)
-						{
-							app.@notice("%s", refused);
-							app.refresh_ui();
-						}
-						else
-						{
-							self.place_dot(elem, self.press_at);
-						}
-					}
-					self.maybe_place = false;
-					self.maybe_pick_model = false;
-					self.orbiting = false;
-					self.panning = false;
-					elem.request_paint();
-					return true;
-				case MIDDLE:
-					self.panning = false;
-					return true;
-				default:
-					return false;
-			}
+			return self.on_release(elem, event, app, input);
 		case SCROLL:
 			self.activate_camera(elem);
 			return self.scroll_camera(elem, event, input);
@@ -2070,6 +1356,739 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			return false;
 	}
 }
+
+// The mouse went down in the view.
+fn bool Viewport.on_press(&self, Element* elem, MouseEvent event, AppState* app, Input* input)
+{
+	self.activate_camera(elem);
+	// A header's click-catcher only blankets its own pane, so a dropdown
+	// left open in the pane next door never hears about this press. It is
+	// never this pane's own dropdown being closed here: while that one is
+	// open its catcher is over the model and the viewport gets nothing.
+	close_menus(elem.ui);
+
+	if (app.transform_interaction.active)
+	{
+		if (event.button == LEFT)
+		{
+			(void)app.finish_transform_interaction(true);
+			elem.request_paint();
+			return true;
+		}
+		if (event.button == RIGHT)
+		{
+			(void)app.finish_transform_interaction(false);
+			elem.request_paint();
+			return true;
+		}
+	}
+
+	switch (event.button)
+	{
+		case LEFT:
+			if (app.transform_tool != SELECT_TOOL && transform_tool_claims_pointer(app))
+			{
+				TransformGizmoPart part = self.hit_transform_gizmo(elem, event.pos);
+				// The middle over a joint is that joint's own drag below, which
+				// lands it on the model; over nothing it is a free move.
+				// Not for the Scale tool, whose ring has no joint of its own to yield to:
+				// a press inside it is always the whole model's.
+				if (part == GIZMO_FREE && app.transform_tool != SCALE_TOOL
+					&& self.pick_dot(elem, event.pos) != 0) part = NO_GIZMO_PART;
+				if (part != NO_GIZMO_PART && transform_tool_poses(app))
+				{
+					// Posing: the arrow is G held to its axis, the ring R held to its
+					// own, and the release ends it like a joint drag. The joint moves
+					// by what the pointer moves from here, not to the pointer.
+					DragAxis axis = gizmo_axis(part);
+					if (app.transform_tool == MOVE_TOOL)
+					{
+						if (app.begin_pose(true))
+						{
+							if (axis != DragAxis.FREE) (void)app.lock_drag(axis);
+							if (try Vec3 at = self.pose_pointer(elem, app, event.pos)) app.drag.grab = at - app.drag.from;
+						}
+					}
+					else
+					{
+						(void)app.begin_turn(true, axis.is_plane() ? DragAxis.FREE : axis);
+					}
+					app.refresh_ui();
+					elem.request_paint();
+					return true;
+				}
+				if (part != NO_GIZMO_PART)
+				{
+					TransformOperation operation = tool_operation(app.transform_tool);
+					(void)self.begin_transform_interaction(
+						elem, operation, gizmo_axis(part), true, event.pos);
+					return true;
+				}
+			}
+
+			// A gesture begun on a key is holding no button, so it has been
+			// following the pointer on hover and there is nothing to let go
+			// of — a *click* is what confirms it. Tested before the pick, so
+			// a confirming click that happens to land on a dot confirms the
+			// gesture rather than selecting a different joint.
+			if (app.drag.dot != 0 && !app.drag.held)
+			{
+				app.end_drag();
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			// A motion path's handles are over the joints too, and drawing a path
+			// takes every click.
+			if (!(app.sketching || app.weight_tool() != NONE) && app.paths_shown()
+				&& self.press_paths(elem, app, event.pos))
+			{
+				return true;
+			}
+
+			// A look-at target's handle is over the joints: its ring can sit on
+			// one, and the ring is what was aimed at.
+			sz aimed = (app.sketching || app.weight_tool() != NONE || input.shift_down())
+				? -1 : self.pick_aim(elem, event.pos);
+			if (aimed >= 0)
+			{
+				app.select_aim_target(app.posed_aims[(usz)aimed].target);
+				self.maybe_drag_aim = (usz)aimed + 1;
+				self.press_at = event.pos;
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			// The brush looks through the joints: a dot drawn over the mesh is
+			// where the stroke was aimed, and picking it would switch the joint
+			// being painted instead of painting. Another joint is chosen in the
+			// Scene outliner.
+			uint hit = app.brushing ? 0 : self.pick_dot(elem, event.pos);
+
+			// Another character's joint or body under the pointer, in front of
+			// this one's: the click is about that character, so it becomes the
+			// one being edited and the press goes no further.
+			if (hit == 0 && !app.sketching && !app.brushing && !app.lassoing && !app.areaing
+				&& !input.shift_down() && self.pick_cast(elem, event.pos))
+			{
+				self.maybe_place = false;
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			// Shift picks out a *set* to act on rather than one dot to
+			// work with, so it selects and stops there — no drag, no pin.
+			// Deleting and bonding are what a set is for, and a
+			// shift-click that also started a drag would move a dot every
+			// time one was added to the group.
+			bool extend = input.shift_down();
+			if (extend && hit != 0)
+			{
+				app.extend_selection(hit);
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			// The lasso and the Area tool select only for a reason of their
+			// own: they work on the *selected* dot, so switching which one has
+			// to stay possible without leaving the mode — and a press that both
+			// dragged a dot and drew around it would do two things at once,
+			// neither of them asked for.
+			if (app.sketching && !input.shift_down())
+			{
+				self.sketch_now = true;
+				app.sketch_active = true;
+				app.sketch_points.clear();
+				app.sketch_moved(event.pos);
+				if (app.sketch_erasing && app.erase_annotations_along(event.pos, event.pos, elem.size) > 0) app.refresh_ui();
+				self.maybe_place = false;
+				self.orbiting = false;
+				self.panning = false;
+				elem.request_paint();
+				return true;
+			}
+
+			if ((app.lassoing || app.areaing) && hit != 0)
+			{
+				app.select(hit);
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			if (hit != 0)
+			{
+				if (app.transform_tool != SELECT_TOOL)
+				{
+					if (!(app.selection_count() > 1 && app.is_selected(hit))) app.select(hit);
+					// The Move tool's drag on a joint is the Select tool's: it moves
+					// the joint on Joints and poses it on Pose.
+					if (app.transform_tool == MOVE_TOOL)
+					{
+						self.maybe_drag_dot = hit;
+						self.press_at = event.pos;
+					}
+					app.refresh_ui();
+					elem.request_paint();
+					return true;
+				}
+
+				// A press selects immediately, but it commits to no gesture yet.
+				// Waiting for CLICK_SLOP is what lets a plain click choose another
+				// posed joint without stopping the animation that put it there.
+				// Once the pointer genuinely drags, the MOVE handler decides: on
+				// Pose a drag poses this joint (as G does, Alt swapping how a hand
+				// or foot turns), and on Joints it moves the joint on the model.
+				//
+				// A press on a dot already inside a multi-selection keeps the
+				// whole group, so an Alt-drag can move it as one piece — pressing
+				// any other dot selects just that dot, the way it always has. A
+				// plain click that never becomes a drag collapses the group back
+				// to the clicked dot at RELEASE, so keeping it here costs nothing.
+				if (!(app.selection_count() > 1 && app.is_selected(hit))) app.select(hit);
+				self.maybe_drag_dot = hit;
+				self.press_at = event.pos;
+				app.refresh_ui();
+				elem.request_paint();
+				return true;
+			}
+
+			// A transform tool turns a press off the dots into the camera —
+			// unless a weight mode is open, which owns a press on the mesh
+			// whatever tool the column was left on. Opening the Weights card
+			// or the lasso does not reset the tool, so without this every
+			// grow, island click and lasso drag quietly orbited instead.
+			bool weight_mode = app.weight_tool() != NONE;
+			if (app.transform_tool != SELECT_TOOL && !weight_mode)
+			{
+				self.press_at = event.pos;
+				self.maybe_place = false;
+				self.maybe_pick_model = true;
+				bool shift = input.shift_down();
+				self.orbiting = !shift;
+				self.panning = shift;
+				return true;
+			}
+
+			// The Area tool: shift-drag on the mesh grows the part from the
+			// point pressed, ctrl-drag shrinks it. Off the mesh, or ctrl with
+			// nothing picked, the press falls through to the camera.
+			// Picking islands, the same drags paint whole islands in and
+			// out instead, and the press alone is a shift- or ctrl-click.
+			if (app.areaing && (input.shift_down() || input.ctrl_down()))
+			{
+				bool grow = input.shift_down();
+				sz vertex = self.vertex_at(elem, event.pos);
+				bool painting = app.area_islands && app.area_pending();
+				if (vertex >= 0 && (painting ? app.begin_island_paint(vertex, grow) : app.begin_grow_drag()))
+				{
+					self.area_now = true;
+					self.area_painting = painting;
+					self.area_grows = grow;
+					self.area_from = event.pos;
+					self.area_rings = 0;
+					self.maybe_place = false;
+					self.orbiting = false;
+					self.panning = false;
+					app.refresh_ui();
+					elem.request_paint();
+					return true;
+				}
+			}
+
+			// Off the dots. Whether this is a click on the model or an
+			// orbit is not knowable yet — record where it started and
+			// let MOVE or RELEASE decide. What the click would *do* is
+			// the mode's business, not this decision's.
+			self.press_at = event.pos;
+			self.maybe_place = true;
+
+			bool shift = input.shift_down();
+
+			// The brush: a plain drag on the mesh paints the way the options
+			// strip says (Add / Remove); a plain drag off the mesh still
+			// orbits, so the model can be turned to reach the next part.
+			// Ctrl-drag adds and ctrl+shift-drag removes whatever the strip
+			// says, and shift alone is still pan. Alt paints the other way
+			// from the X-ray box. One press is one stroke and one undo entry.
+			bool ctrl = input.ctrl_down();
+			if (app.brushing && (ctrl || !shift) && !input.key_down(Key.F))
+			{
+				self.brushing_now = true;
+				self.brush_adds = ctrl ? !shift : !app.brush_removes;
+				self.brush_xray = app.config.brush_xray != input.alt_down();
+				app.begin_stroke();
+				usz under = self.paint_at(elem, event.pos);
+				if (under > 0 || ctrl)
+				{
+					self.maybe_place = false;
+					self.orbiting = false;
+					self.panning = false;
+					return true;
+				}
+				self.brushing_now = false;
+				app.end_stroke();
+			}
+
+			// The lasso takes the plain drag outright, one slot below the
+			// brush because the two never open together. Ctrl is the
+			// other direction here, whichever job is running.
+			// Alt is the one modifier that means something different on
+			// each: reaching through the model while pinning, adding to
+			// the selection while selecting. All three are read live off
+			// `Input` and latched now, so letting go of one half way does
+			// not turn a region that was unpinning into one that pins —
+			// `brush_adds`' rule.
+			if (app.lassoing && !shift)
+			{
+				bool alt = input.alt_down();
+				self.lasso_now = true;
+				app.lasso_removes = input.ctrl_down();
+				app.lasso_xray = app.lasso_job == LassoJob.PIN && alt;
+				app.lasso_adds = app.lasso_job == LassoJob.SELECT && alt;
+				app.lasso_active = true;
+				app.drop_lasso_stroke();
+				app.lasso_moved(event.pos);
+				self.maybe_place = false;
+				self.orbiting = false;
+				self.panning = false;
+				elem.request_paint();
+				return true;
+			}
+
+			self.orbiting = !shift;
+			self.panning = shift;
+			return true;
+		case MIDDLE:
+			self.panning = true;
+			return true;
+		case RIGHT:
+			// A context menu on the joints: Mirror and Delete. Only a
+			// right-press *on* a dot raises it — a press on empty space is
+			// left to fall through to the pane's own split/merge menu, so this
+			// never eats the layout gesture. A dot not already in the selection
+			// is selected first, so right-clicking a joint acts on it; a press
+			// inside an existing multi-selection leaves the group whole, so the
+			// menu can mirror or delete all of it at once.
+			//
+			// Not while the brush is open: it leaves the joints alone, so a
+			// right-press is the empty-space one wherever it lands.
+			if (app.brushing) return false;
+			sz aimed_here = self.pick_aim(elem, event.pos);
+			if (aimed_here >= 0)
+			{
+				// A ring: select the target and open its rows.
+				app.select_aim_target(app.posed_aims[(usz)aimed_here].target);
+				app.refresh_ui();
+				elem.request_paint();
+				open_viewport_context(elem.ui, elem.absolute + event.pos, true);
+				return true;
+			}
+			uint picked = self.pick_dot(elem, event.pos);
+			if (picked == 0) return false;
+			if (!app.is_selected(picked))
+			{
+				app.select(picked);
+				app.refresh_ui();
+			}
+			open_viewport_context(elem.ui, elem.absolute + event.pos);
+			elem.request_paint();
+			return true;
+		default:
+			return false;
+	}
+}
+
+// The pointer moved over the view.
+fn bool Viewport.on_pointer_move(&self, Element* elem, MouseEvent event, AppState* app, Input* input)
+{
+	// Recorded before anything is decided, so the turn ring has a radius
+	// to draw at on the very frame the sweep begins.
+	self.pointer_was = self.pointer_seen ? self.pointer : event.pos;
+	self.pointer = event.pos;
+	self.pointer_seen = true;
+
+	if (app.transform_interaction.active)
+	{
+		app.transform_interaction.free_move = elem.ui.input.ctrl_down();
+		app.update_transform_pointer(event.absolute);
+		return true;
+	}
+
+	if (self.brushing_now)
+	{
+		// The latch cannot outlive the mode: closing the brush with the button still down would
+		// leave a stroke running over a mesh nobody is painting.
+		if (!app.brushing)
+		{
+			self.brushing_now = false;
+		}
+		else
+		{
+			(void)self.paint_at(elem, event.pos);
+			return true;
+		}
+	}
+
+	if (self.sketch_now)
+	{
+		if (!app.sketching || !app.sketch_active)
+		{
+			self.sketch_now = false;
+			app.sketch_active = false;
+		}
+		else
+		{
+			// The eraser takes off what it passes rather than drawing.
+			// The eraser keeps its path in the same list and takes off what the
+			// last step of it crossed.
+			Vec2 was = app.sketch_points.len() > 0 ? app.sketch_points[app.sketch_points.len() - 1] : event.pos;
+			if (app.sketch_moved(event.pos) && app.sketch_erasing
+				&& app.erase_annotations_along(was, event.pos, elem.size) > 0) app.refresh_ui();
+			elem.request_paint();
+			return true;
+		}
+	}
+
+	if (self.lasso_now)
+	{
+		// The latch cannot outlive the mode: closing the lasso with the button still down would
+		// leave a polygon growing that nothing is going to close. Nor the
+		// gesture — escape cancels the region without waiting for the
+		// button, and the outline must not start growing again from
+		// wherever the pointer happens to be next.
+		if (!app.lassoing || !app.lasso_active)
+		{
+			self.lasso_now = false;
+			app.lasso_active = false;
+		}
+		else
+		{
+			// Thinned by distance rather than taken per move — see
+			// `LASSO_STEP`. The repaint is asked for either way, since the
+			// segment under the pointer is redrawn to it.
+			app.lasso_moved(event.pos);
+			elem.request_paint();
+			return true;
+		}
+	}
+
+	if (self.area_now)
+	{
+		if (!app.areaing)
+		{
+			self.area_now = false;
+		}
+		else if (self.area_painting)
+		{
+			sz vertex = self.vertex_at(elem, event.pos);
+			if (vertex >= 0 && app.island_paint_to(vertex)) app.refresh_ui();
+			elem.request_paint();
+			return true;
+		}
+		else
+		{
+			// Steps from the distance travelled, re-derived from where the joint
+			// started, so dragging back takes steps off as it goes.
+			int rings = (int)((event.pos - self.area_from).length() / AREA_RING_PIXELS);
+			if (!self.area_grows) rings = -rings;
+			if (rings != self.area_rings)
+			{
+				self.area_rings = rings;
+				app.grow_drag_to(rings);
+				app.refresh_ui();
+			}
+			elem.request_paint();
+			return true;
+		}
+	}
+
+	if (self.move_paths(elem, app, event.pos)) return true;
+
+	if (self.maybe_drag_aim != 0)
+	{
+		if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
+		usz handle = self.maybe_drag_aim - 1;
+		self.maybe_drag_aim = 0;
+		if (app.begin_aim_drag(handle, true))
+		{
+			// The press was on the ring, not at its centre: the target moves by
+			// what the pointer moves from here, rather than jumping to it.
+			if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
+		}
+		if (app.drag.dot != 0) self.drag_dot(elem, event.pos);
+		app.refresh_ui();
+		elem.request_paint();
+		return true;
+	}
+
+	if (self.maybe_drag_dot != 0)
+	{
+		if ((event.pos - self.press_at).length() <= CLICK_SLOP) return true;
+		uint id = self.maybe_drag_dot;
+		self.maybe_drag_dot = 0;
+		// The header's Joints | Pose switch says what a drag does. On Joints
+		// it moves the joint on the model. On Pose it poses the joint, exactly
+		// as G does, and never moves it on the model — not with Alt held, not
+		// with the Move tool, not with several joints selected: a slip there
+		// would land a rig edit in the history under a pose being built.
+		if (app.stage == JOINTS_STAGE)
+		{
+			app.begin_drag(id);
+		}
+		else if (app.animation_pose_ready())
+		{
+			// The press was beside the joint, not on its centre: the joint moves
+			// by what the pointer moves from there, rather than jumping to it.
+			if (app.begin_pose(true))
+			{
+				if (try Vec3 at = self.pose_pointer(elem, app, self.press_at)) app.drag.grab = at - app.drag.from;
+			}
+		}
+		else
+		{
+			// On Pose with nothing that can be posed right now: say why, and
+			// how to move the joint instead, rather than moving it silently.
+			app.@notice(app.animating && !app.anim_paused
+				? "pause the animation to pose · switch to Joints to move the joint"
+				: "choose an animation to pose · switch to Joints to move the joint");
+			app.refresh_ui();
+			elem.request_paint();
+			return true;
+		}
+		if (app.drag.dot != 0) self.drag_dot(elem, event.pos);
+		app.refresh_ui();
+		elem.request_paint();
+		return true;
+	}
+
+	if (app.drag.dot != 0)
+	{
+		self.drag_dot(elem, event.pos);
+		return true;
+	}
+
+	// A press that travels was an orbit all along, so nothing gets
+	// placed when it comes back up.
+	if (self.maybe_place && (event.pos - self.press_at).length() > CLICK_SLOP)
+	{
+		self.maybe_place = false;
+	}
+
+	// The brush circle is drawn where the pointer is, so a pointer that
+	// moved *is* something to redraw — and a hover move otherwise falls
+	// out below unconsumed, asking for no frame at all. That is what left
+	// the circle sitting still until some other event forced a paint.
+	if (app.brushing) elem.request_paint();
+
+	// Sizing, while the key is down. Sideways travel from where the key
+	// went down: right grows, left shrinks, and letting go leaves it there.
+	if (app.brushing && input.key_down(Key.F))
+	{
+		if (!self.sizing_brush)
+		{
+			self.sizing_brush = true;
+			self.brush_anchor = event.pos;
+			self.brush_from = app.brush_radius;
+		}
+		app.set_brush_radius(self.brush_from + (event.pos.x - self.brush_anchor.x));
+		return true;
+	}
+	self.sizing_brush = false;
+
+	if (!self.orbiting && !self.panning)
+	{
+		self.probe_chain(elem, app, event.pos);
+		self.probe_island(elem, app, event.pos);
+		app.aim_ring_hover = self.pick_aim(elem, event.pos) >= 0;
+		return false;
+	}
+
+	if (self.orbiting) app.camera.orbit(input.mouse_delta);
+	if (self.panning) app.camera.pan(input.mouse_delta, elem.size.y);
+	elem.ui.invalidate(OrbitCamera);
+	return true;
+}
+
+// The mouse came up.
+fn bool Viewport.on_release(&self, Element* elem, MouseEvent event, AppState* app, Input* input)
+{
+	switch (event.button)
+	{
+		case LEFT:
+			if (app.transform_interaction.active && app.transform_interaction.held)
+			{
+				(void)app.finish_transform_interaction(true);
+				elem.request_paint();
+				return true;
+			}
+			if (self.brushing_now)
+			{
+				// The stroke's rows went on the ledger as it went, with the
+				// group left open — `end_stroke` closes it. What ends is the
+				// gesture, and with it the one thing a
+				// stroke over a posed body defers: the surface rebuild.
+				self.brushing_now = false;
+				app.end_stroke();
+			}
+			else if (self.sketch_now)
+			{
+				self.sketch_now = false;
+				app.sketch_active = false;
+				if (!app.sketch_erasing)
+				{
+					OrbitCamera* camera = self.view_camera(elem);
+					Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
+					app.sketch_commit(vp, elem.size, camera);
+				}
+				app.refresh_ui();
+				elem.request_paint();
+			}
+			else if (self.lasso_now)
+			{
+				// Where the brush has already committed and this has not:
+				// a lasso is one *region*, not a stream the hand is still
+				// adding to, and half a polygon says nothing about which
+				// vertices are inside it. So the whole gesture lands here,
+				// as one entry on the ledger — or, selecting, as no entry
+				// at all, a selection being nothing the ledger holds.
+				//
+				// The one branch where the two jobs part company. Pinning
+				// needs the eye as well, for the visibility test it marches
+				// through the mesh; selecting needs only the pixels, since
+				// the circles it catches are drawn on them.
+				self.lasso_now = false;
+				OrbitCamera* camera = self.view_camera(elem);
+				Matrix4f vp = app.model_view_projection(camera, elem.size.x / elem.size.y);
+				if (app.lasso_job == LassoJob.PIN)
+				{
+					app.lasso_commit(vp, elem.size, app.model_eye(camera));
+				}
+				else
+				{
+					app.lasso_select_commit(vp, elem.size);
+				}
+				app.refresh_ui();
+			}
+			else if (self.area_now)
+			{
+				// A grow drag is one undo step; an island paint stays pending.
+				self.area_now = false;
+				self.area_painting = false;
+				app.end_grow_drag();
+				app.refresh_ui();
+			}
+			else if (self.maybe_path.pending)
+			{
+				// A click on a path's handle picked it on the press.
+				self.maybe_path = {};
+				app.refresh_ui();
+				elem.request_paint();
+			}
+			else if (self.maybe_drag_aim != 0)
+			{
+				// A click on a handle: it selected the target on the press, and that is all.
+				self.maybe_drag_aim = 0;
+				app.refresh_ui();
+				elem.request_paint();
+			}
+			else if (self.maybe_drag_dot != 0)
+			{
+				// A click, not a drag: without enough travel there is
+				// deliberately no rest edit and no animation display to stop.
+				//
+				// If a multi-selection was kept alive on press so it could be
+				// dragged as a group, a plain click on one of its dots means
+				// "just this one" after all — collapse to it now that no drag
+				// followed. A single selection is already exactly that, so this
+				// only fires when a group was held open for a drag that never came.
+				if (app.selection_count() > 1) app.select(self.maybe_drag_dot);
+				self.maybe_drag_dot = 0;
+						app.refresh_ui();
+				elem.request_paint();
+			}
+			else if (app.drag.dot != 0 && app.drag.held)
+			{
+				// One edit for the whole drag. The thing being moved has
+				// been re-solved on every mouse move to get here; recording
+				// each step would bury the history in noise.
+				//
+				// Held gestures only. One begun on a key never took a
+				// button, so a release arriving from some unrelated press
+				// must not end it — the click above is its ending.
+				app.end_drag();
+			}
+			else if (self.maybe_pick_model)
+			{
+				// The tool works on what is selected, and a model just opened has
+				// its root joint selected — so without this, Rotate turned that
+				// joint's branch inside the body and nothing on screen offered the
+				// mesh. Clicking the body is how a user says "this", in every
+				// editor with a transform tool.
+				if ((event.pos - self.press_at).length() <= CLICK_SLOP
+					&& app.show_mesh && self.on_body(elem, self.press_at)
+					&& app.scene_selection != MODEL)
+				{
+					app.select_scene(MODEL);
+					app.@notice("%s", transform_tool_hint(app));
+					app.refresh_ui();
+				}
+			}
+			else if (self.maybe_place && app.areaing)
+			{
+				// A click in the Area tool places no joint and picks no part:
+				// the card's Part menu picks one, and after an Apply the weights
+				// are done. UV islands on show are the exception — a click adds
+				// the island under it, or takes it out.
+				sz vertex = self.vertex_at(elem, self.press_at);
+				if (vertex >= 0 && app.area_click(vertex)) app.refresh_ui();
+			}
+			else if (self.maybe_place && app.brushing)
+			{
+				// A click on the body the brush found nothing under — only
+				// faces out of sight — places nothing: the brush leaves the
+				// rig alone. Said, since a click that did nothing reads as
+				// broken.
+				if (self.on_body(elem, self.press_at))
+				{
+					app.@notice("nothing under the brush here — hold F and drag to make it bigger");
+					app.refresh_ui();
+				}
+			}
+			else if (self.maybe_place)
+			{
+				// Acted on at the press position, not the release one:
+				// under CLICK_SLOP they are the same point to the eye,
+				// and the press is where the user was actually aiming.
+				String refused = placement_refused(app);
+				if (refused.len > 0)
+				{
+					app.@notice("%s", refused);
+					app.refresh_ui();
+				}
+				else
+				{
+					self.place_dot(elem, self.press_at);
+				}
+			}
+			self.maybe_place = false;
+			self.maybe_pick_model = false;
+			self.orbiting = false;
+			self.panning = false;
+			elem.request_paint();
+			return true;
+		case MIDDLE:
+			self.panning = false;
+			return true;
+		default:
+			return false;
+	}
+}
+
 
 <*
  The camera's own right in model space: the one direction that stays
