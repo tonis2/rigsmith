@@ -41,10 +41,6 @@ import std::time;
 *>
 const float COLLISION_CLEARANCE = 0.005f;
 
-// The most a rig may ask for: a tenth of the diagonal is a clearance wider
-// than a limb, past which the check stops meaning contact.
-const float MAX_COLLISION_CLEARANCE = 0.1f;
-
 // The clearance this rig measures against, as a fraction of the diagonal.
 fn float AppState.collision_clearance_fraction(&self) => self.doc.collision_clearance > 0.0f
 	? self.doc.collision_clearance
@@ -161,13 +157,6 @@ fn usz AppState.collision_search_depth(&self, float angle)
 		steps++;
 	}
 	return math::max(steps, (usz)1);
-}
-
-// The angle one rotation turns through to become another.
-fn float rotation_angle_between(Quaternionf from, Quaternionf to)
-{
-	float cosine = math::abs(from.v.dot(to.v));
-	return 2.0f * (float)math::acos(math::min(cosine, 1.0f));
 }
 
 <*

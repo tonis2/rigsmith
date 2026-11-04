@@ -317,6 +317,9 @@ fn float AnimLayer.display_shift(&self) => self.placed() ? self.offset : 0.0f;
 // Most repeats a repeated layer is laid out over, whatever its length.
 const usz LAYER_REPEAT_LIMIT @local = 1024;
 
+// Override weights at or above this leave nothing of what is underneath.
+const float OVERRIDE_COVERS = 0.999f;
+
 <*
  The instants in the clip's seconds the layer's keys fall at, up to the clip's
  end: as they are on the clip's clock, stretched on a stretched one, and every

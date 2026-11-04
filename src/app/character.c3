@@ -956,22 +956,6 @@ struct Character
 	AnimRef editing;
 	float edit_time;}
 
-uint generation_counter @local;
-
-<*
- A fresh value for any of a character's generation and revision counters.
-
- One counter for the whole process rather than one per field per character, so
- two characters can never hold the same number: a watcher that remembers "the
- skin it last drew was generation 7" sees a switch to another character as a
- change, which it is. Never 0, which every watcher reads as "never seen".
-*>
-fn uint next_generation()
-{
-	generation_counter++;
-	if (generation_counter == 0) generation_counter = 1;
-	return generation_counter;
-}
 
 <*
  A character over `geometry`, with nothing rigged on it yet.

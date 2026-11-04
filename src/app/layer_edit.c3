@@ -972,9 +972,6 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 // ---------------------------------------------------------------------------
 // Keying into the base under a layer stack
 
-// Override weights at or above this leave nothing of what is underneath.
-const float OVERRIDE_COVERS = 0.999f;
-
 <*
  The base keyframe for the pose on screen, with the layers that are playing
  taken back out of it.

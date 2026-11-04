@@ -1565,3 +1565,10 @@ fn float AnimTemplate.phase_at(self, float time)
 	float turns = time / self.duration;
 	return turns - math::floor(turns);
 }
+
+// The angle one rotation turns through to become another.
+fn float rotation_angle_between(Quaternionf from, Quaternionf to)
+{
+	float cosine = math::abs(from.v.dot(to.v));
+	return 2.0f * (float)math::acos(math::min(cosine, 1.0f));
+}

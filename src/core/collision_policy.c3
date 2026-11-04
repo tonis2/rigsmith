@@ -83,6 +83,10 @@ enum CollisionPairClass : char
 *>
 const float FOLD_WEIGHT = 0.05f;
 
+// The most a rig may ask for: a tenth of the diagonal is a clearance wider
+// than a limb, past which the check stops meaning contact.
+const float MAX_COLLISION_CLEARANCE = 0.1f;
+
 <*
  What one filter pass kept and why it dropped the rest — the numbers the
  status line and the Advanced section will show, and the ones a test can

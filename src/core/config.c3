@@ -955,3 +955,15 @@ fn void CrigConfig.free(&self)
 	if (self.directory.len > 0) alloc::free(mem, self.directory.ptr);
 	*self = { };
 }
+
+<*
+ How the 3D view draws the model's surface, as Blender's shading buttons do:
+ the plain grey model, the model's own base-colour textures, or its edges.
+ SOLID first, so a config without the key reads as what crig always drew.
+*>
+enum ShadingMode : int
+{
+	SOLID,
+	TEXTURED,
+	WIREFRAME,
+}
