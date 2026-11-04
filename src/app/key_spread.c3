@@ -147,33 +147,19 @@ fn AnimRef AppState.key_onto_keys(&self, AnimRef ref, float time, float[] times,
 	List{KeyOffset} offsets;
 	offsets.init(mem);
 	defer offsets.free();
-	bool turns, moves;
-	foreach (usz j, rotation : current.rotations)
+	bool[] may_turn = alloc::new_array(mem, bool, (sz)view.dot_ids.len);
+	defer alloc::free(mem, may_turn);
+	bool[] may_move = alloc::new_array(mem, bool, (sz)view.dot_ids.len);
+	defer alloc::free(mem, may_move);
+	foreach (usz j, dot : view.dot_ids)
 	{
-		if (j >= baseline.rotations.len || j >= names.len || j >= view.dot_ids.len) break;
-		if (names[j].len == 0) continue;
-		bool turned = 1.0f - math::abs(rotation.v.dot(baseline.rotations[j].v)) > 1.0e-7f;
-		bool moved = (current.offsets[j] - baseline.offsets[j]).length_sq() > 1.0e-12f;
-		if (by_channel)
-		{
-			turned = turned && self.channel_key_selected(names[j], ROTATION);
-			moved = moved && self.channel_key_selected(names[j], TRANSLATION);
-		}
-		else if (scope == SELECTED && !self.is_selected(view.dot_ids[j]))
-		{
-			continue;
-		}
-		if (!turned && !moved) continue;
-		offsets.push({
-			.joint = names[j],
-			.rotates = turned,
-			.turn = baseline.rotations[j].invert().mul(rotation).normalize(),
-			.moves = moved,
-			.move = height > 0.0f ? (current.offsets[j] - baseline.offsets[j]) / height : (Vec3){},
-		});
-		turns |= turned;
-		moves |= moved;
+		if (j >= names.len) break;
+		bool picked = scope != SELECTED || self.is_selected(dot);
+		may_turn[j] = by_channel ? self.channel_key_selected(names[j], ROTATION) : picked;
+		may_move[j] = by_channel ? self.channel_key_selected(names[j], TRANSLATION) : picked;
 	}
+	bool turns, moves;
+	key_offsets_of(&offsets, names, baseline, current, height, may_turn, may_move, &turns, &moves);
 	if (offsets.len() == 0) return self.key_here(ref, time, scope);
 
 	// The selection by value: landing lets it go, and it is put back afterwards so
