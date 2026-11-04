@@ -54,16 +54,6 @@ fn void AppState.selected_key_times(&self, AnimRef ref, AnimFloatList* into)
 }
 
 <*
- Where a keyed pose edit goes; see the file's header.
-*>
-enum KeyReach
-{
-	FRAME,
-	SELECTED_KEYS,
-	WHOLE_CLIP,
-}
-
-<*
  The key times a pose keyed at `time` would land on under `key_reach`, sorted
  and distinct; nothing when it keys the playhead alone.
 

@@ -390,18 +390,6 @@ fn void AppState.drop_other_characters(&self)
 // ---------------------------------------------------------------------------
 
 <*
- Where in its own clip a character is at scene time `t`: wrapped when the clip
- loops, held at the ends when it does not.
-*>
-fn float clip_local_time(AnimTemplate* clip, float t) @local
-{
-	if (!clip || clip.duration <= 0.0f) return 0.0f;
-	if (t <= 0.0f) return 0.0f;
-	if (clip.loop) return t - math::floor(t / clip.duration) * clip.duration;
-	return math::min(t, clip.duration);
-}
-
-<*
  The clip the shared clock moves on this character: the one open in its
  timeline, or the one playing when nothing is open. NO_ANIM when neither.
 *>

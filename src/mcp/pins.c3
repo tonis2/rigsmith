@@ -28,12 +28,6 @@ import std::math::vector;
 
 faultdef PINS_REFUSED;
 
-// How many pointer moves a posed move or turn is broken into. One jump from the
-// start to the end is not what a hand does, and a grab carried a short way at a
-// time reaches far-off targets the way a drag does. Each move solves from the
-// pose the gesture began with, so the last one alone decides where the body ends.
-const usz POSE_JOINT_STEPS = 12;
-
 const String GET_PINS_SCHEMA = `{"type":"object","properties":{}}`;
 
 const String SET_PINS_SCHEMA = `{"type":"object","properties":{

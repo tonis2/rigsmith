@@ -28,19 +28,6 @@ const Color PATH_CURVE = { 0.98, 0.62, 0.30, 0.55 };
 const Color PATH_CURVE_SELECTED = { 1.00, 0.70, 0.35, 0.95 };
 const Color PATH_POINT_INK = { 1.00, 0.85, 0.60, 1.00 };
 const Color PATH_SLICE_INK = { 0.95, 0.95, 0.98, 0.95 };
-const float PATH_CURVE_WIDTH = 2.0;
-const float PATH_POINT_SIZE = 7.0;
-const float PATH_SLICE_RADIUS = 4.5;
-// Steps a span is drawn in.
-const usz PATH_DRAW_STEPS = 12;
-
-enum PathPick : char
-{
-	NONE,
-	POINT,
-	SLICE,
-	CURVE,
-}
 
 <*
  Where `pixel` lies along path `index` on screen: the fraction, 0..1 by length,
@@ -288,12 +275,4 @@ fn bool Viewport.move_paths(&self, Element* elem, AppState* app, Vec2 pixel)
 	app.refresh_ui();
 	elem.request_paint();
 	return true;
-}
-
-struct PathPress
-{
-	bool pending;
-	usz path;
-	usz handle;
-	bool slice;
 }

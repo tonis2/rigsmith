@@ -34,19 +34,6 @@ module crig;
 import rig;
 import std::math;
 
-enum ScaleModelResult : int
-{
-	SCALED,
-	UNCHANGED,
-	LOCKED,
-	REFUSED,
-}
-
-// Below this a factor is a typo or a collapse, above it the same the other way.
-// A thousandfold covers millimetres to metres, which is the widest honest change.
-const float SCALE_MODEL_MIN = 0.001f;
-const float SCALE_MODEL_MAX = 1000.0f;
-
 <*
  How tall the model stands, in model units: the mesh's extent along Y, or the
  rig's when there is no mesh. Zero for an empty scene.

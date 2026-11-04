@@ -25,26 +25,6 @@ module crig;
 import rig;
 import std::math;
 
-enum PieceKind
-{
-	CLIP,   // another animation: linked when it is the character's own, copied from a library
-	KEYED,  // a fresh keyed layer
-	WAVE,
-	NOISE,
-	PULSE,
-	SHARED, // a shared layer another clip of the character holds, by link
-}
-
-struct Piece
-{
-	PieceKind kind;
-	AnimRef clip;  // CLIP
-	String link;   // SHARED; borrowed
-}
-
-// How deep linked pieces may nest before a chain is taken for a loop.
-const usz PIECE_DEPTH_MOST = 16;
-
 <*
  Whether the authored clip `from`, or any clip it plays as a linked piece, all
  the way down, is the clip `to` — so laying `from` into `to` would have `to` play
@@ -75,20 +55,6 @@ fn AnimTemplate? AppState.piece_keys(&self, AnimRef source)
 	defer view.free(mem);
 	AnimTemplate flat = clip_flattened(mem, *src, &view.skeleton, self.names_for(&view, source));
 	return self.in_rig_words(flat, source);
-}
-
-<*
- The keys of a linked piece rewritten from `flat` (taken over), its length the
- source's; everything about how it plays here stays.
-*>
-fn void piece_refilled(AnimLayer* layer, AnimTemplate flat) @local
-{
-	foreach (&frame : layer.keyframes) frame.free(mem);
-	if (layer.keyframes.len > 0) alloc::free(mem, layer.keyframes);
-	layer.keyframes = flat.keyframes;
-	layer.length = math::max(flat.duration, ANIM_SAME_TIME * 4.0f);
-	flat.keyframes = {};
-	flat.free(mem);
 }
 
 <*
@@ -232,36 +198,6 @@ fn sz AppState.place_piece(&self, AnimRef ref, Piece piece, float at, uint track
 }
 
 <*
- The layer moved `delta` seconds along the clip, a copy for the caller: its
- range (a whole-clip layer gets the clip as its range first), its fades with it,
- a clip-clock layer's keys, a placed layer's offset, a pulse's moment, a wave's
- phase. Never before the clip's start.
-*>
-fn AnimLayer strip_shifted(AnimLayer* layer, float delta, AnimTemplate* clip)
-{
-	AnimLayer ranged = *layer;
-	if (ranged.end <= ranged.start)
-	{
-		ranged.start = 0.0f;
-		ranged.end = clip.duration;
-	}
-	delta = math::max(delta, -ranged.start);
-	AnimLayer out = ranged.copy(mem, 1.0f, delta);
-	// A moved range is still the range it was, not one more whole-clip layer.
-	out.end = ranged.end + delta;
-	if (out.placed()) out.offset = layer.offset + delta;
-	if (out.kind == WAVE && clip.duration > 0.0f) out.phase += clip.loop_cycles(out.cycles) * delta / clip.duration;
-	return out;
-}
-
-fn uint AnimTemplate.track_count(&self)
-{
-	uint top = 0;
-	foreach (&layer : self.layers) top = math::max(top, layer.track + 1);
-	return top;
-}
-
-<*
  Move the strip at `at` by `delta` seconds and onto `track` (the top track plus
  one makes a new track). Refused, with a notice, when it would overlap a strip
  already on that track. One undo step; the strip stays active.
@@ -316,15 +252,6 @@ fn bool AppState.trim_strip(&self, AnimRef ref, usz at, float from, float to)
 		return false;
 	}
 	return self.land_strips(ref, clip, replaced_layer(clip, at, trimmed), (sz)at) >= 0;
-}
-
-// A copy of the clip's stack with `layer` (taken over) at `at`.
-fn AnimLayer[] replaced_layer(AnimTemplate* clip, usz at, AnimLayer layer) @local
-{
-	AnimLayer[] next = layers_copy(mem, clip.layers);
-	next[at].free(mem);
-	next[at] = layer;
-	return next;
 }
 
 <*

@@ -7,9 +7,6 @@ module crig;
 
 import std::math;
 
-// Seconds the pane's Smooth averages over: takes out jitter, keeps a step's shape.
-const float SMOOTH_DEFAULT_WINDOW = 0.1f;
-
 <*
  Smooth the clip's keys (`clip_smoothed`), as one undo step, and make it the clip
  being edited.
@@ -119,16 +116,6 @@ fn AnimRef AppState.loop_whole_take(&self, AnimRef ref, float crossfade, String 
 	return self.land_cycle(ref, looped, &view, names, in_place, why);
 }
 
-// The name of the rig's root joint in `names`; "" when it has none.
-fn String root_name(RigView* view, String[] names) @local
-{
-	foreach (usz j, parent : view.skeleton.parents)
-	{
-		if (parent < 0 && j < names.len) return names[j];
-	}
-	return "";
-}
-
 <*
  Land a loop made from `ref`: written every sixtieth of a second, it is kept to
  the keys it needs, then replaces the take or joins the authored pack.
@@ -156,17 +143,4 @@ fn AnimRef AppState.land_cycle(&self, AnimRef ref, AnimTemplate loop, RigView* v
 	self.edit_time = 0.0f;
 	self.refresh_ui();
 	return landed;
-}
-
-<*
- The period range a take's cycle is looked for in when nobody says: from a fifth
- of the take to half of it, starting after its first tenth and ending before its
- last — where a generated motion starts and stops.
-*>
-fn void cycle_defaults(float duration, float* period_min, float* period_max, float* from_min, float* from_max)
-{
-	*period_min = duration * 0.2f;
-	*period_max = duration * 0.5f;
-	*from_min = duration * 0.1f;
-	*from_max = duration * 0.9f;
 }

@@ -25,19 +25,6 @@ import std::math::matrix;
 import std::math::vector;
 import std::math::quaternion;
 
-// The blend a fresh clip pin eases in and out with, seconds, before it is clamped to the clip.
-const float CLIP_PIN_BLEND = 0.1f;
-
-// Whether the pin's window covers `time`, a looping clip's wrap-around included.
-fn bool pin_covers(AnimPin* pin, float time, float duration, bool loop) @local
-{
-	if (pin.mute || !(pin.position || pin.rotation) || !(pin.to >= pin.from)) return false;
-	if (time >= pin.from && time <= pin.to) return true;
-	if (!loop || duration <= 0.0f) return false;
-	return (time + duration >= pin.from && time + duration <= pin.to)
-		|| (time - duration >= pin.from && time - duration <= pin.to);
-}
-
 <*
  Whether the editor's pins are the clip's right now: a clip is open for editing.
 *>
@@ -343,31 +330,6 @@ fn bool AppState.set_clip_pin_window_at(&self, usz index, float from, float to, 
 
 // ---------------------------------------------------------------------------
 // Feet held on the floor
-
-// The blend a foot pin eases in and out with by default, seconds: short, since a
-// foot lands quickly, and never more than half its window.
-const float FOOT_PIN_BLEND = 0.05f;
-// Instants across a window a foot pin's hold is measured at.
-const usz FOOT_PIN_PROBES = 9;
-
-// One window a foot is pinned over, in seconds. `joint` is borrowed.
-struct FootWindow
-{
-	String joint;
-	float from;
-	float to;
-}
-
-// One pin `pin_clip_feet` wrote, and how near its foot stayed to it: the worst
-// distance over the window, as a fraction of the rig's height. `joint` is borrowed
-// from the landed clip.
-struct FootPinReport
-{
-	String joint;
-	float from;
-	float to;
-	float residual;
-}
 
 <*
  Hold feet on the floor over windows of a clip, as live clip pins, one undo step.
@@ -679,24 +641,6 @@ fn usz AppState.unpin_clip_joints(&self, AnimRef ref, String[] joints)
 	self.refresh_ui();
 	return gone;
 }
-
-// A ground window in seconds. One that wraps the loop point runs past the end,
-// which a looping clip's pin window reaches round (`AnimPin.weight_at`).
-fn FootWindow foot_window_seconds(String joint, AnimFoot foot, AnimTemplate clip) @local
-{
-	float from = foot.down * clip.duration;
-	float up = foot.up > foot.down ? foot.up : foot.up + (clip.loop ? 1.0f : 0.0f);
-	return { .joint = joint, .from = from, .to = math::max(from, up * clip.duration) };
-}
-
-fn void free_pin_list(AnimPinList* list) @local
-{
-	foreach (&pin : *list) pin.free(mem);
-	list.clear();
-}
-
-alias FootWindowList = List{FootWindow};
-alias AnimPinList = List{AnimPin};
 
 // Where joint `j` stands in the clip at `time`, model space: limits and the ground
 // solve applied, pins not. A time past the end of a looping clip wraps round.

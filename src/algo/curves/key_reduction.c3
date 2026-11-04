@@ -1018,3 +1018,14 @@ fn bool same_keys(usz[] a, usz[] b)
 	foreach (usz i, k : a) if (b[i] != k) return false;
 	return true;
 }
+
+// Every channel a clip keys, counting a joint keyed on both as two.
+fn usz channel_keys(AnimTemplate clip)
+{
+	usz count = 0;
+	foreach (frame : clip.keyframes)
+	{
+		foreach (dot : frame.dots) count += (usz)(dot.keys_rotation() ? 1 : 0) + (usz)(dot.keys_translation() ? 1 : 0);
+	}
+	return count;
+}

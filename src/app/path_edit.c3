@@ -107,10 +107,6 @@ fn bool? AppState.bake_paths(&self, AnimRef ref)
 	return self.land_clip(ref, baked).valid();
 }
 
-// How many points a path made from motion gets per second, and the most it gets.
-const float PATH_FROM_MOTION_RATE = 8.0f;
-const usz PATH_FROM_MOTION_MOST = 48;
-
 <*
  A path through where `joint` goes in the clip as it plays now: a point every
  eighth of a second or so, a slice on each at its time, closed when the clip
@@ -315,10 +311,6 @@ fn void AppState.end_path_drag(&self)
 	self.refresh_posed();
 }
 
-// The point of a generated foot path that is the top of its swing: the middle of
-// the points after the two stance ends.
-const usz GAIT_APEX_POINT = 2 + GAIT_SWING_POINTS / 2;
-
 <*
  A gait's generated path whose stance end or swing top was dragged to where
  `moved` has it: the gait written again with that stride or lift, for every foot.
@@ -348,14 +340,6 @@ fn bool AppState.regait_from_handle(&self, usz which, AnimPath moved)
 		return false;
 	}
 	return self.rerun_gait(self.editing, &preset).valid();
-}
-
-fn bool paths_same(AnimPath* a, AnimPath* b) @local
-{
-	if (a.points.len != b.points.len || a.slices.len != b.slices.len || a.closed != b.closed) return false;
-	foreach (usz i, point : a.points) if (point.at != b.points[i].at || point.sharp != b.points[i].sharp) return false;
-	foreach (usz i, slice : a.slices) if (slice.u != b.slices[i].u || slice.time != b.slices[i].time) return false;
-	return true;
 }
 
 // The edited clip's path at `at` as a copy to change and hand to `replace_path`.

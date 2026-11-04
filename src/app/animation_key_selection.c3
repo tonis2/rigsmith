@@ -3,24 +3,6 @@ module crig;
 import std::sort;
 import std::math;
 
-struct AnimChannelKey
-{
-	float time;
-	String joint; // owned
-	AnimChannels channel; // ROTATION or TRANSLATION, never BOTH
-}
-
-<*
- One look-at target key picked in the sheet: the aim's target (owned, as the clip
- spells it) and where along the clip. Never mixed with pose keys; see
- `select_animation_aim_key`.
-*>
-struct AimKeyRef
-{
-	String target; // owned
-	float time;
-}
-
 fn void AppState.free_animation_aim_selection(&self)
 {
 	foreach (&selected : self.anim_aim_key_selection) selected.target.free(mem);
@@ -219,14 +201,6 @@ fn usz AppState.animation_channel_key_selection_count(&self, AnimRef ref)
 	return self.anim_key_selection_ref.same(ref) ? (usz)self.anim_channel_key_selection.len() : 0;
 }
 
-// Asks `channel_dot`, which reads past a rotation-only entry to a move-only
-// one for the same joint: a key may hold the two halves as separate dots.
-fn bool AnimKeyframe.has_channel(self, String joint, AnimChannels channel)
-{
-	AnimKeyDot found;
-	return self.channel_dot(joint, channel == ROTATION, &found);
-}
-
 <*
  Pick, at each of `times`, the keys `joints` hold there in the channels asked
  for, in place of whatever was picked: the same moments of the clip, on other
@@ -354,22 +328,6 @@ fn usz AppState.select_animation_keys_between(&self, AnimRef ref, float first,
 	self.settle_key_selection();
 	return (usz)self.anim_key_selection.len();
 }
-
-<*
- Where a retime sends a key: scaled about `anchor`, then shifted by `delta`. A
- plain move is scale 1, which adds the delta exactly.
-*>
-struct KeyRetime
-{
-	float anchor;
-	float scale;
-	float delta;
-}
-
-fn float KeyRetime.map(self, float t)
-	=> self.scale == 1.0f ? t + self.delta : self.anchor + (t - self.anchor) * self.scale + self.delta;
-
-fn bool KeyRetime.identity(self) => self.scale == 1.0f && math::abs(self.delta) < ANIM_SAME_TIME;
 
 <*
  The earliest and latest selected key times, whole keys or channel keys.
@@ -721,5 +679,3 @@ fn bool AppState.set_selected_animation_interpolation(&self, AnimRef ref,
 	if (written == 0) { changed.free(mem); return false; }
 	return self.land_keeping_selection(ref, changed, true);
 }
-
-fn int by_key_time(AnimKeyframe a, AnimKeyframe b) @local => a.time < b.time ? -1 : (a.time > b.time ? 1 : 0);

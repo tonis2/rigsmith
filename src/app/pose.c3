@@ -194,15 +194,6 @@ fn float? AppState.mesh_first_surface(&self, Vec3 eye, Vec3 point)
 }
 
 <*
- A bone as the overlay draws it: the two dots it joins and where they stand.
-*>
-struct RigBone
-{
-	uint a, b;
-	Vec3 from, to;
-}
-
-<*
  Every bone of the rig where it is drawn now, for `rig_point_hidden`'s
  question of whose surface is in front. Built once per frame by the caller, not
  per point: a point asks it of every bone.
@@ -219,30 +210,6 @@ fn RigBone[] AppState.rig_bones(&self, Allocator allocator)
 		bones.push({ .a = edge.a, .b = edge.b, .from = self.dot_position(*a), .to = self.dot_position(*b) });
 	}
 	return bones.to_array(allocator);
-}
-
-<*
- Whether the bone nearest `at` meets `a` or `b`: the surface there is the body
- around that joint, or around either end of that bone.
-*>
-fn bool owns_surface(RigBone[] bones, Vec3 at, uint a, uint b) @local
-{
-	float best = float::max;
-	RigBone* nearest = null;
-	foreach (&bone : bones)
-	{
-		Vec3 along = bone.to - bone.from;
-		float length2 = along.dot(along);
-		float t = length2 > 0.0f ? math::clamp((at - bone.from).dot(along) / length2, 0.0f, 1.0f) : 0.0f;
-		float gap = (at - (bone.from + along * t)).length();
-		if (gap < best)
-		{
-			best = gap;
-			nearest = bone;
-		}
-	}
-	if (!nearest) return false;
-	return nearest.a == a || nearest.b == a || (b != 0 && (nearest.a == b || nearest.b == b));
 }
 
 <*
