@@ -335,93 +335,28 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 	usz count = self.geometry.positions.len;
 	if (count == 0 || radius <= 0.0f) return 0;
 	if (vertices.len < count || strength.len < count) return 0;
+	ScreenProbe probe = self.screen_probe(mem, view_projection, viewport, eye, xray);
+	defer alloc::free(mem, probe.shown);
+	return brush_vertices(&probe, vertices, strength, at, radius, self.brush_strength);
+}
 
-	float reach = radius * radius;
-	Vec3[] place = alloc::new_array(mem, Vec3, (sz)count);
-	defer alloc::free(mem, place);
-	Vec2[] pixel = alloc::new_array(mem, Vec2, (sz)count);
-	defer alloc::free(mem, pixel);
-	// Per vertex: 0 off screen, 1 projected, 2 taken in the circle.
-	char[] state = alloc::new_array(mem, char, (sz)count);
-	defer alloc::free(mem, state);
-	List{BrushTouch} touches;
-	touches.init(mem);
-	defer touches.free();
+fn bool mesh_hides(void* app, Vec3 eye, Vec3 point) @private => ((AppState*)app).mesh_hidden_surface(eye, point);
 
-	for (usz v = 0; v < count; v++)
-	{
-		Vec3 position = self.shown_position(v);
-		Vec2? where = project(view_projection, position, viewport);
-		if (catch where) continue;
-		place[v] = position;
-		pixel[v] = where;
-		state[v] = 1;
-
-		Vec2 gap = where - at;
-		float span = gap.x * gap.x + gap.y * gap.y;
-		if (span > reach) continue;
-		if (!xray && self.mesh_hidden_surface(eye, position)) continue;
-		state[v] = 2;
-		touches.push({ .point = position, .closeness = 1.0f - span / reach,
-			.corners = { (uint)v, 0, 0 }, .shares = { 1.0f, 0.0f, 0.0f } });
-	}
-
-	uint[] indices = self.geometry.indices;
-	for (usz t = 0; t + 2 < indices.len; t += 3)
-	{
-		uint[3] corner = { indices[t], indices[t + 1], indices[t + 2] };
-		if (corner[0] >= count || corner[1] >= count || corner[2] >= count) continue;
-		if (state[corner[0]] == 0 || state[corner[1]] == 0 || state[corner[2]] == 0) continue;
-		// Every corner already in: the face has nothing to add.
-		if (state[corner[0]] == 2 && state[corner[1]] == 2 && state[corner[2]] == 2) continue;
-
-		Vec2[3] seen = { pixel[corner[0]], pixel[corner[1]], pixel[corner[2]] };
-		if (math::min(seen[0].x, seen[1].x, seen[2].x) > at.x + radius) continue;
-		if (math::max(seen[0].x, seen[1].x, seen[2].x) < at.x - radius) continue;
-		if (math::min(seen[0].y, seen[1].y, seen[2].y) > at.y + radius) continue;
-		if (math::max(seen[0].y, seen[1].y, seen[2].y) < at.y - radius) continue;
-
-		float[3] weight;
-		Vec2 gap = nearest_on_triangle(at, seen, &weight) - at;
-		float span = gap.x * gap.x + gap.y * gap.y;
-		if (span > reach) continue;
-		Vec3 point = place[corner[0]] * weight[0] + place[corner[1]] * weight[1] + place[corner[2]] * weight[2];
-		if (!xray && self.mesh_hidden_surface(eye, point)) continue;
-
-		float most = math::max(weight[0], weight[1], weight[2]);
-		if (most <= 0.0f) continue;
-		touches.push({ .point = point, .closeness = 1.0f - span / reach, .corners = corner,
-			.shares = { weight[0] / most, weight[1] / most, weight[2] / most } });
-	}
-
-	BrushTouch[] landed = touches.array_view();
-	if (!xray) landed = landed[:self.brush_surface(landed, view_projection, viewport, eye, radius)];
-
-	// Each vertex keeps the hardest of its touches. A vertex in the circle is
-	// taken even where the rim gives it nothing; a corner only where its face does.
-	strength[:count] = -1.0f;
-	foreach (touch : landed)
-	{
-		float pull = brush_falloff(touch.closeness);
-		for (usz k = 0; k < 3; k++)
-		{
-			float share = touch.shares[k];
-			if (share <= 0.0f) continue;
-			float given = pull * share;
-			if (share < 1.0f && given <= 0.0f) continue;
-			uint v = touch.corners[k];
-			if (given > strength[v]) strength[v] = given;
-		}
-	}
-	usz kept = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		if (strength[v] < 0.0f) continue;
-		vertices[kept] = (uint)v;
-		strength[kept] = strength[v] * self.brush_strength;
-		kept++;
-	}
-	return kept;
+// The mesh as shown, for the brush and the lasso. The caller frees `shown`.
+fn ScreenProbe AppState.screen_probe(&self, Allocator allocator, Matrix4f view_projection, Vec2 viewport, Vec3 eye, bool xray)
+{
+	Vec3[] shown = alloc::new_array(allocator, Vec3, (sz)self.geometry.positions.len);
+	foreach (usz v, &place : shown) *place = self.shown_position(v);
+	return {
+		.shown = shown,
+		.indices = self.geometry.indices,
+		.view_projection = view_projection,
+		.viewport = viewport,
+		.eye = eye,
+		.xray = xray,
+		.hidden = &mesh_hides,
+		.ctx = self,
+	};
 }
 
 fn usz AppState.brush_surface(&self, BrushTouch[] touches, Matrix4f view_projection,

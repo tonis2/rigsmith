@@ -415,3 +415,254 @@ fn uint[] pick_vertices_in(Allocator allocator, RigView* view, float[] dense, us
 	}
 	return picked[:kept];
 }
+
+<*
+ Whether a point can't be seen from `eye`, by whatever the mesh is cast against.
+*>
+alias HiddenTest = fn bool(void* ctx, Vec3 eye, Vec3 point);
+
+<*
+ The mesh as it stands on screen, for picking vertices by a shape drawn over it.
+*>
+struct ScreenProbe
+{
+	Vec3[] shown;        // each vertex where it is displayed
+	uint[] indices;
+	Matrix4f view_projection;
+	Vec2 viewport;
+	Vec3 eye;
+	bool xray;           // reach through the mesh
+	HiddenTest hidden;
+	void* ctx;
+}
+
+// Whether the mesh hides this point; never under x-ray.
+fn bool ScreenProbe.blocks(&self, Vec3 point) => !self.xray && self.hidden(self.ctx, self.eye, point);
+
+<*
+ The vertices a brush circle takes, each with its strength.
+
+ @param vertices : `Receives the vertices; at least one slot per vertex.`
+ @param strength : `Receives each one's strength; at least one slot per vertex.`
+ @param gain : `The brush's own strength.`
+ @return `How many were taken.`
+*>
+fn usz brush_vertices(ScreenProbe* probe, uint[] vertices, float[] strength, Vec2 at, float radius, float gain)
+{
+	usz count = probe.shown.len;
+	float reach = radius * radius;
+	Vec3[] place = alloc::new_array(mem, Vec3, (sz)count);
+	defer alloc::free(mem, place);
+	Vec2[] pixel = alloc::new_array(mem, Vec2, (sz)count);
+	defer alloc::free(mem, pixel);
+	// Per vertex: 0 off screen, 1 projected, 2 taken in the circle.
+	char[] state = alloc::new_array(mem, char, (sz)count);
+	defer alloc::free(mem, state);
+	List{BrushTouch} touches;
+	touches.init(mem);
+	defer touches.free();
+
+	for (usz v = 0; v < count; v++)
+	{
+		Vec3 position = probe.shown[v];
+		Vec2? where = project(probe.view_projection, position, probe.viewport);
+		if (catch where) continue;
+		place[v] = position;
+		pixel[v] = where;
+		state[v] = 1;
+
+		Vec2 gap = where - at;
+		float span = gap.x * gap.x + gap.y * gap.y;
+		if (span > reach) continue;
+		if (probe.blocks(position)) continue;
+		state[v] = 2;
+		touches.push({ .point = position, .closeness = 1.0f - span / reach,
+			.corners = { (uint)v, 0, 0 }, .shares = { 1.0f, 0.0f, 0.0f } });
+	}
+
+	uint[] indices = probe.indices;
+	for (usz t = 0; t + 2 < indices.len; t += 3)
+	{
+		uint[3] corner = { indices[t], indices[t + 1], indices[t + 2] };
+		if (corner[0] >= count || corner[1] >= count || corner[2] >= count) continue;
+		if (state[corner[0]] == 0 || state[corner[1]] == 0 || state[corner[2]] == 0) continue;
+		// Every corner already in: the face has nothing to add.
+		if (state[corner[0]] == 2 && state[corner[1]] == 2 && state[corner[2]] == 2) continue;
+
+		Vec2[3] seen = { pixel[corner[0]], pixel[corner[1]], pixel[corner[2]] };
+		if (math::min(seen[0].x, seen[1].x, seen[2].x) > at.x + radius) continue;
+		if (math::max(seen[0].x, seen[1].x, seen[2].x) < at.x - radius) continue;
+		if (math::min(seen[0].y, seen[1].y, seen[2].y) > at.y + radius) continue;
+		if (math::max(seen[0].y, seen[1].y, seen[2].y) < at.y - radius) continue;
+
+		float[3] weight;
+		Vec2 gap = nearest_on_triangle(at, seen, &weight) - at;
+		float span = gap.x * gap.x + gap.y * gap.y;
+		if (span > reach) continue;
+		Vec3 point = place[corner[0]] * weight[0] + place[corner[1]] * weight[1] + place[corner[2]] * weight[2];
+		if (probe.blocks(point)) continue;
+
+		float most = math::max(weight[0], weight[1], weight[2]);
+		if (most <= 0.0f) continue;
+		touches.push({ .point = point, .closeness = 1.0f - span / reach, .corners = corner,
+			.shares = { weight[0] / most, weight[1] / most, weight[2] / most } });
+	}
+
+	BrushTouch[] landed = touches.array_view();
+	if (!probe.xray) landed = landed[:brush_surface(landed, probe.view_projection, probe.viewport, probe.eye, radius)];
+
+	// Each vertex keeps the hardest of its touches. A vertex in the circle is
+	// taken even where the rim gives it nothing; a corner only where its face does.
+	strength[:count] = -1.0f;
+	foreach (touch : landed)
+	{
+		float pull = brush_falloff(touch.closeness);
+		for (usz k = 0; k < 3; k++)
+		{
+			float share = touch.shares[k];
+			if (share <= 0.0f) continue;
+			float given = pull * share;
+			if (share < 1.0f && given <= 0.0f) continue;
+			uint v = touch.corners[k];
+			if (given > strength[v]) strength[v] = given;
+		}
+	}
+	usz kept = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		if (strength[v] < 0.0f) continue;
+		vertices[kept] = (uint)v;
+		strength[kept] = strength[v] * gain;
+		kept++;
+	}
+	return kept;
+}
+
+<*
+ Which vertices project inside the polygon, hidden or not: what a front-faces pass
+ drops here is what the walk in `lasso_region` has to be able to arrive at.
+
+ @param polygon : `At least three points.`
+ @param within : `Receives one flag per vertex; starts all false.`
+ @return `How many are inside.`
+*>
+fn usz lasso_within(ScreenProbe* probe, Vec2[] polygon, bool[] within)
+{
+	usz count = probe.shown.len;
+	Vec2 low = polygon[0];
+	Vec2 high = polygon[0];
+	foreach (point : polygon)
+	{
+		if (point.x < low.x) low.x = point.x;
+		if (point.y < low.y) low.y = point.y;
+		if (point.x > high.x) high.x = point.x;
+		if (point.y > high.y) high.y = point.y;
+	}
+
+	// Membership first, and for every vertex rather than only the ones that
+	// survive the visibility test: what a front-faces pass drops here is precisely
+	// what the walk below has to be able to arrive at.
+	usz enclosed = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		Vec2? where = project(probe.view_projection, probe.shown[v], probe.viewport);
+		if (catch where) continue;
+
+		if (where.x < low.x || where.x > high.x || where.y < low.y || where.y > high.y) continue;
+		if (!inside_polygon(polygon, where)) continue;
+
+		within[v] = true;
+		enclosed++;
+	}
+	return enclosed;
+}
+
+<*
+ The vertices of the lasso's region: under x-ray all of them; otherwise what can
+ be seen and what is joined to that without leaving the outline.
+
+ @param around : `The mesh's adjacency; may be null under x-ray.`
+ @param within : `From lasso_within.`
+ @param out : `Receives the vertices; at least one slot per vertex.`
+ @return `How many there are.`
+*>
+fn usz lasso_region(ScreenProbe* probe, rig::MeshAdjacency* around, bool[] within, uint[] out)
+{
+	usz count = probe.shown.len;
+	usz kept = 0;
+
+	if (probe.xray)
+	{
+		for (usz v = 0; v < count; v++)
+		{
+			if (within[v]) out[kept++] = (uint)v;
+		}
+		return kept;
+	}
+
+	// A mesh with no edges to follow — a point cloud, or one whose triangles this
+	// state has somehow not caught up with — has no neighbourhoods to grow
+	// through. There is nothing to seed from and nowhere to go, so the region is
+	// what can be seen of it, rather than the gesture being refused.
+	if (!around.usable() || around.vertices() != count)
+	{
+		for (usz v = 0; v < count; v++)
+		{
+			if (!within[v]) continue;
+			if (probe.blocks(probe.shown[v])) continue;
+			out[kept++] = (uint)v;
+		}
+		return kept;
+	}
+
+	usz groups = around.classes();
+
+	// `asked` ends the seeding pass meaning "this weld is inside the polygon":
+	// every class with a member inside it is reached by the loop below, and
+	// membership cannot differ between members — they are the same point, so they
+	// are the same pixel.
+	bool[] asked = alloc::new_array(mem, bool, (sz)groups);
+	defer alloc::free(mem, asked);
+	bool[] reached = alloc::new_array(mem, bool, (sz)groups);
+	defer alloc::free(mem, reached);
+
+	// A class is queued at most once, so the frontier can never outgrow the mesh
+	// and the walk needs no buffer that grows.
+	uint[] queue = alloc::new_array(mem, uint, (sz)groups);
+	defer alloc::free(mem, queue);
+
+	usz tail = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		if (!within[v]) continue;
+
+		usz group = (usz)around.class_of[v];
+		// One cast per weld rather than one per copy: the copies are the same
+		// point, so they are the same ray and the same answer.
+		if (asked[group]) continue;
+		asked[group] = true;
+
+		if (probe.blocks(probe.shown[v])) continue;
+		reached[group] = true;
+		queue[tail++] = (uint)group;
+	}
+
+	for (usz head = 0; head < tail; head++)
+	{
+		foreach (n : around.around((usz)queue[head]))
+		{
+			// The step that keeps the region inside its own outline: a neighbour
+			// that projects outside the polygon is where this piece of the model
+			// leaves what was drawn around, and nothing past it is in the region.
+			if (!asked[n] || reached[n]) continue;
+			reached[n] = true;
+			queue[tail++] = n;
+		}
+	}
+
+	for (usz v = 0; v < count; v++)
+	{
+		if (within[v] && reached[around.class_of[v]]) out[kept++] = (uint)v;
+	}
+	return kept;
+}

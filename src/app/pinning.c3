@@ -618,118 +618,15 @@ fn usz AppState.lasso_vertices(&self, uint[] out, Matrix4f view_projection,
 {
 	usz count = self.geometry.positions.len;
 	if (count == 0 || polygon.len < 3 || out.len < count) return 0;
+	ScreenProbe probe = self.screen_probe(mem, view_projection, viewport, eye, xray);
+	defer alloc::free(mem, probe.shown);
 
-	Vec2 low = polygon[0];
-	Vec2 high = polygon[0];
-	foreach (point : polygon)
-	{
-		if (point.x < low.x) low.x = point.x;
-		if (point.y < low.y) low.y = point.y;
-		if (point.x > high.x) high.x = point.x;
-		if (point.y > high.y) high.y = point.y;
-	}
-
-	// Membership first, and for every vertex rather than only the ones that
-	// survive the visibility test: what a front-faces pass drops here is precisely
-	// what the walk below has to be able to arrive at.
 	bool[] within = alloc::new_array(mem, bool, (sz)count);
 	defer alloc::free(mem, within);
-
-	usz enclosed = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		Vec2? where = project(view_projection, self.shown_position(v), viewport);
-		if (catch where) continue;
-
-		if (where.x < low.x || where.x > high.x || where.y < low.y || where.y > high.y) continue;
-		if (!inside_polygon(polygon, where)) continue;
-
-		within[v] = true;
-		enclosed++;
-	}
-
 	// Nothing to cast at, and nothing to walk from. Out before the adjacency is
 	// asked for, so a region drawn over the background never pays to build it.
-	if (enclosed == 0) return 0;
-
-	usz kept = 0;
-
-	if (xray)
-	{
-		for (usz v = 0; v < count; v++)
-		{
-			if (within[v]) out[kept++] = (uint)v;
-		}
-		return kept;
-	}
-
-	rig::MeshAdjacency* around = self.adjacency_for();
-
-	// A mesh with no edges to follow — a point cloud, or one whose triangles this
-	// state has somehow not caught up with — has no neighbourhoods to grow
-	// through. There is nothing to seed from and nowhere to go, so the region is
-	// what can be seen of it, rather than the gesture being refused.
-	if (!around.usable() || around.vertices() != count)
-	{
-		for (usz v = 0; v < count; v++)
-		{
-			if (!within[v]) continue;
-			if (self.mesh_hidden_surface(eye, self.shown_position(v))) continue;
-			out[kept++] = (uint)v;
-		}
-		return kept;
-	}
-
-	usz groups = around.classes();
-
-	// `asked` ends the seeding pass meaning "this weld is inside the polygon":
-	// every class with a member inside it is reached by the loop below, and
-	// membership cannot differ between members — they are the same point, so they
-	// are the same pixel.
-	bool[] asked = alloc::new_array(mem, bool, (sz)groups);
-	defer alloc::free(mem, asked);
-	bool[] reached = alloc::new_array(mem, bool, (sz)groups);
-	defer alloc::free(mem, reached);
-
-	// A class is queued at most once, so the frontier can never outgrow the mesh
-	// and the walk needs no buffer that grows.
-	uint[] queue = alloc::new_array(mem, uint, (sz)groups);
-	defer alloc::free(mem, queue);
-
-	usz tail = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		if (!within[v]) continue;
-
-		usz group = (usz)around.class_of[v];
-		// One cast per weld rather than one per copy: the copies are the same
-		// point, so they are the same ray and the same answer.
-		if (asked[group]) continue;
-		asked[group] = true;
-
-		if (self.mesh_hidden_surface(eye, self.shown_position(v))) continue;
-		reached[group] = true;
-		queue[tail++] = (uint)group;
-	}
-
-	for (usz head = 0; head < tail; head++)
-	{
-		foreach (n : around.around((usz)queue[head]))
-		{
-			// The step that keeps the region inside its own outline: a neighbour
-			// that projects outside the polygon is where this piece of the model
-			// leaves what was drawn around, and nothing past it is in the region.
-			if (!asked[n] || reached[n]) continue;
-			reached[n] = true;
-			queue[tail++] = n;
-		}
-	}
-
-	for (usz v = 0; v < count; v++)
-	{
-		if (within[v] && reached[around.class_of[v]]) out[kept++] = (uint)v;
-	}
-	return kept;
+	if (lasso_within(&probe, polygon, within) == 0) return 0;
+	return lasso_region(&probe, xray ? null : self.adjacency_for(), within, out);
 }
 
 <*
