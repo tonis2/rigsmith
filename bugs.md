@@ -9,7 +9,8 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `gesture_pose` in `pose_mode.c3` lays the floor and aims but not pins, while a drag solves its own pins. It may be deliberate. Unconfirmed.
 - `bake_keyframe` (`bake.c3:391`) solves pins and aims without the floor. Likely misplaces pinned limbs. Not run.
 - Viewport clamps a joint with a saved frame and unusable base; export leaves it free (`constraint_rig.c3:363`). Needs a decision.
-- What counts as a foot differs: `locks.c3:309` and `mcp/pins.c3:546` use hard-coded names, and height bands are 12% and a fifth of rig height. `derived_contacts` samples grounded with no limits; `contact_runs` samples limited, ungrounded. Read.
+- `derived_contacts` samples grounded with no limits; `contact_runs` samples limited and ungrounded. Whether that should change is unconfirmed; changing it moves detected contacts.
+- `foot_ids` (`locks.c3`) still reads only `ankle_L` and `ankle_R`. Only tests reach it.
 - Stdlib `slerp` falls back to lerp near identity, unlike `curve_slerp`, so viewport and glTF readers differ slightly. Read.
 
 ## Weights

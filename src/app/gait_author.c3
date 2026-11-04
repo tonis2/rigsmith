@@ -134,7 +134,7 @@ fn GaitAuthored? AppState.author_gait(
 	if (lift_fraction > 0.0) spec.lift = (float)lift_fraction * gait_leg_height(&view.skeleton, joints[:count]);
 
 	GaitAuthored out  = { .kind = spec.kind, .rig_height = view.skeleton.height() };
-	GaitLimits limits = { .app = self, .view = &view };
+	DocClamp limits = { .limits = &self.doc, .skeleton = &view.skeleton, .dot_ids = view.dot_ids };
 	AnimTemplate? made = gait_clip(
 		mem,
 		&view.skeleton,
@@ -143,7 +143,7 @@ fn GaitAuthored? AppState.author_gait(
 		spec,
 		driven[:count],
 		&out.report,
-		&gait_limit_clamp,
+		&doc_clamp,
 		&limits
 	);
 	if (catch problem = made)
@@ -346,26 +346,6 @@ fn float AppState.clip_foot_slide(&self, AnimRef ref)
 }
 
 fn void AppState.hold_keys_inside_limits(&self, RigView* view, AnimTemplate* clip) => hold_keys_inside_limits(&self.doc, view, clip);
-
-// What `gait_limit_clamp` reads the limits off.
-struct GaitLimits @local
-{
-	AppState* app;
-	RigView* view;
-}
-
-// A joint's turn held inside the document's limits — the gait's `GaitClampFn`.
-fn Quaternionf gait_limit_clamp(void* context, usz joint, Quaternionf local) @local
-{
-	GaitLimits* limits = (GaitLimits*)context;
-	RigView* view      = limits.view;
-	if (joint >= view.dot_ids.len) return local;
-	JointRotationLimits table = limits.app.doc.rotation_limits_of(view.dot_ids[joint]);
-	if (!table.constrained) return local;
-	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, table);
-	if (!frame.usable()) return local;
-	return constrain_joint_rotation(frame, table, local);
-}
 
 // ---------------------------------------------------------------------------
 // Writing a gait again

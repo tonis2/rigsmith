@@ -541,7 +541,19 @@ fn String? tool_pin_feet(Object* args, void* user_data, DString* detail) @privat
 		}
 		if (joints.len() == 0)
 		{
-			detail.append_string(`the rig has no ankle_L or ankle_R. Give "joints": the joints the floor meets.`);
+			// Any other rig's feet, by its shape.
+			RigView? opened = app.open_rig(mem);
+			if (try view = opened)
+			{
+				defer view.free(mem);
+				usz[GAIT_FEET_MAX] feet;
+				usz count = gait_find_feet(&view.skeleton, view.names, feet[..]);
+				foreach (foot : feet[:count]) joints.push(view.names[foot].tcopy());
+			}
+		}
+		if (joints.len() == 0)
+		{
+			detail.append_string(`this rig has no feet to find. Give "joints": the joints the floor meets.`);
 			return PINS_REFUSED~;
 		}
 	}

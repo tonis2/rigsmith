@@ -25,3 +25,12 @@
 - **Rule:** a loop goes round again; a one-shot holds its ends, so the end of a one-shot has phase 1, not 0. Use `AnimTemplate.local_time` and `phase_at`.
 - **Why:** renders wrapped a one-shot back to its start while the player and export held its end.
 - **Tests:** `test/rules/clip_time_test.c3`.
+
+## A foot is found by its shape
+- **Rule:** a rig's feet are `ankle_L` and `ankle_R` when it has them, and otherwise what `gait_find_feet` finds.
+- **Why:** Pin feet refused every rig spelt another way.
+- **Tests:** `test/rules/feet_test.c3`.
+
+## Limits are read one way
+- **Rule:** one clamp, `doc_clamp`, holds a turn inside the document's limits for aims, pins, gaits and bakes.
+- **Why:** three copies of the same steps.
