@@ -248,3 +248,20 @@ fn float[] bind_binder(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells
 	rig::window_bind(bound, distances, view.len(), widths);
 	return bound;
 }
+
+<*
+ Whether the knuckle blend reaches the joint `dot_id`: a digit, or the fork a
+ digit chain hangs from — the joints whose weights `rig::band_digits` decides.
+*>
+fn bool knuckle_blend_applies(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, uint dot_id)
+{
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	sz joint = view.joint_of(dot_id);
+	if (joint < 0) return false;
+	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
+	defer bands.free(mem);
+	return bands.shapes((usz)joint);
+}

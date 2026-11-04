@@ -242,18 +242,7 @@ fn usz AppState.set_selection_anchor_half(&self, bool rotation, bool on, usz* sk
 	return acted;
 }
 
-// Whether nothing below the root can carry this joint back into place — the root,
-// or a joint whose parent forks (a spine joint off the hips).
-fn bool AppState.is_trunk_joint(&self, uint dot_id)
-{
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return false;
-	RigView view = opened;
-	defer view.free(mem);
-	sz j = view.joint_of(dot_id);
-	if (j < 0) return false;
-	return view.skeleton.ancestor_run((usz)j, (usz[IK_MAX_CHAIN]){}[..]) == 0;
-}
+fn bool AppState.is_trunk_joint(&self, uint dot_id) => is_trunk_joint(&self.doc, &self.geometry, &self.shells, dot_id);
 
 fn usz AppState.foot_ids(&self, uint[2]* out) => foot_ids(&self.doc, out);
 

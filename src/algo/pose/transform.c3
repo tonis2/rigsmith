@@ -118,3 +118,47 @@ fn Vec3 model_local_center(RigDocument* doc, rig::TriMesh* geometry)
 	foreach (dot : doc.dots.array_view()) total = total + dot.position;
 	return total * (1.0f / (float)doc.dots.len());
 }
+
+fn uint[] rotation_branch(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, TransformTarget target)
+{
+	if (target.kind != JOINT_TARGETS || target.joint_count != 1 || target.active_joint == 0) return {};
+
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return {};
+	RigView view = opened;
+	defer view.free(mem);
+
+	sz active = view.joint_of(target.active_joint);
+	if (active < 0) return {};
+	uint[] ids = alloc::new_array(mem, uint, view.dot_ids.len);
+	usz count = 0;
+	foreach (usz joint, id : view.dot_ids)
+	{
+		for (int at = (int)joint; at >= 0; at = view.skeleton.parents[(usz)at])
+		{
+			if (at != (int)active) continue;
+			ids[count++] = id;
+			break;
+		}
+	}
+	return ids[:count];
+}
+
+fn Quaternionf transform_basis(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, TransformTarget target, TransformSpace space)
+{
+	if (space != LOCAL_SPACE || target.kind != JOINT_TARGETS || target.active_joint == 0)
+	{
+		return quaternion::IDENTITY;
+	}
+
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return quaternion::IDENTITY;
+	RigView view = opened;
+	defer view.free(mem);
+
+	sz joint = view.joint_of(target.active_joint);
+	if (joint < 0) return quaternion::IDENTITY;
+	JointRotationLimits limits = doc.rotation_limits_of(target.active_joint);
+	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+	return frame.usable() ? frame.rotation.normalize() : (Quaternionf)quaternion::IDENTITY;
+}

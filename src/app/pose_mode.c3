@@ -1230,22 +1230,7 @@ fn Vec3 AppState.gesture_shift(&self, RigView* view, usz joint)
 	return grounded.offsets[root] - drafted;
 }
 
-<*
- What a grab on `dot` keeps of its angle by the rig's shape alone, before its
- Keep angle cell or Alt. `FOLLOW` for a dot that is no joint of the rig.
-*>
-fn PoseHold AppState.pose_hold(&self, uint dot)
-{
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return FOLLOW;
-	RigView view = opened;
-	defer view.free(mem);
-	sz joint = view.joint_of(dot);
-	if (joint < 0) return FOLLOW;
-	PoseHold[] holds = pose_holds(mem, &view, view.skeleton.height());
-	defer alloc::free(mem, holds);
-	return holds[(usz)joint];
-}
+fn PoseHold AppState.pose_hold(&self, uint dot) => pose_hold(&self.doc, &self.geometry, &self.shells, dot);
 
 // Whether `dot`'s Keep angle cell is set the other way from its own.
 fn bool AppState.angle_flipped(&self, uint dot)

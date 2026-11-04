@@ -574,3 +574,20 @@ fn PoleAim aim_chain_pole(RigDocument* doc, RigView* view, rig::Pose* pose, Pose
 	// a limit cut it and the effector may have drifted.
 	return math::abs(constrained.v.dot(candidate.v)) > 0.9999999f ? AIMED : AIMED_TO_LIMIT;
 }
+
+<*
+ What a grab on `dot` keeps of its angle by the rig's shape alone, before its
+ Keep angle cell or Alt. `FOLLOW` for a dot that is no joint of the rig.
+*>
+fn PoseHold pose_hold(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, uint dot)
+{
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return FOLLOW;
+	RigView view = opened;
+	defer view.free(mem);
+	sz joint = view.joint_of(dot);
+	if (joint < 0) return FOLLOW;
+	PoseHold[] holds = pose_holds(mem, &view, view.skeleton.height());
+	defer alloc::free(mem, holds);
+	return holds[(usz)joint];
+}

@@ -172,3 +172,18 @@ fn bool has_bound_clip_named(RigDocument* doc, String name)
 	}
 	return false;
 }
+
+<*
+ The name the Generate pane gives a clip left unnamed: "Generated 1", then 2, and
+ so on — the lowest number no clip on this character already has.
+
+ `String name = app.next_generated_name(mem);`
+*>
+fn String next_generated_name(RigDocument* doc, Allocator allocator)
+{
+	for (int n = 1;; n++)
+	{
+		String name = string::tformat("%s %d", GENERATED_NAME_PREFIX, n);
+		if (!has_bound_clip_named(doc, name)) return name.copy(allocator);
+	}
+}

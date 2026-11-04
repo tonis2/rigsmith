@@ -392,15 +392,7 @@ fn void AppState.hover_area_island(&self, int island)
 	self.area_changed();
 }
 
-// The joint's own bone, or a slice of the model when it has none, which is what
-// the card's fractions are fractions of.
-fn float AppState.area_scale(&self, uint dot_id)
-{
-	float bone = self.own_bone_length(dot_id);
-	if (bone > 0.0f) return bone;
-	rig::Bounds box = self.geometry.bounds();
-	return (box.max - box.min).length() * 0.1f;
-}
+fn float AppState.area_scale(&self, uint dot_id) => area_scale(&self.doc, &self.geometry, dot_id);
 
 // The soft edge the card asks for, in model units.
 fn float AppState.area_soft_distance(&self) => self.band_share(self.area_dot) * self.area_scale(self.area_dot);
@@ -809,8 +801,7 @@ fn bool AppState.area_click(&self, sz vertex, IslandPick how = TOGGLE)
 	return self.pick_area_island(vertex, how);
 }
 
-// One Grow or Shrink step for a joint, in model units: a tenth of its bone.
-fn float AppState.grow_step(&self, uint dot_id) => self.area_scale(dot_id) * AREA_STEP;
+fn float AppState.grow_step(&self, uint dot_id) => grow_step(&self.doc, &self.geometry, dot_id);
 
 <*
  Push the selected joint's region out by whole steps, or pull it in — the card's

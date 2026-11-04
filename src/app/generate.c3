@@ -243,22 +243,7 @@ fn void motion_line(void* context, String line)
 *>
 fn float MotionJob.progress(&self) => self.steps == 0 ? 0.0f : (float)self.step / (float)self.steps;
 
-const String GENERATED_NAME_PREFIX = "Generated";
-
-<*
- The name the Generate pane gives a clip left unnamed: "Generated 1", then 2, and
- so on — the lowest number no clip on this character already has.
-
- `String name = app.next_generated_name(mem);`
-*>
-fn String AppState.next_generated_name(&self, Allocator allocator)
-{
-	for (int n = 1;; n++)
-	{
-		String name = string::tformat("%s %d", GENERATED_NAME_PREFIX, n);
-		if (!self.has_bound_clip_named(name)) return name.copy(allocator);
-	}
-}
+fn String AppState.next_generated_name(&self, Allocator allocator) => next_generated_name(&self.doc, allocator);
 
 fn bool AppState.has_bound_clip_named(&self, String name) => has_bound_clip_named(&self.doc, name);
 

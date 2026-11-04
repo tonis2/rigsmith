@@ -59,11 +59,6 @@ import std::collections::list;
 import std::collections::map;
 import llm::pipeline;
 
-// Named for what it holds rather than for its element type: `rig` exports a
-// `UintList` of its own, and an unqualified name that resolves to either is a
-// name worth not having.
-alias DotIdList = List{uint};
-
 // The dots that ride along in a group rest move, snapshotted at the grab. See
 // `DragMate` and `begin_drag`. Growable because a selection is any size — Ctrl+A
 // puts the whole rig in it — so a fixed cap would silently drop the rest.

@@ -61,3 +61,16 @@ fn usz foot_ids(RigDocument* doc, uint[2]* out)
 	}
 	return found;
 }
+
+// Whether nothing below the root can carry this joint back into place — the root,
+// or a joint whose parent forks (a spine joint off the hips).
+fn bool is_trunk_joint(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, uint dot_id)
+{
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	sz j = view.joint_of(dot_id);
+	if (j < 0) return false;
+	return view.skeleton.ancestor_run((usz)j, (usz[IK_MAX_CHAIN]){}[..]) == 0;
+}

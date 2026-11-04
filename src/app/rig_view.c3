@@ -23,37 +23,7 @@ import std::sort;
 
 
 
-<*
- Build the skeleton and everything keyed to its joint order, in one call.
-
- 	`RigView? opened = app.open_rig(mem);`
- 	`if (catch opened) return;`
- 	`RigView view = opened;`
- 	`defer view.free(mem);`
-
- All five fields, always — the cost is a handful of linear scans over the dots,
- which is nothing beside the bind that follows, and a view that could be *partly*
- filled would put the caller back to tracking which parts are trustworthy.
-
- @return? NO_DOTS : `The document is empty, so there is no rig to view.`
-*>
-fn RigView? AppState.open_rig(&self, Allocator allocator)
-{
-	uint[] dot_ids;
-	rig::Skeleton skeleton = build_skeleton(&self.doc, allocator, &dot_ids)!;
-
-	return {
-		.skeleton = skeleton,
-		.dot_ids = dot_ids,
-		.names = self.joint_names(allocator, dot_ids),
-		.attachments = self.attachment_joints(allocator, dot_ids),
-		.reaches = self.reach_joints(allocator, dot_ids),
-		.grows = self.grow_joints(allocator, dot_ids),
-		.bands = self.band_joints(allocator, dot_ids),
-		.held = self.held_joints(allocator, dot_ids),
-		.pins = self.pin_columns(allocator, dot_ids),
-	};
-}
+fn RigView? AppState.open_rig(&self, Allocator allocator) => open_rig(&self.doc, &self.geometry, &self.shells, allocator);
 
 <*
  Whether the cached playback rig still describes the document.
@@ -111,46 +81,4 @@ fn float[] AppState.grow_joints(&self, Allocator allocator, uint[] dot_ids) => g
 
 fn float[] AppState.band_joints(&self, Allocator allocator, uint[] dot_ids) => band_joints(&self.doc, allocator, dot_ids);
 
-<*
- The document's reaches as the binder takes them: one distance per joint.
-
- Empty when no dot has a reach — `bind_geodesic` reads a short array as
- "unlimited from here on", so an empty one costs nothing and says the same
- thing, and a rig that never sets a reach binds exactly as it always did.
-
- **A mixed rig has no unlimited dots.** Once any dot is limited, one that is not
- gets `default_reach` rather than zero, because zero is not neutral here.
- `reach_bias` scores an unlimited bone 1 at every distance while a sized one
- falls off from its own radius, so on a rig where most dots are sized and a few
- are not, the few outrank the many *everywhere* — and being far from the mesh
- they hold stops costing them anything. A self-rigged squirrel with reaches on
- seventeen dots and none on its two hind feet gave those two feet a third of the
- body, head included, and skewed the torso whenever a hind leg bent. Partial
- reaches were strictly worse than none, which is not a thing a user can be
- expected to guess.
-
- `default_reach` is the same figure the viewport already draws as an unlimited
- dot's ghost ring, so this makes the binder agree with what was on screen rather
- than inventing a size. A dot it cannot size — no bones, no geometry — comes back
- zero and stays genuinely unlimited; there is nothing better to say about it.
-*>
-fn float[] AppState.reach_joints(&self, Allocator allocator, uint[] dot_ids)
-{
-	bool any_limited = false;
-	foreach (dot : self.doc.dots.array_view())
-	{
-		if (dot.reach <= 0.0f) continue;
-		any_limited = true;
-		break;
-	}
-	if (!any_limited) return {};
-
-	float[] reaches = alloc::new_array(allocator, float, (sz)dot_ids.len);
-	foreach (usz j, id : dot_ids)
-	{
-		Dot* dot = self.doc.find(id);
-		if (!dot) { reaches[j] = 0.0f; continue; }
-		reaches[j] = dot.reach > 0.0f ? dot.reach : self.default_reach(id);
-	}
-	return reaches;
-}
+fn float[] AppState.reach_joints(&self, Allocator allocator, uint[] dot_ids) => reach_joints(&self.doc, &self.geometry, allocator, dot_ids);

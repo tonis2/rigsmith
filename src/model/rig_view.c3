@@ -3,6 +3,13 @@ module crig;
 
 import rig;
 import std::sort;
+import gltf;
+import std::math;
+import std::math::matrix;
+import std::math::quaternion;
+import std::collections::list;
+import std::collections::map;
+import std::core::string;
 
 <*
  One skeleton and the four arrays that share its joint order.
@@ -291,4 +298,87 @@ fn float[] band_joints(RigDocument* doc, Allocator allocator, uint[] dot_ids)
 		bands[j] = dot ? dot.band : 0.0f;
 	}
 	return bands;
+}
+
+// Named for what it holds rather than for its element type: `rig` exports a
+// `UintList` of its own, and an unqualified name that resolves to either is a
+// name worth not having.
+alias DotIdList = List{uint};
+
+const String GENERATED_NAME_PREFIX = "Generated";
+
+<*
+ The document's reaches as the binder takes them: one distance per joint.
+
+ Empty when no dot has a reach — `bind_geodesic` reads a short array as
+ "unlimited from here on", so an empty one costs nothing and says the same
+ thing, and a rig that never sets a reach binds exactly as it always did.
+
+ **A mixed rig has no unlimited dots.** Once any dot is limited, one that is not
+ gets `default_reach` rather than zero, because zero is not neutral here.
+ `reach_bias` scores an unlimited bone 1 at every distance while a sized one
+ falls off from its own radius, so on a rig where most dots are sized and a few
+ are not, the few outrank the many *everywhere* — and being far from the mesh
+ they hold stops costing them anything. A self-rigged squirrel with reaches on
+ seventeen dots and none on its two hind feet gave those two feet a third of the
+ body, head included, and skewed the torso whenever a hind leg bent. Partial
+ reaches were strictly worse than none, which is not a thing a user can be
+ expected to guess.
+
+ `default_reach` is the same figure the viewport already draws as an unlimited
+ dot's ghost ring, so this makes the binder agree with what was on screen rather
+ than inventing a size. A dot it cannot size — no bones, no geometry — comes back
+ zero and stays genuinely unlimited; there is nothing better to say about it.
+*>
+fn float[] reach_joints(RigDocument* doc, rig::TriMesh* geometry, Allocator allocator, uint[] dot_ids)
+{
+	bool any_limited = false;
+	foreach (dot : doc.dots.array_view())
+	{
+		if (dot.reach <= 0.0f) continue;
+		any_limited = true;
+		break;
+	}
+	if (!any_limited) return {};
+
+	float[] reaches = alloc::new_array(allocator, float, (sz)dot_ids.len);
+	foreach (usz j, id : dot_ids)
+	{
+		Dot* dot = doc.find(id);
+		if (!dot) { reaches[j] = 0.0f; continue; }
+		reaches[j] = dot.reach > 0.0f ? dot.reach : default_reach(doc, geometry, id);
+	}
+	return reaches;
+}
+
+<*
+ Build the skeleton and everything keyed to its joint order, in one call.
+
+ 	`RigView? opened = app.open_rig(mem);`
+ 	`if (catch opened) return;`
+ 	`RigView view = opened;`
+ 	`defer view.free(mem);`
+
+ All five fields, always — the cost is a handful of linear scans over the dots,
+ which is nothing beside the bind that follows, and a view that could be *partly*
+ filled would put the caller back to tracking which parts are trustworthy.
+
+ @return? NO_DOTS : `The document is empty, so there is no rig to view.`
+*>
+fn RigView? open_rig(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells, Allocator allocator)
+{
+	uint[] dot_ids;
+	rig::Skeleton skeleton = build_skeleton(doc, allocator, &dot_ids)!;
+
+	return {
+		.skeleton = skeleton,
+		.dot_ids = dot_ids,
+		.names = joint_names(doc, allocator, dot_ids),
+		.attachments = attachment_joints(doc, shells, allocator, dot_ids),
+		.reaches = reach_joints(doc, geometry, allocator, dot_ids),
+		.grows = grow_joints(doc, allocator, dot_ids),
+		.bands = band_joints(doc, allocator, dot_ids),
+		.held = held_joints(doc, allocator, dot_ids),
+		.pins = pin_columns(doc, geometry, allocator, dot_ids),
+	};
 }

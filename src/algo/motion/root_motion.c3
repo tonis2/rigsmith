@@ -514,3 +514,14 @@ fn Vec3 clip_bone_of(AnimTemplate clip, String joint) @local
 	return {};
 }
 
+<*
+ Whether this rig has a root joint under the hips to carry travel.
+*>
+fn bool has_root_joint(RigDocument* doc, rig::TriMesh* geometry, rig::MeshShells* shells)
+{
+	RigView? opened = open_rig(doc, geometry, shells, mem);
+	if (catch opened) return false;
+	RigView view = opened;
+	defer view.free(mem);
+	return motion_roots(&view.skeleton, view.names).root >= 0;
+}

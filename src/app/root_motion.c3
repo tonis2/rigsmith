@@ -10,17 +10,7 @@
 module crig;
 
 
-<*
- Whether this rig has a root joint under the hips to carry travel.
-*>
-fn bool AppState.has_root_joint(&self)
-{
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return false;
-	RigView view = opened;
-	defer view.free(mem);
-	return motion_roots(&view.skeleton, view.names).root >= 0;
-}
+fn bool AppState.has_root_joint(&self) => has_root_joint(&self.doc, &self.geometry, &self.shells);
 
 <*
  Move the edited clip's travel. One undo step.

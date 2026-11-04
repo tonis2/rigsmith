@@ -61,54 +61,14 @@ fn bool selected_for_transform(AppState* app, TransformTarget target, uint dot_i
 	return app.is_selected(dot_id);
 }
 
-fn uint[] AppState.rotation_branch(&self, TransformTarget target)
-{
-	if (target.kind != JOINT_TARGETS || target.joint_count != 1 || target.active_joint == 0) return {};
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return {};
-	RigView view = opened;
-	defer view.free(mem);
-
-	sz active = view.joint_of(target.active_joint);
-	if (active < 0) return {};
-	uint[] ids = alloc::new_array(mem, uint, view.dot_ids.len);
-	usz count = 0;
-	foreach (usz joint, id : view.dot_ids)
-	{
-		for (int at = (int)joint; at >= 0; at = view.skeleton.parents[(usz)at])
-		{
-			if (at != (int)active) continue;
-			ids[count++] = id;
-			break;
-		}
-	}
-	return ids[:count];
-}
+fn uint[] AppState.rotation_branch(&self, TransformTarget target) => rotation_branch(&self.doc, &self.geometry, &self.shells, target);
 
 fn bool transform_includes(AppState* app, TransformTarget target, uint dot_id, uint[] branch) @local
 {
 	return branch.len > 0 ? array::contains(branch, dot_id) : selected_for_transform(app, target, dot_id);
 }
 
-fn Quaternionf AppState.transform_basis(&self, TransformTarget target, TransformSpace space)
-{
-	if (space != LOCAL_SPACE || target.kind != JOINT_TARGETS || target.active_joint == 0)
-	{
-		return quaternion::IDENTITY;
-	}
-
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return quaternion::IDENTITY;
-	RigView view = opened;
-	defer view.free(mem);
-
-	sz joint = view.joint_of(target.active_joint);
-	if (joint < 0) return quaternion::IDENTITY;
-	JointRotationLimits limits = self.doc.rotation_limits_of(target.active_joint);
-	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-	return frame.usable() ? frame.rotation.normalize() : (Quaternionf)quaternion::IDENTITY;
-}
+fn Quaternionf AppState.transform_basis(&self, TransformTarget target, TransformSpace space) => transform_basis(&self.doc, &self.geometry, &self.shells, target, space);
 
 fn Vec3 AppState.model_local_center(&self) => model_local_center(&self.doc, &self.geometry);
 

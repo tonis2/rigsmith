@@ -218,3 +218,16 @@ fn float band_share(RigDocument* doc, uint dot_id)
 // Whether the mesh has more than one piece for Whole piece to pick between.
 fn bool area_has_pieces(rig::TriMesh* geometry, rig::MeshShells* shells) => shells.count > 1 && shells.of.len == geometry.positions.len;
 
+// The joint's own bone, or a slice of the model when it has none, which is what
+// the card's fractions are fractions of.
+fn float area_scale(RigDocument* doc, rig::TriMesh* geometry, uint dot_id)
+{
+	float bone = own_bone_length(doc, dot_id);
+	if (bone > 0.0f) return bone;
+	rig::Bounds box = geometry.bounds();
+	return (box.max - box.min).length() * 0.1f;
+}
+
+// One Grow or Shrink step for a joint, in model units: a tenth of its bone.
+fn float grow_step(RigDocument* doc, rig::TriMesh* geometry, uint dot_id) => area_scale(doc, geometry, dot_id) * AREA_STEP;
+

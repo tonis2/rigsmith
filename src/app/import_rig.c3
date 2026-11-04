@@ -710,22 +710,7 @@ fn float[] AppState.bind_bands(&self, Allocator allocator, RigView* view, float[
 
 fn void AppState.shape_bind(&self, float[] dense, RigView* view, int[] riders, float[] grows = {}) => shape_bind(&self.doc, &self.geometry, &self.shells, dense, view, riders, grows);
 
-<*
- Whether the knuckle blend reaches the joint `dot_id`: a digit, or the fork a
- digit chain hangs from — the joints whose weights `rig::band_digits` decides.
-*>
-fn bool AppState.knuckle_blend_applies(&self, uint dot_id)
-{
-	RigView? opened = self.open_rig(mem);
-	if (catch opened) return false;
-	RigView view = opened;
-	defer view.free(mem);
-	sz joint = view.joint_of(dot_id);
-	if (joint < 0) return false;
-	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
-	defer bands.free(mem);
-	return bands.shapes((usz)joint);
-}
+fn bool AppState.knuckle_blend_applies(&self, uint dot_id) => knuckle_blend_applies(&self.doc, &self.geometry, &self.shells, dot_id);
 
 <*
  Give every joint the column the mesh's file painted for it, as its own: what an
