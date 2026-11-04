@@ -50,7 +50,7 @@ import llm::pipeline;
 
 faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
 	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED,
-	CAPTURE_BAD_SIZE, CAPTURE_NO_IMAGE;
+	CAPTURE_BAD_SIZE, CAPTURE_NO_IMAGE, CAPTURE_WRONG_REFERENCE;
 
 // The training set's size by default, and how many poses one frame draws.
 const usz CAPTURE_DEFAULT_POSES = 1500;
@@ -61,12 +61,13 @@ const uint[6] CAPTURE_SIZES = { 448, 512, 640, 768, 896, 1024 };
 const uint CAPTURE_DEFAULT_SIZE = 448;
 // The finder's training as the Zidane finder that fits best was trained: the
 // last block's features beside the 20th's.
-// Also trained on half the poses, to tell whether more would help.
-const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "half_check": true`;
+// Also trained on half the poses, to tell whether more would help; a set too
+// big for the GPU is cut to the pictures that fit.
+const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "half_check": true, "fit_memory": true`;
 // No motion blur: the studio's videos are shot sharp.
 const float CAPTURE_BLUR = 0;
 // Random poses with the legs bent hard: wide stances, squats, kicks.
-const float CAPTURE_LEG_SHARE = 0.25f;
+const float CAPTURE_LEG_SHARE = 0.5f;
 
 enum CaptureStage
 {
@@ -346,6 +347,7 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_FINDER: return "train a joint finder, or choose one, first";
 		case CAPTURE_NO_REFERENCE: return "save a reference picture first: Animations ⋯ › Reference picture…";
 		case CAPTURE_NO_VIDEO: return "choose a video (H.264 .mp4 or .mov), or a folder of its frames";
+		case CAPTURE_WRONG_REFERENCE: return "this wasn't made from the saved reference: its two views split somewhere else. Make it from the reference picture, or draw its own reference";
 		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
 		case CAPTURE_POSE_TAKEN: return "a pose by that name is saved — name this one";
 		case CAPTURE_NO_IMAGE: return "choose the picture: a .png or .jpg";
@@ -423,6 +425,7 @@ fn void fit_renders_to(String renders, uint size)
 
 fn bool renders_drawn_as(Object* set, PoseShoot shoot) @local
 {
+	if (!same_number(set, "draw", (float)POSE_DRAW_VERSION)) return false;
 	if (!same_number(set, "size", (float)shoot.size) || !same_number(set, "count", (float)CAPTURE_CHUNK)) return false;
 	if (!same_number(set, "blur", shoot.blur) || !same_number(set, "leg_share", shoot.leg_share)) return false;
 	Object*? cameras = set.get("cameras");
@@ -786,6 +789,74 @@ fn String AppState.capture_reference_matching(&self, String picture)
 	return self.capture_reference_path(found[best]);
 }
 
+// A column of the divider is this dark, in this share of the picture's rows.
+const uint DIVIDER_DARK = 80;
+const float DIVIDER_ROWS = 0.9f;
+// How far a divider may sit from its reference's, as a share of the width.
+const float DIVIDER_SLACK = 0.006f;
+
+// The middle of the columns dark from top to bottom in `rgba`, in the middle
+// half of the picture; -1 when there are none.
+fn sz divider_column(char[] rgba, uint width, uint height)
+{
+	sz first = -1;
+	sz last = -1;
+	for (uint x = width / 4; x < width - width / 4; x++)
+	{
+		uint dark = 0;
+		for (uint y = 0; y < height; y++)
+		{
+			usz at = ((usz)y * width + x) * 4;
+			if (((uint)rgba[at] + rgba[at + 1] + rgba[at + 2]) / 3 < DIVIDER_DARK) dark++;
+		}
+		if ((float)dark < DIVIDER_ROWS * (float)height) continue;
+		if (first < 0) first = (sz)x;
+		last = (sz)x;
+	}
+	return first < 0 ? -1 : (first + last) / 2;
+}
+
+<*
+ Whether a picture's divider at `column` is where the layout puts it: the
+ layout `layout_width` x `layout_height` split at `split`, scaled to cover
+ the picture and centred, as the pipeline does.
+*>
+fn bool divider_fits(sz column, uint width, uint height, float layout_width, float layout_height, float split)
+{
+	float scale = math::max((float)width / layout_width, (float)height / layout_height);
+	float crop = (layout_width * scale - (float)width) * 0.5f;
+	return math::abs((float)column - (split * scale - crop)) <= DIVIDER_SLACK * (float)width;
+}
+
+<*
+ Whether `picture` (or a video's first frame) splits its views where the
+ reference in `studio` does. True when either can't be read or the picture
+ has no divider to go by: only a split somewhere else is known to be wrong.
+*>
+fn bool reference_fits_picture(String studio, String picture)
+{
+	@pool()
+	{
+		char[]? bytes = file::load_temp(string::tformat("%s/studio.json", studio));
+		if (catch bytes) return true;
+		Object*? layout = json::parse(tmem, (String)bytes);
+		if (catch layout) return true;
+		Object*? views = layout.get("views");
+		if (catch views) return true;
+		if (!views.is_array() || views.get_len() < 2) return true;
+		double? layout_width = layout.get_float("width");
+		double? layout_height = layout.get_float("height");
+		double? split = views.get_at(1).get_float("x");
+		if (catch layout_width, layout_height, split) return true;
+		image::Image? img = load_picture(picture, tmem);
+		if (catch img) return true;
+		if (img.bit_depth != 8) return true;
+		sz column = divider_column(img.to_rgba(tmem), img.width, img.height);
+		if (column < 0) return true;
+		return divider_fits(column, img.width, img.height, (float)layout_width, (float)layout_height, (float)split);
+	};
+}
+
 // The first picture in `folder` by name; "" when there is none. Temporary.
 fn String first_picture_in(String folder)
 {
@@ -879,6 +950,10 @@ fn void? AppState.start_capture_animation(&self, String backbone, String finder,
 		v.close();
 	}
 
+	String first_picture = folder ? first_picture_in(video) : video;
+	if (studio.len == 0) studio = self.capture_reference_matching(first_picture);
+	if (studio.len > 0 && !reference_fits_picture(studio, first_picture)) return CAPTURE_WRONG_REFERENCE~;
+
 	name = name.trim();
 	if (name.len == 0) name = capture_clip_name(video);
 	CaptureJob* job = &self.capture_job;
@@ -891,7 +966,6 @@ fn void? AppState.start_capture_animation(&self, String backbone, String finder,
 	job.max_frames = pose ? 0 : max_frames;
 	job.fps = fps;
 	job.frames = video.copy(mem);
-	if (studio.len == 0) studio = self.capture_reference_matching(folder ? first_picture_in(video) : video);
 	if (studio.len > 0) job.studio = studio.copy(mem);
 	job.running = true;
 	self.start_capture_engine(ANIMATING, self.capture_animate_json());

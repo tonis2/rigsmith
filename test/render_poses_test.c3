@@ -104,6 +104,64 @@ fn void random_poses_stay_inside_the_limits_and_reach_their_ends() @test
 	test::@check(same, "the same seed and index drew two different poses");
 }
 
+fn void legs_drawn_alike_spread_apart() @test
+{
+	crig::RigDocument doc;
+	doc.dots.init(mem);
+	doc.edges.init(mem);
+	doc.secondary.init(mem);
+	doc.rotation_limits.init(mem);
+	defer doc.free();
+	uint hips = doc.add_dot({ 0, 0, 0 }, "hips");
+	uint[2] thigh = { doc.add_dot({ 0.2f, 0, 0 }, "thigh_L"), doc.add_dot({ -0.2f, 0, 0 }, "thigh_R") };
+	uint[2] foot = { doc.add_dot({ 0.2f, -1, 0 }, "foot_L"), doc.add_dot({ -0.2f, -1, 0 }, "foot_R") };
+	float[2][2] range = { { -0.8f, 0.4f }, { -0.4f, 0.8f } };
+	for (usz side = 0; side < 2; side++)
+	{
+		doc.connect(hips, thigh[side]);
+		doc.connect(thigh[side], foot[side]);
+		crig::JointRotationLimits limits = crig::unconstrained_rotation(thigh[side]);
+		limits.constrained = true;
+		limits.primary_child = foot[side];
+		limits.axes[0] = { .allowed = false };
+		limits.axes[1] = { .allowed = false };
+		limits.axes[2] = { .allowed = true, .minimum = range[side][0], .maximum = range[side][1] };
+		test::@check(doc.set_rotation_limits(thigh[side], limits), "a thigh's limits were refused");
+	}
+	uint[] ids;
+	rig::Skeleton skeleton = crig::build_skeleton(&doc, mem, &ids)!!;
+	defer skeleton.free(mem);
+	defer alloc::free(mem, ids);
+	int[] legs = alloc::new_array(mem, int, (sz)skeleton.len());
+	defer alloc::free(mem, legs);
+	int[2] joint;
+	foreach (usz j, id : ids)
+	{
+		legs[j] = -1;
+		if (id == thigh[0]) joint[0] = (int)j;
+		if (id == thigh[1]) joint[1] = (int)j;
+	}
+	legs[joint[0]] = joint[1];
+	legs[joint[1]] = joint[0];
+	crig::JointLimitFrame[2] frame = {
+		crig::joint_limit_frame(&skeleton, ids, doc.rotation_limits_of(thigh[0])),
+		crig::joint_limit_frame(&skeleton, ids, doc.rotation_limits_of(thigh[1])),
+	};
+	crig::PoseShoot shoot = crig::pose_shoot_defaults();
+	shoot.leg_share = 1;
+	usz mirrored = 0;
+	for (ulong index = 0; index < 400; index++)
+	{
+		rig::Pose pose = crig::random_pose(&doc, &skeleton, ids, &shoot, index, 0, legs);
+		defer pose.free(mem);
+		float left = crig::joint_angles_from_rotation(frame[0], pose.rotations[joint[0]]).z;
+		float right = crig::joint_angles_from_rotation(frame[1], pose.rotations[joint[1]]).z;
+		if (math::abs(left + right) < 1.0e-3f) mirrored++;
+	}
+	// Four poses in ten are drawn alike.
+	test::@check(mirrored > 100, "only %d of 400 poses mirrored the legs", mirrored);
+}
+
 fn void the_exam_moves_smoothly_inside_the_limits() @test
 {
 	PoseRig r;

@@ -43,6 +43,34 @@ fn void a_clip_is_named_after_its_video() @test
 	test::@check(crig::capture_clip_name("") == "Captured", "something when there is nothing");
 }
 
+fn void the_divider_is_the_column_dark_from_top_to_bottom() @test
+{
+	uint width = 200;
+	uint height = 100;
+	char[] rgba = alloc::new_array(mem, char, (sz)(width * height * 4));
+	defer alloc::free(mem, rgba);
+	rgba[..] = 130;
+	// A dark figure that stops short of the top is not a divider.
+	for (uint y = 40; y < height; y++) for (uint x = 70; x < 90; x++) for (uint c = 0; c < 3; c++) rgba[((usz)y * width + x) * 4 + c] = 20;
+	test::eq(crig::divider_column(rgba, width, height), (sz)-1);
+	for (uint y = 0; y < height; y++) for (uint x = 118; x < 121; x++) for (uint c = 0; c < 3; c++) rgba[((usz)y * width + x) * 4 + c] = 34;
+	test::eq(crig::divider_column(rgba, width, height), (sz)119);
+}
+
+fn void a_divider_is_held_to_its_reference_at_any_size() @test
+{
+	test::@check(crig::divider_fits(675, 1344, 768, 1344, 768, 676), "the reference's own split");
+	test::@check(!crig::divider_fits(762, 1344, 768, 1344, 768, 676), "a split 87 pixels along");
+	// The clip a little wider than the layout: scaled to cover, the sides cropped.
+	test::@check(crig::divider_fits(697, 1344, 768, 1280, 720, 664), "664 of 1280, scaled to 1344 x 768");
+	test::@check(!crig::divider_fits(762, 1344, 768, 1280, 720, 664), "a split elsewhere at that size");
+}
+
+fn void a_picture_that_cannot_be_read_is_not_called_wrong() @test
+{
+	test::@check(crig::reference_fits_picture("build/no_such_reference", "build/no_such_picture.png"), "nothing to go by");
+}
+
 fn void a_copied_reference_keeps_its_prompt_beside_it() @test
 {
 	test::@check(crig::reference_prompt_copy("/refs/Test.png") == "/refs/Test.txt", "the picture's name, as text");
@@ -700,7 +728,7 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	String first = string::tformat("%s/poses_000000.json", dir);
 	String camera = `{"pitch": 4}`;
 	String cameras = string::tformat("[%s, %s, %s, %s]", camera, camera, camera, camera);
-	(void)file::save(first, string::tformat(`{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras));
+	(void)file::save(first, string::tformat(`{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras));
 	crig::fit_renders_to(dir, 448);
 	test::@check(file::exists(first), "a set at the same size is kept, to carry on");
 	crig::fit_renders_to(dir, 640);
@@ -709,11 +737,12 @@ fn void a_training_set_of_another_size_is_drawn_again() @test
 	// Drawn from fewer cameras, with other settings or in other chunks: drawn again too.
 	String level = `[{"pitch": 8}, {"pitch": 8}, {"pitch": 8}, {"pitch": 8}]`;
 	String[2][*] stale = {
-		{ `{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, `[{"pitch": 4}]` },
-		{ `{"size": 448, "count": 8, "blur": 0.3, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras },
-		{ `{"size": 448, "count": 8, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, level },
-		{ `{"size": 448, "count": 125, "blur": 0, "leg_share": 0.25, "cameras": %s, "images": []}`, cameras },
+		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, `[{"pitch": 4}]` },
+		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0.3, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
+		{ `{"draw": 2, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, level },
+		{ `{"draw": 2, "size": 448, "count": 125, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
 		{ `{"size": 448, "cameras": %s, "images": []}`, cameras },
+		{ `{"draw": 1, "size": 448, "count": 8, "blur": 0, "leg_share": 0.5, "cameras": %s, "images": []}`, cameras },
 	};
 	foreach (row : stale)
 	{
@@ -729,7 +758,7 @@ fn void animate_draws_sharp_hard_legged_level_poses() @test
 {
 	crig::PoseShoot shoot = crig::capture_shoot(768);
 	test::eq(shoot.size, 768u);
-	test::@check(shoot.blur == 0 && shoot.leg_share == 0.25f, "blur %f, leg share %f", shoot.blur, shoot.leg_share);
+	test::@check(shoot.blur == 0 && shoot.leg_share == 0.5f, "blur %f, leg share %f", shoot.blur, shoot.leg_share);
 	test::eq(shoot.camera_count, crig::CAPTURE_CAMERAS);
 	for (usz c = 0; c < shoot.camera_count; c++) test::@check(shoot.cameras[c].pitch == 4, "camera %d pitch %f", c, shoot.cameras[c].pitch);
 	test::@check(shoot.all_clips && shoot.landmarks, "clips and landmarks are drawn");

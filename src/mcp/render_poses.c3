@@ -87,6 +87,8 @@ const usz POSES_LANDMARKS = 24;
 // How far from rest a limited axis is drawn at most, whatever its row allows:
 // about 150 degrees, so a row left at a whole turn does not fold the body.
 const float LIMIT_REACH = 2.6f;
+// Goes up when the same settings start drawing other poses, so a kept set is drawn again.
+const int POSE_DRAW_VERSION = 2;
 
 const String RENDER_POSES_SCHEMA = `{"type":"object","properties":{
 	"out":{"type":"string","description":"The folder the pictures and poses_<first>.json go in; made when missing."},
@@ -362,7 +364,11 @@ fn Quaternionf leg_turn(RigDocument* doc, rig::Skeleton* skeleton, uint[] dot_id
 		}
 		float least, most, rest;
 		drawn_range(row, &least, &most, &rest);
-		float end = draw.unit() < 0.5f ? least : most;
+		// The far or the near end, not the low or the high: a joint and its mate
+		// have mirrored ranges, and legs drawn alike then spread, not lean.
+		float far = math::abs(least - rest) >= math::abs(most - rest) ? least : most;
+		float near = far == least ? most : least;
+		float end = draw.unit() < 0.5f ? far : near;
 		angles[axis] = rest + (end - rest) * draw.between(0.5f, 1.0f);
 	}
 	return rotation_from_joint_angles(frame, angles);
@@ -1562,8 +1568,8 @@ fn String? AppState.render_pose_set(&self, PoseShoot* given, DString* detail)
 		Vec3 p = view.skeleton.joints[j];
 		out.appendf("[%s,%s,%s]", (JsonFloat)p.x, (JsonFloat)p.y, (JsonFloat)p.z);
 	}
-	out.appendf(`],"size":%d,"seed":%d,"first":%d,"count":%d,"motion":%s,"fps":%s,"height":%s,"fill":[%s,%s],"blur":%s,"leg_share":%s,"cameras":[`,
-		shoot.size, shoot.seed, shoot.first, shoot.count, shoot.motion ? "true" : "false", (JsonFloat)shoot.fps, (JsonFloat)height,
+	out.appendf(`],"draw":%d,"size":%d,"seed":%d,"first":%d,"count":%d,"motion":%s,"fps":%s,"height":%s,"fill":[%s,%s],"blur":%s,"leg_share":%s,"cameras":[`,
+		POSE_DRAW_VERSION, shoot.size, shoot.seed, shoot.first, shoot.count, shoot.motion ? "true" : "false", (JsonFloat)shoot.fps, (JsonFloat)height,
 		(JsonFloat)shoot.fill_least, (JsonFloat)shoot.fill_most, (JsonFloat)shoot.blur, (JsonFloat)shoot.leg_share);
 	for (usz c = 0; c < shoot.camera_count; c++)
 	{
