@@ -199,6 +199,7 @@ fn void MotionJob.clear(&self)
 	self.running = false;
 	self.failed = false;
 	self.landed = NO_ANIM;
+	self.landed_pending = false;
 	self.guide_keys = self.guide_dropped = self.guide_partial = 0;
 	self.step = self.steps = 0;
 	self.last_length = 0;

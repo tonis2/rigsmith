@@ -179,6 +179,18 @@ fn void pretend_job(crig::AppState* app, String prompt, char[] glb = {}, crig::K
 	app.motion_job.running = true;
 }
 
+// A new job clears the old one, so nothing can hand out the clip it no longer holds.
+fn void a_cleared_job_has_no_clip_to_hand_out() @test
+{
+	crig::AppState app = crig::new_app({});
+	defer app.free();
+	app.motion_job.landed = { .pack = 0, .clip = 0 };
+	app.motion_job.landed_pending = true;
+	app.motion_job.clear();
+	crig::AnimRef taken;
+	test::@check(!app.take_generated_clip(&taken), "a cleared job handed out a clip");
+}
+
 fn void the_pipelines_lines_move_the_progress() @test
 {
 	crig::MotionJob job;
