@@ -47,3 +47,17 @@ fn PositionLock[] grow_locks(PositionLock[] locks, PositionLock add)
 	if (locks.len > 0) alloc::free(mem, locks);
 	return grown;
 }
+
+<*
+ The feet, by the canonical names every body plan and `pin_feet` use.
+ @return `How many of the two there are.`
+*>
+fn usz foot_ids(RigDocument* doc, uint[2]* out)
+{
+	usz found = 0;
+	foreach (dot : doc.dots.array_view())
+	{
+		if (found < 2 && (dot.name == "ankle_L" || dot.name == "ankle_R")) (*out)[found++] = dot.id;
+	}
+	return found;
+}

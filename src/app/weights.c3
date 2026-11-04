@@ -378,39 +378,7 @@ fn void AppState.drop_tool_bind(&self)
 	self.tool_bind = {};
 }
 
-<*
- A fingerprint of everything the base bind is made from: the joints, their
- tree, their reaches, which shells ride which joint, the model's sharpness and
- knuckle blend, and the mesh itself. Not
- the grows or soft edges, which the live bind does not read — see
- `tool_bind_for`.
-
- What makes the cache trustworthy rather than merely fast. `mark_rig_stale`
- drops it on every recorded edit, but a cache that is only as fresh as the last
- caller remembered to make it hands back the bind of a rig nobody has any more —
- a dot moved by a path that forgot, and every view, the skin and the file all
- describe the old one. Checked on every read; the cost is a pass over the
- joints, against a bind that costs a pass over the mesh through the voxel grid.
-*>
-fn ulong AppState.bind_key(&self, RigView* view)
-{
-	ulong hash = 0xcbf2_9ce4_8422_2325;
-	mix_key(&hash, (ulong)(uptr)self.geometry.positions.ptr);
-	mix_key(&hash, (ulong)self.geometry.positions.len);
-	mix_key(&hash, (ulong)bitcast(self.doc.sharpness, uint));
-	mix_key(&hash, (ulong)bitcast(self.doc.knuckle_blend, uint));
-	foreach (b, joint : view.skeleton.joints)
-	{
-		mix_key(&hash, (ulong)bitcast(joint.x, uint));
-		mix_key(&hash, (ulong)bitcast(joint.y, uint));
-		mix_key(&hash, (ulong)bitcast(joint.z, uint));
-		mix_key(&hash, (ulong)(uint)view.skeleton.parents[b]);
-		mix_key(&hash, (ulong)view.dot_ids[b]);
-	}
-	foreach (reach : view.reaches) mix_key(&hash, (ulong)bitcast(reach, uint));
-	foreach (rides : view.attachments) mix_key(&hash, (ulong)(uint)rides);
-	return hash;
-}
+fn ulong AppState.bind_key(&self, RigView* view) => bind_key(&self.doc, &self.geometry, view);
 
 <*
  The weights, as one of the two binds every tool shares.

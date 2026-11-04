@@ -18,21 +18,9 @@ module crig;
 import rig;
 import std::math;
 
-fn sz AppState.saved_pose_named(&self, String name)
-{
-	foreach (usz i, pose : self.doc.poses) if (pose.name == name) return (sz)i;
-	return -1;
-}
+fn sz AppState.saved_pose_named(&self, String name) => saved_pose_named(&self.doc, name);
 
-// "Pose N", the first N from the library's size up that no pose uses.
-fn String AppState.next_pose_name(&self, Allocator allocator)
-{
-	for (usz n = self.doc.poses.len + 1; ; n++)
-	{
-		String name = string::tformat("Pose %d", n);
-		if (self.saved_pose_named(name) < 0) return name.copy(allocator);
-	}
-}
+fn String AppState.next_pose_name(&self, Allocator allocator) => next_pose_name(&self.doc, allocator);
 
 // Replace the library with `next` (taken over) as one undo step.
 fn void AppState.set_poses_recorded(&self, SavedPose[] next)

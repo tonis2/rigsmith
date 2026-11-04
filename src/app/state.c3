@@ -1064,35 +1064,7 @@ fn void AppState.drop_geometry_cache(&self)
 *>
 fn bool Character.has_mesh(&self) => self.geometry.positions.len > 0;
 
-<*
- The mesh's own edges, built if they are not already in hand.
-
- 	`rig::MeshAdjacency* around = app.adjacency_for();`
-
- **Lazy, because the binder never wants it.** The binder measures distance
- through the voxel grid rather than along the edges, so only the area tools,
- posing and collision ask — building this beside the shells would make every
- model load pay for a sort a session that does none of those never reads.
-
- Rebuilt when the vertex count no longer matches the mesh, which is the one way
- the mesh can change under it without going through `load_mesh` or
- `replace_geometry`; both of those free it outright, so this is a guard rather
- than the mechanism. A mesh of the same length is a mesh this still describes.
-
- **Borrowed.** What comes back points into the AppState and lives until the mesh
- is replaced. A caller may read it and must not free it.
-
- @return `The adjacency, empty and unusable for a mesh with no triangles.`
-*>
-fn rig::MeshAdjacency* AppState.adjacency_for(&self)
-{
-	if (self.adjacency.vertices() != self.geometry.positions.len)
-	{
-		self.adjacency.free(mem);
-		self.adjacency = rig::build_adjacency(mem, self.geometry);
-	}
-	return &self.adjacency;
-}
+fn rig::MeshAdjacency* AppState.adjacency_for(&self) => adjacency_for(&self.geometry, &self.adjacency);
 
 <*
  Point the document at a file it does not own.

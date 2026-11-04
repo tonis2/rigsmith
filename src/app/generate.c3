@@ -260,17 +260,7 @@ fn String AppState.next_generated_name(&self, Allocator allocator)
 	}
 }
 
-<*
- Whether a clip of this name is on the character, from any file.
-*>
-fn bool AppState.has_bound_clip_named(&self, String name)
-{
-	foreach (bound : self.doc.animations.array_view())
-	{
-		if (bound.clip == name) return true;
-	}
-	return false;
-}
+fn bool AppState.has_bound_clip_named(&self, String name) => has_bound_clip_named(&self.doc, name);
 
 <*
  The llm folder the pipeline runs from: `core/` (what llm-runner provides) and

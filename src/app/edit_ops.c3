@@ -26,154 +26,11 @@ import std::math::quaternion;
 import std::collections::list;
 import std::sort;
 
-<*
- The plane the mirror reflects across, read off the rig: a point and a unit
- normal.
+fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane) => mirror_plane(&self.doc, point, normal, on_plane);
 
- The normal is the body's **left-right axis**, averaged over every named pair's
- own left-to-right direction. A rig placed square about the world gives a normal
- along X and the plane is the familiar world-aligned one; a character modelled
- turned about the vertical — its shoulders and hips sitting at different depths —
- gives a tilted normal, and mirroring across it sends a twin around to the other
- side of the *body* rather than straight across world X, which for a turned rig
- is off to the side or out in front. The normal is only tilted once it is more
- than `MIRROR_SQUARE_COS` off world X, so a near-square rig stays exactly
- world-aligned and the pairs it squares up are not dragged by their own noise.
+fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = { }) => mirror_survey(&self.doc, exclude);
 
- The point is the **median** of the centre joints — the ones with no side,
- which sit on the plane (`MirrorSurvey.plane_point`) — or, with none, the pair
- midpoints, or the stored `sym_x`. A median and not a mean, because a joint with
- no side is not always on the midline: a tail that curls to one side is four
- "centre" joints well off it, and averaged in they slid the whole plane over, so
- every twin landed a hand's width wrong — a pinky mirrored into the palm. When
- the plane is world-aligned the point collapses to `{x,0,0}` and snaps to the
- stored `sym_x` when within `on_plane` of it, so a rig already mirrored reflects
- onto itself bit-for-bit and records nothing.
-
- @param on_plane : `The on-plane tolerance, in model units — how near the stored plane the centre line must be to keep it exactly.`
-*>
-fn void AppState.mirror_plane(&self, Vec3* point, Vec3* normal, float on_plane)
-{
-	MirrorSurvey survey = self.mirror_survey();
-	Vec3 n              = survey.normal();
-	if (plane_is_square(n))
-	{
-		// World-aligned: a bare x, snapped to the stored plane when the centre
-		// line all but agrees with it, so an already-square rig records nothing.
-		float px = survey.centres > 0 ? survey.plane_point().x : self.doc.sym_x;
-		if (math::abs(px - self.doc.sym_x) <= on_plane) px = self.doc.sym_x;
-		*point = { px, 0, 0 };
-		*normal = { 1, 0, 0 };
-		return;
-	}
-
-	// Tilted: any point the plane passes through — the centre line, or the pairs'
-	// own midline when the rig carries no centre joint.
-	if (survey.centres > 0)
-	{
-		*point = survey.plane_point();
-	}
-	else if (survey.pairs > 0)
-	{
-		*point = survey.midpoint();
-	}
-	else
-	{
-		*point = { self.doc.sym_x, 0, 0 };
-	}
-	*normal = n;
-}
-
-fn MirrorSurvey AppState.mirror_survey(&self, uint[] exclude = { })
-{
-	MirrorSurvey out;
-	out.on_plane.init(tmem);
-	foreach (dot : self.doc.dots.array_view())
-	{
-		if (dot.name.len == 0 || array::contains(exclude, dot.id)) continue;
-
-		String twin = mirror_name(mem, dot.name);
-		defer if (twin.len > 0) alloc::free(mem, twin.ptr);
-
-		if (twin.len == 0)
-		{
-			// A centre joint, on the plane.
-			out.centre = out.centre + dot.position;
-			out.centres++;
-			out.on_plane.push(dot.position);
-			continue;
-		}
-
-		// A side joint: fold its pair in once, from the lower-id member.
-		Dot* other = self.dot_named(twin);
-		if (other == null || other.id <= dot.id || array::contains(exclude, other.id)) continue;
-
-		Vec3 span = dot.position - other.position;
-		if (span.length() < 1.0e-6f) continue;
-		// Unit-weighted, so a long limb and a short one count the same and one
-		// crooked pair cannot swing the axis far.
-		Vec3 dir = span.normalize();
-		if (dir.x < 0.0f) dir = dir * -1.0f; // orient every pair to the +x side
-		out.axis = out.axis + dir;
-		out.midpoints = out.midpoints + (dot.position + other.position) * 0.5f;
-		out.pairs++;
-	}
-	return out;
-}
-
-<*
- The mirror plane for BUILDING a new side, read off the rig's existing symmetric
- pairs rather than its centre joints.
-
- The difference from `mirror_plane`, and the reason both exist: this **trusts the
- pairs**. Creating the other side of a limb reflects across where the rig is
- already symmetric — the legs, a shoulder line — and a square pair's midpoint sits
- on that plane exactly, immune to an un-sided limb joint (a finger named `ring_f`,
- an `elbow` with no `_r`) that a centre-joint centroid folds in and drags off the
- midline. `mirror_plane` cannot trust the pairs, because its job is to square
- crooked ones up and a crooked pair's midpoint is not the plane; this one squares
- nothing, so the pairs it reads are its firmest evidence.
-
- `exclude` is the selection — the joints whose twin is being made or moved. A
- pair with either side in it is the one being built against, so it cannot be its
- own reference and is left out; the plane comes from the rest of the rig.
-
- Falls back to the centre joints, then the stored `sym_x`, when no pair is left
- to read — the same order `mirror_plane` ends on.
-*>
-fn void AppState.mirror_plane_for_new(&self, uint[] exclude, Vec3* point, Vec3* normal, float on_plane)
-{
-	MirrorSurvey survey = self.mirror_survey(exclude);
-	Vec3 n              = survey.normal();
-
-	// The point: the pairs' own midline first — a square pair's midpoint is on the
-	// plane and no un-sided joint can pull it off — then the centre joints, then the
-	// stored plane.
-	Vec3 base;
-	if (survey.pairs > 0)
-	{
-		base = survey.midpoint();
-	}
-	else if (survey.centres > 0)
-	{
-		base = survey.centre_point();
-	}
-	else
-	{
-		base = { self.doc.sym_x, 0, 0 };
-	}
-
-	if (plane_is_square(n))
-	{
-		float px = base.x;
-		if (math::abs(px - self.doc.sym_x) <= on_plane) px = self.doc.sym_x;
-		*point = { px, 0, 0 };
-		*normal = { 1, 0, 0 };
-		return;
-	}
-	*point = base;
-	*normal = n;
-}
+fn void AppState.mirror_plane_for_new(&self, uint[] exclude, Vec3* point, Vec3* normal, float on_plane) => mirror_plane_for_new(&self.doc, exclude, point, normal, on_plane);
 
 <*
  Selects one dot and nothing else, dropping any wider selection.
@@ -1250,94 +1107,9 @@ fn usz AppState.mirror_create_selection(
 	return created + pulled;
 }
 
-<*
- Names for a joint with no side in its name and for the twin about to be built
- for it, by which side of the plane it falls on.
+fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal, String* source, String* twin) => side_names(&self.doc, id, plane_point, plane_normal, source, twin);
 
- `joint_7` on the left → `joint_7_L`, twin `joint_7_R`; an unnamed joint → `joint_<id>_L`
-
- Which side is "left" and the letter case are read off the rig's own sided names
- (a rig spelled `hand_l` gets `_l`); with none, `fit_preset`'s `_L` on +X. A base
- whose names are taken gets a number (`joint_7_2_L`).
-
- @param source : `Receives the source's new name; the caller owns it.`
- @param twin : `Receives the twin's name; the caller owns it.`
-*>
-fn void AppState.side_names(&self, uint id, Vec3 plane_point, Vec3 plane_normal, String* source, String* twin)
-{
-	int votes  = 0;
-	bool lower = false;
-	bool cased = false;
-	foreach (dot : self.doc.dots.array_view())
-	{
-		char side = name_side(dot.name);
-		if (side == 0) continue;
-		if (!cased)
-		{
-			lower = side == 'l' || side == 'r';
-			cased = true;
-		}
-		float s = (dot.position - plane_point).dot(plane_normal);
-		if (s == 0.0f) continue;
-		bool is_left = side == 'L' || side == 'l';
-		votes += (s > 0.0f) == is_left ? 1 : -1;
-	}
-	bool left_positive = votes >= 0;
-
-	Dot* dot           = self.doc.find(id);
-	float s            = dot ? (dot.position - plane_point).dot(plane_normal) : 0.0f;
-	bool on_left       = (s > 0.0f) == left_positive;
-	String own_letter  = lower ? (on_left ? "l" : "r") : (on_left ? "L" : "R");
-	String twin_letter = lower ? (on_left ? "r" : "l") : (on_left ? "R" : "L");
-
-	String base = dot && dot.name.len > 0 ? (String)alloc::clone_slice(mem, (char[])dot.name)
-		: string::format(mem, "joint_%d", id);
-	defer alloc::free(mem, base.ptr);
-
-	for (int n = 1;; n++)
-	{
-		String suffix = n == 1 ? "" : string::tformat("_%d", n);
-		String a      = string::format(mem, "%s%s_%s", base, suffix, own_letter);
-		String b      = string::format(mem, "%s%s_%s", base, suffix, twin_letter);
-		if (self.dot_named(a) == null && self.dot_named(b) == null)
-		{
-			*source = a;
-			*twin = b;
-			return;
-		}
-		alloc::free(mem, a.ptr);
-		alloc::free(mem, b.ptr);
-	}
-}
-
-<*
- The rig's own left-right symmetry plane, read off its centre joints.
-
- `if (app.symmetry_plane(&x)) { … }`
-
- The mesh's bounding-box centre is a poor guess at the midline — a tail, a wing
- or an off-centre export throws it off, and a hand-built rig on no mesh has none.
- The rig knows better: a centre joint, one whose name carries no side, sits on
- the midline whatever the mesh is shaped like — mostly. A tail curling to one
- side is side-less joints that are not, so the plane is their median
- (`MirrorSurvey.plane_point`) rather than their average.
-
- The limb **pairs** are deliberately left out. A pair's midpoint is the plane
- only when the pair is already square — and a crooked pair, whose midpoint sits
- off to one side, is exactly what Mirror is there to fix. Deriving the plane
- from the pairs would move it to meet the crookedness instead of squaring the
- crookedness up to the plane.
-
- @param out : `Receives the plane's model-space X when one was found.`
- @return `False when the rig has no centre joint to read a plane from, out untouched.`
-*>
-fn bool AppState.symmetry_plane(&self, float* out)
-{
-	MirrorSurvey survey = self.mirror_survey();
-	if (survey.centres == 0) return false;
-	*out = survey.plane_point().x;
-	return true;
-}
+fn bool AppState.symmetry_plane(&self, float* out) => symmetry_plane(&self.doc, out);
 
 <*
  Cross one dot's weights onto its twin, as the mirror's own edit.
@@ -1383,91 +1155,13 @@ fn bool AppState.mirror_paint_recorded(&self, rig::MirrorLookup* across, uint so
 	return self.replace_column(&view, twin, column, commit: false) > 0;
 }
 
-// The dot on the other side that already answers to this one, or 0 for none.
-// 
-// By name first and at any distance, since a twin that has drifted is exactly
-// what a snap is for. A name that names no side is no handle at all — whether it
-// is empty or spelled some way `mirror_name` cannot read — and falls back to
-// position, then only within the tolerance a mirrored placement would have used:
-// a wider net would start claiming the neighbouring joint.
-// 
-// The narrow net is also what keeps that fallback from crossing back over. The
-// caller has already skipped every dot within `tolerance` of the plane, so the
-// reflection sits further than `tolerance` from it on the far side and nothing
-// on the source's own side can be within `tolerance` of the reflection.
-fn uint AppState.twin_of(&self, Dot dot, Vec3 at, float tolerance)
-{
-	String want = dot.name.len > 0 ? mirror_name(mem, dot.name) : "";
-	defer if (want.len > 0) alloc::free(mem, want.ptr);
+fn uint AppState.twin_of(&self, Dot dot, Vec3 at, float tolerance) => twin_of(&self.doc, dot, at, tolerance);
 
-	if (want.len > 0)
-	{
-		foreach (other : self.doc.dots.array_view())
-		{
-			if (other.id != dot.id && other.name == want) return other.id;
-		}
-		return 0;
-	}
+fn uint AppState.mirror_twin(&self, uint id) => mirror_twin(&self.doc, &self.picker, id);
 
-	uint nearest = 0;
-	float best   = tolerance;
-	foreach (other : self.doc.dots.array_view())
-	{
-		if (other.id == dot.id) continue;
-		float gap = (other.position - at).length();
-		if (gap > best) continue;
-		best = gap;
-		nearest = other.id;
-	}
-	return nearest;
-}
+fn rig::MirrorLookup AppState.mesh_mirror(&self, Allocator allocator) => mesh_mirror(&self.doc, &self.geometry, &self.picker, allocator);
 
-// The joint across the symmetry plane from this one, or 0 for a joint on the
-// plane or one with no twin. By name first, then by position — `twin_of`'s rule.
-fn uint AppState.mirror_twin(&self, uint id)
-{
-	Dot* dot = self.doc.find(id);
-	if (!dot) return 0;
-
-	float on_plane = self.picker.scale * MIRROR_EPSILON;
-	Vec3 point;
-	Vec3 normal;
-	self.mirror_plane(&point, &normal, on_plane);
-	if (math::abs((dot.position - point).dot(normal)) <= on_plane) return 0;
-
-	uint twin = self.twin_of(*dot, reflect_across(dot.position, point, normal), on_plane);
-	return twin == id ? 0 : twin;
-}
-
-// A vertex lookup across the same plane `mirror_twin` reflects joints across.
-fn rig::MirrorLookup AppState.mesh_mirror(&self, Allocator allocator)
-{
-	float on_plane = self.picker.scale * MIRROR_EPSILON;
-	Vec3 point;
-	Vec3 normal;
-	self.mirror_plane(&point, &normal, on_plane);
-	return rig::build_mirror_lookup(allocator, self.geometry.positions, point, normal, on_plane);
-}
-
-// Which dot an edge's far end — or a limit table's primary child — becomes on
-// the other side: its twin when the mirror made or moved one, and otherwise
-// itself — a bone reaching the spine from the left reaches the same spine from
-// the right.
-fn uint AppState.mirrored_end(&self, uint other, MirrorPair[] plan, float on_plane, Vec3 plane_point, Vec3 plane_normal)
-{
-	foreach (pair : plan)
-	{
-		if (pair.source == other) return pair.twin;
-	}
-
-	Dot* dot = self.doc.find(other);
-	if (!dot) return other;
-	if (math::abs((dot.position - plane_point).dot(plane_normal)) <= on_plane) return other;
-
-	Vec3 at   = reflect_across(dot.position, plane_point, plane_normal);
-	uint twin = self.twin_of(*dot, at, on_plane);
-	return twin != 0 ? twin : other;
-}
+fn uint AppState.mirrored_end(&self, uint other, MirrorPair[] plan, float on_plane, Vec3 plane_point, Vec3 plane_normal) => mirrored_end(&self.doc, other, plan, on_plane, plane_point, plane_normal);
 
 // Gives a twin its source's rotation limits, read for the other side, leaving
 // the group open. On the reach's terms: what the mirror writes is the source's

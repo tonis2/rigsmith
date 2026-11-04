@@ -29,48 +29,7 @@ import rig;
 import std::math;
 import std::sort;
 
-<*
- Every piece of the mesh, largest first.
-
- 	`ShellRow[] rows = app.shell_rows(mem);`
-
- One pass over the vertices for the whole set — see this file's header for why
- that is the point rather than an optimisation. Empty when there are no pieces,
- or when `shells` was built from a mesh that has since been replaced: `of` is one
- entry per vertex, and a mismatch means indexing it would read past the end.
-
- The caller owns the returned array.
-*>
-fn ShellRow[] AppState.shell_rows(&self, Allocator allocator)
-{
-	usz count = self.shells.count;
-	if (count == 0 || self.shells.of.len != self.geometry.positions.len) return {};
-
-	ShellRow[] rows = alloc::new_array(allocator, ShellRow, (sz)count);
-	for (usz s = 0; s < count; s++) rows[s] = { .shell = s, .vertices = 0 };
-
-	foreach (usz v, position : self.geometry.positions)
-	{
-		int id = self.shells.of[v];
-		if (id < 0 || (usz)id >= count) continue;
-
-		ShellRow* row = &rows[(usz)id];
-		if (row.vertices == 0)
-		{
-			row.low = position;
-			row.high = position;
-		}
-		else
-		{
-			row.low = { math::min(row.low.x, position.x), math::min(row.low.y, position.y), math::min(row.low.z, position.z) };
-			row.high = { math::max(row.high.x, position.x), math::max(row.high.y, position.y), math::max(row.high.z, position.z) };
-		}
-		row.vertices++;
-	}
-
-	sort::quicksort(rows, &by_vertices);
-	return rows;
-}
+fn ShellRow[] AppState.shell_rows(&self, Allocator allocator) => shell_rows(&self.geometry, &self.shells, allocator);
 
 // ---------------------------------------------------------------------------
 // What the pointer is over

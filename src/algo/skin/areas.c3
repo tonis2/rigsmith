@@ -178,3 +178,39 @@ fn float island_shade(int island) @private
 	uint mixed = (uint)island * 2654435761u;
 	return ((float)((mixed >> 13) & 7u) / 7.0f - 0.5f) * 0.16f;
 }
+
+// The shell under the seed, or with none the shell holding most of `own`.
+fn int piece_for(rig::TriMesh* geometry, rig::MeshShells* shells, bool[] own, sz seed)
+{
+	usz count = geometry.positions.len;
+	if (shells.of.len != count) return -1;
+	if (seed >= 0 && (usz)seed < count) return shells.of[(usz)seed];
+	if (shells.count == 0) return -1;
+
+	usz[] tally = alloc::new_array(mem, usz, (sz)shells.count);
+	defer alloc::free(mem, tally);
+	foreach (v, id : shells.of)
+	{
+		if (own[v] && id >= 0) tally[(usz)id]++;
+	}
+	int best = -1;
+	usz most = 0;
+	foreach (i, held : tally)
+	{
+		if (held <= most) continue;
+		most = held;
+		best = (int)i;
+	}
+	return best;
+}
+
+<*
+ A joint's soft edge as a share of its bone: what it was given (`Dot.band`), or
+ the model's default. The one number the automatic weights' band, the card's
+ slider and an Apply's soft edge all read.
+*>
+fn float band_share(RigDocument* doc, uint dot_id)
+{
+	Dot* dot = doc.find(dot_id);
+	return dot && dot.band > 0.0f ? dot.band : BAND_SHARE_DEFAULT;
+}

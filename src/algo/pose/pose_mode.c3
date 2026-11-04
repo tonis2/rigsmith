@@ -419,3 +419,70 @@ fn PoseHold[] pose_holds(Allocator allocator, RigView* view, float height)
 	foreach (j, is_trunk : trunk) if (is_trunk) holds[j] = TRUNK;
 	return holds;
 }
+
+<*
+ The run above a dot: the joint, and the ancestors `ancestor_run` walks up to the
+ first fork — the limb as the rig's own shape draws it.
+*>
+fn PoseChain pose_chain(RigView* view, uint dot)
+{
+	PoseChain chain;
+	sz joint = view.joint_of(dot);
+	if (joint < 0) return chain;
+	chain.effector = (usz)joint;
+	chain.count = view.skeleton.ancestor_run((usz)joint, chain.joints[..]);
+	return chain;
+}
+
+<*
+ Turn a joint so its world orientation matches `held`, whatever its parents are
+ now doing.
+
+ A joint's world rotation is its parent's composed with its own, so holding the
+ world at `held` means setting the local to `parent_world^-1 * held` — the same
+ change of frame `pose_toward`'s pivot step runs, at one joint and with no target
+ but the orientation itself. Constrained through the joint's limits when it has
+ them, so a held foot never lands out of range; free otherwise, since most feet
+ are. Nothing below is written — the subtree follows through `joint_palette`.
+*>
+fn void hold_world_rotation(RigDocument* doc, RigView* view, rig::Pose* pose, uint dot_id, Quaternionf held)
+{
+	sz found = view.joint_of(dot_id);
+	if (found < 0) return;
+	usz joint = (usz)found;
+
+	Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
+	if (catch read) return;
+	Quaternionf[] world = read;
+	defer alloc::free(mem, world);
+
+	int parent = view.skeleton.parents[joint];
+	Quaternionf parent_world = parent >= 0 ? world[(usz)parent] : (Quaternionf)quaternion::IDENTITY;
+	Quaternionf local = parent_world.invert().mul(held).normalize();
+
+	JointRotationLimits limits = doc.rotation_limits_of(dot_id);
+	if (limits.constrained)
+	{
+		JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+		if (frame.usable()) local = constrain_joint_rotation(frame, limits, local);
+	}
+	pose.rotations[joint] = local;
+}
+
+<*
+ Where the chain's joints stand for `pose`, anchor first and effector last —
+ the points the solver turns, and what it reads back after a cut pass.
+*>
+fn void chain_points(RigView* view, PoseChain chain, rig::Pose pose, Vec3 ground_shift, Vec3[] points)
+{
+	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
+	if (catch built) return;
+	Matrix4f[] palette = built;
+	defer alloc::free(mem, palette);
+	for (usz t = 0; t < chain.count; t++)
+	{
+		usz j = chain.joints[chain.count - 1 - t];
+		points[t] = view.skeleton.joints[j].transform(palette[j]) + ground_shift;
+	}
+	points[chain.count] = view.skeleton.joints[chain.effector].transform(palette[chain.effector]) + ground_shift;
+}

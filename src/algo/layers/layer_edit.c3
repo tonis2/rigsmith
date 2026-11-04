@@ -54,3 +54,15 @@ fn Quaternionf scaled_turn(Quaternionf q, float factor)
 	if (!axis_angle_of(q, &axis, &angle)) return quaternion::IDENTITY;
 	return quaternion::from_axis_angle{float}(axis, math::min(angle * factor, 3.1f));
 }
+
+fn String unused_layer_name(AnimTemplate* clip, String base)
+{
+	for (uint n = 1; n < 1000; n++)
+	{
+		String tried = n == 1 ? base : string::tformat("%s %d", base, n);
+		bool taken = false;
+		foreach (&layer : clip.layers) if (layer.name == tried) { taken = true; break; }
+		if (!taken) return tried.copy(mem);
+	}
+	return base.copy(mem);
+}

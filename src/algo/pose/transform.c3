@@ -104,3 +104,17 @@ enum MoveByResult : int
 	LOCKED,
 	REFUSED,
 }
+
+fn Vec3 model_direction(RigDocument* doc, Vec3 world_direction)
+{
+	return doc.model_transform.inverse_direction(world_direction);
+}
+
+fn Vec3 model_local_center(RigDocument* doc, rig::TriMesh* geometry)
+{
+	if (geometry.positions.len > 0) return geometry.bounds().center();
+	if (doc.dots.len() == 0) return {};
+	Vec3 total = {};
+	foreach (dot : doc.dots.array_view()) total = total + dot.position;
+	return total * (1.0f / (float)doc.dots.len());
+}

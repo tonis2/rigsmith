@@ -73,24 +73,7 @@ fn void AppState.drop_stroke_mirror(&self)
 	self.stroke_mirror = {};
 }
 
-<*
- The vertices across the plane from `vertices`, aligned with them: the partner
- of each, or `count` (past the mesh) where it has none or sits on the plane — a
- vertex the joint and its twin would both claim is the joint's alone.
-*>
-fn uint[] AppState.mirrored_vertices(&self, Allocator allocator, rig::MirrorLookup* across, uint[] vertices)
-{
-	usz count = self.geometry.positions.len;
-	uint[] partners = alloc::new_array(allocator, uint, (sz)vertices.len);
-	foreach (i, v : vertices)
-	{
-		partners[i] = (uint)count;
-		if ((usz)v >= count) continue;
-		sz partner = across.twin_of(self.geometry.positions[v]);
-		if (partner >= 0 && (uint)partner != v) partners[i] = (uint)partner;
-	}
-	return partners;
-}
+fn uint[] AppState.mirrored_vertices(&self, Allocator allocator, rig::MirrorLookup* across, uint[] vertices) => mirrored_vertices(&self.geometry, allocator, across, vertices);
 
 <*
  The button came up: settle what the stroke put off.
@@ -424,58 +407,8 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 	return kept;
 }
 
-<*
- Keep only the surface under the cursor: the touches within the brush's radius,
- measured in the model, of the point under the centre — the closest touch to it
- on screen, the nearer one where two tie. A circle on the screen also covers
- whatever else shows through it — a hand held in front of the chest, fingers
- over a palm — and painting the chest must not paint those. A face is measured
- at its touch, so the corners of a big face under the cursor stay.
-
- @return `How many of the touches are left, packed to the front.`
-*>
 fn usz AppState.brush_surface(&self, BrushTouch[] touches, Matrix4f view_projection,
-	Vec2 viewport, Vec3 eye, float radius)
-{
-	usz kept = touches.len;
-	if (kept < 2) return kept;
-	usz middle = 0;
-	float nearest = (touches[0].point - eye).length();
-	for (usz i = 1; i < kept; i++)
-	{
-		float closeness = touches[i].closeness;
-		if (closeness < touches[middle].closeness) continue;
-		float gap = (touches[i].point - eye).length();
-		if (closeness == touches[middle].closeness && gap >= nearest) continue;
-		middle = i;
-		nearest = gap;
-	}
-	Vec3 centre = touches[middle].point;
-
-	// The brush's radius in model units at that depth: a short step across the
-	// view, and how many pixels it covers.
-	Vec3 look = centre - eye;
-	float away = look.length();
-	if (away <= 0.0f) return kept;
-	look /= away;
-	Vec3 up = math::abs(look.y) < 0.9f ? (Vec3){ 0.0f, 1.0f, 0.0f } : (Vec3){ 1.0f, 0.0f, 0.0f };
-	Vec3 side = look.cross(up).normalize();
-	float step = away * 0.01f;
-	Vec2? from = project(view_projection, centre, viewport);
-	Vec2? to = project(view_projection, centre + side * step, viewport);
-	if (catch from, to) return kept;
-	float pixels = (to - from).length();
-	if (pixels <= 0.0f) return kept;
-	float span = radius * step / pixels * BRUSH_DEPTH_SLACK;
-
-	usz left = 0;
-	for (usz i = 0; i < kept; i++)
-	{
-		if ((touches[i].point - centre).length() > span) continue;
-		touches[left++] = touches[i];
-	}
-	return left;
-}
+	Vec2 viewport, Vec3 eye, float radius) => brush_surface(touches, view_projection, viewport, eye, radius);
 
 <*
  The vertices matching a pick.

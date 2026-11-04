@@ -345,43 +345,7 @@ fn float AppState.clip_foot_slide(&self, AnimRef ref)
 	return numbers.foot_slide;
 }
 
-<*
- Every rotation key of a clip written on this rig, held inside the rig's limits.
-
- A generator solves for where a foot should be, not for what the joints allow,
- and the few degrees it overshoots by — a knee a hair past straight, an ankle
- rolled further than it goes — are clamped away again when the clip plays. Kept
- in the keys, they are a clip whose keys say one thing and whose playback another,
- and measure_clip reports every one as saturating. Keys on this rig are its own
- local turns, so the clamp is the same one playback runs.
-*>
-fn void AppState.hold_keys_inside_limits(&self, RigView* view, AnimTemplate* clip)
-{
-	foreach (&frame : clip.keyframes)
-	{
-		foreach (&dot : frame.dots)
-		{
-			if (dot.channels == TRANSLATION) continue;
-			sz joint = -1;
-			foreach (usz j, name : view.names)
-			{
-				if (name == dot.joint_name)
-				{
-					joint = (sz)j;
-					break;
-				}
-			}
-			if (joint < 0 || (usz)joint >= view.dot_ids.len) continue;
-			JointRotationLimits limits = self.doc.rotation_limits_of(view.dot_ids[(usz)joint]);
-			if (!limits.constrained) continue;
-			JointLimitFrame limit_frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-			if (!limit_frame.usable()) continue;
-			Quaternionf turn = quaternion::from_axis_angle{float}(dot.axis, dot.angle);
-			Quaternionf held = constrain_joint_rotation(limit_frame, limits, turn);
-			axis_angle_of(held, &dot.axis, &dot.angle);
-		}
-	}
-}
+fn void AppState.hold_keys_inside_limits(&self, RigView* view, AnimTemplate* clip) => hold_keys_inside_limits(&self.doc, view, clip);
 
 // What `gait_limit_clamp` reads the limits off.
 struct GaitLimits @local

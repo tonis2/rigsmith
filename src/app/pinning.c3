@@ -201,36 +201,11 @@ fn usz AppState.pin_dabs(&self, VertexPin[] batch, bool commit = true)
 // taken off to anybody — a vertex left holding nothing is unused, and the Unused
 // overlay shows it.
 
-// Whether a joint's weights are its own — see `Dot.held`.
-fn bool AppState.weights_held(&self, uint dot_id)
-{
-	Dot* dot = self.doc.find(dot_id);
-	return dot && dot.held;
-}
+fn bool AppState.weights_held(&self, uint dot_id) => weights_held(&self.doc, dot_id);
 
-// Whether any joint's weights are its own.
-fn bool AppState.weights_edited(&self)
-{
-	foreach (dot : self.doc.dots.array_view()) if (dot.held) return true;
-	return false;
-}
+fn bool AppState.weights_edited(&self) => weights_edited(&self.doc);
 
-<*
- What the document stores for a dot, one weight per vertex, held or not: what
- a write to its column is measured against.
-
- The caller owns the result, which is exactly as long as the mesh.
-*>
-fn float[] AppState.stored_column(&self, Allocator allocator, uint dot_id)
-{
-	usz count = self.geometry.positions.len;
-	float[] column = alloc::new_array(allocator, float, (sz)count);
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if (pin.dot_id == dot_id && (usz)pin.vertex < count) column[pin.vertex] = pin.share;
-	}
-	return column;
-}
+fn float[] AppState.stored_column(&self, Allocator allocator, uint dot_id) => stored_column(&self.doc, &self.geometry, allocator, dot_id);
 
 <*
  One joint's weight on every vertex, as the views show it: what it stores when

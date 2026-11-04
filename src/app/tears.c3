@@ -11,15 +11,7 @@ import rig;
 import std::math::vector;
 import std::collections::list;
 
-// The length joined surfaces are measured in: the model's height, or its widest side when flat.
-fn float AppState.join_scale(&self)
-{
-	float height = self.model_height();
-	if (height > 0.0f || self.geometry.positions.len == 0) return height;
-	rig::Bounds box = self.geometry.bounds();
-	Vec3 size = box.max - box.min;
-	return math::max(size.x, size.z);
-}
+fn float AppState.join_scale(&self) => join_scale(&self.doc, &self.geometry);
 
 // The mesh's layer partners at `JOIN_GAP`, built on first ask. Borrowed.
 fn rig::JoinedLayers* AppState.joined_layers(&self)

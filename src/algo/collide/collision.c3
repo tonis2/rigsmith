@@ -200,3 +200,16 @@ macro float @bisect_clear(CollisionBlock* report, CollisionContact* contact, flo
  what pinned means, and half a clearance is under what the eye can see.
 *>
 const float PINNED_TIP_TRAVEL = 0.5f;
+
+<*
+ The joints on either side of a contact, by the dot names the rig gives
+ them — "LeftHand" and "Spine1" — or "" for a triangle no joint weights.
+*>
+fn String contact_region_name(RigDocument* doc, CollisionPolicy* collision_policy, DeformedCollisionSurface* deformed_surface, uint triangle)
+{
+	uint region = deformed_surface.region_for_triangle(triangle);
+	usz joint = (usz)region;
+	if (joint >= collision_policy.dot_ids.len) return "";
+	Dot* dot = doc.find(collision_policy.dot_ids[joint]);
+	return dot ? dot.name : "";
+}

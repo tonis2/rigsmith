@@ -274,17 +274,7 @@ fn AnimRef AppState.land_layered(&self, AnimRef ref, AnimTemplate built)
 // ---------------------------------------------------------------------------
 // Stack edits. Each is one undo step.
 
-fn String AppState.unused_layer_name(&self, AnimTemplate* clip, String base)
-{
-	for (uint n = 1; n < 1000; n++)
-	{
-		String tried = n == 1 ? base : string::tformat("%s %d", base, n);
-		bool taken = false;
-		foreach (&layer : clip.layers) if (layer.name == tried) { taken = true; break; }
-		if (!taken) return tried.copy(mem);
-	}
-	return base.copy(mem);
-}
+fn String AppState.unused_layer_name(&self, AnimTemplate* clip, String base) => unused_layer_name(clip, base);
 
 <*
  The names of the dots the viewport has selected, in rig order and in the clip's

@@ -24,10 +24,7 @@ fn Vec3 Character.model_eye(&self, OrbitCamera* camera)
 *>
 fn float Character.shown_scale(&self) => self.preview_scale > 0.0f ? self.preview_scale : 1.0f;
 
-fn Vec3 Character.model_direction(&self, Vec3 world_direction)
-{
-	return self.doc.model_transform.inverse_direction(world_direction);
-}
+fn Vec3 Character.model_direction(&self, Vec3 world_direction) => model_direction(&self.doc, world_direction);
 
 fn TransformTarget AppState.transform_target(&self)
 {
@@ -113,14 +110,7 @@ fn Quaternionf AppState.transform_basis(&self, TransformTarget target, Transform
 	return frame.usable() ? frame.rotation.normalize() : (Quaternionf)quaternion::IDENTITY;
 }
 
-fn Vec3 AppState.model_local_center(&self)
-{
-	if (self.geometry.positions.len > 0) return self.geometry.bounds().center();
-	if (self.doc.dots.len() == 0) return {};
-	Vec3 total = {};
-	foreach (dot : self.doc.dots.array_view()) total = total + dot.position;
-	return total * (1.0f / (float)self.doc.dots.len());
-}
+fn Vec3 AppState.model_local_center(&self) => model_local_center(&self.doc, &self.geometry);
 
 fn Vec3 AppState.transform_target_pivot(&self, TransformTarget target, TransformPivot mode)
 {

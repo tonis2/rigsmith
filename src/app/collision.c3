@@ -177,18 +177,7 @@ fn void AppState.judge_collision_cost(&self)
 	}
 }
 
-<*
- The joints on either side of a contact, by the dot names the rig gives
- them — "LeftHand" and "Spine1" — or "" for a triangle no joint weights.
-*>
-fn String AppState.contact_region_name(&self, uint triangle)
-{
-	uint region = self.deformed_surface.region_for_triangle(triangle);
-	usz joint = (usz)region;
-	if (joint >= self.collision_policy.dot_ids.len) return "";
-	Dot* dot = self.doc.find(self.collision_policy.dot_ids[joint]);
-	return dot ? dot.name : "";
-}
+fn String AppState.contact_region_name(&self, uint triangle) => contact_region_name(&self.doc, &self.collision_policy, &self.deformed_surface, triangle);
 
 <*
  Whether a move of `carried` as one piece is a move of every joint the skin

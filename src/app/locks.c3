@@ -255,19 +255,7 @@ fn bool AppState.is_trunk_joint(&self, uint dot_id)
 	return view.skeleton.ancestor_run((usz)j, (usz[IK_MAX_CHAIN]){}[..]) == 0;
 }
 
-<*
- The feet, by the canonical names every body plan and `pin_feet` use.
- @return `How many of the two there are.`
-*>
-fn usz AppState.foot_ids(&self, uint[2]* out)
-{
-	usz found = 0;
-	foreach (dot : self.doc.dots.array_view())
-	{
-		if (found < 2 && (dot.name == "ankle_L" || dot.name == "ankle_R")) (*out)[found++] = dot.id;
-	}
-	return found;
-}
+fn usz AppState.foot_ids(&self, uint[2]* out) => foot_ids(&self.doc, out);
 
 // Whether both feet are pinned, position and angle — what the Pin feet toggle shows.
 fn bool AppState.feet_pinned(&self)

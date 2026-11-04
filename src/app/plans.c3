@@ -160,25 +160,7 @@ fn bool AppState.apply_pack_rig(&self, usz index, PresetFacing facing = AUTO)
 	return true;
 }
 
-<*
- Which way the rig faces at rest, along the floor: where its toes point from
- their ankles, or its left side turned a quarter (see `rig_facing`). What the
- viewport's facing arrow draws and what a re-fit the other way round turns from.
-
- @return `False for a rig with nothing named to read it from.`
-*>
-fn bool AppState.rest_facing(&self, Vec3* out)
-{
-	if (self.doc.dots.len() < 2) return false;
-	@pool()
-	{
-		uint[] dot_ids;
-		rig::Skeleton? built = build_skeleton(&self.doc, tmem, &dot_ids);
-		if (catch built) return false;
-		rig::Skeleton skeleton = built;
-		return rig_facing(&skeleton, self.joint_names(tmem, dot_ids), out);
-	};
-}
+fn bool AppState.rest_facing(&self, Vec3* out) => rest_facing(&self.doc, out);
 
 <*
  Fit the rig's body plan again, the other way round from the way it faces now,

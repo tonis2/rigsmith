@@ -34,27 +34,7 @@ module crig;
 import rig;
 import std::math;
 
-<*
- How tall the model stands, in model units: the mesh's extent along Y, or the
- rig's when there is no mesh. Zero for an empty scene.
-*>
-fn float AppState.model_height(&self)
-{
-	if (self.geometry.positions.len > 0)
-	{
-		rig::Bounds box = self.geometry.bounds();
-		return box.max.y - box.min.y;
-	}
-	if (self.doc.dots.len() == 0) return 0.0f;
-	float low = math::FLOAT_MAX;
-	float high = -math::FLOAT_MAX;
-	foreach (dot : self.doc.dots.array_view())
-	{
-		low = math::min(low, dot.position.y);
-		high = math::max(high, dot.position.y);
-	}
-	return high - low;
-}
+fn float AppState.model_height(&self) => model_height(&self.doc, &self.geometry);
 
 <*
  Resize the model by a factor, as one undo step.

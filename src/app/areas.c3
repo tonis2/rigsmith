@@ -148,30 +148,7 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 	return mask;
 }
 
-// The shell under the seed, or with none the shell holding most of `own`.
-fn int AppState.piece_for(&self, bool[] own, sz seed)
-{
-	usz count = self.geometry.positions.len;
-	if (self.shells.of.len != count) return -1;
-	if (seed >= 0 && (usz)seed < count) return self.shells.of[(usz)seed];
-	if (self.shells.count == 0) return -1;
-
-	usz[] tally = alloc::new_array(mem, usz, (sz)self.shells.count);
-	defer alloc::free(mem, tally);
-	foreach (v, id : self.shells.of)
-	{
-		if (own[v] && id >= 0) tally[(usz)id]++;
-	}
-	int best = -1;
-	usz most = 0;
-	foreach (i, held : tally)
-	{
-		if (held <= most) continue;
-		most = held;
-		best = (int)i;
-	}
-	return best;
-}
+fn int AppState.piece_for(&self, bool[] own, sz seed) => piece_for(&self.geometry, &self.shells, own, seed);
 
 <*
  The mesh's UV islands, read from the source file the first time they are asked
@@ -428,16 +405,7 @@ fn float AppState.area_scale(&self, uint dot_id)
 // The soft edge the card asks for, in model units.
 fn float AppState.area_soft_distance(&self) => self.band_share(self.area_dot) * self.area_scale(self.area_dot);
 
-<*
- A joint's soft edge as a share of its bone: what it was given (`Dot.band`), or
- the model's default. The one number the automatic weights' band, the card's
- slider and an Apply's soft edge all read.
-*>
-fn float AppState.band_share(&self, uint dot_id)
-{
-	Dot* dot = self.doc.find(dot_id);
-	return dot && dot.band > 0.0f ? dot.band : BAND_SHARE_DEFAULT;
-}
+fn float AppState.band_share(&self, uint dot_id) => band_share(&self.doc, dot_id);
 
 <*
  The same part on the twin joint across the symmetry plane.

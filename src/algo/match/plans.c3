@@ -109,3 +109,23 @@ fn JointAxisLimit[3] carried_axes(JointAxisLimit[3] axes, Quaternionf from, Quat
 	out[2] = carried_axis(to.rotate_vec3({ 0, 0, 1 }), xs, zs, axes[0], axes[2]);
 	return out;
 }
+
+<*
+ Which way the rig faces at rest, along the floor: where its toes point from
+ their ankles, or its left side turned a quarter (see `rig_facing`). What the
+ viewport's facing arrow draws and what a re-fit the other way round turns from.
+
+ @return `False for a rig with nothing named to read it from.`
+*>
+fn bool rest_facing(RigDocument* doc, Vec3* out)
+{
+	if (doc.dots.len() < 2) return false;
+	@pool()
+	{
+		uint[] dot_ids;
+		rig::Skeleton? built = build_skeleton(doc, tmem, &dot_ids);
+		if (catch built) return false;
+		rig::Skeleton skeleton = built;
+		return rig_facing(&skeleton, joint_names(doc, tmem, dot_ids), out);
+	};
+}

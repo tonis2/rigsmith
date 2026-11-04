@@ -74,3 +74,13 @@ fn void free_tears(Allocator allocator, TearPatch[] tears)
 	}
 	if (tears.len > 0) alloc::free(allocator, tears);
 }
+
+// The length joined surfaces are measured in: the model's height, or its widest side when flat.
+fn float join_scale(RigDocument* doc, rig::TriMesh* geometry)
+{
+	float height = model_height(doc, geometry);
+	if (height > 0.0f || geometry.positions.len == 0) return height;
+	rig::Bounds box = geometry.bounds();
+	Vec3 size = box.max - box.min;
+	return math::max(size.x, size.z);
+}

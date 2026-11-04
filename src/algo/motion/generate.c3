@@ -160,3 +160,15 @@ fn float rig_heading_by_names(RigView* view)
 	if (lefts < 2 || rights < 2) return 0.0f;
 	return heading_of(right / (float)rights - left / (float)lefts);
 }
+
+<*
+ Whether a clip of this name is on the character, from any file.
+*>
+fn bool has_bound_clip_named(RigDocument* doc, String name)
+{
+	foreach (bound : doc.animations.array_view())
+	{
+		if (bound.clip == name) return true;
+	}
+	return false;
+}

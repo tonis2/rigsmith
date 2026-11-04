@@ -96,184 +96,20 @@ fn void AppState.drop_playback_rig(&self)
 	self.playback_rig_built = false;
 }
 
-<*
- The multipliers an older session carried, with their dot ids resolved against
- this build's joint order — read once, by `legacy_weights`, which bakes them
- into the weights an older session showed. Empty when there are none, which is every session written
- since version 31.
-*>
-fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_ids)
-{
-	sz dabs = self.doc.paint.len();
-	if (dabs == 0) return {};
+fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_ids) => paint_columns(&self.doc, &self.geometry, allocator, dot_ids);
 
-	PaintColumn[] columns = alloc::new_array(allocator, PaintColumn, dabs);
-	usz kept = 0;
-	foreach (dab : self.doc.paint.array_view())
-	{
-		if ((usz)dab.vertex >= self.geometry.positions.len) continue;
-		foreach (usz j, id : dot_ids)
-		{
-			if (id != dab.dot_id) continue;
-			columns[kept++] = { .vertex = dab.vertex, .joint = j, .factor = dab.factor };
-			break;
-		}
-	}
+fn bool[] AppState.held_joints(&self, Allocator allocator, uint[] dot_ids) => held_joints(&self.doc, allocator, dot_ids);
 
-	if (kept == 0)
-	{
-		alloc::free(allocator, columns);
-		return {};
-	}
-	return columns[:kept];
-}
-
-<*
- Which joints are held (`Dot.held`): one flag per joint, empty when none is.
-*>
-fn bool[] AppState.held_joints(&self, Allocator allocator, uint[] dot_ids)
-{
-	bool holding = false;
-	foreach (dot : self.doc.dots.array_view()) if (dot.held) holding = true;
-	if (!holding) return {};
-	bool[] held = alloc::new_array(allocator, bool, (sz)dot_ids.len);
-	foreach (usz j, id : dot_ids)
-	{
-		Dot* dot = self.doc.find(id);
-		held[j] = dot && dot.held;
-	}
-	return held;
-}
-
-<*
- The held joints' stored weights with their dot ids resolved against this
- build's joint order.
-
- `paint_columns` for the other layer — one pass over a sparse list, dropping an
- entry whose dot is gone or not held and a vertex past the end of the mesh. A
- full column per held joint is a long list, so each entry is resolved through
- one table read (`joint_table`) rather than a search of the joints.
-
- Empty when no joint is held, which is the ordinary case and costs no
- allocation.
-*>
-fn PinColumn[] AppState.pin_columns(&self, Allocator allocator, uint[] dot_ids)
-{
-	sz stored = self.doc.pins.len();
-	if (stored == 0) return {};
-
-	usz[] table = joint_table(mem, dot_ids);
-	defer alloc::free(mem, table);
-	bool[] held = alloc::new_array(mem, bool, (sz)table.len);
-	defer alloc::free(mem, held);
-	usz holding = 0;
-	foreach (dot : self.doc.dots.array_view())
-	{
-		if (!dot.held || (usz)dot.id >= table.len) continue;
-		held[dot.id] = true;
-		holding++;
-	}
-	if (holding == 0) return {};
-
-	PinColumn[] columns = alloc::new_array(allocator, PinColumn, stored);
-	usz kept = 0;
-	foreach (pin : self.doc.pins.array_view())
-	{
-		if ((usz)pin.vertex >= self.geometry.positions.len) continue;
-		if ((usz)pin.dot_id >= table.len || !held[pin.dot_id] || table[pin.dot_id] == 0) continue;
-		columns[kept++] = { .vertex = pin.vertex, .joint = table[pin.dot_id] - 1, .share = pin.share };
-	}
-
-	if (kept == 0)
-	{
-		alloc::free(allocator, columns);
-		return {};
-	}
-	return columns[:kept];
-}
+fn PinColumn[] AppState.pin_columns(&self, Allocator allocator, uint[] dot_ids) => pin_columns(&self.doc, &self.geometry, allocator, dot_ids);
 
 
-<*
- The document's attachments as the binder takes them: one joint index per shell,
- -1 where the binder is left to decide for itself.
+fn int[] AppState.attachment_joints(&self, Allocator allocator, uint[] dot_ids) => attachment_joints(&self.doc, &self.shells, allocator, dot_ids);
 
- An attachment whose dot has since been deleted resolves to nothing and its shell
- falls back to the automatic rule, which is the right reading of a pin hanging
- off a hole.
+fn String[] AppState.joint_names(&self, Allocator allocator, uint[] dot_ids) => joint_names(&self.doc, allocator, dot_ids);
 
- Empty when there is nothing to say — `bind_geodesic` reads a short array as
- "decide the rest automatically".
-*>
-fn int[] AppState.attachment_joints(&self, Allocator allocator, uint[] dot_ids)
-{
-	if (self.shells.count == 0 || self.doc.attachments.len() == 0) return {};
+fn float[] AppState.grow_joints(&self, Allocator allocator, uint[] dot_ids) => grow_joints(&self.doc, allocator, dot_ids);
 
-	int[] joints = alloc::new_array(allocator, int, (sz)self.shells.count);
-	joints[:self.shells.count] = -1;
-
-	foreach (entry : self.doc.attachments.array_view())
-	{
-		if ((usz)entry.shell >= self.shells.count) continue;
-
-		joints[entry.shell] = -1;
-		foreach (usz j, id : dot_ids)
-		{
-			if (id != entry.dot_id) continue;
-			joints[entry.shell] = (int)j;
-			break;
-		}
-	}
-	return joints;
-}
-
-// One name per joint, borrowed from the document. See `RigView.names` for what
-// a blank one means and how long these live.
-fn String[] AppState.joint_names(&self, Allocator allocator, uint[] dot_ids)
-{
-	String[] names = alloc::new_array(allocator, String, (sz)dot_ids.len);
-	foreach (usz j, id : dot_ids)
-	{
-		Dot* dot = self.doc.find(id);
-		names[j] = dot ? dot.name : "";
-	}
-	return names;
-}
-
-<*
- The document's grows as the binder takes them: one distance per joint, empty
- when no dot is grown — see `Dot.grow`.
-*>
-fn float[] AppState.grow_joints(&self, Allocator allocator, uint[] dot_ids)
-{
-	bool grown = false;
-	foreach (dot : self.doc.dots.array_view()) if (dot.grow != 0.0f) grown = true;
-	if (!grown) return {};
-	float[] grows = alloc::new_array(allocator, float, (sz)dot_ids.len);
-	foreach (usz j, id : dot_ids)
-	{
-		Dot* dot = self.doc.find(id);
-		grows[j] = dot ? dot.grow : 0.0f;
-	}
-	return grows;
-}
-
-<*
- The document's soft edges: one share of its bone per joint, 0 for the model's
- default, empty when no dot has one — see `Dot.band`.
-*>
-fn float[] AppState.band_joints(&self, Allocator allocator, uint[] dot_ids)
-{
-	bool softened = false;
-	foreach (dot : self.doc.dots.array_view()) if (dot.band > 0.0f) softened = true;
-	if (!softened) return {};
-	float[] bands = alloc::new_array(allocator, float, (sz)dot_ids.len);
-	foreach (usz j, id : dot_ids)
-	{
-		Dot* dot = self.doc.find(id);
-		bands[j] = dot ? dot.band : 0.0f;
-	}
-	return bands;
-}
+fn float[] AppState.band_joints(&self, Allocator allocator, uint[] dot_ids) => band_joints(&self.doc, allocator, dot_ids);
 
 <*
  The document's reaches as the binder takes them: one distance per joint.

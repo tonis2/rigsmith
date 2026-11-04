@@ -180,3 +180,34 @@ fn usz top_row(float[] row, uint[] dot_ids, sz keep, uint[] out_dots, float[] ou
 	for (usz i = 0; i < held; i++) out_shares[i] /= sum;
 	return held;
 }
+
+// Whether a joint's weights are its own — see `Dot.held`.
+fn bool weights_held(RigDocument* doc, uint dot_id)
+{
+	Dot* dot = doc.find(dot_id);
+	return dot && dot.held;
+}
+
+// Whether any joint's weights are its own.
+fn bool weights_edited(RigDocument* doc)
+{
+	foreach (dot : doc.dots.array_view()) if (dot.held) return true;
+	return false;
+}
+
+<*
+ What the document stores for a dot, one weight per vertex, held or not: what
+ a write to its column is measured against.
+
+ The caller owns the result, which is exactly as long as the mesh.
+*>
+fn float[] stored_column(RigDocument* doc, rig::TriMesh* geometry, Allocator allocator, uint dot_id)
+{
+	usz count = geometry.positions.len;
+	float[] column = alloc::new_array(allocator, float, (sz)count);
+	foreach (pin : doc.pins.array_view())
+	{
+		if (pin.dot_id == dot_id && (usz)pin.vertex < count) column[pin.vertex] = pin.share;
+	}
+	return column;
+}

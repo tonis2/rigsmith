@@ -477,19 +477,7 @@ fn Quaternionf? AppState.joint_axes(&self, uint dot, bool posed)
 	return carried_joint_limit_frame(frame, &view.skeleton, world, (usz)found);
 }
 
-<*
- The run above a dot: the joint, and the ancestors `ancestor_run` walks up to the
- first fork — the limb as the rig's own shape draws it.
-*>
-fn PoseChain AppState.pose_chain(&self, RigView* view, uint dot)
-{
-	PoseChain chain;
-	sz joint = view.joint_of(dot);
-	if (joint < 0) return chain;
-	chain.effector = (usz)joint;
-	chain.count = view.skeleton.ancestor_run((usz)joint, chain.joints[..]);
-	return chain;
-}
+fn PoseChain AppState.pose_chain(&self, RigView* view, uint dot) => pose_chain(view, dot);
 
 <*
  Begins a pose move on the selected joint (G).
@@ -790,40 +778,7 @@ fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, ui
 	}
 }
 
-<*
- Turn a joint so its world orientation matches `held`, whatever its parents are
- now doing.
-
- A joint's world rotation is its parent's composed with its own, so holding the
- world at `held` means setting the local to `parent_world^-1 * held` — the same
- change of frame `pose_toward`'s pivot step runs, at one joint and with no target
- but the orientation itself. Constrained through the joint's limits when it has
- them, so a held foot never lands out of range; free otherwise, since most feet
- are. Nothing below is written — the subtree follows through `joint_palette`.
-*>
-fn void AppState.hold_world_rotation(&self, RigView* view, rig::Pose* pose, uint dot_id, Quaternionf held)
-{
-	sz found = view.joint_of(dot_id);
-	if (found < 0) return;
-	usz joint = (usz)found;
-
-	Quaternionf[]? read = pose.world_rotations(mem, &view.skeleton);
-	if (catch read) return;
-	Quaternionf[] world = read;
-	defer alloc::free(mem, world);
-
-	int parent = view.skeleton.parents[joint];
-	Quaternionf parent_world = parent >= 0 ? world[(usz)parent] : (Quaternionf)quaternion::IDENTITY;
-	Quaternionf local = parent_world.invert().mul(held).normalize();
-
-	JointRotationLimits limits = self.doc.rotation_limits_of(dot_id);
-	if (limits.constrained)
-	{
-		JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-		if (frame.usable()) local = constrain_joint_rotation(frame, limits, local);
-	}
-	pose.rotations[joint] = local;
-}
+fn void AppState.hold_world_rotation(&self, RigView* view, rig::Pose* pose, uint dot_id, Quaternionf held) => hold_world_rotation(&self.doc, view, pose, dot_id, held);
 
 <*
  Twist a limb's bend so its elbow or knee points toward `pole`.
@@ -1158,23 +1113,7 @@ fn Quaternionf AppState.pivot_step(
 	return constrain_joint_rotation(*frame, *limits, candidate);
 }
 
-<*
- Where the chain's joints stand for `pose`, anchor first and effector last —
- the points the solver turns, and what it reads back after a cut pass.
-*>
-fn void AppState.chain_points(&self, RigView* view, PoseChain chain, rig::Pose pose, Vec3 ground_shift, Vec3[] points)
-{
-	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
-	if (catch built) return;
-	Matrix4f[] palette = built;
-	defer alloc::free(mem, palette);
-	for (usz t = 0; t < chain.count; t++)
-	{
-		usz j = chain.joints[chain.count - 1 - t];
-		points[t] = view.skeleton.joints[j].transform(palette[j]) + ground_shift;
-	}
-	points[chain.count] = view.skeleton.joints[chain.effector].transform(palette[chain.effector]) + ground_shift;
-}
+fn void AppState.chain_points(&self, RigView* view, PoseChain chain, rig::Pose pose, Vec3 ground_shift, Vec3[] points) => chain_points(view, chain, pose, ground_shift, points);
 
 <*
  A digit's runs put back as the gesture found them, so every move solves from

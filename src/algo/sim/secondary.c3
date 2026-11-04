@@ -556,3 +556,91 @@ fn SecondaryChain[] secondary_chains_from_bones(Allocator allocator, RigDocument
 
 	return runs.len() > 0 ? runs.to_array(allocator) : (SecondaryChain[]){};
 }
+
+<*
+ The joints a chain owns in this build, root first: `secondary_run` with the
+ dot ids resolved. Zero when the chain does not resolve here.
+
+ @param out : `Room for the run. The view's joint count is always enough.`
+*>
+fn usz secondary_run_of(RigView* view, SecondaryChain chain, usz[] out)
+{
+	sz root = view.joint_of(chain.root);
+	sz tip = view.joint_of(chain.tip);
+	if (root < 0 || tip < 0) return 0;
+	return secondary_run(&view.skeleton, (usz)root, (usz)tip, out);
+}
+
+<*
+ Where a chain rooted at this dot would end: the far end of the unbranched run
+ below it, or the dot itself at a fork. See `secondary_infer_tip`.
+
+ @return `The tip's dot id, or 0 when the root is not a joint of this build.`
+*>
+fn uint infer_secondary_tip(RigView* view, uint root)
+{
+	sz joint = view.joint_of(root);
+	if (joint < 0) return 0;
+	usz tip = secondary_infer_tip(&view.skeleton, (usz)joint);
+	return tip < view.dot_ids.len ? view.dot_ids[tip] : 0;
+}
+
+<*
+ Why this record could not be simulated, or "" when it could.
+
+ 	`String problem = app.secondary_problem(&view, chain);`
+ 	`if (problem.len > 0) { app.@notice("%s", problem); return; }`
+
+ The four shapes `jiggle_specs_from_document` would skip, said out loud before
+ they are written, plus the values a file would refuse:
+
+ - the root is not a joint of this rig, or is the skeleton's own root — there
+   is no animated point above it for the chain to hang from;
+ - the tip is not a joint, or does not descend from the root;
+ - the run passes through a joint another chain already owns. One bone, one
+   chain: a run that overlapped would have the nearer chain keep the joint and
+   this one silently lose it;
+ - a value outside its range — see `secondary_values_sane`.
+
+ The sentence is a literal, so nothing is owned by the caller.
+*>
+fn String secondary_problem(RigDocument* doc, RigView* view, SecondaryChain chain)
+{
+	if (!secondary_values_sane(chain))
+	{
+		return "flexibility and damping run 0 to 1, gravity to ±10, the swing to 180° and the thickness cannot be negative";
+	}
+
+	sz root = view.joint_of(chain.root);
+	if (root < 0) return "the chain's root is not a joint of this rig";
+	if (view.skeleton.parents[root] < 0)
+	{
+		return "the root cannot start a chain — there is nothing above it to hinge from";
+	}
+
+	uint tip_id = chain.tip != 0 ? chain.tip : chain.root;
+	sz tip = view.joint_of(tip_id);
+	if (tip < 0) return "the chain's tip is not a joint of this rig";
+
+	usz[] run = alloc::new_array(mem, usz, (sz)view.len());
+	defer alloc::free(mem, run);
+	usz length = secondary_run(&view.skeleton, (usz)root, (usz)tip, run);
+	if (length == 0) return "the tip has to be below the root — a chain runs down one line of bones";
+
+	usz[] other = alloc::new_array(mem, usz, (sz)view.len());
+	defer alloc::free(mem, other);
+	foreach (held : doc.secondary.array_view())
+	{
+		if (held.root == chain.root) continue;
+		usz taken = secondary_run_of(view, held, other);
+		for (usz i = 0; i < length; i++)
+		{
+			for (usz k = 0; k < taken; k++)
+			{
+				if (run[i] == other[k]) return "that run crosses a chain that is already there — clear it first, or root this one below it";
+			}
+		}
+	}
+
+	return "";
+}
