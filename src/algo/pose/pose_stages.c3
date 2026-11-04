@@ -114,10 +114,14 @@ fn void PoseStages.aims(&self, Allocator allocator, AnimTemplate clip, float tim
 }
 
 <*
- The clip at `time`, through every stage. The caller owns the pose.
+ The clip at `time`, through every stage.
 
- @param grounded : `Run the ground solve.`
- @param held : `Run the pins and the aims.`
+ @param allocator : "Owns the returned pose"
+ @param grounded : "Run the ground solve"
+ @param held : "Run the pins and the aims"
+ @require self.skeleton != null : "Stages need a skeleton"
+
+ @return "The pose, which the caller frees"
 *>
 fn rig::Pose PoseStages.pose(&self, Allocator allocator, AnimTemplate clip, float time, bool grounded = true, bool held = true)
 {
@@ -126,7 +130,12 @@ fn rig::Pose PoseStages.pose(&self, Allocator allocator, AnimTemplate clip, floa
 	return pose;
 }
 
-// Every stage after the sample, for a pose sampled or blended elsewhere.
+<*
+ Every stage after the sample, for a pose sampled or blended elsewhere.
+
+ @param [&inout] pose : "Changed in place"
+ @require self.skeleton != null : "Stages need a skeleton"
+*>
 fn void PoseStages.finish(&self, Allocator allocator, AnimTemplate clip, float time, rig::Pose* pose, bool grounded = true, bool held = true)
 {
 	self.limit(pose);

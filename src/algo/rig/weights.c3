@@ -572,19 +572,6 @@ fn float[] bind_geodesic(
 }
 
 <*
- The weight a bone scores at distance `d` — the binder's own falloff, for a
- caller re-deriving a row from the distances `bind_geodesic` handed out.
-
- `d` is a distance as written to `distances`, grown already; `reach` and `eps`
- are the ones the bind was made with.
-*>
-fn float field_score(float d, float reach, float eps)
-{
-    float d2 = d * d;
-    return reach_bias(d2, reach) / (d2 + eps);
-}
-
-<*
  What `bind_geodesic` writes to `distances` for a bone that holds nothing of a
  vertex — one the flood did not bring there, or any bone but the rider on a
  piece bound rigidly. Larger than any real distance, so a window over it closes.

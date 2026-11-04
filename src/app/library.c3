@@ -789,7 +789,9 @@ fn AnimRef AppState.author_clip(&self, AnimTemplate clip, bool* replaced = null)
  A copy of a clip beside it, as the clip being edited. In this rig's joint names,
  so a copy of a library clip keeps moving the joints it moved.
 
- @return `The copy, or NO_ANIM when it would not land.`
+ @require name.len > 0 : "A copy needs a name"
+
+ @return "The copy, or NO_ANIM when it would not land"
 *>
 fn AnimRef AppState.duplicate_clip(&self, AnimRef ref, String name)
 {

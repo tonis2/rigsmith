@@ -1164,18 +1164,6 @@ fn bool RigDocument.set_paint(&self, uint vertex, uint dot_id, float factor)
 }
 
 <*
- What this vertex's correction to this dot is, or 1 where there is none.
-*>
-fn float RigDocument.paint_of(&self, uint vertex, uint dot_id)
-{
-	foreach (dab : self.paint.array_view())
-	{
-		if (dab.vertex == vertex && dab.dot_id == dot_id) return dab.factor;
-	}
-	return 1.0f;
-}
-
-<*
  Hands one vertex to one dot outright, or takes the hand-over back.
 
  The pin layer's primitive, and `set_paint`'s sibling — but what it stores is a

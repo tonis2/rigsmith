@@ -192,20 +192,6 @@ fn String AppState.aim_name_of(&self, RigView* view, uint dot_id)
 }
 
 <*
- The name of the target the joint on `dot_id` is locked to in the editing clip,
- or an empty string. Borrowed from the clip; copy it before landing anything.
-*>
-fn String AppState.aim_target_of(&self, RigView* view, uint dot_id)
-{
-	AnimTemplate* clip = self.clip(self.editing);
-	if (!clip) return "";
-	String joint = self.aim_name_of(view, dot_id);
-	if (joint.len == 0) return "";
-	sz at = aim_index_of(clip.aims, joint);
-	return at >= 0 ? clip.aims[(usz)at].target : "";
-}
-
-<*
  Where in the editing clip's aims the joint's is, or -1 when the clip has none
  on it. Not an index into `posed_aims`, which is the handles on screen.
 *>
@@ -513,15 +499,6 @@ fn bool AppState.lock_selection_to(&self, String target)
 	RigView view = opened;
 	defer view.free(mem);
 	return self.land_locks(self.selected_aim_dots(tmem, &view), held);
-}
-
-// Lock the one joint `dot_id` to `target`, as `lock_selection_to` does for the selection.
-fn bool AppState.lock_joint_to(&self, uint dot_id, String target)
-{
-	String held = target.copy(mem);
-	defer alloc::free(mem, held.ptr);
-	uint[1] one = { dot_id };
-	return self.land_locks(one[:1], held);
 }
 
 <*

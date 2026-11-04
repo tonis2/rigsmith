@@ -1559,6 +1559,8 @@ fn float phase_wrapped(float phase) => phase - math::floor(phase);
 <*
  Where time `t` lands in the clip. A loop goes round again; a one-shot holds its
  ends. This is the one rule: see rules/posing.md.
+
+ @return "Seconds from the clip's start, 0 to its duration"
 *>
 fn float AnimTemplate.local_time(self, float t)
 {

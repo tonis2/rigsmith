@@ -180,21 +180,6 @@ fn int AppState.character_from(&self, String path)
 }
 
 <*
- Whether a character other than the one being edited has unsaved work — what
- opening a model, which replaces the scene, would throw away unasked.
-*>
-fn bool AppState.others_unsaved(&self)
-{
-	for (usz i = 0; i < self.character_count(); i++)
-	{
-		if (i == self.active) continue;
-		Character* c = self.character(i);
-		if (c.has_mesh() && c.unsaved()) return true;
-	}
-	return false;
-}
-
-<*
  Whether any loaded character has work a save has not written.
 *>
 fn bool AppState.any_character_unsaved(&self)

@@ -707,14 +707,6 @@ fn void AppState.drop_strays(&self)
 // Whether the last survey still describes the bind: nothing has been edited since.
 fn bool AppState.strays_current(&self) => self.strays_checked && self.strays_revision == self.undo_stack.revision;
 
-// How many vertices the last survey's strays hold together.
-fn usz AppState.stray_vertices(&self)
-{
-	usz held = 0;
-	foreach (stray : self.strays) held += stray.vertices.len;
-	return held;
-}
-
 <*
  Fix every stray the last survey found (`fix_strays`), then survey again so the
  card says what is left.
