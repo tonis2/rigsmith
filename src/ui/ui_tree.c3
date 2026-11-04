@@ -2277,6 +2277,273 @@ fn bool AppRoot.on_key(&self, Element* elem, KeyEvent event) @dynamic
 	return true;
 }
 
+// The reference, the chooser and the panels that open it. Siblings paint in tree order.
+fn void file_dialogs() @private
+{
+	// ---- the Controls reference ----
+	// A window fixture, not a pane's: it is the same reference whatever a
+	// pane happens to be showing, and one per split would be three copies
+	// of it. Built here rather than inside the workspace for the reason
+	// AreaPane's own comment gives — a pane clips, and a panel this size
+	// would be cut off by the pane it floated in.
+	//
+	// Before the bar, so an open dropdown still covers it: the dialog wins
+	// the paint order against the model and loses it against the menus,
+	// which is the order both of them expect. Closed it is a zero-size
+	// element that paints nothing, so it costs nothing to leave here.
+	@node((Dialog) {
+		.title = "Controls",
+		.body = fn Element*(Ui* ui)
+		{
+			// Asked for its own height, not the room the window has: the
+			// viewport is clamped to whatever the dialog can offer, so this
+			// is "as tall as the reference, or as tall as it fits" in one
+			// number. Handing it 0 — fill the space — would leave a short
+			// screen scrolling correctly and a tall one with a dialog full
+			// of blank space under the last binding.
+			return @subtree(ui)
+			{
+				@tree((Scroll) { .size = { CONTROLS_SHEET_W, controls_height() } })
+				{
+					@node((ControlsSheet) { }).with_id("controls");
+				};
+			};
+		},
+		.style = DIALOG_STYLE,
+	}).with_id(CONTROLS_DIALOG_ID);
+
+	// ---- what goes into an export ----
+	// Before the chooser, so a Browse opened from inside it floats over
+	// this one rather than under it: siblings paint in tree order, and
+	// the chooser is the answer to a question this panel asked.
+	@node((Dialog) {
+		.title = "Export",
+		.body = &build_export_dialog_body,
+		.style = DIALOG_STYLE,
+		.modal = true,
+	}).with_id(EXPORT_DIALOG_ID);
+
+	// ---- the settings ----
+	// Before the chooser for the export panel's reason: Add folder opens
+	// it, and the answer has to float over the question.
+	//
+	// Not modal, unlike the two around it. It changes nothing the rest of
+	// the interface is acting on — the document is untouched by every
+	// control in it — and a panel of settings is a reasonable thing to
+	// leave open while looking at what the browser did with them.
+	@node((Dialog) {
+		.title = "Settings",
+		.body = &build_settings_body,
+		.style = DIALOG_STYLE,
+		.close_outside = true,
+	}).with_id(SETTINGS_DIALOG_ID);
+
+	// ---- one asset's name and tags ----
+	// Beside the settings and for the same reasons: it changes nothing the
+	// rest of the interface is acting on until Save, and it is raised from a
+	// pane rather than from the menu bar.
+	@node((Dialog) {
+		.title = "Asset settings",
+		.body = &build_asset_settings_body,
+		.style = DIALOG_STYLE,
+		.close_outside = true,
+	}).with_id(ASSET_SETTINGS_DIALOG_ID);
+
+	// Under the chooser, which its Browse opens.
+	@node((Dialog) { .title = "Reference picture", .body = &build_reference_dialog_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(REFERENCE_DIALOG_ID);
+
+	// ---- the file chooser ----
+	// Beside the reference and for the same reasons, with one of its own:
+	// it is modal. Opening a model or choosing where to write replaces
+	// what every other control acts on, so the rest of the interface has
+	// to stop answering until the question is settled — and a click on
+	// the scrim is a way out that needs no button.
+	//
+	// Its title and its confirming button are rewritten per opening by
+	// `open_file_dialog`; both are what the purpose decides.
+	@node((Dialog) {
+		.title = "Open model",
+		.body = &build_file_dialog_body,
+		.style = DIALOG_STYLE,
+		.modal = true,
+		.close_outside = true,
+	}).with_id(FILE_DIALOG_ID);
+}
+
+// The offers and questions about the rig itself.
+fn void rig_dialogs() @private
+{
+	// ---- a mesh that arrived with no skeleton ----
+	// After the chooser, because opening a model is what raises it and the
+	// answer has to float over the question that produced it.
+	//
+	// Not modal, unlike the chooser: it is an offer rather than a question.
+	// A user who would rather place dots by hand should be able to start
+	// doing that by clicking the model, and a scrim would make them dismiss
+	// a panel first to reach the thing it is talking about.
+	@node((Dialog) {
+		.title = "No skeleton",
+		.body = &build_rig_prompt_body,
+		.style = DIALOG_STYLE,
+		.close_outside = true,
+	}).with_id(RIG_PROMPT_DIALOG_ID);
+
+	@node((Dialog) {
+		.title = "Skeleton faces away",
+		.body = &build_turn_offer_body,
+		.style = DIALOG_STYLE,
+		.close_outside = true,
+	}).with_id(TURN_OFFER_DIALOG_ID);
+
+	@node((Dialog) {
+		.title = "Rotate skeleton",
+		.body = &build_skeleton_rotation_body,
+		.style = DIALOG_STYLE,
+		.modal = true,
+	}).with_id(SKELETON_ROTATION_DIALOG_ID);
+	@node((Dialog) { .title = "Move by", .body = &build_move_by_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(MOVE_BY_DIALOG_ID);
+	@node((Dialog) { .title = "Scale model", .body = &build_scale_model_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(SCALE_MODEL_DIALOG_ID);
+}
+
+// The animation panels and popups.
+fn void animation_dialogs() @private
+{
+	@node((Dialog) { .title = "Create animation", .body = &build_anim_new_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id("anim-new-dialog");
+	@node((Dialog) { .body = &build_anim_clip_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CLIP_MENU_ID);
+	@node((Dialog) { .body = &build_anim_key_context,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id("anim-key-context");
+	@node((Dialog) { .body = &build_anim_interp_body,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 8, 8, 8, 8 } }).with_id(ANIM_INTERP_POPOVER_ID);
+	@node((Dialog) { .body = &build_anim_contact_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CONTACT_MENU_ID);
+	@node((Dialog) { .body = &build_anim_layer_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_LAYER_MENU_ID);
+	@node((Dialog) { .body = &build_anim_layer_row_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_LAYER_ROW_MENU_ID);
+	@node((Dialog) { .body = &build_anim_strip_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_STRIP_MENU_ID);
+	@node((Dialog) { .body = &build_anim_tools_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_TOOLS_MENU_ID);
+	// Ghosts' settings float over the dock, and move: dragged by the bar.
+	@node((Dialog) { .title = "Ghosts", .body = &build_anim_ghosts_body,
+		.style = DIALOG_STYLE }).with_id(ANIM_GHOSTS_DIALOG_ID);
+	// The last Check's findings float the same way; not modal, so the ruler's
+	// flags stay clickable.
+	@node((Dialog) { .title = "Check", .body = &build_anim_check_body,
+		.style = DIALOG_STYLE }).with_id(ANIM_CHECK_DIALOG_ID);
+	@node((Dialog) { .body = &build_viewport_context,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(VIEWPORT_CONTEXT_ID);
+	@node((Dialog) { .title = "Stretch animation timing", .body = &build_anim_retime_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_RETIME_DIALOG_ID);
+	@node((Dialog) { .title = "Optimize animation", .body = &build_anim_cleanup_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_CLEANUP_DIALOG_ID);
+	@node((Dialog) { .title = "Optimize keys", .body = &build_anim_optimize_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_OPTIMIZE_DIALOG_ID);
+	@node((Dialog) { .title = "Trim animation", .body = &build_anim_trim_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_TRIM_DIALOG_ID);
+	@node((Dialog) { .title = "Add to animations", .body = &build_layer_share_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_SHARE_DIALOG_ID);
+	@node((Dialog) { .title = "Shared layer", .body = &build_layer_pick_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_PICK_DIALOG_ID);
+	@node((Dialog) { .title = "Joint mapping", .body = &build_anim_mapping_body,
+		.style = DIALOG_STYLE, .modal = true, .on_close = &anim_mapping_closed }).with_id(ANIM_MAPPING_DIALOG_ID);
+	@node((Dialog) { .title = "Collision (advanced)", .body = &build_collision_body,
+		.style = DIALOG_STYLE, .modal = true }).with_id(COLLISION_DIALOG_ID);
+}
+
+// The confirmations, after every other dialog so they float over them.
+fn void confirm_dialogs() @private
+{
+	// ---- before something is thrown away ----
+	// Last, so it floats over every other panel: it is raised from the
+	// library, which is a pane, and from anywhere else that later grows a
+	// way to replace the rig. It carries its own question — the sentence
+	// is formatted when the question is asked and copied into the widget,
+	// so nothing about it is parked anywhere else.
+	@node((ConfirmDialog) {
+		.title = "Apply body plan",
+		.confirm_label = "Replace rig",
+		.style = DIALOG_STYLE,
+		.buttons = CONFIRM_BUTTONS,
+	}).with_id(CONFIRM_DIALOG_ID);
+	// Before unsaved work is dropped: a new scene, an open, a removed character.
+	@node((ConfirmDialog) {
+		.title = "Unsaved changes",
+		.confirm_label = "Yes",
+		.decline_label = "No",
+		.style = DIALOG_STYLE,
+		.buttons = CONFIRM_BUTTONS,
+	}).with_id(UNSAVED_DIALOG_ID);
+	// Two ways ahead and a way out: its answers are its own buttons, and
+	// each closes the panel itself.
+	Element* make_loop = @tree((ChoiceDialog) { .title = "Make loop", .style = DIALOG_STYLE })
+	{
+		@node(panel_button("Cancel", &anim_make_loop_cancel));
+		@node(panel_button("One cycle", &anim_make_loop_cycle)).with_id(ANIM_MAKE_LOOP_CYCLE_ID);
+		@node(accent_button("Whole take", &anim_make_loop_whole)).with_id(ANIM_MAKE_LOOP_WHOLE_ID);
+	};
+	make_loop.with_id(ANIM_MAKE_LOOP_CONFIRM_ID);
+	@node((ConfirmDialog) {
+		.title = "Remove joint animation",
+		.confirm_label = "Remove keys",
+		.style = DIALOG_STYLE,
+		.buttons = CONFIRM_BUTTONS,
+	}).with_id(ANIM_REMOVE_JOINTS_CONFIRM_ID);
+}
+
+// The bar, the tour and the tooltips, over everything else.
+fn void top_layers() @private
+{
+	// ---- window menu bar ----
+	// Painted after the pane tree, so the bar and an open dropdown win
+	// every hit test over the model. Its element reports only the bar
+	// strip as its size; the open state escapes that rect by design.
+	// Rig and View are here too: they act on the rig and on the camera of
+	// the last 3D View used, and View's camera items grey with none open.
+	@node((MenuBar) { .menus = menus[..], .style = MENU_STYLE })
+		.with_id("menubar");
+
+	// ---- the guided tour ----
+	// After the menu bar so the dim covers it and can light a menu title,
+	// and the welcome and the card after the dim so both float over it.
+	@node((TutorialOverlay) { }).with_id(TUTORIAL_OVERLAY_ID);
+
+	@node((Dialog) {
+		.title = "Welcome to Rigsmith",
+		.body = &build_welcome_body,
+		.style = DIALOG_STYLE,
+		.modal = true,
+		.on_close = &welcome_closed,
+	}).with_id(WELCOME_DIALOG_ID);
+
+	@node((Dialog) {
+		.title = "Tutorial",
+		.body = &build_tutorial_body,
+		.style = DIALOG_STYLE,
+		.on_close = &tutorial_card_closed,
+	}).with_id(TUTORIAL_DIALOG_ID);
+
+	// ---- tooltips ----
+	// Last, and raised from its own layout, so a label is over the menus
+	// and every pane. Transparent to the pointer.
+	@node((TooltipHost) { .style = TOOLTIP_STYLE }).with_id("tooltip-host");
+}
+
+
 <*
  Builds the whole window as a detached tree: the pane tree under the bar, the
  menu bar over everything.
@@ -2354,251 +2621,11 @@ fn Element* build_ui_tree(Ui* ui, AppState* app, bool with_library = true)
 				@node((AreaHost) { .areas = &area_layout }).with_id("areas");
 			};
 
-			// ---- the Controls reference ----
-			// A window fixture, not a pane's: it is the same reference whatever a
-			// pane happens to be showing, and one per split would be three copies
-			// of it. Built here rather than inside the workspace for the reason
-			// AreaPane's own comment gives — a pane clips, and a panel this size
-			// would be cut off by the pane it floated in.
-			//
-			// Before the bar, so an open dropdown still covers it: the dialog wins
-			// the paint order against the model and loses it against the menus,
-			// which is the order both of them expect. Closed it is a zero-size
-			// element that paints nothing, so it costs nothing to leave here.
-			@node((Dialog) {
-				.title = "Controls",
-				.body = fn Element*(Ui* ui)
-				{
-					// Asked for its own height, not the room the window has: the
-					// viewport is clamped to whatever the dialog can offer, so this
-					// is "as tall as the reference, or as tall as it fits" in one
-					// number. Handing it 0 — fill the space — would leave a short
-					// screen scrolling correctly and a tall one with a dialog full
-					// of blank space under the last binding.
-					return @subtree(ui)
-					{
-						@tree((Scroll) { .size = { CONTROLS_SHEET_W, controls_height() } })
-						{
-							@node((ControlsSheet) { }).with_id("controls");
-						};
-					};
-				},
-				.style = DIALOG_STYLE,
-			}).with_id(CONTROLS_DIALOG_ID);
-
-			// ---- the file chooser ----
-			// Beside the reference and for the same reasons, with one of its own:
-			// it is modal. Opening a model or choosing where to write replaces
-			// what every other control acts on, so the rest of the interface has
-			// to stop answering until the question is settled — and a click on
-			// the scrim is a way out that needs no button.
-			//
-			// Its title and its confirming button are rewritten per opening by
-			// `open_file_dialog`; both are what the purpose decides.
-			// ---- what goes into an export ----
-			// Before the chooser, so a Browse opened from inside it floats over
-			// this one rather than under it: siblings paint in tree order, and
-			// the chooser is the answer to a question this panel asked.
-			@node((Dialog) {
-				.title = "Export",
-				.body = &build_export_dialog_body,
-				.style = DIALOG_STYLE,
-				.modal = true,
-			}).with_id(EXPORT_DIALOG_ID);
-
-			// ---- the settings ----
-			// Before the chooser for the export panel's reason: Add folder opens
-			// it, and the answer has to float over the question.
-			//
-			// Not modal, unlike the two around it. It changes nothing the rest of
-			// the interface is acting on — the document is untouched by every
-			// control in it — and a panel of settings is a reasonable thing to
-			// leave open while looking at what the browser did with them.
-			@node((Dialog) {
-				.title = "Settings",
-				.body = &build_settings_body,
-				.style = DIALOG_STYLE,
-				.close_outside = true,
-			}).with_id(SETTINGS_DIALOG_ID);
-
-			// ---- one asset's name and tags ----
-			// Beside the settings and for the same reasons: it changes nothing the
-			// rest of the interface is acting on until Save, and it is raised from a
-			// pane rather than from the menu bar.
-			@node((Dialog) {
-				.title = "Asset settings",
-				.body = &build_asset_settings_body,
-				.style = DIALOG_STYLE,
-				.close_outside = true,
-			}).with_id(ASSET_SETTINGS_DIALOG_ID);
-
-			// Under the chooser, which its Browse opens.
-			@node((Dialog) { .title = "Reference picture", .body = &build_reference_dialog_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(REFERENCE_DIALOG_ID);
-
-			@node((Dialog) {
-				.title = "Open model",
-				.body = &build_file_dialog_body,
-				.style = DIALOG_STYLE,
-				.modal = true,
-				.close_outside = true,
-			}).with_id(FILE_DIALOG_ID);
-
-			// ---- a mesh that arrived with no skeleton ----
-			// After the chooser, because opening a model is what raises it and the
-			// answer has to float over the question that produced it.
-			//
-			// Not modal, unlike the chooser: it is an offer rather than a question.
-			// A user who would rather place dots by hand should be able to start
-			// doing that by clicking the model, and a scrim would make them dismiss
-			// a panel first to reach the thing it is talking about.
-			@node((Dialog) {
-				.title = "No skeleton",
-				.body = &build_rig_prompt_body,
-				.style = DIALOG_STYLE,
-				.close_outside = true,
-			}).with_id(RIG_PROMPT_DIALOG_ID);
-
-			@node((Dialog) {
-				.title = "Skeleton faces away",
-				.body = &build_turn_offer_body,
-				.style = DIALOG_STYLE,
-				.close_outside = true,
-			}).with_id(TURN_OFFER_DIALOG_ID);
-
-			@node((Dialog) {
-				.title = "Rotate skeleton",
-				.body = &build_skeleton_rotation_body,
-				.style = DIALOG_STYLE,
-				.modal = true,
-			}).with_id(SKELETON_ROTATION_DIALOG_ID);
-			@node((Dialog) { .title = "Move by", .body = &build_move_by_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(MOVE_BY_DIALOG_ID);
-			@node((Dialog) { .title = "Scale model", .body = &build_scale_model_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(SCALE_MODEL_DIALOG_ID);
-
-			@node((Dialog) { .title = "Create animation", .body = &build_anim_new_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id("anim-new-dialog");
-			@node((Dialog) { .body = &build_anim_clip_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CLIP_MENU_ID);
-			@node((Dialog) { .body = &build_anim_key_context,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id("anim-key-context");
-			@node((Dialog) { .body = &build_anim_interp_body,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 8, 8, 8, 8 } }).with_id(ANIM_INTERP_POPOVER_ID);
-			@node((Dialog) { .body = &build_anim_contact_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CONTACT_MENU_ID);
-			@node((Dialog) { .body = &build_anim_layer_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_LAYER_MENU_ID);
-			@node((Dialog) { .body = &build_anim_layer_row_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_LAYER_ROW_MENU_ID);
-			@node((Dialog) { .body = &build_anim_strip_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_STRIP_MENU_ID);
-			@node((Dialog) { .body = &build_anim_tools_menu,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_TOOLS_MENU_ID);
-			// The last Check's findings. Floats over the dock instead of pushing the
-			// sheet down; not modal, so the ruler's flags stay clickable.
-			// Ghosts' settings float the same way, and move: dragged by the bar.
-			@node((Dialog) { .title = "Ghosts", .body = &build_anim_ghosts_body,
-				.style = DIALOG_STYLE }).with_id(ANIM_GHOSTS_DIALOG_ID);
-			@node((Dialog) { .title = "Check", .body = &build_anim_check_body,
-				.style = DIALOG_STYLE }).with_id(ANIM_CHECK_DIALOG_ID);
-			@node((Dialog) { .body = &build_viewport_context,
-				.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-				.popup_insets = { 0, 5, 0, 5 } }).with_id(VIEWPORT_CONTEXT_ID);
-			@node((Dialog) { .title = "Stretch animation timing", .body = &build_anim_retime_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_RETIME_DIALOG_ID);
-			@node((Dialog) { .title = "Optimize animation", .body = &build_anim_cleanup_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_CLEANUP_DIALOG_ID);
-			@node((Dialog) { .title = "Optimize keys", .body = &build_anim_optimize_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_OPTIMIZE_DIALOG_ID);
-			@node((Dialog) { .title = "Trim animation", .body = &build_anim_trim_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(ANIM_TRIM_DIALOG_ID);
-			@node((Dialog) { .title = "Add to animations", .body = &build_layer_share_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_SHARE_DIALOG_ID);
-			@node((Dialog) { .title = "Shared layer", .body = &build_layer_pick_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(LAYER_PICK_DIALOG_ID);
-			@node((Dialog) { .title = "Joint mapping", .body = &build_anim_mapping_body,
-				.style = DIALOG_STYLE, .modal = true, .on_close = &anim_mapping_closed }).with_id(ANIM_MAPPING_DIALOG_ID);
-			@node((Dialog) { .title = "Collision (advanced)", .body = &build_collision_body,
-				.style = DIALOG_STYLE, .modal = true }).with_id(COLLISION_DIALOG_ID);
-
-			// ---- before something is thrown away ----
-			// Last, so it floats over every other panel: it is raised from the
-			// library, which is a pane, and from anywhere else that later grows a
-			// way to replace the rig. It carries its own question — the sentence
-			// is formatted when the question is asked and copied into the widget,
-			// so nothing about it is parked anywhere else.
-			@node((ConfirmDialog) {
-				.title = "Apply body plan",
-				.confirm_label = "Replace rig",
-				.style = DIALOG_STYLE,
-				.buttons = CONFIRM_BUTTONS,
-			}).with_id(CONFIRM_DIALOG_ID);
-			// Before unsaved work is dropped: a new scene, an open, a removed character.
-			@node((ConfirmDialog) {
-				.title = "Unsaved changes",
-				.confirm_label = "Yes",
-				.decline_label = "No",
-				.style = DIALOG_STYLE,
-				.buttons = CONFIRM_BUTTONS,
-			}).with_id(UNSAVED_DIALOG_ID);
-			// Two ways ahead and a way out: its answers are its own buttons, and
-			// each closes the panel itself.
-			Element* make_loop = @tree((ChoiceDialog) { .title = "Make loop", .style = DIALOG_STYLE })
-			{
-				@node(panel_button("Cancel", &anim_make_loop_cancel));
-				@node(panel_button("One cycle", &anim_make_loop_cycle)).with_id(ANIM_MAKE_LOOP_CYCLE_ID);
-				@node(accent_button("Whole take", &anim_make_loop_whole)).with_id(ANIM_MAKE_LOOP_WHOLE_ID);
-			};
-			make_loop.with_id(ANIM_MAKE_LOOP_CONFIRM_ID);
-			@node((ConfirmDialog) {
-				.title = "Remove joint animation",
-				.confirm_label = "Remove keys",
-				.style = DIALOG_STYLE,
-				.buttons = CONFIRM_BUTTONS,
-			}).with_id(ANIM_REMOVE_JOINTS_CONFIRM_ID);
-
-			// ---- window menu bar ----
-			// Painted after the pane tree, so the bar and an open dropdown win
-			// every hit test over the model. Its element reports only the bar
-			// strip as its size; the open state escapes that rect by design.
-			// Rig and View are here too: they act on the rig and on the camera of
-			// the last 3D View used, and View's camera items grey with none open.
-			@node((MenuBar) { .menus = menus[..], .style = MENU_STYLE })
-				.with_id("menubar");
-
-			// ---- the guided tour ----
-			// After the menu bar so the dim covers it and can light a menu title,
-			// and the welcome and the card after the dim so both float over it.
-			@node((TutorialOverlay) { }).with_id(TUTORIAL_OVERLAY_ID);
-
-			@node((Dialog) {
-				.title = "Welcome to Rigsmith",
-				.body = &build_welcome_body,
-				.style = DIALOG_STYLE,
-				.modal = true,
-				.on_close = &welcome_closed,
-			}).with_id(WELCOME_DIALOG_ID);
-
-			@node((Dialog) {
-				.title = "Tutorial",
-				.body = &build_tutorial_body,
-				.style = DIALOG_STYLE,
-				.on_close = &tutorial_card_closed,
-			}).with_id(TUTORIAL_DIALOG_ID);
-
-			// ---- tooltips ----
-			// Last, and raised from its own layout, so a label is over the menus
-			// and every pane. Transparent to the pointer.
-			@node((TooltipHost) { .style = TOOLTIP_STYLE }).with_id("tooltip-host");
+			file_dialogs();
+			rig_dialogs();
+			animation_dialogs();
+			confirm_dialogs();
+			top_layers();
 		};
 	};
 }
