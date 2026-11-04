@@ -1176,3 +1176,7 @@ fn String? scale_model_tool(AppState* app, Object* args, DString* detail)
 		app.mesh_resized ? "true" : "false");
 	return out.copy_str(mem);
 }
+
+// Every `op` edit_rig answers to, for the refusals that list them. Keep it in
+// step with the schema's enum and the switch in `apply_op`.
+const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, knuckle_blend, attach, detach, limits, exclude, include, symmetry, plan_limits";

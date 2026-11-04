@@ -35,10 +35,6 @@ fn bool named_earlier(AnimTemplate* clip, sz frame, sz dot, String name)
 	return false;
 }
 
-// What set_layer and patch_clip answer with when they move the root of a
-// grounded clip up or down: the floor solve cancels that while a foot is down.
-const String ROOT_Y_NOTE = `a move on the root's Y in a grounded clip is cancelled by the floor solve while a foot is down, so it changes nothing there; stance height comes from how the legs bend (get_crig_docs topic ground)`;
-
 <*
  Rewrite this keyframe's world-space entries as the parent-relative turns a
  template stores.

@@ -44,6 +44,7 @@ import std::math;
 import std::sort;
 import std::math::vector;
 import std::math::quaternion;
+import std::collections::object;
 
 <*
  One pin. `joint` is in the clip's vocabulary (resolved with `names_for`) and is
@@ -866,3 +867,9 @@ fn void pin_mark_turned(rig::Skeleton* skeleton, String[] names, AnimTemplate* c
 		}
 	}
 }
+
+// How many pointer moves a posed move or turn is broken into. One jump from the
+// start to the end is not what a hand does, and a grab carried a short way at a
+// time reaches far-off targets the way a drag does. Each move solves from the
+// pose the gesture began with, so the last one alone decides where the body ends.
+const usz POSE_JOINT_STEPS = 12;
