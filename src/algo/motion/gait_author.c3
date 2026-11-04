@@ -100,3 +100,118 @@ fn void hold_keys_inside_limits(RigDocument* doc, RigView* view, AnimTemplate* c
 		}
 	}
 }
+
+<*
+ The joints the body layer takes: every keyed joint but the legs and the root.
+
+ @param [&inout] out : `Receives the names.`
+ @param feet : `The foot joints.`
+*>
+fn void gait_body_joints(StringList* out, rig::Skeleton* skeleton, String[] names, usz root, usz[] feet, AnimTemplate clip)
+{
+	bool[] leg = alloc::new_array(mem, bool, (sz)skeleton.len());
+	defer alloc::free(mem, leg);
+	leg[root] = true;
+	foreach (foot : feet)
+	{
+		GaitLeg each;
+		if (gait_leg_of(skeleton, foot, &each)) for (usz j = 0; j <= each.bones; j++) leg[each.joints[j]] = true;
+	}
+	foreach (usz j, joint_name : names)
+	{
+		if (leg[j] || joint_name.len == 0 || clip.channel_count(joint_name, true) + clip.channel_count(joint_name, false) == 0) continue;
+		out.push(joint_name);
+	}
+}
+
+<*
+ What was laid over the cycle being rewritten, carried onto the new one: its layers
+ and look-ats. The body layer is the cycle's own, and is written again.
+
+ @param body_layered : `Whether the new cycle has its own body layer.`
+ @return `How many layers were kept.`
+*>
+fn usz gait_keep_laid_over(Allocator allocator, AnimTemplate* clip, AnimTemplate* before, bool body_layered)
+{
+	usz kept;
+	foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) kept++;
+	AnimLayer[] next = alloc::new_array(allocator, AnimLayer, (sz)(clip.layers.len + kept));
+	foreach (usz i, layer : clip.layers) next[i] = layer;
+	usz write = clip.layers.len;
+	foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) next[write++] = layer.copy(allocator);
+	if (clip.layers.len > 0) alloc::free(allocator, clip.layers);
+	clip.layers = next;
+	clip.aims = aims_copy(allocator, before.aims);
+	clip.aim_targets = aim_targets_copy(allocator, before.aim_targets);
+	return kept;
+}
+
+<*
+ The feet's new paths over the old cycle's: a path edited by hand stays, and a
+ generated one keeps its switches through a re-run.
+
+ @param before : `The cycle being rewritten, or null.`
+ @param stepped : `The new paths; taken over.`
+ @return `Owned by the caller.`
+*>
+fn AnimPath[] gait_paths_over(Allocator allocator, AnimTemplate* before, AnimPath[] stepped)
+{
+	usz hand;
+	if (before) foreach (&path : before.paths) if (!path.generated) hand++;
+	AnimPath[] next = alloc::new_array(allocator, AnimPath, (sz)(hand + stepped.len));
+	usz write;
+	if (before) foreach (&path : before.paths) if (!path.generated) next[write++] = path.copy(allocator);
+	foreach (&path : stepped)
+	{
+		bool edited;
+		for (usz k = 0; k < write; k++) if (next[k].joint == path.joint) edited = true;
+		if (edited) { path.free(allocator); continue; }
+		if (before)
+		{
+			foreach (&old : before.paths)
+			{
+				if (!old.generated || old.joint != path.joint) continue;
+				path.follow = old.follow;
+				path.mute = old.mute;
+			}
+		}
+		next[write++] = *path;
+	}
+	if (stepped.len > 0) alloc::free(allocator, stepped);
+	return next[:write];
+}
+
+<*
+ What a cycle was written from, for the viewport to write it again.
+
+ @param height : `The rig's height, above zero.`
+ @param feet : `The foot joints.`
+ @param driven : `Each foot's gait entry.`
+*>
+fn void gait_record(Allocator allocator, AnimTemplate* clip, GaitSpec spec, GaitReport report, float height, String[] names,
+	usz[] feet, GaitFoot[] driven)
+{
+	clip.gait = {
+		.set = true,
+		.kind = spec.kind,
+		.duty = report.duty,
+		.stride = report.stride / height,
+		.lift = report.lift / height,
+		.drop_set = spec.drop_set,
+		.drop = spec.drop / height,
+		.legs_only = spec.legs_only,
+		.arms_set = spec.arms_set,
+		.arm_swing = spec.arm_swing,
+		.arm_elbow = spec.arm_elbow,
+		.arm_elbow_swing = spec.arm_elbow_swing,
+		.arm_spread = spec.arm_spread,
+		.samples = spec.samples,
+		.feet = alloc::new_array(allocator, String, (sz)feet.len),
+		.offsets = alloc::new_array(allocator, float, (sz)feet.len),
+	};
+	foreach (usz i, foot : feet)
+	{
+		clip.gait.feet[i] = names[foot].copy(allocator);
+		clip.gait.offsets[i] = driven[i].offset;
+	}
+}

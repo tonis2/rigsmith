@@ -176,22 +176,10 @@ fn GaitAuthored? AppState.author_gait(
 	bool body_layered = false;
 	if (!spec.legs_only && count == 2)
 	{
-		bool[] leg = alloc::new_array(mem, bool, (sz)view.len());
-		defer alloc::free(mem, leg);
-		leg[root] = true;
-		for (usz i = 0; i < count; i++)
-		{
-			GaitLeg each;
-			if (gait_leg_of(&view.skeleton, joints[i], &each)) for (usz j = 0; j <= each.bones; j++) leg[each.joints[j]] = true;
-		}
 		StringList body;
 		body.init(mem);
 		defer body.free();
-		foreach (usz j, joint_name : view.names)
-		{
-			if (leg[j] || joint_name.len == 0 || clip.channel_count(joint_name, true) + clip.channel_count(joint_name, false) == 0) continue;
-			body.push(joint_name);
-		}
+		gait_body_joints(&body, &view.skeleton, view.names, root, joints[:count], clip);
 		if (body.len() > 0)
 		{
 			if (try layered = clip_with_joints_layered(mem, clip, body.array_view(), {}, GAIT_BODY_LAYER))
@@ -210,73 +198,13 @@ fn GaitAuthored? AppState.author_gait(
 	// person's and stays.
 	if (before && !spec.drop_layers)
 	{
-		usz kept;
-		foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) kept++;
-		AnimLayer[] next = alloc::new_array(mem, AnimLayer, (sz)(clip.layers.len + kept));
-		foreach (usz i, layer : clip.layers) next[i] = layer;
-		usz write = clip.layers.len;
-		foreach (&layer : before.layers) if (!body_layered || layer.name != GAIT_BODY_LAYER) next[write++] = layer.copy(mem);
-		if (clip.layers.len > 0) alloc::free(mem, clip.layers);
-		clip.layers = next;
-		clip.aims = aims_copy(mem, before.aims);
-		clip.aim_targets = aim_targets_copy(mem, before.aim_targets);
-		out.kept_layers = kept;
+		out.kept_layers = gait_keep_laid_over(mem, &clip, before, body_layered);
 	}
 	AnimPath[] stepped = gait_foot_paths(mem, &view.skeleton, view.names, spec, driven[:count], out.report);
-	{
-		usz hand;
-		if (before) foreach (&path : before.paths) if (!path.generated) hand++;
-		AnimPath[] next = alloc::new_array(mem, AnimPath, (sz)(hand + stepped.len));
-		usz write;
-		if (before) foreach (&path : before.paths) if (!path.generated) next[write++] = path.copy(mem);
-		foreach (&path : stepped)
-		{
-			bool edited;
-			for (usz k = 0; k < write; k++) if (next[k].joint == path.joint) edited = true;
-			if (edited) { path.free(mem); continue; }
-			// A generated path keeps its switches through a re-run.
-			if (before)
-			{
-				foreach (&old : before.paths)
-				{
-					if (!old.generated || old.joint != path.joint) continue;
-					path.follow = old.follow;
-					path.mute = old.mute;
-				}
-			}
-			next[write++] = *path;
-		}
-		if (stepped.len > 0) alloc::free(mem, stepped);
-		clip.paths = next[:write];
-		out.paths = write;
-	}
+	clip.paths = gait_paths_over(mem, before, stepped);
+	out.paths = clip.paths.len;
 	// What it was written from, for the viewport to write it again.
-	if (height > 0.0f)
-	{
-		clip.gait = {
-			.set = true,
-			.kind = spec.kind,
-			.duty = out.report.duty,
-			.stride = out.report.stride / height,
-			.lift = out.report.lift / height,
-			.drop_set = spec.drop_set,
-			.drop = spec.drop / height,
-			.legs_only = spec.legs_only,
-			.arms_set = spec.arms_set,
-			.arm_swing = spec.arm_swing,
-			.arm_elbow = spec.arm_elbow,
-			.arm_elbow_swing = spec.arm_elbow_swing,
-			.arm_spread = spec.arm_spread,
-			.samples = spec.samples,
-			.feet = alloc::new_array(mem, String, (sz)count),
-			.offsets = alloc::new_array(mem, float, (sz)count),
-		};
-		for (usz i = 0; i < count; i++)
-		{
-			clip.gait.feet[i] = view.names[joints[i]].copy(mem);
-			clip.gait.offsets[i] = driven[i].offset;
-		}
-	}
+	if (height > 0.0f) gait_record(mem, &clip, spec, out.report, height, view.names, joints[:count], driven[:count]);
 
 	out.landed = self.author_clip(clip, &out.replaced);
 
