@@ -345,11 +345,6 @@ fn void aim_pose_applies_by_name_and_records_what_it_touched() @test
 	test::@check(turn_angle(applied.before_of(3)) == 0.0f, "the recorded rotation is not the one from before");
 	// Targets are fractions of the rig's height: 2.0 here, so the target is {1,1.8,1}.
 	test::@check(miss(pose, { 1.0f, 1.8f, 1.0f }) < 1.0e-3f, "the target was not scaled by the rig height");
-
-	rig::Pose faded = rig::rest_pose(mem, 4);
-	defer faded.free(mem);
-	crig::aim_pose(mem, &skeleton, chain_names[..], aims[..], targets, 0.0f, 1.0f, false, &faded, 2.0f, null, null, null, 0.0f);
-	test::@check(turn_angle(faded.rotations[3]) == 0.0f, "a zero gain still turned the head");
 }
 
 fn void locks_apply_parents_first() @test

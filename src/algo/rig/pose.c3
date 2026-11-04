@@ -105,60 +105,6 @@ fn Pose Pose.copy(self, Allocator allocator)
 }
 
 <*
- A pose `t` of the way from `a` to `b` — one crossfade frame.
-
- Rotations slerp and offsets lerp, which is the only combination that keeps bone
- lengths: interpolating the rotations component-wise would shorten a limb as it
- swung, and interpolating world positions would break the chain outright.
-
- **Blend before grounding, not after.** Two poses that each have a foot on the
- floor blend to one that mostly does not — the feet are at different places and
- the average of two contacts is a hover. Sample both clips ungrounded, blend
- here, and call `ground_pose` once on the result.
-
- Exact at the ends: `t <= 0` is `a` and `t >= 1` is `b`, copied rather than
- computed. A fade that has not started must show the clip it has not left, and
- slerp with a renormalize answers a hair off that.
-
- The caller owns the returned pose.
-
- @param t : `How far along, clamped. 0 is all a, 1 is all b.`
- @return? POSE_SIZE_MISMATCH : `The two poses are not the same length.`
-*>
-fn Pose? blend_poses(Allocator allocator, Pose a, Pose b, float t)
-{
-	usz count = a.rotations.len;
-	if (a.offsets.len != count || b.rotations.len != count || b.offsets.len != count)
-	{
-		return POSE_SIZE_MISMATCH~;
-	}
-
-	if (t <= 0.0f) return a.copy(allocator);
-	if (t >= 1.0f) return b.copy(allocator);
-
-	Pose out = {
-		.rotations = alloc::new_array(allocator, Quaternionf, (sz)count),
-		.offsets = alloc::new_array(allocator, Vec3, (sz)count),
-	};
-
-	foreach (usz i, rotation : a.rotations)
-	{
-		Quaternionf to = b.rotations[i];
-		// A quaternion and its negation are the same rotation, so a pair written
-		// on opposite hemispheres slerps the long way round — three-quarters of a
-		// turn to reach a pose a quarter turn away, which reads as the character
-		// snapping through itself. The same alignment `AnimSpan.turn` does to its
-		// control points, for the same reason.
-		if (rotation.v.dot(to.v) < 0.0f) to = -to;
-
-		out.rotations[i] = rotation.slerp(to, t).normalize();
-		out.offsets[i] = a.offsets[i] + (b.offsets[i] - a.offsets[i]) * t;
-	}
-
-	return out;
-}
-
-<*
  Turn one joint by `angle` radians about `axis`, replacing whatever it held.
 
  Out-of-range indices are ignored rather than raised: callers hand this a joint

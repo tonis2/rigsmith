@@ -21,7 +21,7 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `normalise_rows`, `top_row`, `strongest_shares` and `guide.c3:110` keep the strongest shares by different rules. Whether all the differences are intended isn't known.
 
 ## Clips
-- `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
+- `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets rather than lerping them. Read.
 
 ## Files
 - Scene path in `export.c3` lacks the `joints > 0` guard and hard-codes 4 influences. Read.

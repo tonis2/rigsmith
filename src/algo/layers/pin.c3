@@ -675,7 +675,7 @@ fn void pin_hold_rotation(
  Lay the clip's pins over `pose`, which has had its limits and its ground solve.
 
  Each pin finds its joint by `names` (the clip's vocabulary), takes its weight
- from the window (`AnimPin.weight_at`) times `gain`, solves the joint's limb to
+ from the window (`AnimPin.weight_at`), solves the joint's limb to
  `at * scale` and holds its orientation, then slerps every joint it touched from
  where it was to where it landed by that weight. Pins run in the rig's joint
  order, parents first, each on what the last left, so two that disagree settle
@@ -684,7 +684,6 @@ fn void pin_hold_rotation(
  is skipped for position; its rotation hold still runs.
 
  @param scale : `The rig's height; positions are fractions of it.`
- @param gain : `Multiplies every weight, how a crossfade weights a clip's pins.`
 *>
 fn void pin_pose(
 	Allocator allocator,
@@ -697,11 +696,10 @@ fn void pin_pose(
 	rig::Pose* pose,
 	float scale,
 	AimClamp clamp = null,
-	void* ctx = null,
-	float gain = 1.0f)
+	void* ctx = null)
 {
 	if (pins.len == 0 || pose.rotations.len != skeleton.len()) return;
-	pin_lower_hips(allocator, skeleton, names, pins, time, duration, loop, pose, scale, gain);
+	pin_lower_hips(allocator, skeleton, names, pins, time, duration, loop, pose, scale);
 	// In the rig's order, parents first, as the body solve takes them: two pins
 	// that disagree settle the same way whichever was set first.
 	sz[] joint_of = alloc::new_array(allocator, sz, (sz)pins.len);
@@ -714,7 +712,7 @@ fn void pin_pose(
 	for (usz joint = 0; joint < skeleton.len(); joint++) foreach (usz i, &pin : pins)
 	{
 		if (joint_of[i] != (sz)joint || !pin_plays(pin)) continue;
-		float weight = pin.weight_at(time, duration, loop) * math::clamp(gain, 0.0f, 1.0f);
+		float weight = pin.weight_at(time, duration, loop);
 		if (!(weight > 0.0f)) continue;
 
 		usz[IK_RUN_MAX] run;
@@ -790,8 +788,7 @@ fn void pin_lower_hips(
 	float duration,
 	bool loop,
 	rig::Pose* pose,
-	float scale,
-	float gain) @local
+	float scale) @local
 {
 	Matrix4f[]? built = rig::joint_palette(allocator, skeleton, *pose);
 	if (catch built) return;
@@ -803,7 +800,7 @@ fn void pin_lower_hips(
 	foreach (&pin : pins)
 	{
 		if (!pin_plays(pin) || !pin.position) continue;
-		float weight = pin.weight_at(time, duration, loop) * math::clamp(gain, 0.0f, 1.0f);
+		float weight = pin.weight_at(time, duration, loop);
 		if (!(weight > 0.0f)) continue;
 		sz found = -1;
 		foreach (usz j, name : names) if (j < skeleton.len() && name == pin.joint) { found = (sz)j; break; }

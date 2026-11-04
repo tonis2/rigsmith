@@ -33,36 +33,13 @@ import std::math::matrix;
 fn void AppState.start_animation(&self, AnimTemplate template)
 {
 	self.stop_animation();
-	self.swap_clip(template, cut: true);
-}
-
-<*
- Put `template` on the rig and start it running.
-
- The body `start_animation` used to be, with the cut made a choice. Everything
- here is the same either way except the dynamic bones: a cut throws away what the
- last clip left them doing, and a crossfade must not, because inheriting that lag
- is the whole of what makes a fade look like one movement rather than two.
-
- Does **not** stop what is already running — `start_animation` does that first,
- and `begin_blend` deliberately does not.
-
- @return `False when the template has no length, or there is no rig to carry it.`
-*>
-fn bool AppState.swap_clip(&self, AnimTemplate template, bool cut)
-{
-	// Whatever fade was in flight is over: two clips are as many as this blends,
-	// and clearing here rather than at each call site is what stops a stale
-	// `fade_from` outliving the clip it was fading out of.
-	self.end_blend();
-
-	if (template.keyframes.len == 0 || template.duration <= 0.0f) return false;
+	if (template.keyframes.len == 0 || template.duration <= 0.0f) return;
 
 	RigView? opened = self.open_rig(mem);
 	if (catch opened)
 	{
 		self.@notice("can't animate an empty rig");
-		return false;
+		return;
 	}
 	RigView view = opened;
 	defer view.free(mem);
@@ -70,7 +47,7 @@ fn bool AppState.swap_clip(&self, AnimTemplate template, bool cut)
 	if (!self.rebind_skin(&view))
 	{
 		self.@notice("can't skin this mesh to the rig");
-		return false;
+		return;
 	}
 
 	// A transient timeline draft must release the shared palette before the clip
@@ -91,9 +68,8 @@ fn bool AppState.swap_clip(&self, AnimTemplate template, bool cut)
 	self.anim_paused = false;
 	// A cut: whatever the last clip left the dynamic bones doing is not lag this
 	// one may inherit. See `app/sim.c3`.
-	if (cut) self.jiggle_reset();
+	self.jiggle_reset();
 	self.refresh_animation();
-	return self.animating;
 }
 
 <*
@@ -108,7 +84,6 @@ fn void AppState.stop_animation(&self)
 	self.drop_playback_rig();
 	self.current_anim = {};
 	self.current_ref = NO_ANIM;
-	self.end_blend();
 	self.drop_palette();
 	// The mesh is back at rest, so the tail has nothing left to lag behind. The
 	// sim itself is kept until something wants one again — see `app/sim.c3`.
@@ -182,12 +157,7 @@ fn String[] AppState.clip_names(&self, RigView* view)
 }
 
 <*
- The same, for a clip that is not the one running.
-
- A crossfade samples two clips at once and they need not come from the same pack:
- fading a downloaded walk into a hand-authored jump means two vocabularies in one
- frame, and reading the second through the first's reach would drive the wrong
- joints for as long as the fade lasts.
+ The same, for any clip: its pack says how its joint names spell this rig's.
 *>
 fn String[] AppState.names_for(&self, RigView* view, AnimRef ref)
 {
@@ -333,93 +303,6 @@ fn void AppState.resume_clip(&self)
 }
 
 <*
- Change clip without a cut: fade out of what is running and into `ref`.
-
- 	`app.begin_blend(walk, 0.2f);`
-
- What a character driven by input needs and `start_animation` cannot give it —
- that one is a cut by design, resetting the dynamic bones so a new clip does not
- inherit the last one's lag. A crossfade wants exactly the opposite: the tail
- that was swinging on the walk should keep swinging into the run.
-
- **Falls back to a cut** when there is nothing to fade from, when the clip is
- parked, or when the fade has no length — each of which is a cut in every sense
- that matters, and pretending otherwise would mean a zero-length fade that had to
- be special-cased everywhere downstream.
-
- Asking for the clip that is already running is answered with silence rather than
- a restart: a script calling `clip("walk")` every frame while a key is held is
- the ordinary way to write one, and restarting would leave the character
- twitching on the first frame of the walk forever.
-
- @param fade : `Seconds to cross over. Zero or less cuts.`
- @return `False if there is no such clip, or it would not play.`
-*>
-fn bool AppState.begin_blend(&self, AnimRef ref, float fade)
-{
-	AnimTemplate* template = self.clip(ref);
-	if (!template) return false;
-
-	if (self.current_ref.valid() && self.current_ref.pack == ref.pack
-		&& self.current_ref.clip == ref.clip)
-	{
-		return true;
-	}
-
-	if (!self.animating || self.anim_paused || fade <= 0.0f
-		|| self.current_anim.keyframes.len == 0)
-	{
-		return self.start_animation_ref(ref);
-	}
-
-	// Read before the swap, which is what overwrites both.
-	AnimTemplate outgoing = self.current_anim;
-	float outgoing_time = self.anim_time;
-	AnimRef outgoing_ref = self.current_ref;
-
-	if (!self.swap_clip(*template, cut: false)) return false;
-	self.current_ref = ref;
-
-	// After the swap, because `swap_clip` clears these — it is the one place that
-	// can be sure no fade survives a clip change it did not start.
-	self.fade_from = outgoing;
-	self.fade_from_ref = outgoing_ref;
-	self.fade_from_time = outgoing_time;
-	self.fade_span = fade;
-	self.fade_left = fade;
-
-	// Again, now that there is something to blend: `swap_clip` already refreshed,
-	// but it did so with the fade cleared and therefore showed the incoming clip
-	// outright — one frame of exactly the jump this exists to remove.
-	self.refresh_animation();
-	return true;
-}
-
-<*
- Forget the clip being faded out of. Idempotent, and cheap enough to call
- wherever a clip changes.
-
- Nothing is freed: `fade_from` is a shallow copy of a template the library owns,
- the same way `current_anim` is.
-*>
-fn void AppState.end_blend(&self)
-{
-	self.fade_from = {};
-	self.fade_from_ref = NO_ANIM;
-	self.fade_from_time = 0.0f;
-	self.fade_left = 0.0f;
-	self.fade_span = 0.0f;
-}
-
-<*
- Whether a crossfade is in flight.
-*>
-fn bool AppState.blending(&self)
-{
-	return self.fade_left > 0.0f && self.fade_span > 0.0f && self.fade_from.keyframes.len > 0;
-}
-
-<*
  Start the clip a reference names, and remember which one it was.
 
  @return `False if there is no such clip, or it would not play.`
@@ -474,21 +357,6 @@ fn void AppState.tick_animation(&self, float dt)
 
 	dt *= self.anim_preview_speed > 0 ? self.anim_preview_speed : 1.0f;
 	self.anim_time += dt;
-
-	// The clip being faded out of keeps running while it fades, so the two are
-	// crossing between two moving poses rather than into a frozen one — a fade
-	// out of a walk whose legs had stopped mid-stride reads as a stumble.
-	if (self.blending())
-	{
-		self.fade_left -= dt;
-		self.fade_from_time += dt;
-		AnimTemplate from = self.fade_from;
-		if (from.loop && from.duration > 0.0f)
-		{
-			while (self.fade_from_time >= from.duration) self.fade_from_time -= from.duration;
-		}
-		if (self.fade_left <= 0.0f) self.end_blend();
-	}
 
 	bool preview_loops = self.anim_preview_loop == LOOP
 		|| (self.anim_preview_loop == FOLLOW_CLIP && anim.loop);
@@ -628,9 +496,7 @@ fn void AppState.cache_player_pose(&self, rig::Pose pose)
  raw key and is deliberately last. The returned arrays are temporary evaluated
  data; neither the template nor its keys are rewritten.
 
- This helper is also the sampling door for timeline drafts and joint UI. The
- player adds crossfade handling in `sampled_pose`, then applies the same limit
- and grounding order to the blended result.
+ This helper is also the sampling door for timeline drafts and joint UI.
 
  The caller owns the returned pose.
 *>
@@ -655,67 +521,12 @@ fn rig::Pose AppState.evaluated_clip_pose(
 }
 
 <*
- The pose to show this frame: the running clip, or the two being crossed.
-
- **The grounding order is the whole reason this is a function.** A clip's own
- `pose` grounds what it returns, and two grounded poses do not average to a
- grounded one — each has a foot planted somewhere, and the midpoint of two
- contacts is a hover. So both sides are sampled with the solve switched off,
- blended, and put on the floor once at the end.
-
- Which clip's floor spec is used: the incoming one, falling back to the outgoing
- when the incoming names no feet. A fade into a clip that was never grounded
- would otherwise drop the character through the floor for the length of the fade
- and then snap it back.
-
- The caller owns the returned pose.
+ The pose to show this frame. The caller owns it.
 *>
 fn rig::Pose AppState.sampled_pose(&self, Allocator allocator, RigView* view)
 {
-	AnimTemplate anim = self.current_anim;
-	String[] names = self.clip_names(view);
-
-	if (!self.blending())
-	{
-		return self.evaluated_clip_pose(allocator, view, anim, self.current_ref,
-			self.anim_time, aimed: true);
-	}
-
-	AnimTemplate from = self.fade_from;
-	String[] from_names = self.names_for(view, self.fade_from_ref);
-
-	// Counted down rather than up, so this is how much of the fade is *spent*.
-	float t = 1.0f - self.fade_left / self.fade_span;
-
-	rig::Pose leaving = from.pose(allocator, &view.skeleton, from_names, self.fade_from_time, grounded: false);
-	defer leaving.free(allocator);
-	rig::Pose arriving = anim.pose(allocator, &view.skeleton, names, self.anim_time, grounded: false);
-	defer arriving.free(allocator);
-
-	rig::Pose? mixed = rig::blend_poses(allocator, leaving, arriving, t);
-	// Only when the two disagree on joint count, which one skeleton makes
-	// impossible — but a fallback that shows the incoming clip beats a frame with
-	// no pose at all.
-	if (catch mixed)
-	{
-		return self.evaluated_clip_pose(allocator, view, anim, self.current_ref,
-			self.anim_time, aimed: true);
-	}
-
-	rig::Pose out = mixed;
-	// Limits describe the pose that reaches the renderer, including the midpoint
-	// of a crossfade. Clamping the two endpoints only would not guarantee their
-	// quaternion blend remains inside the independent swing and twist ranges.
-	PoseStages stages = self.stages_for(view, self.current_ref);
-	stages.limit(&out);
-	AnimGround floor = anim.ground.solves() ? anim.ground : from.ground;
-	stages.ground(allocator, anim, self.anim_time, &out, &floor);
-	// Each clip's pins and then targets in proportion to how much of it is showing.
-	self.apply_clip_pins(view, from, self.fade_from_ref, self.fade_from_time, &out, 1.0f - t);
-	self.apply_clip_pins(view, anim, self.current_ref, self.anim_time, &out, t);
-	self.apply_clip_aims(view, from, self.fade_from_ref, self.fade_from_time, &out, null, 1.0f - t);
-	self.apply_clip_aims(view, anim, self.current_ref, self.anim_time, &out, null, t);
-	return out;
+	return self.evaluated_clip_pose(allocator, view, self.current_anim, self.current_ref,
+		self.anim_time, aimed: true);
 }
 
 <*

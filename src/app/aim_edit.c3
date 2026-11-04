@@ -21,7 +21,6 @@ import std::math::quaternion;
  aims they name, so a target being dragged turns the head before it is keyed.
 
  @param applied : `Receives each touched joint's rotation from before the aims; may be null.`
- @param gain : `A crossfade's weight for this clip's aims.`
 *>
 fn void AppState.apply_clip_aims(
 	&self,
@@ -30,11 +29,10 @@ fn void AppState.apply_clip_aims(
 	AnimRef ref,
 	float time,
 	rig::Pose* pose,
-	AimAppliedSet* applied = null,
-	float gain = 1.0f)
+	AimAppliedSet* applied = null)
 {
 	PoseStages stages = self.edit_stages(view, &clip, ref);
-	stages.aims(mem, clip, time, pose, applied, gain);
+	stages.aims(mem, clip, time, pose, applied);
 }
 
 <*
@@ -43,8 +41,6 @@ fn void AppState.apply_clip_aims(
 
  Live, like the aims: the keys are untouched and the limb of each pinned joint
  bends to keep it where the pin says while its window covers `time`.
-
- @param gain : `A crossfade's weight for this clip's pins.`
 *>
 fn void AppState.apply_clip_pins(
 	&self,
@@ -52,11 +48,10 @@ fn void AppState.apply_clip_pins(
 	AnimTemplate clip,
 	AnimRef ref,
 	float time,
-	rig::Pose* pose,
-	float gain = 1.0f)
+	rig::Pose* pose)
 {
 	PoseStages stages = self.edit_stages(view, &clip, ref);
-	stages.pins(mem, clip, time, pose, gain);
+	stages.pins(mem, clip, time, pose);
 }
 
 // The stages for a clip on this rig, with no edit open.

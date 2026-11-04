@@ -774,26 +774,6 @@ struct Character
 	AnimRef current_ref; // which pack and clip that copy came from; `{-1,-1}` = neither
 
 	<*
-	 The clip being faded out of, while a crossfade is in flight — see
-	 `begin_blend`. Zero keyframes means no fade, which is what `blending()` asks.
-
-	 Shallow, exactly as `current_anim` is: the template belongs to the library
-	 and this borrows it for the length of the fade. Nothing here is freed.
-
-	 `fade_from_ref` is kept alongside because the two clips need not come from the
-	 same pack, and a pack is what says how its clip's joint names spell this rig's.
-	*>
-	AnimTemplate fade_from;
-	AnimRef fade_from_ref;
-	float fade_from_time;
-
-	// Seconds left, and how many there were. Both are needed: the fraction is
-	// what the blend takes, and a fade cannot report its own progress from a
-	// countdown alone.
-	float fade_left;
-	float fade_span;
-
-	<*
 	 The dynamic bones running under the clip, and whether they are running at
 	 all — see `app/sim.c3`.
 

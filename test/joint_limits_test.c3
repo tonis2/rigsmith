@@ -243,18 +243,6 @@ fn void sampled_playback_obeys_limits_without_rewriting_its_keys() @test
 	test::@check(near_vec(shown.offsets[at], raw.offsets[at]),
 		"limit evaluation changed the clip's translation channel");
 
-	// Exercise the crossfade branch too: its final blended quaternion must cross
-	// the same evaluator rather than trusting constrained endpoints.
-	app.fade_from = clip;
-	app.fade_from_time = 0.5f;
-	app.fade_span = 1.0f;
-	app.fade_left = 0.5f;
-	rig::Pose faded = app.sampled_pose(mem, &view);
-	defer faded.free(mem);
-	Vec3 faded_angles = crig::joint_angles_from_rotation(frame, faded.rotations[at]);
-	test::@check(near_vec(faded_angles, { 0.25f, 0.0f, 0.0f }),
-		"crossfade bypassed the playback limits and showed %s", faded_angles);
-
 	// Grounding must measure the constrained limb. With the raw 0.8 rad bend the
 	// tip falls below its rest floor and raises the root; an all-axis lock makes
 	// the same limb straight, so applying the old ground correction afterwards

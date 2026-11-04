@@ -71,7 +71,7 @@ fn void PoseStages.ground(&self, Allocator allocator, AnimTemplate clip, float t
 	ground_pose(allocator, self.skeleton, self.names, floor ? *floor : clip.ground, pose, clip.phase_at(time));
 }
 
-fn void PoseStages.pins(&self, Allocator allocator, AnimTemplate clip, float time, rig::Pose* pose, float gain = 1.0f)
+fn void PoseStages.pins(&self, Allocator allocator, AnimTemplate clip, float time, rig::Pose* pose)
 {
 	if (!clip.plays_holds()) return;
 	AnimPin[] pins = clip_live_pins(tmem, &clip, time);
@@ -88,15 +88,15 @@ fn void PoseStages.pins(&self, Allocator allocator, AnimTemplate clip, float tim
 	if (self.has_table())
 	{
 		pin_pose(allocator, self.skeleton, self.names, pins, time, clip.duration, clip.loop, pose,
-			self.skeleton.height(), &constraint_rig_aim_clamp, &exact, gain);
+			self.skeleton.height(), &constraint_rig_aim_clamp, &exact);
 		return;
 	}
 	pin_pose(allocator, self.skeleton, self.names, pins, time, clip.duration, clip.loop, pose,
-		self.skeleton.height(), self.limits ? &doc_clamp : null, &held, gain);
+		self.skeleton.height(), self.limits ? &doc_clamp : null, &held);
 }
 
 fn void PoseStages.aims(&self, Allocator allocator, AnimTemplate clip, float time, rig::Pose* pose,
-	AimAppliedSet* applied = null, float gain = 1.0f)
+	AimAppliedSet* applied = null)
 {
 	if (clip.aims.len == 0) return;
 	AnimAimTarget[] targets = self.targets_staged ? self.aim_targets : clip.aim_targets;
@@ -106,11 +106,11 @@ fn void PoseStages.aims(&self, Allocator allocator, AnimTemplate clip, float tim
 	if (self.has_table())
 	{
 		aim_pose(allocator, self.skeleton, self.names, clip.aims, targets, time, clip.duration, clip.loop, pose,
-			self.skeleton.height(), &constraint_rig_aim_clamp, &exact, applied, gain);
+			self.skeleton.height(), &constraint_rig_aim_clamp, &exact, applied);
 		return;
 	}
 	aim_pose(allocator, self.skeleton, self.names, clip.aims, targets, time, clip.duration, clip.loop, pose,
-		self.skeleton.height(), self.limits ? &doc_clamp : null, &held, applied, gain);
+		self.skeleton.height(), self.limits ? &doc_clamp : null, &held, applied);
 }
 
 <*

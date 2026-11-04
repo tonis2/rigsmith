@@ -700,7 +700,6 @@ fn void AimAppliedSet.free(&self, Allocator allocator)
 
  @param scale : `The rig's height; targets are fractions of it.`
  @param applied : `When given, receives each touched joint's rotation from before the aims. May be null.`
- @param gain : `Multiplies every influence, how a crossfade weights a clip's aims.`
 *>
 fn void aim_pose(
 	Allocator allocator,
@@ -715,8 +714,7 @@ fn void aim_pose(
 	float scale,
 	AimClamp clamp = null,
 	void* ctx = null,
-	AimAppliedSet* applied = null,
-	float gain = 1.0f)
+	AimAppliedSet* applied = null)
 {
 	if (aims.len == 0) return;
 	usz[] order = alloc::new_array(allocator, usz, (sz)aims.len);
@@ -729,7 +727,7 @@ fn void aim_pose(
 	foreach (usz i, &aim : aims)
 	{
 		joints[i] = -1;
-		float influence = math::clamp(aim.influence, 0.0f, 1.0f) * math::clamp(gain, 0.0f, 1.0f);
+		float influence = math::clamp(aim.influence, 0.0f, 1.0f);
 		if (aim.mute || !(influence > 0.0f)) continue;
 		sz t = aim_target_index_of(targets, aim.target);
 		if (t < 0 || targets[(usz)t].mute || targets[(usz)t].keys.len == 0) continue;
@@ -754,7 +752,7 @@ fn void aim_pose(
 	{
 		AnimAim* aim = &aims[i];
 		AnimAimTarget* target = &targets[(usz)aim_target_index_of(targets, aim.target)];
-		float influence = math::clamp(aim.influence, 0.0f, 1.0f) * math::clamp(gain, 0.0f, 1.0f);
+		float influence = math::clamp(aim.influence, 0.0f, 1.0f);
 		AimChain chain = aim_chain_of(skeleton, (usz)joints[i], aim.spread);
 		if (applied)
 		{
