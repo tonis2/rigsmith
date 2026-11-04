@@ -241,6 +241,15 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	path_field.widget_as(TextField).on_submit(fixture.ui, "build/test_pick_frames/");
 	fixture.ui.flush();
 	test::@check(g.at(g.find("video")).params[0] == picked, "Select on a folder did not pick it: '%s'", g.at(g.find("video")).params[0]);
+	// Browse on Reference file takes a reference's folder the same way.
+	test::@check(@ok(node_browse_press(fixture, "reference", 0)), "no Browse on the Reference file card");
+	fixture.ui.flush();
+	test::@check(fixture.app.file_purpose == crig::FilePurpose.CAPTURE_REFERENCE, "Reference file's Browse asks for %s", fixture.app.file_purpose);
+	path_field = fixture.ui.find_id(crig::FILE_PATH_ID)!!;
+	path_field.widget_as(TextField).set_text(path_field, "build/test_pick_frames/");
+	path_field.widget_as(TextField).on_submit(fixture.ui, "build/test_pick_frames/");
+	fixture.ui.flush();
+	test::@check(g.at(g.find("reference")).params[0] == picked, "Select on a folder did not pick it: '%s'", g.at(g.find("reference")).params[0]);
 	// Animate writes no files: no save folder. Train's asks for a folder.
 	test::@check(!@ok(node_browse_press(fixture, "animate", 2)), "Animate still has a save folder");
 	test::@check(@ok(node_browse_press(fixture, "train", 2)), "no save folder Browse on Train");

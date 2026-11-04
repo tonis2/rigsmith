@@ -137,6 +137,7 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case MOTION_PATH: return { "Choose a model file or folder", "Select" };
 		case CAPTURE_IMAGE: return { "Choose the picture", "Select" };
 		case CAPTURE_FOLDER: return { "Choose a folder", "Use" };
+		case CAPTURE_REFERENCE: return { "Choose the reference", "Select" };
 		case PLUGINS_FOLDER: return { "Choose the llm folder", "Use" };
 		case PLUGIN_LINK: return { "Link a plugin's folder", "Link" };
 		case REFERENCE_FOLDER: return { "Save the reference picture in", "Use" };
@@ -239,6 +240,7 @@ fn String[] file_dialog_mask(AppState* app) @private
 		case CAPTURE_IMAGE:
 		case REFERENCE_FOLDER: return capture_image_mask[..];
 		case CAPTURE_FINDER: return capture_finder_mask[..];
+		case CAPTURE_REFERENCE: return capture_reference_mask[..];
 		case PLUGINS_FOLDER:
 		case PLUGIN_LINK: return plugin_mask[..];
 		case OPEN_SCENE:
@@ -361,7 +363,7 @@ fn void file_path_submitted(Ui* ui, String text) @private
 fn bool picks_folder(FilePurpose purpose) @private => purpose == ASSET_LIBRARY || purpose == PLUGINS_FOLDER || purpose == PLUGIN_LINK || purpose == CAPTURE_FOLDER || purpose == REFERENCE_FOLDER;
 
 // The purposes a folder answers as well as a file: Select takes the folder in the field.
-fn bool takes_folder(FilePurpose purpose) @private => picks_folder(purpose) || purpose == MOTION_PATH || purpose == CAPTURE_VIDEO;
+fn bool takes_folder(FilePurpose purpose) @private => picks_folder(purpose) || purpose == MOTION_PATH || purpose == CAPTURE_VIDEO || purpose == CAPTURE_REFERENCE;
 
 fn void file_dialog_confirmed(Ui* ui) @private
 {
@@ -438,6 +440,7 @@ fn void file_dialog_confirmed(Ui* ui) @private
 		case CAPTURE_FINDER:
 		case CAPTURE_IMAGE:
 		case CAPTURE_FOLDER:
+		case CAPTURE_REFERENCE:
 			node_file_chosen(ui, path);
 		case PLUGINS_FOLDER:
 			set_motion_path(ui, "plugins", path);

@@ -19,6 +19,9 @@ import std::io;
 import std::math;
 import std::math::quaternion;
 
+// About as long as the humanoid's little finger, knuckle to tip.
+const float FINGER_LENGTH @local = 0.06f;
+
 struct Body
 {
 	rig::TriMesh mesh;
@@ -72,6 +75,37 @@ fn float Body.bend(&self, String name)
 {
 	Quaternionf q = self.app.working_pose(self.id(name)).rotation;
 	return 2.0f * (float)math::acos((double)math::min(math::abs(q.v[3]), 1.0f)) * (float)(180.0 / math::PI);
+}
+
+// Bend each joint of a finger to its share of what its limits allow, and key it.
+fn void Body.clench(&self, String[] run, float[] shares)
+{
+	test::@check(self.app.prepare_animation_pose(), "there was no pose to edit");
+	crig::RigView view = self.app.open_rig(mem)!!;
+	defer view.free(mem);
+	foreach (i, name : run)
+	{
+		crig::JointRotationLimits limits = self.app.doc.rotation_limits_of(self.id(name));
+		crig::JointAxisLimit curl = limits.axes[0];
+		float end = math::abs(curl.maximum) > math::abs(curl.minimum) ? curl.maximum : curl.minimum;
+		crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+		Quaternionf turn = crig::rotation_from_joint_angles(frame, { end * shares[i], 0, 0 });
+		test::@check(self.app.set_working_pose(self.id(name), turn, {}), "%s did not turn", name);
+	}
+	self.app.pose_edit_pending = true;
+	test::@check(self.app.key_pose_edit(), "the fist was not keyed");
+	self.app.refresh_posed();
+}
+
+// Grab `tip` and carry it to `to` in ten steps. The finger is read once the grab
+// has it in its draft, into `before`.
+fn void Body.pull_to(&self, String[] run, String tip, Vec3 to, float[] before)
+{
+	Vec3 from = self.at(tip);
+	self.app.select(self.id(tip));
+	test::@check(self.app.begin_pose(), "G did not begin on %s", tip);
+	foreach (i, name : run) before[i] = self.bend(name);
+	for (int k = 1; k <= 10; k++) self.app.pose_toward(from + (to - from) * (k / 10.0f));
 }
 
 fn float Body.mass(&self, String name)
@@ -150,6 +184,57 @@ fn void a_curled_finger_pulled_out_straightens() @test
 	foreach (name : (String[2]){ "index_2_L", "index_3_L" })
 	{
 		test::@check(body.bend(name) < 1.0f, "%s is still bent %.1f° after the pull out", name, body.bend(name));
+	}
+}
+
+<*
+ A fist's finger is curled past a half turn, so its tip is nearer the way round
+ through the palm: a pull out has to open it, not close it onto its limits.
+*>
+fn void a_clenched_finger_pulled_out_opens() @test
+{
+	Body body;
+	test::@check(body.open(), "the humanoid did not open");
+	defer body.close();
+	io::printn("A fist's little finger pulled out past its reach opens");
+
+	String[3] run = { "pinky_1_L", "pinky_2_L", "pinky_3_L" };
+	body.clench(run[..], (float[3]){ 0.9f, 0.9f, 0.9f }[..]);
+	Vec3 knuckle = body.at(run[0]);
+	Vec3 along = (knuckle - body.at("wrist_L")).normalize();
+	float[3] clenched;
+	body.pull_to(run[..], "pinky_4_L", knuckle + along * 0.15f, clenched[..]);
+
+	float total = clenched[0] + clenched[1] + clenched[2];
+	test::@check(total > 200.0f, "the fist curled only %.1f°", total);
+	float opened = body.bend(run[0]) + body.bend(run[1]) + body.bend(run[2]);
+	test::@check(opened < 40.0f, "the finger still bends %.1f° of its %.1f°", opened, total);
+}
+
+<*
+ Where a finger can go by opening evenly and lifting at the knuckle, that is how
+ it gets there: the pull finds the pose, not a hook that puts the tip in the same place.
+*>
+fn void a_fist_pulled_to_a_half_open_finger_finds_it() @test
+{
+	Body body;
+	test::@check(body.open(), "the humanoid did not open");
+	defer body.close();
+	io::printn("A fist's finger pulled to where a half open finger's tip was opens to that pose");
+
+	String[3] run = { "ring_1_L", "ring_2_L", "ring_3_L" };
+	body.clench(run[..], (float[3]){ 0.15f, 0.4f, 0.4f }[..]);
+	float[3] wanted;
+	Vec3 tip = body.at("ring_4_L");
+	body.pull_to(run[..], "ring_4_L", tip, wanted[..]);
+	body.app.end_drag();
+
+	body.clench(run[..], (float[3]){ 0.9f, 0.9f, 0.9f }[..]);
+	float[3] clenched;
+	body.pull_to(run[..], "ring_4_L", tip, clenched[..]);
+	foreach (i, name : run)
+	{
+		test::@check(math::abs(body.bend(name) - wanted[i]) < 10.0f, "%s bends %.1f° where the half open finger bent %.1f°", name, body.bend(name), wanted[i]);
 	}
 }
 

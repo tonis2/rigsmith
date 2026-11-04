@@ -1381,13 +1381,14 @@ enum FilePurpose
 	ASSET_LIBRARY,
 
 	// A node's setting, for the node `node_pick` names: a model file, a model
-	// file or folder, a video or frames folder, a finder, a picture, a folder.
+	// file or folder, a video or frames folder, a finder, a picture, a folder, a reference.
 	MOTION_FILE,
 	MOTION_PATH,
 	CAPTURE_VIDEO,
 	CAPTURE_FINDER,
 	CAPTURE_IMAGE,
 	CAPTURE_FOLDER,
+	CAPTURE_REFERENCE,
 
 	// Folders, like ASSET_LIBRARY: the llm folder, and a plugin's folder
 	// to link into it (Settings › AI › Plugins).

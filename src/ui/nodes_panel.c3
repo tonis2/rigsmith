@@ -3,7 +3,8 @@
  (`app/pipeline_graph.c3`) in cui's node editor, one per template, picked in
  the bar on top. Model nodes hold the weights, Prompt and Guide poses feed Text
  to motion; Finder file, Train finder and Video feed Animate, and an Image
- feeds Image to pose (their reference pictures come from the Pose tab). Nodes are added from the menu (double-click, Space or Tab, or a wire
+ feeds Image to pose. Reference file picks the reference either one reads through
+ (they are drawn from the Animations menu). Nodes are added from the menu (double-click, Space or Tab, or a wire
  dropped on nothing), wired by dragging, and run from their cards.
 
  One pipeline job runs at a time; the MCP tools share it.
@@ -422,6 +423,9 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 			case IMAGE:
 				path_field(0, "reference.png in a new pose", "Choose picture — a reference picture moved into a new pose by an image model: the same two views, the same framing");
 				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
+			case REFERENCE:
+				path_field(0, "empty: the closest saved reference", "Choose the reference — the one the video or picture was made from: its folder, reference.png or studio.json. Empty takes the saved reference that looks most like the first frame");
+				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 			case ANIMATE:
 			case POSE:
 				bool pose = n.kind == POSE;
@@ -551,6 +555,10 @@ fn String node_status_text(Element* elem) @private
 			String lower = first.to_lower_tcopy();
 			if (first.len > 0 && !lower.ends_with(".mp4") && !lower.ends_with(".mov") && !lower.ends_with(".m4v")) return "Not an .mp4 or .mov".copy(mem);
 			return "H.264 .mp4 or .mov, read in Rigsmith".copy(mem);
+		case REFERENCE:
+			if (first.len == 0) return "The closest saved reference".copy(mem);
+			String folder = capture_reference_folder(first);
+			return folder.len > 0 ? string::format(mem, "Found: %s", base_name(folder)) : "Not a reference: no studio.json".copy(mem);
 		default:
 			return "";
 	}
@@ -994,6 +1002,8 @@ fn void node_browse(Ui* ui, usz slot) @private
 	// Start in a folder that is set, or beside a file, since the other weights are usually next to it.
 	String held = n.params[slot].trim();
 	if (held.len > 1 && held[^1] == '/') held = held[:held.len - 1];
+	// A reference with nothing chosen starts where the dialog saves them.
+	if (n.kind == REFERENCE && held.len == 0) held = app.config.reference_folder.len > 0 ? app.config.reference_folder : app.capture_path("references");
 	if (held.len > 0 && path::is_dir((Path)held))
 	{
 		app.remember_directory(held);
@@ -1017,6 +1027,7 @@ fn FilePurpose node_browse_purpose(NodeKind kind, usz slot)
 		case VIDEO: return CAPTURE_VIDEO;
 		case IMAGE: return CAPTURE_IMAGE;
 		case FINDER_FILE: return CAPTURE_FINDER;
+		case REFERENCE: return CAPTURE_REFERENCE;
 		default: return MOTION_FILE;
 	}
 }

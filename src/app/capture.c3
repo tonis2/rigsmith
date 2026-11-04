@@ -124,7 +124,6 @@ struct CaptureJob
 	// A saved pose to draw instead of a clip, by name.
 	String reference_pose;
 	// Where a copy of the picture goes too; "" for none.
-	String reference_copy;
 	// Bumped whenever a step ends, so the pane rebuilds its statuses.
 	uint finished;
 	// Set when a clip has landed, for the interface to select; taken once.
@@ -171,11 +170,11 @@ fn void CaptureJob.clear(&self)
 fn void CaptureJob.free(&self)
 {
 	self.clear();
-	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose, self.reference_copy })
+	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.reference_studio = self.reference_clip = self.reference_pose = self.reference_copy = "";
+	self.reference_studio = self.reference_clip = self.reference_pose = "";
 }
 
 <*
@@ -345,7 +344,7 @@ fn String capture_fault_text(fault err)
 		case CAPTURE_NO_GPU: return "there is no GPU to run it on";
 		case CAPTURE_NO_SKELETON: return "the model needs a skinned skeleton first";
 		case CAPTURE_NO_FINDER: return "train a joint finder, or choose one, first";
-		case CAPTURE_NO_REFERENCE: return "save a reference picture first: Animations ⋯ › Reference picture…";
+		case CAPTURE_NO_REFERENCE: return "save a reference picture first (Animations ⋯ › Reference picture…), or choose one in a Reference file node";
 		case CAPTURE_NO_VIDEO: return "choose a video (H.264 .mp4 or .mov), or a folder of its frames";
 		case CAPTURE_WRONG_REFERENCE: return "this wasn't made from the saved reference: its two views split somewhere else. Make it from the reference picture, or draw its own reference";
 		case CAPTURE_CLIP_TAKEN: return "the character already has a clip by that name — give this one another";
@@ -543,10 +542,9 @@ fn void AppState.set_reference_size(&self, usz row)
  Draw the reference picture into `studio` next time the renderer is free:
  render_studio's two cameras on the saved pose `pose`, or else on `clip`
  ("pack/clip"; "" is the rest pose) at `time` seconds, `width` x `height`
- pixels (0 = the chosen reference size), with a copy of the picture at `copy`
- ("" = none).
+ pixels (0 = the chosen reference size).
 *>
-fn void? AppState.request_capture_reference(&self, String studio, String clip, float time, String pose = "", uint width = 0, uint height = 0, String copy = "")
+fn void? AppState.request_capture_reference(&self, String studio, String clip, float time, String pose = "", uint width = 0, uint height = 0)
 {
 	if (self.source_path.len == 0) return CAPTURE_NO_MODEL_FILE~;
 	if (self.doc.dots.len() == 0 || !self.has_mesh()) return CAPTURE_NO_SKELETON~;
@@ -554,7 +552,6 @@ fn void? AppState.request_capture_reference(&self, String studio, String clip, f
 	replace_owned(&job.reference_studio, studio);
 	replace_owned(&job.reference_clip, clip);
 	replace_owned(&job.reference_pose, pose);
-	replace_owned(&job.reference_copy, copy);
 	job.reference_time = math::max(time, 0.0f);
 	uint[2] size = REFERENCE_SIZES[self.reference_size_row()];
 	job.reference_width = width > 0 ? width : size[0];
@@ -602,35 +599,18 @@ fn void AppState.draw_capture_reference(&self)
 	}
 	alloc::free(mem, answer.ptr);
 	job.reference_ok = true;
-	String shown = studio;
-	if (job.reference_copy.len > 0)
-	{
-		if (try slash = job.reference_copy.rindex_of_char('/')) if (slash > 0) (void)path::mkdir(job.reference_copy[:(usz)slash], true);
-		if (!copy_file(string::tformat("%s/reference.png", studio), job.reference_copy))
-		{
-			self.@notice("Reference picture drawn, but it could not be saved as %s", job.reference_copy);
-			return;
-		}
-		// Its prompt beside it, so the copy is never sent with another picture's camera wording.
-		(void)copy_file(string::tformat("%s/prompt.txt", studio), reference_prompt_copy(job.reference_copy));
-		shown = job.reference_copy;
-	}
-	self.@notice("Reference picture saved as %s at %d × %d · copy a prompt for the video or image model", shown, ask.width, ask.height);
-}
-
-// The prompt's path beside a copied picture: "dir/Test.png" is "dir/Test.txt". Temporary.
-fn String reference_prompt_copy(String picture)
-{
-	usz end = picture.len;
-	usz start = 0;
-	if (try slash = picture.rindex_of_char('/')) start = (usz)slash + 1;
-	if (try dot = picture[start..].rindex_of_char('.')) end = start + (usz)dot;
-	return string::tformat("%s.txt", picture[:end]);
+	self.@notice("Reference picture saved in %s at %d × %d · copy a prompt for the video or image model", studio, ask.width, ask.height);
 }
 
 
 // ---------------------------------------------------------------------------
 // The references: each a folder with reference.png and studio.json.
+
+// Where the dialog draws the reference `name`: under `folder`, else with the character's own. Temporary.
+fn String AppState.reference_save_path(&self, String folder, String name)
+{
+	return folder.len > 0 ? string::tformat("%s/%s", folder, name) : self.capture_reference_path(name);
+}
 
 // A pose's name as a folder name. Temporary.
 fn String capture_reference_name(String pose)
@@ -700,6 +680,27 @@ fn String AppState.capture_reference_for(&self, String chosen)
 	found.init(tmem);
 	self.capture_references(tmem, &found);
 	return found.len() > 0 ? self.capture_reference_path(found[0]) : "";
+}
+
+<*
+ The folder of a reference given as that folder, its studio.json or its
+ reference.png; "" when `chosen` is none of them. Temporary.
+*>
+fn String capture_reference_folder(String chosen)
+{
+	chosen = chosen.trim();
+	while (chosen.len > 1 && chosen[^1] == '/') chosen = chosen[:chosen.len - 1];
+	if (chosen.len == 0) return "";
+	String folder = chosen;
+	if (!path::is_dir((Path)chosen))
+	{
+		sz? slash = chosen.rindex_of_char('/');
+		if (catch slash) return "";
+		String name = chosen[(usz)slash + 1..];
+		if (name != "studio.json" && name != "reference.png") return "";
+		folder = chosen[:(usz)slash];
+	}
+	return file::exists(string::tformat("%s/studio.json", folder)) ? folder : "";
 }
 
 const uint MATCH_W = 48;

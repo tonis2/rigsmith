@@ -3,6 +3,11 @@
 # it, so a reference to anything up there does not resolve. Takes about a second.
 cd "$(dirname "$0")/.." || exit 1
 
+command -v c3c >/dev/null || {
+	echo "check_layers: c3c is not on PATH, so nothing was checked" >&2
+	exit 1
+}
+
 libs="--libdir libs/three/lib --lib gltf --lib collision --lib image"
 pure=$(find src/model src/algo -name '*.c3')
 files=$(find src/format -name '*.c3')

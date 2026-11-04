@@ -148,15 +148,19 @@ fn void the_clip_menu_draws_a_reference_picture_into_a_chosen_folder() @test
 	test::@check(job.reference_pending && job.reference_pose.len == 0 && job.reference_clip.ends_with("Posed"),
 		"the frame at the playhead was not asked for (%s)", job.reference_clip);
 	test::@check(job.reference_time == 1.5f, "not at the playhead (%f)", job.reference_time);
-	test::eq(job.reference_studio, f.app.capture_reference_path("Posed"));
-	test::eq(job.reference_copy, "build/test_reference_copy/Posed.png");
+	test::eq(job.reference_studio, "build/test_reference_copy/Posed");
 	job.reference_pending = false;
 
 	f.app.reference_pose_row = 1;
 	f.click(f.center_of(crig::REFERENCE_DRAW_ID)!!);
 	f.ui.flush();
 	test::@check(job.reference_pending && job.reference_pose == "Crouch", "the saved pose was not asked for (%s)", job.reference_pose);
-	test::eq(job.reference_studio, f.app.capture_reference_path("Crouch"));
-	test::eq(job.reference_copy, "build/test_reference_copy/Crouch.png");
+	test::eq(job.reference_studio, "build/test_reference_copy/Crouch");
 	job.reference_pending = false;
+
+	// The prompt buttons read the camera from where the picture went.
+	String pose;
+	test::eq(crig::reference_target(f.ui, &pose), "build/test_reference_copy/Crouch");
+	folder_field.widget_as(TextField).set_text(folder_field, "");
+	test::eq(crig::reference_target(f.ui, &pose), f.app.capture_reference_path("Crouch"));
 }

@@ -871,10 +871,13 @@ fn float AppState.solve_limited_pose_chain(
 	{
 		share = 1.0f / (float)tip;
 		passes *= CURL_PASS_FACTOR;
-		// Only a finger being closed is curled toward the pointer. One pulled back
-		// out toward straight has the shared passes alone, which open every
-		// pivot evenly; the curl's pull would bend it back in against the hand.
-		if (!digit_opening(view, chain, world, points[:tip + 1], target))
+		// Only a finger being closed is curled toward the pointer: the curl's pull
+		// would bend one being opened back in against the hand.
+		if (digit_opening(view, chain, world, points[:tip + 1], target))
+		{
+			self.open_digit(view, chain, pose, points, world, target);
+		}
+		else
 		{
 			target = curl_target(points[:tip + 1], target);
 			curl_start = true;
@@ -1022,6 +1025,51 @@ fn Quaternionf AppState.pivot_step(
 }
 
 fn void AppState.chain_points(&self, RigView* view, PoseChain chain, rig::Pose pose, Vec3 ground_shift, Vec3[] points) => chain_points(view, chain, pose, ground_shift, points);
+
+// How many places along a digit's way back to rest `open_digit` tries.
+const uint DIGIT_OPEN_STEPS @local = 32;
+
+<*
+ Opens a digit towards `target` before any pass: every joint the same share of its
+ way back to rest, and the knuckle aims the rest. A pass alone takes the shortest
+ arc, which past a half turn of curl closes the finger onto its limits.
+*>
+fn void AppState.open_digit(&self, RigView* view, PoseChain chain, rig::Pose* pose, Vec3[] points, Quaternionf[] world, Vec3 target)
+{
+	usz tip = chain.count;
+	Quaternionf[IK_MAX_CHAIN + 1] start;
+	for (usz p = 0; p < tip; p++) start[p] = pose.rotations[pose_chain_joint(chain, p)];
+
+	float nearest = -1.0f;
+	float share = 0.0f;
+	for (uint step = 0; step <= DIGIT_OPEN_STEPS; step++)
+	{
+		float trial = (float)step / (float)DIGIT_OPEN_STEPS;
+		self.open_digit_by(view, chain, pose, points, world, start[:tip], trial, target);
+		float gap = (target - points[tip]).length();
+		if (nearest >= 0.0f && gap >= nearest) continue;
+		nearest = gap;
+		share = trial;
+	}
+	self.open_digit_by(view, chain, pose, points, world, start[:tip], share, target);
+}
+
+// Puts each pivot `share` of the way from `start` back to rest, then aims the knuckle, all through the limits.
+fn void AppState.open_digit_by(&self, RigView* view, PoseChain chain, rig::Pose* pose, Vec3[] points, Quaternionf[] world, Quaternionf[] start, float share, Vec3 target)
+{
+	Quaternionf rest = quaternion::IDENTITY;
+	JointLimitFrame frame;
+	JointRotationLimits limits;
+	foreach (usz pivot, from : start)
+	{
+		limits = self.doc.rotation_limits_of(view.dot_ids[pose_chain_joint(chain, pivot)]);
+		frame = joint_limit_frame(&view.skeleton, view.dot_ids, limits);
+		carry_pivot(view, chain, pose, points, world, pivot, constrain_joint_rotation(frame, limits, from.slerp(rest, share)));
+	}
+	Quaternionf aim = ik::shortest_arc(points[chain.count] - points[0], target - points[0], (float)math::PI);
+	carry_pivot(view, chain, pose, points, world, 0,
+		self.pivot_step(view, chain, pose, points, world, 0, target, &frame, &limits, 1.0f, &aim));
+}
 
 <*
  A digit's runs put back as the gesture found them, so every move solves from

@@ -48,7 +48,7 @@ fn Element* build_reference_dialog_body(Ui* ui)
 			@node((Label) { .text = "Save to", .size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
 			@tree((Row) { .gap = ANIM_GAP })
 			{
-				@node((TextField) { .placeholder = "folder (empty: only the character's own copy)", .style = TEXT_FIELD_STYLE,
+				@node((TextField) { .placeholder = "folder (empty: the character's capture folder)", .style = TEXT_FIELD_STYLE,
 					.width = REFERENCE_DIALOG_W - 80 }).with_id(REFERENCE_FOLDER_ID);
 				@node(panel_button("Browse", &reference_browse)).with_id(REFERENCE_BROWSE_ID);
 			};
@@ -105,11 +105,24 @@ fn String reference_choice(AppState* app, String* pose) @private
 	return capture_reference_name(clip ? clip.name : "rest");
 }
 
+// The Save to field, without a trailing slash.
+fn String reference_folder_typed(Ui* ui) @private
+{
+	String folder = field_text(ui, REFERENCE_FOLDER_ID).trim();
+	return folder.len > 1 && folder[^1] == '/' ? folder[:folder.len - 1] : folder;
+}
+
+// The folder the dialog's choices draw into, and the pose as reference_choice gives it. Temporary.
+fn String reference_target(Ui* ui, String* pose)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	return app.reference_save_path(reference_folder_typed(ui), reference_choice(app, pose));
+}
+
 fn void reference_draw_clicked(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
-	String folder = field_text(ui, REFERENCE_FOLDER_ID).trim();
-	if (folder.len > 1 && folder[^1] == '/') folder = folder[:folder.len - 1];
+	String folder = reference_folder_typed(ui);
 	if (folder != app.config.reference_folder)
 	{
 		if (app.config.reference_folder.len > 0) alloc::free(mem, app.config.reference_folder.ptr);
@@ -117,7 +130,7 @@ fn void reference_draw_clicked(Ui* ui)
 		app.config.save();
 	}
 	String pose;
-	String name = reference_choice(app, &pose);
+	String studio = reference_target(ui, &pose);
 	String clip_name = "";
 	float time = 0;
 	AnimTemplate* clip = app.clip(app.editing);
@@ -127,8 +140,7 @@ fn void reference_draw_clicked(Ui* ui)
 		clip_name = pack.len > 0 ? string::tformat("%s/%s", pack, clip.name) : clip.name;
 		time = anim_live_time(app);
 	}
-	String copy = folder.len > 0 ? string::tformat("%s/%s.png", folder, name) : "";
-	if (catch err = app.request_capture_reference(app.capture_reference_path(name), clip_name, time, pose, 0, 0, copy))
+	if (catch err = app.request_capture_reference(studio, clip_name, time, pose))
 	{
 		app.@notice("No reference picture: %s", capture_fault_text(err));
 	}
@@ -138,7 +150,7 @@ fn void reference_prompt(Ui* ui, bool video) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
 	String pose;
-	float yaw = capture_left_yaw(app.capture_reference_path(reference_choice(app, &pose)));
+	float yaw = capture_left_yaw(reference_target(ui, &pose));
 	ui.clipboard_write(video ? capture_prompt("", yaw) : capture_pose_prompt("", yaw));
 	app.@notice(video ? "Video prompt copied · write the action on its first line"
 		: "Image prompt copied · write the pose on its first line");

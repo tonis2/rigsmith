@@ -498,6 +498,7 @@ String[2] plugin_mask = { "plugin.json", "core.json" };
 String[3] capture_video_mask = { "*.mp4", "*.mov", "*.m4v" };
 String[1] capture_finder_mask = { "*.safetensors" };
 String[3] capture_image_mask = { "*.png", "*.jpg", "*.jpeg" };
+String[2] capture_reference_mask = { "reference.png", "studio.json" };
 
 // The asset browser's category sidebar, in the listing's colours — it is the
 // same kind of thing as the file browser beside a path, and a second palette for

@@ -71,12 +71,6 @@ fn void a_picture_that_cannot_be_read_is_not_called_wrong() @test
 	test::@check(crig::reference_fits_picture("build/no_such_reference", "build/no_such_picture.png"), "nothing to go by");
 }
 
-fn void a_copied_reference_keeps_its_prompt_beside_it() @test
-{
-	test::@check(crig::reference_prompt_copy("/refs/Test.png") == "/refs/Test.txt", "the picture's name, as text");
-	test::@check(crig::reference_prompt_copy("/refs.v2/Test") == "/refs.v2/Test.txt", "a dot in the folder is not the extension");
-}
-
 fn void a_stopped_training_set_carries_on_from_its_first_missing_chunk() @test
 {
 	String dir = "build/test_capture_chunks";
@@ -270,6 +264,16 @@ fn void the_animate_task_asks_for_the_clip_only() @test
 	test::@check(@ok(frames) && frames!!.get_len() == 1 && (frames!!.get_string_at(0) ?? "") == "/pictures/crouch.png", "the picture itself: %s", pose);
 }
 
+fn void a_reference_is_saved_under_the_chosen_folder_or_with_the_character() @test
+{
+	String dir = "build/test_reference_save";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::eq(app.reference_save_path("/refs", "Test"), "/refs/Test");
+	test::eq(app.reference_save_path("", "Test"), app.capture_reference_path("Test"));
+}
+
 fn void the_reference_picture_is_drawn_at_the_chosen_size() @test
 {
 	String dir = "build/test_reference_size";
@@ -331,9 +335,9 @@ fn void image_to_pose_makes_a_saved_pose() @test
 	crig::PipelineGraph* g = app.pipeline();
 	sz animate = g.find("pose");
 	sz image = g.find("image");
-	test::@check(g.count() == 5 && animate >= 0 && image >= 0 && g.at(animate).input[1] == image, "the picture into Image to pose (%d nodes)", g.count());
+	test::@check(g.count() == 6 && animate >= 0 && image >= 0 && g.at(animate).input[1] == image, "the picture into Image to pose (%d nodes)", g.count());
 	if (animate < 0 || image < 0) return;
-	test::@check(g.find("reference") < 0, "no reference node: references come from the clip menu");
+	test::@check(g.at(animate).input[3] == g.find("reference"), "Reference file into Image to pose");
 	test::@check(!g.connect((usz)image, (usz)g.add(crig::NodeKind.ANIMATE, { 600, 0 }), 1), "a picture does not wire into Animate's video");
 	test::@check(!app.node_ready(g, (usz)image), "no picture chosen, not ready");
 
@@ -503,7 +507,7 @@ fn void each_template_opens_on_its_own_canvas() @test
 
 	app.open_template_named(TRAIN_TEMPLATE);
 	crig::PipelineGraph* capture = app.pipeline();
-	test::@check(capture != g && capture.count() == 5, "train a finder: its four nodes and its note (%d)", capture.count());
+	test::@check(capture != g && capture.count() == 6, "train a finder: its five nodes and its note (%d)", capture.count());
 	sz animate = capture.find("animate");
 	test::@check(animate >= 0 && capture.at(animate).input[0] == capture.find("train") && capture.at(animate).input[2] == capture.find("backbone"),
 		"the finder and the backbone into Animate");
@@ -537,7 +541,7 @@ fn void a_node_graph_reads_back_what_it_saved() @test
 	g.free();
 
 	g = app.pipeline_now(TRAIN_TEMPLATE);
-	test::@check(g.count() == 6, "six nodes read back (%d)", g.count());
+	test::@check(g.count() == 7, "seven nodes read back (%d)", g.count());
 	sz again = g.find("video");
 	sz read_second = g.find("animate2");
 	if (again < 0 || read_second < 0)
@@ -692,6 +696,66 @@ fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 	g.disconnect(animate, 2);
 	order.clear();
 	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_BACKBONE, "and without a backbone");
+}
+
+fn void a_reference_node_picks_the_layout() @test
+{
+	String dir = "build/test_nodes_reference";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
+	usz animate = (usz)g.find("animate");
+	usz reference = (usz)g.find("reference");
+	test::@check(g.at(animate).input[3] == (sz)reference, "Reference file into Animate");
+	g.set_param((usz)g.find("video"), 0, app.source_path);
+	g.set_param((usz)g.find("backbone"), 0, app.source_path);
+	g.set_param(animate, 0, "reference_test");
+	List{usz} order;
+	order.init(mem);
+	defer order.free();
+
+	test::@check(app.node_ready(g, reference), "empty is ready: it takes the closest saved one");
+	test::@check(g.fed_reference(animate) == "", "and hands on no folder");
+	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_REFERENCE, "empty, with none saved beside the model: refused");
+
+	// Outside the open model's capture folder, the case Reference file is for.
+	String chosen = string::tformat("%s/elsewhere/Walk", dir);
+	(void)path::mkdir(chosen, true);
+	(void)file::save(string::tformat("%s/studio.json", chosen), "{}");
+	(void)file::save(string::tformat("%s/reference.png", chosen), "x");
+	(void)file::save(string::tformat("%s/Walk.png", chosen), "x");
+	foreach (given : (String[]) { chosen, string::tformat("%s/", chosen), string::tformat("%s/studio.json", chosen), string::tformat("%s/reference.png", chosen) })
+	{
+		g.set_param(reference, 0, given);
+		test::@check(g.fed_reference(animate) == chosen, "%s is the reference in %s", given, g.fed_reference(animate));
+		order.clear();
+		test::@check(@ok(app.node_order(g, animate, &order)), "%s lets Animate run with none saved beside the model", given);
+	}
+
+	// A copy of the picture says nothing of which layout it goes with.
+	foreach (bad : (String[]) { string::tformat("%s/Walk.png", chosen), string::tformat("%s/gone", dir), dir })
+	{
+		g.set_param(reference, 0, bad);
+		order.clear();
+		test::@check(@catch(app.node_order(g, animate, &order)) == crig::NODE_SOURCE_MISSING && g.blocker == (sz)reference, "%s is not a reference", bad);
+	}
+
+	g.set_param(reference, 0, chosen);
+	String text = g.to_json();
+	defer text.free(mem);
+	test::@check(text.contains(`"reference": { "from": "reference.reference" }`), "the wire is saved: %s", text);
+
+	// Unwired, as a graph saved before the node reads.
+	g.disconnect(animate, 3);
+	order.clear();
+	test::@check(@catch(app.node_order(g, animate, &order)) == crig::CAPTURE_NO_REFERENCE, "unwired goes back to the saved ones");
+	(void)path::mkdir(app.capture_reference_path("Test"), true);
+	(void)file::save(string::tformat("%s/studio.json", app.capture_reference_path("Test")), "{}");
+	order.clear();
+	test::@check(@ok(app.node_order(g, animate, &order)), "which it then finds");
+	test::@check(crig::node_browse_purpose(REFERENCE, 0) == crig::FilePurpose.CAPTURE_REFERENCE, "Browse asks for a reference");
 }
 
 fn void a_train_node_checks_its_size() @test
