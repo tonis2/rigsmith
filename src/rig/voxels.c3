@@ -77,7 +77,7 @@ fn MeshVoxels build_voxels(
 	// time the grid is refined, so a horn tip or a finger that needed the reach at
 	// one resolution loses it at the next and comes out anchored nowhere at all.
 	// That was the standing argument against a finer grid — at 96, 703 of the
-	// shipped Mixamo character's vertices lost their cell, and none do now.
+	// shipped downloaded character's vertices lost their cell, and none do now.
 	//
 	// A twenty-fourth of the model, which is what two cells used to be at 48.
 	int reach = (int)math::max((float)collision::VOXEL_PAD, math::round((float)resolution / 24.0f));
@@ -147,7 +147,7 @@ const float PIECE_CELLS = 8.0;
  than a thigh to resolve. So it is spent where it buys something. Measured over
  the models here, the piece a typical vertex sits in is 48 cells across on a
  one-skin character and **two to three** on a model assembled from solids — the
- robot at 3.19, the Mixamo character at 2.17, everything else at 47.7 or more.
+ robot at 3.19, the downloaded character at 2.17, everything else at 47.7 or more.
  Nothing lands between, so the test needs no care beyond being on the right side
  of the gap.
 

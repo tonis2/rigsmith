@@ -27,8 +27,8 @@
  in common with the rig.
 
  **A file on a rig crig recognises is read onto that rig's body plan.** Nothing
- downloaded carries crig metadata, and a Mixamo walk names its joints
- `mixamorig:LeftUpLeg` where the biped plan says `thigh_L` — so the clips would
+ downloaded carries crig metadata, and a downloaded walk names its joints
+ `armature:LeftUpLeg` where the biped plan says `thigh_L` — so the clips would
  arrive intact and match nothing. `core/joint_alias.c3` carries the names across,
  and a pack that said no plan of its own adopts the scheme's. The scheme is
  settled once for the whole file, so the skeleton and every clip in it are named

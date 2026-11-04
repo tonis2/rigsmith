@@ -28,7 +28,7 @@
 
  **Rows are named by pack, not by plan.** A library easily holds three files
  declaring `biped` (the shipped `humanoid.glb`, a saved `biped.glb`, a
- downloaded `mixamo.glb`), so a list keyed on the plan tag would be three rows
+ downloaded `walk.glb`), so a list keyed on the plan tag would be three rows
  all reading "Biped" — worse than the silence it replaces. The tag rides in the
  trailing column, where it groups without being the only thing said.
 

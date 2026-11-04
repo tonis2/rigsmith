@@ -11,7 +11,7 @@
  animation, no mesh — and the clip comes in by the door every downloaded clip
  does: `pack_for_file` matches the source skeleton onto the character's body
  plan by shape, and a bind puts it on the character. A generated walk is
- retargeted exactly the way a Mixamo walk is.
+ retargeted exactly the way a downloaded walk is.
 
  **Asynchronous because it is slow.** A generation is ten to thirty seconds of
  GPU work, most of it the diffusion loop. The pipeline breathes between blocks

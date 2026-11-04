@@ -1398,7 +1398,7 @@ fn void AppState.free_pack_reaches(&self)
  reach is the shape; the loop below is the clip.
 
  **The shape level used to be missing, and its absence was silent.** The test was
- one joint name in common, so a Mixamo dance keying sixty-five joints on a rig
+ one joint name in common, so a downloaded dance keying sixty-five joints on a rig
  that happened to share six of the spellings read as playable, ran, and moved a
  toe. `JointMatch.usable` — two thirds of the pack's required joints — is the
  line between a clip that will be partial and a clip that is for another animal,

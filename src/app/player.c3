@@ -185,7 +185,7 @@ fn String[] AppState.clip_names(&self, RigView* view)
  The same, for a clip that is not the one running.
 
  A crossfade samples two clips at once and they need not come from the same pack:
- fading a Mixamo walk into a hand-authored jump means two vocabularies in one
+ fading a downloaded walk into a hand-authored jump means two vocabularies in one
  frame, and reading the second through the first's reach would drive the wrong
  joints for as long as the fade lasts.
 *>
@@ -202,7 +202,7 @@ fn String[] AppState.names_for(&self, RigView* view, AnimRef ref)
  Say how far a clip just started actually reaches, when it does not reach
  everything.
 
- The disclosure half of playing a clip across two vocabularies. A Mixamo dance on
+ The disclosure half of playing a clip across two vocabularies. A downloaded dance on
  a rig with no fingers is a perfectly good walk that will not curl a hand, and
  that is worth one sentence and no dialog: the user asked for the clip, and the
  answer is "yes, minus the hands", not a question.

@@ -346,7 +346,7 @@ struct SideCase
 
  This is not a formatting nicety. A rig is named after whichever body plan it
  matched, and a plan's words are its pack file's own joint names — so anything
- fitted against a downloaded Mixamo pack is spelled `mixamorig:LeftHand` and
+ fitted against a downloaded pack is spelled `armature:LeftHand` and
  nothing crig writes is in it. Read only `_L`/`_R` and every joint on such a rig
  looks like a joint with no other side, which is what made Mirror lay a second
  skeleton on top of the one already there instead of squaring the two halves up.
@@ -365,8 +365,8 @@ fn void a_side_is_read_from_every_convention_a_rig_arrives_in() @test
 		{ "L_Upperarm", "R_Upperarm", "the letter on the front instead" },
 		{ "Bip01_L_Finger0", "Bip01_R_Finger0", "and in the middle, which 3ds Max writes" },
 		{ "leg_joint_R_1", "leg_joint_L_1", "a marker between two words, with a numbered joint after it" },
-		{ "mixamorig:LeftHandThumb1", "mixamorig:RightHandThumb1", "Mixamo, camel-cased" },
-		{ "mixamorig:RightToe_End", "mixamorig:LeftToe_End", "and a marker that is not at either end" },
+		{ "armature:LeftHandThumb1", "armature:RightHandThumb1", "prefixed, camel-cased" },
+		{ "armature:RightToe_End", "armature:LeftToe_End", "and a marker that is not at either end" },
 		{ "upperarm_left", "upperarm_right", "the word spelled out, lowercase" },
 		{ "LEFT_FOOT", "RIGHT_FOOT", "and shouted" },
 		{ "armLeft", "armRight", "camel-cased onto a lowercase stem" },
@@ -400,7 +400,7 @@ fn void mirroring_a_name_twice_gives_the_name_back() @test
 {
 	String[] named = {
 		"thigh_L", "hand.R", "upperarm_l", "R_Upperarm", "Bip01_L_Finger0",
-		"mixamorig:LeftHandThumb1", "upperarm_right", "LEFT_FOOT", "armLeft",
+		"armature:LeftHandThumb1", "upperarm_right", "LEFT_FOOT", "armLeft",
 	};
 
 	foreach (name : named)

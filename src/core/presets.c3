@@ -190,7 +190,7 @@ fn Vec3 mirror_at(Vec3 at) => { 1.0f - at.x, at.y, at.z };
 
 <*
  A side written out as a word, wherever it falls in the name:
- `mixamorig:LeftHandThumb1`, `upperarm_left`, `LEFT_FOOT`. Listed both ways
+ `armature:LeftHandThumb1`, `upperarm_left`, `LEFT_FOOT`. Listed both ways
  round, so one pass answers either.
 
  Three casings rather than a case-insensitive compare, because the answer has to
@@ -213,12 +213,12 @@ const SideWord[] SIDE_WORDS @local = {
  The name a dot's mirror twin would carry, or "" for a name that names no side.
 
  	`mirror_name("thigh_L") == "thigh_R"`
- 	`mirror_name("mixamorig:LeftHandThumb1") == "mixamorig:RightHandThumb1"`
+ 	`mirror_name("armature:LeftHandThumb1") == "armature:RightHandThumb1"`
 
  **Not only crig's own suffix.** `fit_preset` writes `_L`/`_R`, but a rig is
  named from whichever body plan it matched and a plan's words are its pack
- file's own joint names — so a figure matched against a downloaded Mixamo pack
- comes back spelled `mixamorig:LeftHand`, and one exported from Unreal spelled
+ file's own joint names — so a figure matched against a downloaded pack
+ comes back spelled `armature:LeftHand`, and one exported from Unreal spelled
  `hand_l`. Reading only the suffix left every one of those a name with no
  other side, which is not a rig with no symmetry but a mirror that could not
  see the symmetry it had: it would place a second skeleton on top of the one
@@ -317,7 +317,7 @@ fn bool name_break(char c) @local => c == '_' || c == '.' || c == '-';
 // than a run of letters inside one: `Cleft` is not a left anything and
 // `Rightful` is not a right one. A joint name breaks its words with a separator
 // or with a capital, so both count as an edge — which is what lets
-// `mixamorig:LeftHandThumb1` and `upperarm_left` be read by the same rule.
+// `armature:LeftHandThumb1` and `upperarm_left` be read by the same rule.
 fn sz side_word_at(String name, String word) @local
 {
 	if (word.len == 0 || word.len > name.len) return -1;

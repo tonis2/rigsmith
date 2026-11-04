@@ -647,7 +647,7 @@ fn uint unique_fitted_dot_id(String name, FittedDot[] fitted, uint[] ids) @local
 
  Packs carrying no body are skipped, and the tag alone is not enough to identify
  one. A clips-only pack carries the tag of the plan it was authored against —
- `Mixamo` and anything `save_pack` writes for a biped are both tagged `biped` —
+ a downloaded pack and anything `save_pack` writes for a biped are both tagged `biped` —
  so matching on the tag alone answers with whichever of them the library lists
  first, and the plan then fails to apply for want of a body to fit from.
 

@@ -178,7 +178,7 @@ fn SourceSkin? skin_from_gltf(Allocator allocator, gltf::GltfStream* stream, int
  *is* the geometry — so a `B` that is not the identity has to be applied here or
  it is lost.
 
- For anything crig writes, and for a Blender or Mixamo export, `B` is the
+ For anything crig writes, and for a Blender or downloaded export, `B` is the
  identity and this changes nothing: the joints already sit at the scene root, so
  the inverse bind matrices undo their globals exactly. It is files that carry a
  conversion above the joints — COLLADA2GLTF puts its `Z_UP` node there — whose

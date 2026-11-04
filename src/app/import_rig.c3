@@ -3,7 +3,7 @@
 
  crig's ordinary job is to put a skeleton on a mesh that has none. This is the
  other case: the mesh arrives already rigged and already weighted — from Blender,
- from Mixamo, from crig's own export — and the only thing wanted is animation.
+ from a download, from crig's own export — and the only thing wanted is animation.
  Re-deriving the rig would answer a question nobody asked and lose the answer
  that came with the file.
 

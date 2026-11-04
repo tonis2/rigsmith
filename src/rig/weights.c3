@@ -791,7 +791,7 @@ const float SHELL_CARRIER_SHARE = 0.7f;
  *be* that bone's, and bound to it rigidly.
 
  This is what a hard-surface model is: not a skin stretched over a skeleton but
- one solid per bone, hinged at the joints. A Mixamo character shipped as a robot
+ one solid per bone, hinged at the joints. A downloaded character shipped as a robot
  is ninety-five separate pieces and ninety-four of them are one joint outright in
  the weights it came with — which is why its hand reads cleanly and a
  falloff-bound one does not, and it is a fact about how the model was built
@@ -805,7 +805,7 @@ const float SHELL_CARRIER_SHARE = 0.7f;
  piece turn out to be far apart. Counted over the two split models in the repo,
  pieces pile up at both ends and thin out in between: the robot has 21 of its 70
  sitting at 0.5-0.6 and 18 above 0.9, with five in the 0.8-0.9 band between them;
- the Mixamo character has 28 at 0.5-0.6 and 41 above 0.9, with seven between. A
+ the downloaded character has 28 at 0.5-0.6 and 41 above 0.9, with seven between. A
  piece that straddles a knuckle splits near half-and-half by construction — the
  bone ends in the middle of it — so the low mode is the joint-spanning pieces and
  the high mode is the one-bone ones, and the bar belongs in the trough.

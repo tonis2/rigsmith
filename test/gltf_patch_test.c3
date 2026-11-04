@@ -24,7 +24,7 @@ import std::io::file;
 
 // A document with the two shapes every edit here touches: an array of objects
 // with names in them, and numbers that must not be re-formatted.
-const String DOCUMENT @local = `{"accessors":[{"min":[-0.10000000149011612,1.0e-7],"count":24}],"animations":[{"name":"mixamo.com","channels":[]},{"channels":[]}],"asset":{"version":"2.0"}}`;
+const String DOCUMENT @local = `{"accessors":[{"min":[-0.10000000149011612,1.0e-7],"count":24}],"animations":[{"name":"take_one","channels":[]},{"channels":[]}],"asset":{"version":"2.0"}}`;
 
 // One edit's worth of path, held in a static so the slice outlives the call that
 // built it. One static per helper, so two calls to the same one alias — every
@@ -72,7 +72,7 @@ fn void a_name_is_written_over_and_nothing_else_moves() @test
 	defer alloc::free(mem, patched.ptr);
 
 	test::@check(patched.contains(`"name":"Walk"`), "the new name is not in %s", patched);
-	test::@check(!patched.contains("mixamo.com"), "the old name survived in %s", patched);
+	test::@check(!patched.contains("take_one"), "the old name survived in %s", patched);
 
 	// Everything before the animations array and everything after it, unchanged.
 	test::@check(patched.contains(`"min":[-0.10000000149011612,1.0e-7]`),
@@ -104,7 +104,7 @@ fn void a_missing_member_is_written_in() @test
 	test::@check(patched.contains(`"name":"Idle"`), "the name was not added: %s", patched);
 	// The first animation keeps its own name: an insertion into the wrong object
 	// is the failure this catches.
-	test::@check(patched.contains(`"name":"mixamo.com"`),
+	test::@check(patched.contains(`"name":"take_one"`),
 		"the other animation lost its name: %s", patched);
 }
 

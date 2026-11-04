@@ -222,7 +222,7 @@ fn AnimKeyframe? AppState.keyframe_here(&self, Allocator allocator, float time, 
 	defer if (bones.len > 0) alloc::free(mem, bones);
 
 	// The clip's own vocabulary, not the rig's, so a key written onto a rig named
-	// `hips` lands in a pack that spells it `mixamorig:Hips` — the same
+	// `hips` lands in a pack that spells it `armature:Hips` — the same
 	// translation playback reads through. Without it, keying into a borrowed clip
 	// would write entries no joint of that pack answers to.
 	return keyframe_of_pose(allocator, pose, self.names_for(&view, ref), bones,
@@ -901,7 +901,7 @@ fn void AppState.free_timeline_tracks(&self)
  What a dimmed lane means: the clip drives this joint and the figure on screen
  has nothing to answer to it. Asked through `clip_names`, not through the dots,
  because that is the vocabulary playback matches against — a rig named `hips`
- playing a pack that spells it `mixamorig:Hips` answers to the pack's spelling
+ playing a pack that spells it `armature:Hips` answers to the pack's spelling
  and to nothing else.
 *>
 fn bool AppState.rig_answers_to(&self, String joint)

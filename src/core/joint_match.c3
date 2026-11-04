@@ -2,7 +2,7 @@
  Matching a source rig onto a body plan by the shape of the two skeletons.
 
  A downloaded clip names its joints whatever its authoring tool felt like —
- `mixamorig:LeftUpLeg`, `upperarm_l`, `L_Upperarm` — and a crig rig names its
+ `armature:LeftUpLeg`, `upperarm_l`, `L_Upperarm` — and a crig rig names its
  dots `shoulder_L`. Nothing in either name tells you they are the same joint, and
  a table of translations only ever covers rigs someone has already met. This
  matches on what every rig has and no rig can spell wrong: where its joints are
@@ -276,7 +276,7 @@ fn bool JointMatch.usable(&self) => self.total > 0 && self.matched * 3 >= self.t
  them, the fraction says 1.0 across the board, and the winner is whichever plan
  happened to be looked at first. `matched + extra` is what the rig actually
  filled, fingers included, so the plan with a word for more of this skeleton
- wins. That is also the plan whose clips will reach more of it: a Mixamo
+ wins. That is also the plan whose clips will reach more of it: a downloaded
  character used to import under the smallest plan that fitted, leaving its own
  clips keying sixty-five joint names the rig no longer had.
 *>

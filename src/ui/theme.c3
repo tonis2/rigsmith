@@ -550,7 +550,7 @@ const TreeStyle OUTLINER_STYLE = {
 // selected key — the same "this is the one" the rest of the interface uses.
 //
 // The gutter is wide enough for a joint name a body plan actually produces
-// (`shoulder_L`, `mixamorig:LeftHand` elides), and a lane is shorter than a tree
+// (`shoulder_L`, `armature:LeftHand` elides), and a lane is shorter than a tree
 // row: a rig has sixty-five joints and a sheet of them has to fit in a pane.
 const TimelineStyle TIMELINE_STYLE = {
 	.gutter = BG,

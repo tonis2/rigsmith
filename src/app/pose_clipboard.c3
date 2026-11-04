@@ -40,7 +40,7 @@
  there the reflection at the playhead spreads as an offset, as any edit does.
 
  Entries are kept in the **rig's own names** rather than a clip's vocabulary, so
- a pose copied out of a Mixamo clip can be pasted into an authored one on the
+ a pose copied out of a downloaded clip can be pasted into an authored one on the
  same figure; on the way in they are translated to whatever the destination
  clip calls the joint, the same way the key clipboard does. What cannot be
  translated — a rig that has changed underneath, a twin the figure never had —

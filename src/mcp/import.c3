@@ -6,7 +6,7 @@
  does.
 
  For motion made somewhere else for another skeleton — a capture, SAM 3D Body's
- MHR clip, a Mixamo download — which the library would only show once the file
+ MHR clip, a downloaded clip — which the library would only show once the file
  sat in one of its folders and the folders were scanned again.
 *>
 module crig;

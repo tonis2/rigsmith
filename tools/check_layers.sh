@@ -11,3 +11,9 @@ c3c -C compile-only --no-obj $libs $lower || {
 	echo "check_layers: a lower layer depends on something above it" >&2
 	exit 1
 }
+
+# Third-party rig names stay out of the code: see Naming in AGENTS.md.
+if grep -rIil 'mixamo' src test tools --exclude=check_layers.sh; then
+	echo "check_layers: third-party rig name in the files above" >&2
+	exit 1
+fi

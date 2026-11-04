@@ -4125,7 +4125,7 @@ fn void the_viewport_context_menu_deletes_the_selection() @test
  The case this was reported from, and it is the ordinary one rather than the
  exotic one: a rig is named after whichever body plan it matched, a plan's words
  are its pack file's own joint names, and a pack a user downloads is as likely
- as not a Mixamo export. So an imported figure wears `mixamorig:LeftHandThumb1`
+ as not a downloaded export. So an imported figure wears `armature:LeftHandThumb1`
  on every joint it has, and while the twin was looked up by `_L`/`_R` alone that
  name said nothing — Mirror placed a whole second hand on top of the hand that
  was already there, one spare dot per finger joint, and left the crooked side
@@ -4153,8 +4153,8 @@ fn void mirror_reads_the_side_out_of_an_imported_name() @test
 	Vec3 kept = { plane + unit, 0.5f, 0.0f };
 	Vec3 crooked = { plane - unit * 1.6f, 0.42f, 0.05f };
 
-	uint left = fixture.app.add_recorded(kept, "mixamorig:LeftHandThumb1");
-	uint right = fixture.app.add_recorded(crooked, "mixamorig:RightHandThumb1");
+	uint left = fixture.app.add_recorded(kept, "armature:LeftHandThumb1");
+	uint right = fixture.app.add_recorded(crooked, "armature:RightHandThumb1");
 	fixture.app.undo_stack.commit();
 
 	fixture.app.select(left);

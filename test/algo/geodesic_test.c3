@@ -1494,7 +1494,7 @@ fn void row_chain(Vec3[]* joints, int[]* parents)
  The whole of hard-surface rigging: a solid hinged at its ends does not stretch,
  so every gram of a neighbouring bone's influence on it is a gram of wrong. This
  is also what makes a machine's hand read as fingers rather than as a smear — the
- shipped Mixamo character is ninety-five pieces bound almost exactly this way in
+ shipped downloaded character is ninety-five pieces bound almost exactly this way in
  the weights it arrives with.
 *>
 fn void a_piece_wholly_one_bones_rides_it_rigidly() @test

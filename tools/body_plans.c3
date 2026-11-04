@@ -71,7 +71,7 @@ PresetDot[32] biped_dots = {
 	// where a knuckle goes, so `fit_preset` never places any of these.
 	//
 	// **Four joints a finger, not three**, and the fourth is a tip marker that no
-	// clip turns. Downloaded rigs are written that way — mixamo's are
+	// clip turns. Downloaded rigs are written that way — theirs are
 	// `Index1..Index4` — and a three-dot plan chain laid along a four-joint source
 	// run lands on the last three of it: the knuckle rotation, which is the largest
 	// of the four, would go to the fold and the plan's fingertip would sit on a

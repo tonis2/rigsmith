@@ -3,7 +3,7 @@
 
      `c3c test --trust=full --test-filter crig_tests::pose_clipboard`
 
- The biped workflow fixture again — a Mixamo-named rig fitted to the shared
+ The biped workflow fixture again — a downloaded rig fitted to the shared
  cube, and a two-key clip on it — so twins are found by the same names a real
  figure carries. Each check is about the contract in `app/pose_clipboard.c3`:
  the selection scopes the copy, a paste lands the copied joints and nothing

@@ -1024,7 +1024,7 @@ fn bool AppState.mirror_crossings(&self, MirrorPair[] plan, float on_plane, Vec3
  that is in the wrong place — that being the whole point. `mirror_name` reads
  the conventions a rig can arrive wearing rather than crig's own alone, because
  an imported figure is named after the pack it matched: a rig off a downloaded
- Mixamo pack spells its wrist `mixamorig:LeftHand`, and reading only `_L` would
+ downloaded pack spells its wrist `armature:LeftHand`, and reading only `_L` would
  have made every joint on it look like a joint with no other side.
 
  A name that still names no side has no handle, and is matched by position

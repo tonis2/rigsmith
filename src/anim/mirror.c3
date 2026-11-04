@@ -183,7 +183,7 @@ fn String twin_or_same(Allocator allocator, String name)
 
  What pasting a pose *mirrored* means, and what mirroring a selected pose in
  place means — the two are one operation on different inputs. Every sided
- entry (`hip_L`, `mixamorig:LeftArm`) is reflected by the three sign rules and
+ entry (`hip_L`, `armature:LeftArm`) is reflected by the three sign rules and
  handed to its twin; an entry whose twin is also in the pose is thereby
  swapped with it. A joint with no side — a spine, the head, the root — has no
  twin to hand anything to, so it is reflected in place: a torso leaning to

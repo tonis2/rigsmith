@@ -8,7 +8,7 @@
  keyframe names each joint of the rig and leaves the ones it does not at rest.
  That single string comparison is the whole of retargeting, and it is also the
  whole of the problem — a library holds packs tagged `biped` in more than one
- spelling, a downloaded one saying `mixamorig:Hips` where the shipped humanoid
+ spelling, a downloaded one saying `armature:Hips` where the shipped humanoid
  says `hips`. A rig named by one of them takes nothing from the others, and the
  clip does not fail loudly: it plays, and the character stands still.
 
@@ -155,7 +155,7 @@ fn PackReach measure_reach(
 
 	// **Matched both ways round, because the matcher is directional.** It lays the
 	// plan's chains along the source's, so it needs a source at least as detailed
-	// as the plan: a sixty-five joint mixamorig rig fits the seventeen-joint biped
+	// as the plan: a sixty-five joint downloaded rig fits the seventeen-joint biped
 	// plan exactly, and the same two the other way round matches the hips and
 	// gives up — there is no source joint for `Spine1`, for a toe tip, or for the
 	// crown of a head. Neither direction is the right one in general. The rig is
@@ -556,7 +556,7 @@ fn bool ReachGaps.present(&self) => self.stops.len > 0 || self.missing.len > 0;
  A clip keying sixty-five joints on a rig with nineteen is short by forty-six,
  and reciting forty-six names tells nobody anything. What is worth saying is
  where the rig *stops*: the joints it does have, under which the clip has motion
- and the rig has nothing. On a Mixamo dance played on a fingerless character that
+ and the rig has nothing. On a downloaded dance played on a fingerless character that
  is two entries, `hand_L` and `hand_R`, and it reads as "the fingers will not
  move" without either of us having parsed a name to work it out.
 

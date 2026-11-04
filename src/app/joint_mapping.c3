@@ -83,7 +83,7 @@ fn usz AppState.unmatched_joints(&self, AnimRef ref)
  Fill the dialog's rows for the clip: the keyed joints no rig joint plays and the
  ones already matched by hand, or with `all` every joint the clip keys. Each row
  starts on what the rig plays now, or for an unplayed joint on a rig joint whose
- name reads the same (`hip_L`, `LeftHip`, `mixamorig:LeftHip`).
+ name reads the same (`hip_L`, `LeftHip`, `armature:LeftHip`).
 *>
 fn bool AppState.open_mapping_draft(&self, AnimRef ref, bool all)
 {
@@ -166,7 +166,7 @@ fn String similar_joint(String source, String[] names, PackReach* reach, AnimPac
 
 <*
  A joint name reduced to its words, lowercase and run together, with the side
- (`l`, `r` or 0) taken out: `mixamorig:LeftUpLeg` and `up_leg_L` both read
+ (`l`, `r` or 0) taken out: `armature:LeftUpLeg` and `up_leg_L` both read
  "upleg" on the left. In tmem.
 *>
 fn String joint_name_key(String name, char* side) @local

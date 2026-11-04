@@ -469,7 +469,7 @@ fn void a_fingerless_rig_still_matches_biped() @test
  and arc length measured from the anchor the limbs hang off — the hips — and from
  there all five fingers of one hand point the same way to within a per cent. What
  separates them is local to the palm, and the shared arm dilutes it. Measured on
- this fixture and on a real mixamo rig, the five come back as a permutation of
+ this fixture and on a real downloaded rig, the five come back as a permutation of
  each other: the chains are whole and in order, the side is right, the joint depth
  is right, and the labels are shuffled. So a clip's index finger may drive the
  ring one.
@@ -612,7 +612,7 @@ fn void optional_dots_are_not_placed() @test
 <*
  Of two plans a rig fits equally, the one with a word for more of it wins.
 
- The regression a Mixamo character walked into. Coverage is measured against a
+ The regression a downloaded character walked into. Coverage is measured against a
  plan's **required** dots — see `PresetDot.optional` — and every biped plan
  requires the same seventeen, so a rig with hands covers a plan that has fingers
  and a plan that has none by exactly the same fraction. Both report 17 of 17, the
@@ -746,7 +746,7 @@ fn crig::Preset without_optional(Allocator allocator, crig::Preset plan) @local
  the shape of the two skeletons.
 
  The case in the wild is a library holding packs tagged `biped` in two
- spellings — a downloaded one's `mixamorig:Hips` beside the shipped `hips`.
+ spellings — a downloaded one's `armature:Hips` beside the shipped `hips`.
  Before this, a rig named by one of them took nothing from the others — and
  took it *silently*, because one accidental spelling in common was enough for
  the clip to be offered, play, and move a toe.
@@ -818,7 +818,7 @@ fn void a_clip_reaches_a_rig_that_spells_its_joints_differently() @test
 <*
  A clip that asks for more rig than there is says where the rig stops.
 
- The disclosure half. A Mixamo dance on a character with no fingers is a good
+ The disclosure half. A downloaded dance on a character with no fingers is a good
  walk that will not curl a hand, and the user is entitled to know that before
  wondering why the hands are stiff — but not by being handed the forty joint
  names that did not land. What is worth saying is the boundary: the joints the
