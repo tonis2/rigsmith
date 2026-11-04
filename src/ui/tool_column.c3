@@ -175,7 +175,7 @@ struct ToolColumn (Widget)
 {
 	// What the last build drew. Polled per frame rather than pushed, because the
 	// keyboard opens and closes these tools as much as a click does and neither
-	// path knows this widget exists — the bargain `TintToggles` and the HUD both
+	// path knows this widget exists — the bargain `IconStrip` and the HUD both
 	// make.
 	MenuItemFlags[8] shown;
 	bool had_mesh;

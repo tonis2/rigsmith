@@ -1255,7 +1255,7 @@ fn Vec2 tint_cell(Element* strip, usz index)
 *>
 fn MenuItemFlags tint_flags(Element* strip, usz index)
 {
-	return strip.widget_as(crig::TintToggles).shown[index];
+	return strip.widget_as(IconStrip).shown[index];
 }
 
 <*

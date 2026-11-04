@@ -94,24 +94,22 @@ fn void AppState.refresh_category_rows(&self)
 	self.category_rows = alloc::new_array(mem, TreeRow, (sz)self.asset_categories.len);
 	foreach (usz i, category : self.asset_categories)
 	{
-		self.category_rows[i] = {
+		self.category_rows[i] = ((TreeRow) {
 			.label = category.label,
-			.trailing = string::format(mem, "%d", category.count),
+			.trailing = string::tformat("%d", category.count),
 			.depth = category.depth,
 			// A kind heading is the only row with anything under it. Which way its
 			// mark points is read back off the same flags `categories` was given, so
 			// the triangle and the rows it claims to control cannot disagree.
 			.expandable = category.depth == 1,
 			.expanded = !self.kind_collapsed(category.kind),
-		};
+		}).owned();
 	}
 }
 
 fn void AppState.free_category_rows(&self)
 {
-	foreach (row : self.category_rows) alloc::free(mem, row.trailing.ptr);
-	if (self.category_rows.len > 0) alloc::free(mem, self.category_rows);
-	self.category_rows = {};
+	widgets::free_tree_rows(&self.category_rows);
 }
 
 <*

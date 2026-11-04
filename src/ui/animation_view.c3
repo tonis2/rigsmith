@@ -77,7 +77,7 @@ const String ANIM_SHEET_EMPTY =
  What the right-hand column of a row says: how long the clip runs, or why it
  could not be found.
 
- Owned by the caller — `free_anim_rows` releases it.
+ Owned by the caller.
 *>
 fn String AppState.anim_row_text(&self, sz index)
 {
@@ -123,23 +123,13 @@ fn void AppState.refresh_anim_rows(&self)
 	self.anim_rows = alloc::new_array(mem, TreeRow, count);
 	for (sz i = 0; i < count; i++)
 	{
-		self.anim_rows[i] = {
-			.label = self.doc.animations[i].clip,
-			.trailing = self.anim_row_text(i),
-			.depth = 0,
-		};
+		String text = self.anim_row_text(i);
+		defer text.free(mem);
+		self.anim_rows[i] = ((TreeRow) { .label = self.doc.animations[i].clip, .trailing = text }).owned();
 	}
 }
 
-fn void AppState.free_anim_rows(&self)
-{
-	foreach (row : self.anim_rows)
-	{
-		if (row.trailing.len > 0) alloc::free(mem, row.trailing.ptr);
-	}
-	if (self.anim_rows.len > 0) alloc::free(mem, self.anim_rows);
-	self.anim_rows = {};
-}
+fn void AppState.free_anim_rows(&self) => widgets::free_tree_rows(&self.anim_rows);
 
 fn Element* build_animations_view(Ui* ui)
 {

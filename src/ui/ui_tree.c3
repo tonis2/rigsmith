@@ -1696,8 +1696,8 @@ fn Element* build_3d_view(Ui* ui)
 			@tree((Row) { .gap = STAGE_SWITCH_GAP, .cross_align = CENTER })
 			{
 				@tree(widgets::tip_probe(&stage_tip)) { @node((StageSwitch) { }); };
-				@tree(widgets::tip_probe(&shading_tip)) { @node((ShadingToggles) { }).with_id("shading"); };
-				@tree(widgets::tip_probe(&tint_tip)) { @node((TintToggles) { }).with_id("tints"); };
+				@tree(widgets::tip_probe(&widgets::icon_strip_tip)) { @node(shading_strip()).with_id("shading"); };
+				@tree(widgets::tip_probe(&widgets::icon_strip_tip)) { @node(tint_strip()).with_id("tints"); };
 			};
 
 			// ---- workflow guide ----

@@ -151,7 +151,7 @@ fn void paint_layer_icon(Painter* painter, Vec2 at, float size, ushort icon, boo
 fn String layer_row_note(AnimLayer* layer)
 {
 	String mode = layer.mode == OVERRIDE ? "override" : "additive";
-	return string::format(mem, "%s · %s · %d%%%s", layer.kind.label(), mode, (int)(layer.weight * 100.0f + 0.5f),
+	return string::tformat("%s · %s · %d%%%s", layer.kind.label(), mode, (int)(layer.weight * 100.0f + 0.5f),
 		layer.link.len > 0 ? " · shared" : "");
 }
 
@@ -167,12 +167,7 @@ struct AnimLayerStrip (Widget)
 
 fn void AnimLayerStrip.release(&self)
 {
-	foreach (row : self.rows)
-	{
-		if (row.label.len > 0) alloc::free(mem, row.label.ptr);
-		if (row.trailing.len > 0) alloc::free(mem, row.trailing.ptr);
-	}
-	if (self.rows.len > 0) alloc::free(mem, self.rows);
+	widgets::free_tree_rows(&self.rows);
 	foreach (name : self.joints) if (name.len > 0) alloc::free(mem, name.ptr);
 	if (self.joints.len > 0) alloc::free(mem, self.joints);
 	// The tips are the joints behind a "(chain)" entry: only that one is ours.
@@ -183,7 +178,6 @@ fn void AnimLayerStrip.release(&self)
 	}
 	if (self.mask_text.len > 0) alloc::free(mem, self.mask_text.ptr);
 	if (self.shared_text.len > 0) alloc::free(mem, self.shared_text.ptr);
-	self.rows = {};
 	self.joints = {};
 	self.tips = {};
 	self.mask_text = "";
@@ -247,19 +241,19 @@ fn Element* AnimLayerStrip.build(&self, Element* elem) @dynamic
 	{
 		if (r == count)
 		{
-			*row = {
-				.label = "Base".copy(mem),
-				.trailing = string::format(mem, "%d keys", clip.keyframes.len),
+			*row = ((TreeRow) {
+				.label = "Base",
+				.trailing = string::tformat("%d keys", clip.keyframes.len),
 				.icon = LAYER_ICON_BASE,
-			};
+			}).owned();
 			continue;
 		}
 		AnimLayer* each = &clip.layers[count - 1 - r];
-		*row = {
-			.label = (each.name.len > 0 ? each.name : "Layer").copy(mem),
+		*row = ((TreeRow) {
+			.label = each.name.len > 0 ? each.name : "Layer",
 			.trailing = layer_row_note(each),
 			.icon = each.kind.icon(),
-		};
+		}).owned();
 		row.toggles[0] = { .icon = OUTLINER_ICON_EYE, .on = !each.mute, .shown = true };
 		row.toggles[1] = { .icon = LAYER_ICON_SOLO, .on = each.solo, .shown = true };
 	}

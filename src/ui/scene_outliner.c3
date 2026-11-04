@@ -463,14 +463,8 @@ struct SceneOutliner (Widget)
 
 fn void SceneOutliner.release(&self)
 {
-	foreach (row : self.rows)
-	{
-		if (row.label.len > 0) alloc::free(mem, row.label.ptr);
-		if (row.trailing.len > 0) alloc::free(mem, row.trailing.ptr);
-	}
-	if (self.rows.len > 0) alloc::free(mem, self.rows);
+	widgets::free_tree_rows(&self.rows);
 	if (self.items.len > 0) alloc::free(mem, self.items);
-	self.rows = {};
 	self.items = {};
 }
 
@@ -503,25 +497,23 @@ fn Element* SceneOutliner.build(&self, Element* elem) @dynamic
 		String trailing;
 		switch (item.kind)
 		{
-			case SCENE_ITEM: label = "Scene".copy(mem);
+			case SCENE_ITEM: label = "Scene";
 			case MODEL_ITEM:
 				Character* c = app.character(item.character);
-				label = (c.source_path.len > 0 ? base_name(c.source_path) : "Model").copy(mem);
-				if (item.character != app.active) trailing = string::format(mem, "%d joints", c.doc.dots.len());
+				label = c.source_path.len > 0 ? base_name(c.source_path) : "Model";
+				if (item.character != app.active) trailing = string::tformat("%d joints", c.doc.dots.len());
 			case MESH_ITEM:
-				label = "Mesh".copy(mem);
-				trailing = string::format(mem, "%d verts", app.geometry.positions.len);
+				label = "Mesh";
+				trailing = string::tformat("%d verts", app.geometry.positions.len);
 			case SKELETON_ITEM:
-				label = "Skeleton".copy(mem);
-				trailing = string::format(mem, "%d joints", app.doc.dots.len());
+				label = "Skeleton";
+				trailing = string::tformat("%d joints", app.doc.dots.len());
 			case JOINT_ITEM:
 				Dot* dot = app.doc.find(item.dot_id);
-				label = dot && dot.name.len > 0
-					? dot.name.copy(mem)
-					: string::format(mem, "Joint %d", item.dot_id);
+				label = dot && dot.name.len > 0 ? dot.name : string::tformat("Joint %d", item.dot_id);
 		}
 
-		self.rows[i] = {
+		self.rows[i] = ((TreeRow) {
 			.label = label,
 			.trailing = trailing,
 			.depth = item.depth,
@@ -529,7 +521,7 @@ fn Element* SceneOutliner.build(&self, Element* elem) @dynamic
 			.expanded = item.expanded,
 			.icon = scene_item_icon(app, item),
 			.highlighted = item.kind == JOINT_ITEM && app.is_selected(item.dot_id),
-		};
+		}).owned();
 		self.rows[i].toggles[0] = scene_item_eye(app, item);
 		if (scene_item_selected(app, item)) selected = i;
 	}

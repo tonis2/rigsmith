@@ -77,22 +77,12 @@ struct PosePinList (Widget)
 	TreeRow[] rows;
 }
 
-fn void PosePinList.release(&self)
-{
-	foreach (row : self.rows)
-	{
-		row.label.free(mem);
-	}
-	if (self.rows.len > 0) alloc::free(mem, self.rows);
-	self.rows = {};
-}
-
-fn void PosePinList.unmount(&self, Element* elem) @dynamic => self.release();
+fn void PosePinList.unmount(&self, Element* elem) @dynamic => widgets::free_tree_rows(&self.rows);
 
 fn Element* PosePinList.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
-	self.release();
+	widgets::free_tree_rows(&self.rows);
 	PositionLock[] locks = app.position_locks;
 	usz selected = ~(usz)0;
 	if (locks.len > 0)
@@ -102,11 +92,11 @@ fn Element* PosePinList.build(&self, Element* elem) @dynamic
 		{
 			Dot* dot = app.doc.find(lock.dot_id);
 			String name = dot && dot.name.len > 0 ? dot.name : "Unnamed joint";
-			self.rows[i] = {
-				.label = name.copy(mem),
+			self.rows[i] = ((TreeRow) {
+				.label = name,
 				.trailing = lock.position && lock.rotation ? "position + angle"
 					: (lock.position ? "position" : "angle"),
-			};
+			}).owned();
 			if (lock.dot_id == app.selected) selected = i;
 		}
 	}

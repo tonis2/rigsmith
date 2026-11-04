@@ -82,30 +82,19 @@ struct AnimCheckPanel (Widget)
 	TreeRow[] rows;
 }
 
-fn void AnimCheckPanel.release(&self)
-{
-	foreach (row : self.rows)
-	{
-		row.label.free(mem);
-		row.trailing.free(mem);
-	}
-	if (self.rows.len > 0) alloc::free(mem, self.rows);
-	self.rows = {};
-}
-
-fn void AnimCheckPanel.unmount(&self, Element* elem) @dynamic => self.release();
+fn void AnimCheckPanel.unmount(&self, Element* elem) @dynamic => widgets::free_tree_rows(&self.rows);
 
 fn Element* AnimCheckPanel.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
-	self.release();
+	widgets::free_tree_rows(&self.rows);
 	CheckIssue[] issues = app.anim_check.issues;
 	if (issues.len > 0)
 	{
 		self.rows = alloc::new_array(mem, TreeRow, issues.len);
 		foreach (usz i, issue : issues)
 		{
-			self.rows[i] = { .label = issue.label.copy(mem), .trailing = issue.trailing.copy(mem) };
+			self.rows[i] = ((TreeRow) { .label = issue.label, .trailing = issue.trailing }).owned();
 		}
 	}
 	AnimTemplate* clip = app.clip(app.editing);

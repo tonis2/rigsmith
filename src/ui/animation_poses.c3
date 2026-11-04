@@ -113,23 +113,12 @@ struct AnimPosesPanel (Widget)
 	TreeRow[] rows;
 }
 
-fn void AnimPosesPanel.release(&self)
-{
-	foreach (row : self.rows)
-	{
-		row.label.free(mem);
-		row.trailing.free(mem);
-	}
-	if (self.rows.len > 0) alloc::free(mem, self.rows);
-	self.rows = {};
-}
-
-fn void AnimPosesPanel.unmount(&self, Element* elem) @dynamic => self.release();
+fn void AnimPosesPanel.unmount(&self, Element* elem) @dynamic => widgets::free_tree_rows(&self.rows);
 
 fn Element* AnimPosesPanel.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
-	self.release();
+	widgets::free_tree_rows(&self.rows);
 	SavedPose[] poses = app.doc.poses;
 	if (app.pose_library_row >= poses.len) app.pose_library_row = poses.len > 0 ? poses.len - 1 : 0;
 	bool renaming = app.pose_library_renaming && poses.len > 0;
@@ -138,8 +127,8 @@ fn Element* AnimPosesPanel.build(&self, Element* elem) @dynamic
 		self.rows = alloc::new_array(mem, TreeRow, poses.len);
 		foreach (usz i, pose : poses)
 		{
-			self.rows[i] = { .label = pose.name.copy(mem), .trailing = string::format(mem, "%d joint%s",
-				pose.dots.len, pose.dots.len == 1 ? "" : "s") };
+			self.rows[i] = ((TreeRow) { .label = pose.name, .trailing = string::tformat("%d joint%s",
+				pose.dots.len, pose.dots.len == 1 ? "" : "s") }).owned();
 		}
 	}
 	Element* body = @subtree(elem.ui)

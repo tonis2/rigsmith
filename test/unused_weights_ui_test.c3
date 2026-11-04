@@ -3,6 +3,7 @@ module crig_tests::ui;
 
 import crig;
 import cui;
+import cui::widgets;
 import std::math;
 import std::core::test;
 
@@ -27,7 +28,7 @@ fn void unused_weights_toggle_from_the_menu_and_the_strip() @test
 
 	f.feed(VIEWPORT_CENTER);
 	Element* strip = f.ui.find_id("tints")!!;
-	test::@check(strip.widget_as(crig::TintToggles).shown[2].checked, "the header's third cell did not light");
+	test::@check(strip.widget_as(IconStrip).shown[2].checked, "the header's third cell did not light");
 	f.click(strip.absolute + (Vec2){ crig::TINT_CELL_W * 2.5f, crig::TINT_CELL_H * 0.5f });
 	test::@check(!f.app.show_unused, "the header's third cell did not turn it off");
 	test::@check(f.app.tint_mode == OFF, "the overlay switched a view on");
