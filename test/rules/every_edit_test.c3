@@ -29,6 +29,7 @@ const Edit[*] EDITS @local = {
 	{ "edit_rig", `{"ops":[{"op":"grow","joint":"knee_L","grow":0.1,"soft":0.8}]}`, "", "" },
 	{ "edit_rig", `{"ops":[{"op":"reach","joint":"knee_L","reach":0.25}]}`, "", "" },
 	{ "edit_rig", `{"ops":[{"op":"exclude","a":"hips","b":"head"}]}`, "", "" },
+	{ "edit_rig", `{"ops":[{"op":"name","joint":"knee_L","name":"shin_L"}]}`, "", "" },
 	{ "set_secondary_motion", `{"chains":[{"root":"head_top"}]}`, "", "" },
 	{ "scale_model", `{"factor":2}`, "", "" },
 	{ "paint_weights", `{"dot":"knee_L","weight":0.1,"vertices":[0,1,2,3]}`, "", "" },

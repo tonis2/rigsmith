@@ -904,3 +904,20 @@ fn AnimPin[] pins_named(Allocator allocator, AnimPin[] pins) @local
 	alloc::free(allocator, pins);
 	return {};
 }
+
+// Whether anything in the clip addresses `joint` by name.
+fn bool AnimTemplate.names_joint(&self, String joint)
+{
+	foreach (frame : self.keyframes) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
+	foreach (foot : self.ground.feet) if (foot.joint == joint) return true;
+	foreach (aim : self.aims) if (aim.joint == joint) return true;
+	foreach (pin : self.pins) if (pin.joint == joint) return true;
+	foreach (path : self.paths) if (path.joint == joint) return true;
+	foreach (layer : self.layers)
+	{
+		if (layer.joint == joint || layer.tip == joint) return true;
+		foreach (entry : layer.mask) if (entry == joint) return true;
+		foreach (frame : layer.keyframes) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
+	}
+	return false;
+}

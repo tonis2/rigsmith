@@ -473,6 +473,7 @@ fn bool AppState.rename_recorded(&self, uint id, String name)
 	// shape match wherever a pack shares it. `mark_rig_stale` covers everything
 	// else, including the undo of this. See `AppState.pack_reach`.
 	self.reach_stale = true;
+	if (had.len > 0 && name.len > 0) self.respell_authored_clips(had, name);
 	self.undo_stack.record({
 		.kind = RENAME_DOT,
 		.id = id,
@@ -480,6 +481,22 @@ fn bool AppState.rename_recorded(&self, uint id, String name)
 		.prior_name = had,
 	});
 	return true;
+}
+
+// Authored clips speak the rig's words, so they follow a rename, recorded with it.
+fn void AppState.respell_authored_clips(&self, String from, String to)
+{
+	AnimPack* pack = self.authored();
+	if (!pack) return;
+	String[1] was = { from };
+	String[1] now = { to };
+	for (usz i = 0; i < pack.clips.len; i++)
+	{
+		if (!pack.clips[i].names_joint(from)) continue;
+		AnimTemplate respelt = clip_in_words(mem, pack.clips[i], was[..], now[..]);
+		(void)self.land_clip_recorded({ .pack = self.authored_pack, .clip = (int)i }, respelt);
+		pack = self.authored();
+	}
 }
 
 fn bool AppState.root_recorded(&self, uint id)
