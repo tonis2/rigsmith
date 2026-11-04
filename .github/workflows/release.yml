@@ -38,7 +38,7 @@ permissions:
   contents: write
 
 env:
-  C3C_VERSION: v0.8.4
+  C3C_VERSION: v0.8.5_1
 
 jobs:
   build:
