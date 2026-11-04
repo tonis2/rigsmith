@@ -1,0 +1,10 @@
+# Editing
+
+## Every edit undoes, redoes and saves exactly
+- **Rule:** one undo puts the document and the authored clips back exactly. Redo gives the same result again. What an edit leaves survives the session file.
+- **Why:** an edit that forgets a step has been the commonest way for a bug to come back through a new door.
+- **Tests:** `test/rules/every_edit_test.c3`. It runs on the humanoid, so its rows use that rig's joint names.
+
+## A new tool joins the sweep, or says why not
+- **Rule:** every tool is a row in the sweep or has a named excuse.
+- **Tests:** `every_tool_is_swept_or_excused`.
