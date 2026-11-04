@@ -376,7 +376,7 @@ fn uint AppState.place(&self, Vec3 position)
 	if (self.doc.auto_connect && anchor != 0) self.connect_recorded(anchor, id);
 
 	self.undo_stack.commit();
-	self.mark_rig_stale();
+	self.finish_rig_edit();
 	self.select(id);
 	return id;
 }
@@ -392,8 +392,7 @@ fn void AppState.remove(&self, uint id)
 {
 	if (!self.remove_recorded(id)) return;
 	self.undo_stack.commit();
-	self.mark_rig_stale();
-	self.forget_stale_ids();
+	self.finish_rig_edit();
 }
 
 <*
@@ -470,8 +469,7 @@ fn usz AppState.remove_selection(&self)
 	if (gone == 0) return 0;
 
 	self.undo_stack.commit();
-	self.mark_rig_stale();
-	self.forget_stale_ids();
+	self.finish_rig_edit();
 	return gone;
 }
 

@@ -106,19 +106,14 @@ fn String? edit_rig(AppState* app, Object* args, DString* detail)
 			// back from a closed edit. Then back to where the batch started.
 			app.undo_stack.commit();
 			while (app.undo_stack.cursor > mark && app.undo()) {}
-			app.mark_rig_stale();
-			app.forget_stale_ids();
-			app.refresh_ui();
+			app.finish_rig_edit();
 			return RIG_REFUSED~;
 		}
 		done++;
 	}
 
 	app.undo_stack.commit();
-	app.mark_rig_stale();
-	app.forget_stale_ids();
-	app.plan_targets_stale = true;
-	app.refresh_ui();
+	app.finish_rig_edit();
 	return rig_json(app, done);
 }
 

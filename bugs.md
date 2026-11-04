@@ -21,9 +21,6 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `get_clip` then `parse_clip` loses tangents and gait. A ground with `floor_set` and no feet survives only in the session writer. Read.
 - `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
 
-## Rig edits
-- Plan fit and import call `clear_rig_recorded`, which owes `forget_stale_ids`, and neither calls it. Read.
-
 ## Files
 - `config.c3:932` ignores write errors and `pipeline_graph.c3:531` discards the result. `write_glb` (`patch.c3:863`) saves over the model directly. Read.
 - Scene path in `export.c3` lacks the `joints > 0` guard and hard-codes 4 influences. Read.

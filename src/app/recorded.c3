@@ -491,6 +491,15 @@ fn bool AppState.root_recorded(&self, uint id)
 	return true;
 }
 
+// Everything a committed rig edit leaves out of date, in one place.
+fn void AppState.finish_rig_edit(&self)
+{
+	self.mark_rig_stale();
+	self.forget_stale_ids();
+	self.plan_targets_stale = true;
+	self.refresh_ui();
+}
+
 <*
  Drops any held id that no longer names a dot.
 

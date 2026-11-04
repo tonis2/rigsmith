@@ -8,3 +8,8 @@
 ## A new tool joins the sweep, or says why not
 - **Rule:** every tool is a row in the sweep or has a named excuse.
 - **Tests:** `every_tool_is_swept_or_excused`.
+
+## One refresh after a rig edit
+- **Rule:** after a rig edit commits, `AppState.finish_rig_edit` marks the rig stale, drops selected ids that no longer exist, marks the plan's targets and refreshes.
+- **Why:** seven callers each listed their own steps, and they differed.
+- **Tests:** `test/rules/rig_edit_test.c3`.

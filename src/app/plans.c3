@@ -103,10 +103,8 @@ fn void AppState.apply_preset(
 	self.undo_stack.commit();
 	self.doc.set_plan(plan);
 	// The same plan fitted the other way round is still a new fit to measure against.
-	self.plan_targets_stale = true;
-	self.mark_rig_stale();
+	self.finish_rig_edit();
 	self.select(ids[0]);
-	self.refresh_ui();
 
 	// Only what the user can act on follows the count: a fit that came out facing
 	// -Z (the facing is measured and can be wrong), joints outside the mesh, the
