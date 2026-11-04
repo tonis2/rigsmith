@@ -6,15 +6,15 @@
  it for the length of a run, the session keeps it across runs, and the export is
  how it leaves crig for something else.
 
- `undo` and `redo` walk `core/editing.c3`'s cursor through a *group* — every
+ `undo` and `redo` walk `model/editing.c3`'s cursor through a *group* — every
  edit chained to the one before it, which is why one Ctrl+Z takes back a whole
  mirrored placement rather than one of its four primitives. Both end by dropping
  ids that no longer name a dot, because either direction can remove the dot the
  user is pointing at.
 
- The session's format and its validation are `core/session.c3`; what is here is
+ The session's format and its validation are `format/session.c3`; what is here is
  the pair of user-facing commands over it. Same for the export: the writers are
- `anim/export.c3` and `rig/weights.c3`, and `export_rig` is the operation —
+ `format/export.c3` and `algo/rig/weights.c3`, and `export_rig` is the operation —
  which binds, optionally prunes, and says what it did in the status line.
 *>
 module crig;
@@ -35,7 +35,7 @@ import std::math;
  every kind is the document's, but clips hang off `AppState`, so `REPLACE_CLIP`
  has to be replayed here instead. The `default` keeps that a one-line exception
  rather than a second full copy of the mapping — and the `unreachable` waiting in
- `core/editing.c3` is what catches a kind added there and forgotten here.
+ `model/editing.c3` is what catches a kind added there and forgotten here.
 *>
 fn void AppState.apply_one(&self, Edit edit)
 {
@@ -58,7 +58,7 @@ fn void AppState.apply_one(&self, Edit edit)
  `REPLACE_CLIP` is its own inverse — the slot holds whichever side of the swap is
  not in the pack, and both directions are the same exchange — so the two cases
  call the same thing. Written as a pair anyway, so this file mirrors
- `core/editing.c3`'s pair and a reader who finds one goes looking for the other.
+ `model/editing.c3`'s pair and a reader who finds one goes looking for the other.
 *>
 fn void AppState.revert_one(&self, Edit edit)
 {
@@ -281,7 +281,7 @@ fn void AppState.stepped_history(&self, bool had_draft)
 <*
  Binds the mesh to the rig the dots describe and writes it out as a .glb.
 
- Everything here is derived: `core/rigging.c3` walks the document into a
+ Everything here is derived: `algo/skin/rigging.c3` walks the document into a
  skeleton, the binder weights the vertices against it, and the file is
  written from those two. Nothing about the export is stored between runs, so
  there is no state that can be stale relative to what is on screen.
@@ -700,7 +700,7 @@ fn void AppState.export_clips_only(&self, String destination, AnimTemplate[] cli
 
 // ---------------------------------------------------------------------------
 // The session file (B7): the rig as it was when it was saved. The format and
-// the validation are `core/session.c3`; these are the user-facing operations
+// the validation are `format/session.c3`; these are the user-facing operations
 // over it — saving from File > Save session and Ctrl+S, loading on the open that
 // finds a session sitting beside the model.
 
@@ -734,7 +734,7 @@ fn void AppState.export_clips_only(&self, String destination, AnimTemplate[] cli
 
  The sidecar is the destination rather than a fallback, and it is what a later
  open reads first — its existence beside a model is also what raises
- `saves_in_place` on that open. See `core/session.c3` and `adopt_source_rig`.
+ `saves_in_place` on that open. See `format/session.c3` and `adopt_source_rig`.
 *>
 fn void AppState.save_session(&self)
 {

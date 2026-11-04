@@ -2,7 +2,7 @@
  The app's side of secondary-motion chains: the questions about a chain that
  need the skeleton to answer, asked over an opened `RigView`.
 
- `core/secondary.c3` holds the record and the document's list and knows only
+ `algo/sim/secondary.c3` holds the record and the document's list and knows only
  dot ids. Everything here resolves those ids against a build — which joints a
  chain owns, where a chain started at a dot would end, whether a record the
  user is about to write can be simulated — and says so in a sentence when it

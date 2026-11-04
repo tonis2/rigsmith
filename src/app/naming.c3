@@ -8,7 +8,7 @@
  it.
 
  Nothing here decides what a joint is called by looking at it. `match_shapes`
- (core/joint_match.c3) pairs two skeletons on where their joints sit and which
+ (algo/match/joint_match.c3) pairs two skeletons on where their joints sit and which
  hangs off which, reads no name on either side, and is already what carries a
  downloaded clip's joints onto a plan's vocabulary on import. This points the
  same function at the document's own dots and writes the answer back.

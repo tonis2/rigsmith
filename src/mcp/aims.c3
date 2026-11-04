@@ -3,7 +3,7 @@
  creates, keys, mutes or removes a target, and `set_aim` locks a joint to one.
 
  A look-at target is a named point in space; a lock turns a joint, usually the
- head or a finger, toward it (see anim/aim.c3). Any number of joints may lock to
+ head or a finger, toward it (see algo/layers/aim.c3). Any number of joints may lock to
  one target. The turn is laid over the finished pose when the clip is shown or
  played and never written into its keys, so removing or muting a lock or a target
  gives the authored motion back exactly.

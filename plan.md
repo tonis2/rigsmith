@@ -84,7 +84,7 @@ handles, as the Path tool shows a path.
 - New `src/ui/layer_overlay.c3` (paint, pick, press, drag, following
   `path_overlay.c3`) and `src/app/layer_handles.c3` (a layer draft played while
   dragging, landed once).
-- `DragVerb.LAYER` in `src/core/dragging.c3`; hooks in `viewport.c3` beside the
+- `DragVerb.LAYER` in `src/model/dragging.c3`; hooks in `viewport.c3` beside the
   path ones.
 - Shows only when the Layers sheet has a generator strip selected and the edited
   clip is on show.

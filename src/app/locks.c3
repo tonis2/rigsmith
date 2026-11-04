@@ -4,7 +4,7 @@
  An anchor names a dot and, independently, whether to hold its world **position**,
  its world **orientation**, or both — each captured from where the joint stands
  the moment that half is switched on. Every gesture holds it: the body solve
- (`pose_body` in `pose_mode.c3`, `body_solve` in `core/body_solve.c3`) bends the
+ (`pose_body` in `pose_mode.c3`, `body_solve` in `algo/pose/body_solve.c3`) bends the
  whole figure around the pins, so a foot pinned stays on its point while the hips
  drop and the knee folds, which is a sit. A position is held hard. Where a pin
  cannot hold — out of its limb's reach, or against another pin — the grab gives

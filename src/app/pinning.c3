@@ -1,7 +1,7 @@
 <*
  The pin layer as an operation, and the lasso that draws one.
 
- `core/document.c3` holds one pin and the primitive that sets it; this is the
+ `model/document.c3` holds one pin and the primitive that sets it; this is the
  layer above, where a region of the mesh becomes one undoable gesture and the
  views are told to catch up.
 

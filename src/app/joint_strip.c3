@@ -12,7 +12,7 @@
  Remove follows the key editors' rule about where it writes: the base keys, or
  the active keyed layer's when one is chosen in the layer strip. Move always
  lifts from the base, and puts the new layer at the bottom of the stack so the
- pose stays exactly what it was (anim/keying.c3 `clip_with_joints_layered`).
+ pose stays exactly what it was (algo/curves/keying.c3 `clip_with_joints_layered`).
 *>
 module crig;
 

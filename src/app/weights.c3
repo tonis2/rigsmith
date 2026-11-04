@@ -4,7 +4,7 @@
  Two colourings of the same bind, kept apart because they answer two different
  questions — territory ("which dot wins this vertex") and falloff ("how much of
  it does *this* dot hold"). At most one is on at a time. The palettes themselves
- are `core/rigging.c3`; what is here is when to rebuild them and what to do with
+ are `algo/skin/rigging.c3`; what is here is when to rebuild them and what to do with
  the result.
 
  **Rebinding is debounced, and that is the whole design.** A bind is a pass over

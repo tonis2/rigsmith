@@ -19,10 +19,10 @@
 
  A chain is stated as a root and a tip and a handful of values in user terms —
  preset, flexibility, damping, gravity, collide — and expanded to the solver's
- per-bone numbers only at the boundary; see `core/secondary.c3`.
+ per-bone numbers only at the boundary; see `algo/sim/secondary.c3`.
 
- Handlers only, like clip.c3 and body.c3: the solver is `anim/jiggle.c3`, the bake
- is `anim/bake.c3`, neither of which knows what JSON is, and the registration is
+ Handlers only, like clip.c3 and body.c3: the solver is `algo/sim/jiggle.c3`, the bake
+ is `algo/layers/bake.c3`, neither of which knows what JSON is, and the registration is
  server.c3's.
 *>
 module crig;

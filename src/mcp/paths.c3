@@ -1,7 +1,7 @@
 <*
  The path tools: `get_paths` reads a clip's motion paths, `set_path` changes them.
 
- A path is a curve a joint follows (anim/path.c3): `points` it runs through and
+ A path is a curve a joint follows (algo/layers/path.c3): `points` it runs through and
  `slices`, each saying where along it (`u`, 0..1 by length) the joint is at a
  `time`. It is solved live with the clip's pins and baked into keys on export.
  Each `set_path` call is one undo step.

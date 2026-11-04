@@ -1,7 +1,7 @@
 <*
  The layer tools: `set_layer` edits a clip's stack, `merge_layers` bakes it.
 
- A layer is an adjustment laid over a clip's own keys — see anim/layers.c3 for
+ A layer is an adjustment laid over a clip's own keys — see algo/layers/layers.c3 for
  what one is and how it composes. Two ways in over the wire:
 
  - `apply_clip` takes an optional `layers` array and `get_clip` reports one, in
@@ -11,7 +11,7 @@
  - `set_layer` changes one layer without resending the clip: add, replace,
    remove or move. Each call is one undo step.
 
- **The wire shape of a layer.** The scalar fields of anim/layers.c3's
+ **The wire shape of a layer.** The scalar fields of algo/layers/layers.c3's
  `append_layer_fields`, plus for a keyed layer `keyframes`, in exactly the shape
  apply_clip's own keyframes take (rotation as a quaternion, axis/angle or euler;
  move as a fraction of height) — additive values are deltas from rest.

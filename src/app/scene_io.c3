@@ -1,7 +1,7 @@
 <*
  Scenes on disk: saving every loaded character and the arrangement they stand
  in, and opening that arrangement again in one step. The file format is
- `core/scene_file.c3`; this is what the app does around it.
+ `format/scene_file.c3`; this is what the app does around it.
 *>
 module crig;
 

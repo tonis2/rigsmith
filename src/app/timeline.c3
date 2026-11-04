@@ -5,7 +5,7 @@
  	`app.pose_from_clip(ref, 0.25f);   // scrub here, then pose by hand`
  	`app.key_here(ref, 0.25f);         // and write the pose back into the clip`
 
- This is the `AppState` half of `anim/keying.c3`. The rewriters there are pure
+ This is the `AppState` half of `algo/curves/keying.c3`. The rewriters there are pure
  clip → clip; everything that needs a rig, a document, a library or an undo stack
  is here.
 
@@ -404,7 +404,7 @@ fn AnimRef AppState.drop_renamed_authored(&self, String name, AnimRef landed)
 <*
  `built`, made from the clip at `from`, spelt in the rig's own words — the words
  the authored pack speaks, since it has no skeleton of its own to be matched by
- (anim/retarget.c3 `measure_reach`). A library clip keys its joints in its
+ (algo/match/retarget.c3 `measure_reach`). A library clip keys its joints in its
  file's words, which reach the rig through the pack's reach; copied into the
  authored pack as they were, every joint the two spell differently would stop
  moving. Taken over, and handed back as it is when the words already agree or

@@ -2,7 +2,7 @@
  The asset browser's model: everything in every library, narrowed to what is on
  screen.
 
- The index is `core/assets.c3` — one `gltf::open` per file, reading the JSON
+ The index is `format/assets.c3` — one `gltf::open` per file, reading the JSON
  chunk and nothing else, so a library of three hundred files costs three hundred
  header reads and no geometry. This file is the state over it: which kinds are
  collapsed in the sidebar, which category and search the grid is filtered to,

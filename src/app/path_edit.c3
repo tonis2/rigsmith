@@ -2,7 +2,7 @@
  Editing a clip's motion paths: the one path the viewport's Path tool and the
  MCP `set_path` tool both take.
 
- A path is a curve a joint follows (anim/path.c3). Every change builds the
+ A path is a curve a joint follows (algo/layers/path.c3). Every change builds the
  clip's paths aside and lands the clip as one undo step (`land_clip`), as the
  pins and aims do. A drag in the viewport works on `path_draft`, a copy the
  player reads in place of the clip's own paths, and lands once when the pointer

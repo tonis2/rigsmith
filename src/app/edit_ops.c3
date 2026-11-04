@@ -4,7 +4,7 @@
  The operations proper — each one is a whole thing the user asked for, so each
  one ends in a single `commit` and is a single Ctrl+Z. What they are assembled
  from is `recorded.c3`, whose primitives record but never commit; the ledger
- underneath both is `core/editing.c3`.
+ underneath both is `model/editing.c3`.
 
  On `AppState` rather than on `RigDocument` because they move the selection as
  well as the document. Placing a dot selects it, deleting one clears it, and

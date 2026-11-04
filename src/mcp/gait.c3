@@ -3,7 +3,7 @@
 
  The layer above `solve_targets` and `pin_feet` for the commonest thing an
  animator asks of a character: make it walk. The caller names a gait (or gives each
- foot its own place in the cycle) and a duration; `anim/gait.c3` draws every foot's
+ foot its own place in the cycle) and a duration; `algo/motion/gait.c3` draws every foot's
  path — stance back along the floor at a constant speed, swing forward through an
  arc — and solves each leg onto it with the same two-bone-and-distal-tilt rule
  `solve_targets` uses for a three-bone run. The clip lands in the authored pack as

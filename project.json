@@ -30,7 +30,7 @@
 		"make-anims": {
 			"type": "executable",
 			"dependencies-override": ["gltf", "collision", "image"],
-			"sources": ["src/rig/**", "src/core/**", "src/anim/**", "src/gltf/**", "tools/**"]
+			"sources": ["src/model/**", "src/algo/**", "src/format/**", "tools/**"]
 		}
 	},
 	"output": "./build"

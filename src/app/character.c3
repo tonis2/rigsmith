@@ -81,11 +81,11 @@ struct Character
 
 	// Static topology shared by lazy rig-overlay rays and exact regional
 	// collision refits. It borrows the picker's BVH and is rebuilt with the skin
-	// binding, never per animation frame — see `core/posed_occlusion.c3`.
+	// binding, never per animation frame — see `algo/collide/posed_occlusion.c3`.
 	DeformedCollisionSurface deformed_surface;
 
 	// Which of that surface's broad-phase pairs a self-collision check may test,
-	// built beside it from the same binding — see `core/collision_policy.c3`.
+	// built beside it from the same binding — see `algo/collide/collision_policy.c3`.
 	CollisionPolicy collision_policy;
 	RigDocument doc;
 
@@ -285,7 +285,7 @@ struct Character
 
 	<*
 	 The move the pointer is in the middle of, if any — which dot, where it
-	 started, and the axis it has been locked to. See `core/dragging.c3`.
+	 started, and the axis it has been locked to. See `model/dragging.c3`.
 
 	 Here rather than on the viewport because the keys that steer a move arrive
 	 at the tree's root: capturing the pointer does not move keyboard focus, so

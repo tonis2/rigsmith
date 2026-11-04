@@ -14,7 +14,7 @@
  playhead. Auto-key commits it on release; otherwise Save pose does.
 
  **Where the solving happens is not here.** A gesture on the body — a hand, a
- foot, the hips, any joint — is one `body_solve` (`core/body_solve.c3`) over the
+ foot, the hips, any joint — is one `body_solve` (`algo/pose/body_solve.c3`) over the
  whole figure, with the pins, the planted feet, the floor and the balance as its
  goals, started from the pose the gesture began with on every move; this file says
  what the gesture asks for and writes back what comes out (`pose_body`). A finger or a toe's tip curls along its own short run instead,

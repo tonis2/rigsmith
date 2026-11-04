@@ -5,7 +5,7 @@
  	`AnimRef ref = app.resolve_bound(i);`
 
  The document stores a binding as **a file path and a clip name** (`BoundClip`,
- core/document.c3) because that is what survives: an `AnimRef` is a pair of
+ model/document.c3) because that is what survives: an `AnimRef` is a pair of
  positions into `AppState.packs`, and `load_packs` re-reads the whole library, so
  a reference written to a session would come back pointing at whatever landed in
  that slot. This file is the other half — turning those two strings back into a

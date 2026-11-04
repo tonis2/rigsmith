@@ -18,7 +18,14 @@ Algorithm tests go in test/algo and need no editor: tools/test_algo.sh runs them
 
 # Layers
 
-src/core, src/anim, src/rig and src/gltf must compile without app, ui or mcp. tools/check_layers.sh checks this, and the pre-commit hook runs it. Keep algorithms free of AppState, UI, GPU, files and notices: take inputs, return results, and let app record them. Install the hook once with:
+Dependencies point one way: `src/model` and `src/algo`, then `src/format`, then `src/app`, then `src/ui` and `src/mcp`. tools/check_layers.sh compiles each layer without the ones above it, and the pre-commit hook runs it.
+
+- `src/model`: data, such as RigDocument and AnimPack.
+- `src/algo`: algorithms by topic. No AppState, UI, GPU, files or notices: take inputs, return results, and let app record them.
+- `src/format`: reading and writing files and JSON.
+- `src/app`: state, undo and commands, as thin methods that call algo.
+
+Install the hook once with:
 
     echo 'tools/pre-commit.sh || exit 1' >> .git/hooks/pre-commit
 

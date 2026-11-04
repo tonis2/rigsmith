@@ -1,7 +1,7 @@
 <*
  The animation player: a clip from the library, running on the rig on screen.
 
- `AnimTemplate` says what a clip means at an instant (`anim/animation.c3`); this
+ `AnimTemplate` says what a clip means at an instant (`algo/curves/animation.c3`); this
  turns that into the two things the renderer needs — a joint palette to skin
  with, and a dot per joint for the overlay to draw at. Timeline drafts use the
  same palette after a parked player hands it over on the first edit.

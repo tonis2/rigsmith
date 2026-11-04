@@ -1,8 +1,8 @@
 <*
  The packs held in memory: read off disk, added to, and written back.
 
- A pack is a body plan and its clips (`anim/pack.c3`); the folders they are
- read from are the configured libraries (`core/config.c3`). `scan_libraries` is
+ A pack is a body plan and its clips (`format/pack.c3`); the folders they are
+ read from are the configured libraries (`format/config.c3`). `scan_libraries` is
  what startup and the settings dialog call — the index in full, the packs only
  where one declares a plan, because a folder from another tool costs one open
  per file and a plan is what everything else measures against.

@@ -2,7 +2,7 @@
  Editing a clip's layer stack: the one path the Animations pane and the MCP
  `set_layer` / `merge_layers` tools both take.
 
- A layer is an adjustment laid over a clip's keys (anim/layers.c3). Everything a
+ A layer is an adjustment laid over a clip's keys (algo/layers/layers.c3). Everything a
  person or an agent does to the stack is *build the new stack aside, swap it in*:
  the clip is copied, its `layers` replaced, and the copy lands as one undo step
  (`land_clip` forks a library clip into the authored pack first, as any other
@@ -43,7 +43,7 @@ import std::math::vector;
 import std::math::quaternion;
 
 // ---------------------------------------------------------------------------
-// The stack as a whole (the array arithmetic is anim/layers.c3's)
+// The stack as a whole (the array arithmetic is algo/layers/layers.c3's)
 
 <*
  The clip with its whole stack replaced by `next`, which is taken over.

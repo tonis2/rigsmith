@@ -4,7 +4,7 @@
 
  The unit here is an **item**, not a file. One `.glb` may hold a skin, half a
  dozen clips and a body, and what a person wants is one of those — so a cell is a
- clip rather than a card that has to be opened to find one. See `core/assets.c3`
+ clip rather than a card that has to be opened to find one. See `format/assets.c3`
  for the index behind it, which is read from each file's JSON alone.
 
  Three parts, and each is a cui widget rather than something painted here: the

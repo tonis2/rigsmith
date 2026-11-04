@@ -3,7 +3,7 @@
  tool and the Animations pane's Gait panel both take.
 
  The caller says which gait, how long, and optionally which feet (by joint name)
- and where each lands; this finds the rest, draws the clip with `anim/gait.c3`,
+ and where each lands; this finds the rest, draws the clip with `algo/motion/gait.c3`,
  and lands it in the authored pack as one undo step, bound and opened, exactly as
  `author_clip` does for every other writer. Why a request was refused is written
  into `detail`, in words a caller can show as they are.

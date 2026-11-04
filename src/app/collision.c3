@@ -2,7 +2,7 @@
  The self-collision service's seam: the policy over the deformed surface, the
  one setting both read, and the blocking a pose write goes through (C3).
 
- `core/posed_occlusion.c3` finds the pairs and `core/collision_policy.c3`
+ `algo/collide/posed_occlusion.c3` finds the pairs and `algo/collide/collision_policy.c3`
  decides which count; what is here is how the editor holds the two together.
  Both are rebuilt with the skin binding in `rebind_skin`, so a rig edit that
  renumbers the joints renumbers them under the policy as well, and both are

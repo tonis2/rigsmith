@@ -2,9 +2,9 @@
  Body plans: a whole rig placed at once, and the ghosts that show where it
  wanted to put things.
 
- A plan is a named rest skeleton — from `core/presets.c3`'s built-in tables or
+ A plan is a named rest skeleton — from `algo/match/presets.c3`'s built-in tables or
  from a pack in the library that declares one — fitted to the mesh's voxel grid
- by `core/presets.c3` and then placed as ordinary recorded dots. Nothing about
+ by `algo/match/presets.c3` and then placed as ordinary recorded dots. Nothing about
  the result remembers the pack afterwards except `doc.plan`, which is what
  decides which packs are offered next time.
 

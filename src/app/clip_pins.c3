@@ -2,7 +2,7 @@
  Clip pins as the editor's pins: while a clip is being edited, its pins ARE the
  gesture pins in `position_locks` (`locks.c3`).
 
- **One source of truth.** The clip owns the pins (`anim/pin.c3`); `position_locks`
+ **One source of truth.** The clip owns the pins (`algo/layers/pin.c3`); `position_locks`
  is only the view of them the gestures read, rebuilt by `sync_clip_pins` from the
  pins whose window covers `edit_time`. So a pin outside its window does not steer
  a gesture there — which is the same as it not holding in playback — and undo and

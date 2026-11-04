@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.." || exit 1
 
 libs="--libdir libs/three/lib --lib gltf --lib collision --lib image"
-lower=$(find src/rig src/gltf src/core src/anim -name '*.c3')
+lower=$(find src/model src/algo src/format -name '*.c3')
 tests=$(find test/algo -name '*.c3')
 
 # shellcheck disable=SC2086

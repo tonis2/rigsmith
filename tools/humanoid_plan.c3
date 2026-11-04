@@ -14,7 +14,7 @@
  Nothing here spells a joint the way any download does. A clip from an asset
  site or a motion-capture service names its joints however its exporter felt
  like, and crig carries those across by matching the two skeletons' *shapes*
- (`core/joint_match.c3`, `anim/retarget.c3`), which is what lets the names here
+ (`algo/match/joint_match.c3`, `algo/match/retarget.c3`), which is what lets the names here
  be plain words rather than an interoperability contract.
 
  **Why this exists as a table rather than as a file.** A rigged humanoid is the

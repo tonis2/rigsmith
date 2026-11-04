@@ -2,7 +2,7 @@
  Look-at targets in the editor: the limits a turn is clamped to, the draft a
  target is dragged as, and the handles the viewport draws.
 
- The clip stores the aims (`anim/aim.c3`); this is how the app lays them over a
+ The clip stores the aims (`algo/layers/aim.c3`); this is how the app lays them over a
  pose it shows. A target being edited lives in `aim_draft`, beside
  `pose_edit_draft` and with the same rule: it is working memory, applied to the
  clip being edited and landed as one undo step when it is keyed.

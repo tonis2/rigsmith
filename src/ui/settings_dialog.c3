@@ -20,7 +20,7 @@
  each row would be a second copy of hit-test arithmetic for no gain.
 
  What is here and what is not: this holds settings that outlive the run, which is
- the same rule `core/config.c3` follows. Anything about the document belongs to
+ the same rule `format/config.c3` follows. Anything about the document belongs to
  the document, and anything about the view belongs to the view's own menu.
 
  Nothing in the subtree is state. `Dialog.body` is rebuilt on every opening and

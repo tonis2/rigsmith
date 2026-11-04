@@ -8,7 +8,7 @@
  table plus a run of `make-anims` rather than a modelling session.
 
  The frame is `fit_preset`'s: 0 to 1 per axis, x across, y up, z head-ward, and
- a `mirror` row emits `<name>_L` then `<name>_R`. See core/presets.c3.
+ a `mirror` row emits `<name>_L` then `<name>_R`. See algo/match/presets.c3.
 *>
 module make_anims;
 

@@ -4,7 +4,7 @@
 
  	draw · from motion · slice · close · mute · bake · delete
 
- A path is a curve a joint follows (anim/path.c3), drawn and edited over the
+ A path is a curve a joint follows (algo/layers/path.c3), drawn and edited over the
  posed rig (ui/path_overlay.c3). The cells act on the selected joint (draw, from
  motion) or on the selected path (the rest), each through app/path_edit.c3, one
  undo step apiece. The line beside them says which path is picked and what

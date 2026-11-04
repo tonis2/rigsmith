@@ -2392,7 +2392,7 @@ fn void Viewport.place_dot(&self, Element* elem, Vec2 pixel)
 
  Under an axis lock none of that applies: the line decides two coordinates, so
  there is no ray to intersect and the mesh is consulted only to say how far
- along the dot may go. See `core/dragging.c3`.
+ along the dot may go. See `model/dragging.c3`.
 *>
 fn void Viewport.drag_dot(&self, Element* elem, Vec2 pixel)
 {

@@ -1,7 +1,7 @@
 <*
  The document's dynamic bones, running on top of whatever clip is playing.
 
- `anim/jiggle.c3` is the solver and knows nothing about a document, a window or
+ `algo/sim/jiggle.c3` is the solver and knows nothing about a document, a window or
  a frame; `player.c3` turns a clip into a pose. This is the seam between them,
  and the whole of it is an order that is not negotiable:
 

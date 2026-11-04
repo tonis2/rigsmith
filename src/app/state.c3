@@ -10,9 +10,9 @@
 
  Every operation the user can invoke is a method on this struct, and they live
  across the rest of `app/`. They touch the selection as much as the document, so
- `core/document.c3` cannot hold them, and splitting them from the state they
+ `model/document.c3` cannot hold them, and splitting them from the state they
  mutate only makes them harder to find. The ledger they record into is
- `core/editing.c3`.
+ `model/editing.c3`.
 
  **`app/` is the seam, and this file is its floor.** `core/` is the document and
  the math under it and imports no cui; `ui/` is the widget tree over it; `app/`
@@ -37,8 +37,8 @@
                    above are assembled from, none of which commits
      rig_view.c3   the skeleton and everything indexed by its joint order
 
- What is not here: the file *formats* (`core/session.c3`, `core/config.c3`,
- `anim/pack.c3`) and the geometry (`core/`, `rig/`). This folder holds the
+ What is not here: the file *formats* (`format/session.c3`, `format/config.c3`,
+ `format/pack.c3`) and the geometry (`core/`, `rig/`). This folder holds the
  operations over them.
 *>
 module crig;
