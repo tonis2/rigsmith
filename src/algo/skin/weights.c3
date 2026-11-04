@@ -207,3 +207,291 @@ fn ulong bind_key(RigDocument* doc, rig::TriMesh* geometry, RigView* view)
 	foreach (rides : view.attachments) mix_key(&hash, (ulong)(uint)rides);
 	return hash;
 }
+
+<*
+ Every stray in the bind as shown, the ones a pose pulls furthest first.
+
+ Per joint, the mesh it holds at least `STRAY_SHARE` of, split into connected
+ islands over the welded surface and the layers lying on it (`joined_layers`).
+ The largest is its region; a smaller island
+ is a stray when the mesh around it is someone else's — not a whole piece of
+ its own — it sits at least `STRAY_GAP` of the model's height from the region
+ at rest, and a pose can pull it at least `STRAY_PULL` off the mesh around it
+ (`pull_apart`). A joint's blend into its neighbours stays beside its region,
+ and a blotch the mesh around moves with is no spike, so what this finds is
+ what a pose pulls out of the body.
+
+ The caller owns the result and frees it with `free_strays`.
+*>
+fn StrayIsland[] find_stray_islands(Allocator allocator, rig::TriMesh* geometry, rig::MeshAdjacency* around, rig::JoinedLayers* layers, RigView* view, float[] painted, float height)
+{
+	usz count = geometry.positions.len;
+	usz bones = view.len();
+
+	// One row per weld, as shares, and where it is at rest.
+	usz classes = around.classes();
+	float[] share = alloc::new_array(mem, float, (sz)(classes * bones));
+	defer alloc::free(mem, share);
+	Vec3[] point = alloc::new_array(mem, Vec3, (sz)classes);
+	defer alloc::free(mem, point);
+	for (usz c = 0; c < classes; c++)
+	{
+		usz v = (usz)around.first[c];
+		point[c] = geometry.positions[v];
+		float sum = 0.0f;
+		for (usz b = 0; b < bones; b++) sum += painted[v * bones + b];
+		if (sum <= 0.0f) continue;
+		for (usz b = 0; b < bones; b++) share[c * bones + b] = painted[v * bones + b] / sum;
+	}
+
+	int[] island = alloc::new_array(mem, int, (sz)classes);
+	defer alloc::free(mem, island);
+	float[] fill = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, fill);
+	float[] beside = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, beside);
+	float[] limb = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, limb);
+	List{uint} flood;
+	flood.init(mem);
+	defer flood.free();
+	List{uint} region;
+	region.init(mem);
+	defer region.free();
+	List{StrayIsland} found;
+	found.init(mem);
+	defer found.free();
+	float[SKIN_INFLUENCES] beside_shares;
+
+	for (usz b = 0; b < bones; b++)
+	{
+		// The joint's islands, and which is the largest.
+		island[..] = -1;
+		int islands = 0;
+		int largest = -1;
+		usz largest_size = 0;
+		for (usz c = 0; c < classes; c++)
+		{
+			if (island[c] >= 0 || share[c * bones + b] < STRAY_SHARE) continue;
+			flood.clear();
+			flood.push((uint)c);
+			island[c] = islands;
+			for (sz next = 0; next < flood.len(); next++)
+			{
+				foreach (n : around.around(flood[next]))
+				{
+					if (island[n] >= 0 || share[(usz)n * bones + b] < STRAY_SHARE) continue;
+					island[n] = islands;
+					flood.push(n);
+				}
+				// Layers lying on each other touch, so weight carried across them is one piece.
+				foreach (n : layers.around(flood[next]))
+				{
+					if (island[n] >= 0 || share[(usz)n * bones + b] < STRAY_SHARE) continue;
+					island[n] = islands;
+					flood.push(n);
+				}
+			}
+			if ((usz)flood.len() > largest_size)
+			{
+				largest_size = (usz)flood.len();
+				largest = islands;
+			}
+			islands++;
+		}
+		if (islands < 2) continue;
+
+		region.clear();
+		for (usz c = 0; c < classes; c++) if (island[c] == largest) region.push((uint)c);
+
+		for (int k = 0; k < islands; k++)
+		{
+			if (k == largest) continue;
+			bool bordered = false;
+			float nearest = float::max;
+			float peak = 0.0f;
+			Vec3 middle = {};
+			usz members = 0;
+			fill[..] = 0.0f;
+			for (usz c = 0; c < classes; c++)
+			{
+				if (island[c] != k) continue;
+				members++;
+				middle += point[c];
+				peak = math::max(peak, share[c * bones + b]);
+				foreach (n : around.around(c))
+				{
+					if (island[n] == k) continue;
+					if (share[(usz)n * bones + b] < AREA_LEAK_FLOOR) bordered = true;
+					for (usz j = 0; j < bones; j++) fill[j] += share[(usz)n * bones + j];
+				}
+				foreach (r : region) nearest = math::min(nearest, (point[r] - point[c]).length());
+			}
+			if (!bordered || nearest < STRAY_GAP * height) continue;
+
+			// The mesh around it, as one row: what the island moves with once fixed.
+			float total = 0.0f;
+			foreach (weight : fill) total += weight;
+			if (total <= 0.0f) continue;
+			foreach (&weight : fill) *weight /= total;
+			float pull = 0.0f;
+			for (usz c = 0; c < classes; c++)
+			{
+				if (island[c] == k) pull = math::max(pull, pull_apart(&view.skeleton, share[c * bones:bones], fill, point[c], limb));
+			}
+			if (pull < STRAY_PULL * height) continue;
+
+			StrayIsland stray = { .dot = view.dot_ids[b], .centre = middle / (float)members, .peak = peak,
+				.gap = nearest / height, .pull = pull / height };
+			beside[..] = fill[..];
+			beside[b] = 0.0f;
+			stray.around_count = strongest_shares(beside, view.dot_ids, stray.around[..], beside_shares[..], 0.0f);
+			usz held = 0;
+			for (usz v = 0; v < count; v++) if (island[around.class_of[v]] == k) held++;
+			stray.vertices = alloc::new_array(allocator, uint, (sz)held);
+			held = 0;
+			for (usz v = 0; v < count; v++) if (island[around.class_of[v]] == k) stray.vertices[held++] = (uint)v;
+			found.push(stray);
+		}
+	}
+
+	StrayIsland[] strays = alloc::new_array(allocator, StrayIsland, found.len());
+	foreach (i, stray : found) strays[i] = stray;
+	for (usz i = 0; i + 1 < strays.len; i++)
+	{
+		usz top = i;
+		for (usz j = i + 1; j < strays.len; j++) if (strays[j].pull > strays[top].pull) top = j;
+		if (top == i) continue;
+		StrayIsland swap = strays[i];
+		strays[i] = strays[top];
+		strays[top] = swap;
+	}
+	return strays;
+}
+
+<*
+ Read the bind as numbers: who owns what, who reaches into whose, what nothing
+ owns.
+
+ The same dense matrix `rebind_tints` paints from, and deliberately so — an
+ answer that disagreed with the picture on screen would be worse than no answer.
+ It follows that this reports the binder's raw weights and not the file's:
+ `sparsify_weights` keeps only a vertex's four strongest afterwards, so `owns`
+ is what TERRITORY draws either way, while a `reaches` entry ranking fifth or
+ lower on its vertex is one the export will drop.
+
+ Rebinds from scratch on every call — the cost of `rebind_tints`, without its
+ debounce — so this is a diagnostic to ask a question with, not something to
+ call per frame.
+
+ The caller owns the result and frees it with `WeightSurvey.free`.
+
+*>
+fn WeightSurvey survey_of(Allocator allocator, rig::MeshShells* shells, RigView* view, float[] dense, float[] nearest, int[] riders, usz vertices, sz focus)
+{
+	usz bones = view.len();
+
+	usz unused = 0;
+	JointStake[] stakes = alloc::new_array(allocator, JointStake, (sz)bones);
+	for (usz j = 0; j < bones; j++)
+	{
+		stakes[j] = { .dot = view.dot_ids[j], .name = view.names[j] };
+	}
+
+	// Per owning joint, what the surveyed one still holds of its vertices.
+	usz[] taken = alloc::new_array(mem, usz, (sz)bones);
+	float[] taken_sum = alloc::new_array(mem, float, (sz)bones);
+	float[] taken_peak = alloc::new_array(mem, float, (sz)bones);
+
+	defer {
+		alloc::free(mem, taken);
+		alloc::free(mem, taken_sum);
+		alloc::free(mem, taken_peak);
+	}
+
+	for (usz v = 0; v < vertices; v++)
+	{
+		usz base = v * bones;
+
+		// Shares, not raw weights: the raw output spans orders of magnitude and a
+		// floor over it would mean something different at every vertex. This is the
+		// normalisation `falloff_tints` paints and `sparsify_weights` writes.
+		float sum;
+		sz owner = row_owner(dense[base:bones], &sum);
+		if (sum <= UNUSED_TOTAL) unused++;
+		if (sum <= 0.0f || owner < 0) continue;
+		usz best = (usz)owner;
+		stakes[best].owns++;
+
+		// The owner always reaches what it owns. On a rig with enough joints the
+		// strongest share of an evenly-spread vertex can sit under the floor, and a
+		// dot reported as owning mass it does not reach describes nothing.
+		for (usz b = 0; b < bones; b++)
+		{
+			if (b == best || dense[base + b] / sum >= SHOWN_FLOOR) stakes[b].reaches++;
+		}
+
+		if (focus < 0 || (usz)focus == best) continue;
+
+		float share = dense[base + (usz)focus] / sum;
+		if (share < SHOWN_FLOOR) continue;
+		taken[best]++;
+		taken_sum[best] += share;
+		if (share > taken_peak[best]) taken_peak[best] = share;
+	}
+
+	bool[] stray = unclaimed_mask(mem, nearest, vertices, shells, riders, view.pins);
+	defer alloc::free(mem, stray);
+	usz unclaimed = 0;
+	foreach (flag : stray)
+	{
+		if (flag) unclaimed++;
+	}
+
+	usz neighbours = 0;
+	for (usz b = 0; b < bones; b++)
+	{
+		if (taken[b] > 0) neighbours++;
+	}
+
+	BlendShare[] shared = neighbours > 0
+		? alloc::new_array(allocator, BlendShare, (sz)neighbours)
+		: (BlendShare[]){};
+	usz at = 0;
+	for (usz b = 0; b < bones; b++)
+	{
+		if (taken[b] == 0) continue;
+		shared[at++] = {
+			.dot = stakes[b].dot,
+			.name = stakes[b].name,
+			.vertices = taken[b],
+			.mean = taken_sum[b] / (float)taken[b],
+			.peak = taken_peak[b],
+		};
+	}
+
+	// Worst first, so a caller reading only the head of the list reads the
+	// boundary most likely to tear. Selection sort over one entry per joint.
+	for (usz i = 0; i + 1 < shared.len; i++)
+	{
+		usz top = i;
+		for (usz j = i + 1; j < shared.len; j++)
+		{
+			if (shared[j].vertices > shared[top].vertices) top = j;
+		}
+		if (top != i)
+		{
+			BlendShare swap = shared[i];
+			shared[i] = shared[top];
+			shared[top] = swap;
+		}
+	}
+
+	return {
+		.vertices = vertices,
+		.unclaimed = unclaimed,
+		.unused = unused,
+		.stakes = stakes,
+		.shared = shared,
+	};
+}

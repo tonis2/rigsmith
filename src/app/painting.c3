@@ -410,21 +410,6 @@ fn usz AppState.brush_vertices(&self, uint[] vertices, float[] strength, Matrix4
 fn usz AppState.brush_surface(&self, BrushTouch[] touches, Matrix4f view_projection,
 	Vec2 viewport, Vec3 eye, float radius) => brush_surface(touches, view_projection, viewport, eye, radius);
 
-<*
- The vertices matching a pick.
-
- 	`uint[] found = app.pick_vertices(mem, knee, { .owner = hip, .at_least = 0.05f });`
-
- One bind, one pass. The shares are normalised exactly as `survey_weights` and
- the views normalise them, so a count here and a count there are the same number
- — a selector that measured differently from the diagnosis it is phrased in would
- be worse than no selector.
-
- The caller owns the result.
-
- @param dot_id : `The dot whose share the bounds are about.`
- @return `Vertex indices, ascending. Empty when nothing matches or there is no rig.`
-*>
 fn uint[] AppState.pick_vertices(&self, Allocator allocator, uint dot_id, PaintPick pick)
 {
 	RigView? opened = self.open_rig(mem);
@@ -450,30 +435,7 @@ fn uint[] AppState.pick_vertices(&self, Allocator allocator, uint dot_id, PaintP
 	float[] dense = self.weights(mem, &view);
 	defer alloc::free(mem, dense);
 	if (dense.len < count * bones) return {};
-
-	uint[] picked = alloc::new_array(allocator, uint, (sz)count);
-	usz kept = 0;
-
-	for (usz v = 0; v < count; v++)
-	{
-		usz at = v * bones;
-
-		float sum;
-		sz best = row_owner(dense[at:bones], &sum);
-		if (sum <= 0.0f) continue;
-		if (wanted_owner >= 0 && best != wanted_owner) continue;
-
-		float share = dense[at + mine] / sum;
-		if (share < pick.at_least || share > pick.at_most) continue;
-		picked[kept++] = (uint)v;
-	}
-
-	if (kept == 0)
-	{
-		alloc::free(allocator, picked);
-		return {};
-	}
-	return picked[:kept];
+	return pick_vertices_in(allocator, &view, dense, count, mine, wanted_owner, pick);
 }
 
 <*
