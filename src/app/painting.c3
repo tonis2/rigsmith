@@ -151,6 +151,23 @@ fn float AppState.stroke_pull(&self, uint vertex, float falloff)
 	return (falloff - seen) / (1.0f - seen);
 }
 
+// The weight tool that owns a press on the mesh. They close each other as they open.
+enum WeightTool
+{
+	NONE,
+	BRUSH,
+	AREA,
+	LASSO,
+}
+
+fn WeightTool AppState.weight_tool(&self)
+{
+	if (self.brushing) return BRUSH;
+	if (self.areaing) return AREA;
+	if (self.lassoing) return LASSO;
+	return NONE;
+}
+
 <*
  Open the weight brush on the selected dot (shift+W).
 

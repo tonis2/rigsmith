@@ -1425,7 +1425,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 
 					// A motion path's handles are over the joints too, and drawing a path
 					// takes every click.
-					if (!(app.sketching || app.brushing || app.lassoing || app.areaing) && app.paths_shown()
+					if (!(app.sketching || app.weight_tool() != NONE) && app.paths_shown()
 						&& self.press_paths(elem, app, event.pos))
 					{
 						return true;
@@ -1433,7 +1433,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 
 					// A look-at target's handle is over the joints: its ring can sit on
 					// one, and the ring is what was aimed at.
-					sz aimed = (app.sketching || app.brushing || app.lassoing || app.areaing || input.shift_down())
+					sz aimed = (app.sketching || app.weight_tool() != NONE || input.shift_down())
 						? -1 : self.pick_aim(elem, event.pos);
 					if (aimed >= 0)
 					{
@@ -1546,7 +1546,7 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					// whatever tool the column was left on. Opening the Weights card
 					// or the lasso does not reset the tool, so without this every
 					// grow, island click and lasso drag quietly orbited instead.
-					bool weight_mode = app.areaing || app.brushing || app.lassoing;
+					bool weight_mode = app.weight_tool() != NONE;
 					if (app.transform_tool != SELECT_TOOL && !weight_mode)
 					{
 						self.press_at = event.pos;
