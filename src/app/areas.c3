@@ -72,80 +72,22 @@ fn bool[] AppState.area_part_mask(&self, Allocator allocator, uint dot_id, AreaP
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (painted.len < count * bones) return {};
 
-	bool[] mine = alloc::new_array(mem, bool, (sz)bones);
-	defer alloc::free(mem, mine);
-	mine[(usz)found] = true;
-	if (part == WITH_CHILDREN)
-	{
-		for (usz j = 0; j < bones; j++)
-		{
-			for (int up = view.skeleton.parents[j]; up >= 0; up = view.skeleton.parents[(usz)up])
-			{
-				if (up != (int)found) continue;
-				mine[j] = true;
-				break;
-			}
-		}
-	}
-
-	// A finger's part from the knuckle planes, over the automatic bind — which
-	// moves no knuckle plane for a grow, so neither does this. A piece riding one
-	// joint rigidly keeps its rider, as it does in the bind.
+	// A finger's part reads the knuckle planes over the automatic bind.
 	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
 	defer bands.free(mem);
 	bool banded = (usz)found < bands.digit.len && bands.digit[(usz)found];
 	float[] base = banded ? self.base_bind_for(&view) : {};
-	if (base.len < count * bones) banded = false;
-	float[] row = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, row);
-
-	bool[] mask = alloc::new_array(allocator, bool, (sz)count);
-	usz caught = 0;
-	for (usz v = 0; v < count; v++)
-	{
-		float[] read = painted[v * bones:bones];
-		if (banded)
-		{
-			row[..] = base[v * bones:bones];
-			if (!rig::rides_rigidly(self.shells.of, self.shell_riders, v)) bands.band_row(row, self.geometry.positions[v], 0.0f);
-			read = row;
-		}
-		sz owner = row_owner(read);
-		if (owner < 0 || !mine[(usz)owner]) continue;
-		mask[v] = true;
-		caught++;
-	}
-
-	if (part == ISLANDS)
-	{
-		bool[] owned = self.islands_owned(mem, painted, bones, found);
-		defer if (owned.len > 0) alloc::free(mem, owned);
-		rig::MeshShells* split = self.islands_for();
-		caught = 0;
-		foreach (v, &on : mask)
-		{
-			*on = owned.len > 0 && split.of.len == count && owned[(usz)split.of[v]];
-			if (*on) caught++;
-		}
-	}
-
-	if (part == PIECE)
-	{
-		int shell = self.piece_for(mask, seed);
-		caught = 0;
-		foreach (v, id : self.shells.of)
-		{
-			mask[v] = shell >= 0 && id == shell;
-			if (mask[v]) caught++;
-		}
-	}
-
-	if (caught == 0)
-	{
-		alloc::free(allocator, mask);
-		return {};
-	}
-	return mask;
+	AreaSource source = {
+		.geometry = &self.geometry,
+		.skeleton = &view.skeleton,
+		.painted = painted,
+		.base = base,
+		.bands = &bands,
+		.shells = &self.shells,
+		.riders = self.shell_riders,
+		.islands = part == ISLANDS ? self.islands_for() : null,
+	};
+	return area_part_of(allocator, &source, (usz)found, part, seed);
 }
 
 fn int AppState.piece_for(&self, bool[] own, sz seed) => piece_for(&self.geometry, &self.shells, own, seed);
@@ -176,76 +118,6 @@ fn rig::MeshShells* AppState.islands_for(&self)
 
 	self.uv_islands = rig::build_uv_islands(mem, self.geometry, surface.uvs);
 	return &self.uv_islands;
-}
-
-<*
- Which UV islands a joint holds: one flag per island, set where the joint is the
- strongest joint of at least as many of the island's vertices as any other
- joint is. With no such island, the one holding most of its vertices.
-
- @return `Owned by the caller; empty when the mesh has no islands or the joint holds nothing.`
-*>
-fn bool[] AppState.islands_owned(&self, Allocator allocator, float[] painted, usz bones, sz joint)
-{
-	rig::MeshShells* split = self.islands_for();
-	usz count = self.geometry.positions.len;
-	if (split.count == 0 || split.of.len != count || painted.len < count * bones) return {};
-
-	// Island and owner in one key, so one sort lines each island's owners up.
-	ulong span = (ulong)bones + 1;
-	ulong[] keys = alloc::new_array(mem, ulong, (sz)count);
-	defer alloc::free(mem, keys);
-	for (usz v = 0; v < count; v++)
-	{
-		sz owner = row_owner(painted[v * bones:bones]);
-		keys[v] = (ulong)split.of[v] * span + (ulong)(owner + 1);
-	}
-	sort::quicksort(keys);
-
-	usz[] held = alloc::new_array(mem, usz, (sz)split.count);
-	usz[] rival = alloc::new_array(mem, usz, (sz)split.count);
-	defer
-	{
-		alloc::free(mem, held);
-		alloc::free(mem, rival);
-	}
-	usz run = 0;
-	for (usz i = 1; i <= count; i++)
-	{
-		if (i < count && keys[i] == keys[run]) continue;
-		usz island = (usz)(keys[run] / span);
-		sz owner = (sz)(keys[run] % span) - 1;
-		usz n = i - run;
-		if (owner == joint)
-		{
-			held[island] = n;
-		}
-		else if (owner >= 0 && n > rival[island])
-		{
-			rival[island] = n;
-		}
-		run = i;
-	}
-
-	bool[] out = alloc::new_array(allocator, bool, (sz)split.count);
-	bool some = false;
-	usz best = 0;
-	foreach (usz g, n : held)
-	{
-		out[g] = n > 0 && n >= rival[g];
-		some = some || out[g];
-		if (n > held[best]) best = g;
-	}
-	if (!some)
-	{
-		if (held[best] == 0)
-		{
-			alloc::free(allocator, out);
-			return {};
-		}
-		out[best] = true;
-	}
-	return out;
 }
 
 // Whether the texture layout cuts the mesh finer than its pieces do, so that

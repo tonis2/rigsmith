@@ -231,3 +231,169 @@ fn float area_scale(RigDocument* doc, rig::TriMesh* geometry, uint dot_id)
 // One Grow or Shrink step for a joint, in model units: a tenth of its bone.
 fn float grow_step(RigDocument* doc, rig::TriMesh* geometry, uint dot_id) => area_scale(doc, geometry, dot_id) * AREA_STEP;
 
+<*
+ Which UV islands a joint holds: one flag per island, set where the joint is the
+ strongest joint of at least as many of the island's vertices as any other
+ joint is. With no such island, the one holding most of its vertices.
+
+ @return `Owned by the caller; empty when the mesh has no islands or the joint holds nothing.`
+*>
+fn bool[] islands_owned(Allocator allocator, rig::MeshShells* split, usz count, float[] painted, usz bones, sz joint)
+{
+	if (split.count == 0 || split.of.len != count || painted.len < count * bones) return {};
+
+	// Island and owner in one key, so one sort lines each island's owners up.
+	ulong span = (ulong)bones + 1;
+	ulong[] keys = alloc::new_array(mem, ulong, (sz)count);
+	defer alloc::free(mem, keys);
+	for (usz v = 0; v < count; v++)
+	{
+		sz owner = row_owner(painted[v * bones:bones]);
+		keys[v] = (ulong)split.of[v] * span + (ulong)(owner + 1);
+	}
+	sort::quicksort(keys);
+
+	usz[] held = alloc::new_array(mem, usz, (sz)split.count);
+	usz[] rival = alloc::new_array(mem, usz, (sz)split.count);
+	defer
+	{
+		alloc::free(mem, held);
+		alloc::free(mem, rival);
+	}
+	usz run = 0;
+	for (usz i = 1; i <= count; i++)
+	{
+		if (i < count && keys[i] == keys[run]) continue;
+		usz island = (usz)(keys[run] / span);
+		sz owner = (sz)(keys[run] % span) - 1;
+		usz n = i - run;
+		if (owner == joint)
+		{
+			held[island] = n;
+		}
+		else if (owner >= 0 && n > rival[island])
+		{
+			rival[island] = n;
+		}
+		run = i;
+	}
+
+	bool[] out = alloc::new_array(allocator, bool, (sz)split.count);
+	bool some = false;
+	usz best = 0;
+	foreach (usz g, n : held)
+	{
+		out[g] = n > 0 && n >= rival[g];
+		some = some || out[g];
+		if (n > held[best]) best = g;
+	}
+	if (!some)
+	{
+		if (held[best] == 0)
+		{
+			alloc::free(allocator, out);
+			return {};
+		}
+		out[best] = true;
+	}
+	return out;
+}
+
+<*
+ What a part of a joint is read from. `riders` is only valid once the bind has run.
+*>
+struct AreaSource
+{
+	rig::TriMesh* geometry;
+	rig::Skeleton* skeleton;
+	float[] painted;         // vertex by joint
+	float[] base;            // the automatic bind, for a finger's part; empty otherwise
+	rig::DigitBands* bands;
+	rig::MeshShells* shells;
+	int[] riders;
+	rig::MeshShells* islands; // needed for ISLANDS only
+}
+
+<*
+ The vertices of one of a joint's parts. See `AppState.area_part_mask`.
+
+ @param joint : `The joint, as a skeleton index.`
+ @return `One flag per vertex, owned by the caller; empty when the part holds nothing.`
+*>
+fn bool[] area_part_of(Allocator allocator, AreaSource* source, usz joint, AreaPart part, sz seed = -1)
+{
+	usz count = source.geometry.positions.len;
+	usz bones = source.skeleton.len();
+	if (count == 0 || part == CUSTOM || source.painted.len < count * bones) return {};
+
+	bool[] mine = alloc::new_array(mem, bool, (sz)bones);
+	defer alloc::free(mem, mine);
+	mine[joint] = true;
+	if (part == WITH_CHILDREN)
+	{
+		for (usz j = 0; j < bones; j++)
+		{
+			for (int up = source.skeleton.parents[j]; up >= 0; up = source.skeleton.parents[(usz)up])
+			{
+				if (up != (int)joint) continue;
+				mine[j] = true;
+				break;
+			}
+		}
+	}
+
+	// A finger's part from the knuckle planes, over the automatic bind — which
+	// moves no knuckle plane for a grow, so neither does this. A piece riding one
+	// joint rigidly keeps its rider, as it does in the bind.
+	bool banded = source.base.len >= count * bones;
+	float[] row = alloc::new_array(mem, float, (sz)bones);
+	defer alloc::free(mem, row);
+
+	bool[] mask = alloc::new_array(allocator, bool, (sz)count);
+	usz caught = 0;
+	for (usz v = 0; v < count; v++)
+	{
+		float[] read = source.painted[v * bones:bones];
+		if (banded)
+		{
+			row[..] = source.base[v * bones:bones];
+			if (!rig::rides_rigidly(source.shells.of, source.riders, v)) source.bands.band_row(row, source.geometry.positions[v], 0.0f);
+			read = row;
+		}
+		sz owner = row_owner(read);
+		if (owner < 0 || !mine[(usz)owner]) continue;
+		mask[v] = true;
+		caught++;
+	}
+
+	if (part == ISLANDS)
+	{
+		rig::MeshShells* split = source.islands;
+		bool[] owned = islands_owned(mem, split, count, source.painted, bones, (sz)joint);
+		defer if (owned.len > 0) alloc::free(mem, owned);
+		caught = 0;
+		foreach (v, &on : mask)
+		{
+			*on = owned.len > 0 && split.of.len == count && owned[(usz)split.of[v]];
+			if (*on) caught++;
+		}
+	}
+
+	if (part == PIECE)
+	{
+		int shell = piece_for(source.geometry, source.shells, mask, seed);
+		caught = 0;
+		foreach (v, id : source.shells.of)
+		{
+			mask[v] = shell >= 0 && id == shell;
+			if (mask[v]) caught++;
+		}
+	}
+
+	if (caught == 0)
+	{
+		alloc::free(allocator, mask);
+		return {};
+	}
+	return mask;
+}
