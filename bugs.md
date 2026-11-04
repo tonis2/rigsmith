@@ -27,9 +27,6 @@ Found by the code audit of 2026-11-04. Delete each entry when it's fixed, and th
 - `get_clip` then `parse_clip` loses tangents and gait. A ground with `floor_set` and no feet survives only in the session writer. Read.
 - `between_poses` (`render_poses.c3:506`) keeps `from`'s offsets; `rig::blend_poses` lerps them. Read.
 
-## Names
-- `gait_twin_name`, `side_sign` and `plans.c3:242` only read suffixes, so `armature:LeftFoot` has a twin under `mirror_name` and none under them. `side_sign` feeds `rig_facing`. Read.
-
 ## Rig edits
 - Plan fit and import call `clear_rig_recorded`, which owes `forget_stale_ids`, and neither calls it. Read.
 

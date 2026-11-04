@@ -414,9 +414,14 @@ fn bool rig_upright(rig::Skeleton* skeleton, String[] names)
 // +1 for a joint on the left, -1 on the right, 0 on the midline.
 fn float side_sign(String name)
 {
-	if (name.ends_with("_L") || name.ends_with("_l") || name.ends_with(".L") || name.ends_with("Left")) return 1.0f;
-	if (name.ends_with("_R") || name.ends_with("_r") || name.ends_with(".R") || name.ends_with("Right")) return -1.0f;
-	return 0.0f;
+	switch (name_side(name))
+	{
+		case 'L':
+		case 'l': return 1.0f;
+		case 'R':
+		case 'r': return -1.0f;
+		default: return 0.0f;
+	}
 }
 
 fn bool name_has(String name, String part)

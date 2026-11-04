@@ -390,27 +390,8 @@ fn bool gait_leg_named(GaitLeg* leg, String[] names) @local
 	return true;
 }
 
-// The pairs of suffixes a rig names its sides with, left first.
-const String[2][*] GAIT_SIDES = {
-	{ "_L", "_R" }, { "_l", "_r" }, { ".L", ".R" }, { ".l", ".r" }, { "Left", "Right" },
-};
-
 // The other side's name, or "" for a name that states no side. Caller frees.
-fn String gait_twin_name(Allocator allocator, String name)
-{
-	foreach (pair : GAIT_SIDES)
-	{
-		if (name.len > pair[0].len && name.ends_with(pair[0]))
-		{
-			return string::format(allocator, "%s%s", name[:name.len - pair[0].len], pair[1]);
-		}
-		if (name.len > pair[1].len && name.ends_with(pair[1]))
-		{
-			return string::format(allocator, "%s%s", name[:name.len - pair[1].len], pair[0]);
-		}
-	}
-	return "";
-}
+fn String gait_twin_name(Allocator allocator, String name) => mirror_name(allocator, name);
 
 fn sz gait_joint_named(String[] names, String name) @local
 {

@@ -221,8 +221,7 @@ fn sz AppState.reapply_plan_limits(&self, bool commit = true, uint[] only = {})
 	foreach (usz j, name : pack.joint_names)
 	{
 		if (j >= pack.rest.len()) break;
-		float sign = name.ends_with("_L") || name.ends_with("_l") ? 1.0f
-			: (name.ends_with("_R") || name.ends_with("_r") ? -1.0f : 0.0f);
+		float sign = side_sign(name);
 		if (sign == 0.0f) continue;
 		source_side += sign * pack.rest.joints[j].x;
 		foreach (dot : self.doc.dots.array_view())
