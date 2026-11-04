@@ -14,7 +14,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # The test rigs are in LFS; without this they are text pointers.
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # .gitmodules names three.c3 by its SSH URL, which a runner has no key for.
       - name: Submodules
