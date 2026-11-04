@@ -163,33 +163,7 @@ fn String Character.label(&self)
 	return file_stem(self.source_path);
 }
 
-<*
- The character's mesh, in the world: its rest bounds carried through its
- placement. Empty bounds for a character with no mesh.
-*>
-fn rig::Bounds Character.world_bounds(&self)
-{
-	if (!self.has_mesh()) return {};
-	rig::Bounds local = self.geometry.bounds();
-	rig::Bounds out;
-	for (int corner = 0; corner < 8; corner++)
-	{
-		Vec3 at = {
-			corner & 1 ? local.max.x : local.min.x,
-			corner & 2 ? local.max.y : local.min.y,
-			corner & 4 ? local.max.z : local.min.z,
-		};
-		Vec3 world = self.doc.model_transform.point(at);
-		if (corner == 0)
-		{
-			out = { world, world };
-			continue;
-		}
-		out.min = math::min(out.min, world);
-		out.max = math::max(out.max, world);
-	}
-	return out;
-}
+fn rig::Bounds Character.world_bounds(&self) => world_bounds(&self.doc, &self.geometry);
 
 <*
  Which loaded character came from this file, or -1. Compared as written, so the

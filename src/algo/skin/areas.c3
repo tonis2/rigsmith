@@ -214,3 +214,7 @@ fn float band_share(RigDocument* doc, uint dot_id)
 	Dot* dot = doc.find(dot_id);
 	return dot && dot.band > 0.0f ? dot.band : BAND_SHARE_DEFAULT;
 }
+
+// Whether the mesh has more than one piece for Whole piece to pick between.
+fn bool area_has_pieces(rig::TriMesh* geometry, rig::MeshShells* shells) => shells.count > 1 && shells.of.len == geometry.positions.len;
+

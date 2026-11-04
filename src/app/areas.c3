@@ -702,8 +702,7 @@ fn void AppState.leave_brush(&self)
 	self.sync_weights_card();
 }
 
-// Whether the mesh has more than one piece for Whole piece to pick between.
-fn bool AppState.area_has_pieces(&self) => self.shells.count > 1 && self.shells.of.len == self.geometry.positions.len;
+fn bool AppState.area_has_pieces(&self) => area_has_pieces(&self.geometry, &self.shells);
 
 fn bool AppState.area_pending(&self) => self.area_mask.len > 0;
 

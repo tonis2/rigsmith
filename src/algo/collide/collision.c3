@@ -213,3 +213,11 @@ fn String contact_region_name(RigDocument* doc, CollisionPolicy* collision_polic
 	Dot* dot = doc.find(collision_policy.dot_ids[joint]);
 	return dot ? dot.name : "";
 }
+
+// The clearance this rig measures against, as a fraction of the diagonal.
+fn float collision_clearance_fraction(RigDocument* doc) => doc.collision_clearance > 0.0f
+	? doc.collision_clearance
+	: COLLISION_CLEARANCE;
+
+fn float collision_clearance(RigDocument* doc, Picker* picker) => picker.scale * collision_clearance_fraction(doc);
+

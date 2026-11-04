@@ -30,12 +30,9 @@ import std::math::quaternion;
 import std::collections::list;
 import std::time;
 
-// The clearance this rig measures against, as a fraction of the diagonal.
-fn float AppState.collision_clearance_fraction(&self) => self.doc.collision_clearance > 0.0f
-	? self.doc.collision_clearance
-	: COLLISION_CLEARANCE;
+fn float AppState.collision_clearance_fraction(&self) => collision_clearance_fraction(&self.doc);
 
-fn float AppState.collision_clearance(&self) => self.picker.scale * self.collision_clearance_fraction();
+fn float AppState.collision_clearance(&self) => collision_clearance(&self.doc, &self.picker);
 
 fn float AppState.collision_budget_seconds(&self) => self.collision_budget > 0.0f
 	? self.collision_budget

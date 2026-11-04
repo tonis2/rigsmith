@@ -15,3 +15,31 @@ fn float clip_local_time(AnimTemplate* clip, float t)
 	if (clip.loop) return t - math::floor(t / clip.duration) * clip.duration;
 	return math::min(t, clip.duration);
 }
+
+<*
+ The character's mesh, in the world: its rest bounds carried through its
+ placement. Empty bounds for a character with no mesh.
+*>
+fn rig::Bounds world_bounds(RigDocument* doc, rig::TriMesh* geometry)
+{
+	if (!has_mesh(geometry)) return {};
+	rig::Bounds local = geometry.bounds();
+	rig::Bounds out;
+	for (int corner = 0; corner < 8; corner++)
+	{
+		Vec3 at = {
+			corner & 1 ? local.max.x : local.min.x,
+			corner & 2 ? local.max.y : local.min.y,
+			corner & 4 ? local.max.z : local.min.z,
+		};
+		Vec3 world = doc.model_transform.point(at);
+		if (corner == 0)
+		{
+			out = { world, world };
+			continue;
+		}
+		out.min = math::min(out.min, world);
+		out.max = math::max(out.max, world);
+	}
+	return out;
+}

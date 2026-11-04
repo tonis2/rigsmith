@@ -38,3 +38,14 @@ fn rig::MeshAdjacency* adjacency_for(rig::TriMesh* geometry, rig::MeshAdjacency*
 	}
 	return adjacency;
 }
+
+<*
+ Whether there is a model to rig.
+
+ False between startup and the first `load_mesh` when crig was run with no
+ file. Everything that reads the mesh — placing a dot, binding, exporting, the
+ occlusion cue — has to ask, because with no mesh they have nothing to answer
+ about rather than an empty answer to give.
+*>
+fn bool has_mesh(rig::TriMesh* geometry) => geometry.positions.len > 0;
+

@@ -1054,15 +1054,7 @@ fn void AppState.drop_geometry_cache(&self)
 	self.shells.free(mem);
 }
 
-<*
- Whether there is a model to rig.
-
- False between startup and the first `load_mesh` when crig was run with no
- file. Everything that reads the mesh — placing a dot, binding, exporting, the
- occlusion cue — has to ask, because with no mesh they have nothing to answer
- about rather than an empty answer to give.
-*>
-fn bool Character.has_mesh(&self) => self.geometry.positions.len > 0;
+fn bool Character.has_mesh(&self) => has_mesh(&self.geometry);
 
 fn rig::MeshAdjacency* AppState.adjacency_for(&self) => adjacency_for(&self.geometry, &self.adjacency);
 
