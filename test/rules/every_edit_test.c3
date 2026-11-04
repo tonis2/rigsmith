@@ -94,6 +94,12 @@ fn String print_of(AppState* app) @local
 	return crig::session_text(mem, &app.doc, "", pack ? pack.clips : {}, limits: true);
 }
 
+fn void step(Fixture* f, String tool) @local
+{
+	String? answer = f.call_tool_text(tool, "{}");
+	if (try answer) answer.free(mem);
+}
+
 // Whether two prints match, numbers to within reading's rounding: a limit frame
 // is normalised as it loads, which can move its last digit.
 fn bool same_print(String a, String b) @local
@@ -206,7 +212,7 @@ fn void every_edit_undoes_redoes_and_saves() @test
 			if (after == before)
 			{
 				out.appendf("%s: changed nothing\n", edit.tool);
-				if (edit.setup_tool.len > 0) (void)f.call_tool_text("undo", "{}");
+				if (edit.setup_tool.len > 0) step(f, "undo");
 				continue;
 			}
 
@@ -214,19 +220,19 @@ fn void every_edit_undoes_redoes_and_saves() @test
 			defer saved.free(mem);
 			if (!same_print(saved, after)) out.appendf("%s: lost in the session file\n", edit.tool);
 
-			(void)f.call_tool_text("undo", "{}");
+			step(f, "undo");
 			String undone = print_of(&f.app);
 			defer undone.free(mem);
 			if (undone != before) out.appendf("%s: undo differs\n", edit.tool);
 
-			(void)f.call_tool_text("redo", "{}");
+			step(f, "redo");
 			String redone = print_of(&f.app);
 			defer redone.free(mem);
 			if (redone != after) out.appendf("%s: redo differs\n", edit.tool);
 
-			(void)f.call_tool_text("undo", "{}");
+			step(f, "undo");
 		}
-		if (edit.setup_tool.len > 0) (void)f.call_tool_text("undo", "{}");
+		if (edit.setup_tool.len > 0) step(f, "undo");
 	}
 	test::@check(out.len() == 0, "%s", out.str_view());
 }
