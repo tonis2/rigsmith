@@ -53,9 +53,8 @@ fn uint funnel_dot(crig::AppState* app, String name)
 }
 
 <*
- Both edit layers on: an Apply that pins the knee's own part, and a multiplier
- dab elsewhere, so the edited weights differ from the automatic ones and a
- reader that skipped a layer would show it.
+ An Apply that pins the knee's own part, so the edited weights differ from the
+ automatic ones and a reader that skipped them would show it.
 *>
 fn void FunnelFixture.edit(&self)
 {
@@ -65,19 +64,7 @@ fn void FunnelFixture.edit(&self)
 	bool[] part = app.area_part_mask(mem, knee, OWN);
 	defer alloc::free(mem, part);
 	test::@check(app.apply_area(knee, part, app.area_scale(knee) * 0.25f) > 0, "the knee's part wrote nothing");
-
-	// And a multiplier, the layer sessions from before stated rows carry, on a
-	// vertex the knee's part did not pin.
-	uint thigh = funnel_dot(app, "thigh_L");
-	uint shin = 0;
-	foreach (v, on : part)
-	{
-		if (on) continue;
-		shin = (uint)v;
-		break;
-	}
-	test::@check(app.doc.set_paint(shin, thigh, 0.3f), "the multiplier did not take");
-	test::@check(app.doc.pins.len() > 0 && app.doc.paint.len() > 0, "the fixture carries no hand edits");
+	test::@check(app.doc.pins.len() > 0, "the fixture carries no hand edits");
 }
 
 fn void every_reader_counts_the_same_owners() @test

@@ -123,38 +123,6 @@ fn sz RigView.joint_of(&self, uint id)
 }
 
 <*
- The multipliers an older session carried, with their dot ids resolved against
- this build's joint order — read once, by `legacy_weights`, which bakes them
- into the weights an older session showed. Empty when there are none, which is every session written
- since version 31.
-*>
-fn PaintColumn[] paint_columns(RigDocument* doc, rig::TriMesh* geometry, Allocator allocator, uint[] dot_ids)
-{
-	sz dabs = doc.paint.len();
-	if (dabs == 0) return {};
-
-	PaintColumn[] columns = alloc::new_array(allocator, PaintColumn, dabs);
-	usz kept = 0;
-	foreach (dab : doc.paint.array_view())
-	{
-		if ((usz)dab.vertex >= geometry.positions.len) continue;
-		foreach (usz j, id : dot_ids)
-		{
-			if (id != dab.dot_id) continue;
-			columns[kept++] = { .vertex = dab.vertex, .joint = j, .factor = dab.factor };
-			break;
-		}
-	}
-
-	if (kept == 0)
-	{
-		alloc::free(allocator, columns);
-		return {};
-	}
-	return columns[:kept];
-}
-
-<*
  Which joints are held (`Dot.held`): one flag per joint, empty when none is.
 *>
 fn bool[] held_joints(RigDocument* doc, Allocator allocator, uint[] dot_ids)
@@ -175,7 +143,7 @@ fn bool[] held_joints(RigDocument* doc, Allocator allocator, uint[] dot_ids)
  The held joints' stored weights with their dot ids resolved against this
  build's joint order.
 
- `paint_columns` for the other layer — one pass over a sparse list, dropping an
+ One pass over a sparse list, dropping an
  entry whose dot is gone or not held and a vertex past the end of the mesh. A
  full column per held joint is a long list, so each entry is resolved through
  one table read (`joint_table`) rather than a search of the joints.

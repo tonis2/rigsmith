@@ -335,7 +335,7 @@ fn void retime_crop_and_cut_carry_the_pin_window() @test
 	test::@check(rewritten.pins.len == 0 && source.pins.len == 1, "clip_without_pin changed its source or kept the pin");
 }
 
-fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
+fn void the_session_round_trips_pins_and_a_clip_without_them() @test
 {
 	Person p;
 	if (!p.open()) return;
@@ -374,26 +374,16 @@ fn void the_session_round_trips_pins_and_an_older_file_has_none() @test
 		test::@check(math::abs(got.orient.v.dot(pin.orient.v)) > 0.99999f, "orient differs");
 	}
 
-	// A version 23 file has no pins and reads as a clip with none.
-	String old = bare.replace(mem, `"version": 33`, `"version": 23`);
-	defer old.free(mem);
-	AnimTemplate[]? older = crig::parse_session_clips(mem, old);
-	if (catch fault error = older)
+	// A clip with no pins reads as a clip with none.
+	AnimTemplate[]? without = crig::parse_session_clips(mem, bare);
+	if (catch fault error = without)
 	{
-		test::@check(false, "a version 23 session was refused: %s", error);
+		test::@check(false, "a clip with no pins was refused: %s", error);
 		return;
 	}
-	AnimTemplate[] clips = older;
+	AnimTemplate[] clips = without;
 	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].pins.len == 0, "a version 23 clip came back with pins");
-	crig::RigDocument? opened = crig::parse_session(mem, old);
-	if (catch opened)
-	{
-		test::@check(false, "a version 23 session was refused");
-		return;
-	}
-	crig::RigDocument doc = opened;
-	doc.free();
+	test::@check(clips.len == 1 && clips[0].pins.len == 0, "a clip with none came back with pins");
 }
 
 fn void export_bakes_the_pin_into_keys_and_leaves_none() @test

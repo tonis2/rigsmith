@@ -90,8 +90,7 @@ struct AnimPack
 	 with — read out of the file's KHR_physics_rigid_bodies, in the same joint
 	 order as everything above.
 
-	 Empty for every pack written before physics existed and for every file from
-	 another tool that carries none, which is the same as saying "the animation
+	 Empty for every file that carries none, which is the same as saying "the animation
 	 states every bone". Carried onto the document only when the pack's rig is
 	 adopted — see `AppState.apply_preset` — because until then this is a library
 	 entry and not the rig being edited.

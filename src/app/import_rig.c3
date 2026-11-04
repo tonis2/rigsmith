@@ -42,8 +42,7 @@ import std::math::vector;
 <*
  Fill an empty `doc.plan` from the model's own `extras.plan`.
 
- A sidecar written before plans were recorded (or by hand) has no "plan", yet the
- glb may carry the tag — and the next Save hands `doc.plan` to `reskin_glb`, which
+ A sidecar with no "plan" can sit beside a glb that carries the tag — and the next Save hands `doc.plan` to `reskin_glb`, which
  REMOVES the member when the value is empty. Adopting it here keeps the tag alive.
  A plan the session already declared wins.
 *>
@@ -65,7 +64,7 @@ fn void AppState.adopt_source_plan(&self)
 <*
  Settle where this model's rig comes from, in the one order that is defensible.
 
- The session beside the mesh wins, and it is the only place a rig document is
+ The session beside the mesh wins when it can be read, and it is the only place a rig document is
  kept. crig used to stamp the whole document into the model's own `extras` as
  well; that is gone, because the document is mostly the **paint layer** — one
  entry per (vertex, dot) pair — and a properly painted humanoid put megabytes of
@@ -92,12 +91,10 @@ fn void AppState.adopt_source_rig(&self)
 	String session = session_path(mem, self.source_path);
 	defer session.free(mem);
 
-	if (io::file::is_file(session))
+	if (io::file::is_file(session) && self.load_session())
 	{
-		// The file's own weights, when the session says it wore them, are read
-		// back inside — see `load_session`. The joints' limits live in the model
-		// too, since session 18: what it carries replaces whatever the session had.
-		self.load_session();
+		// The joints' limits live in the model too: what it carries replaces
+		// whatever the session had.
 		(void)self.adopt_model_limits(recorded: false);
 		self.adopt_source_plan();
 
@@ -369,8 +366,7 @@ fn void AppState.turn_geometry_half_round(&self)
  	`usz landed = app.adopt_model_limits(recorded: false);`
 
  A model crig saved or exported holds its limits as the KHR constraint joints
- `write_rig_constraints` and the in-place writer both produce, and since
- session 18 that is the only place they are kept. Read back as a pack and
+ `write_rig_constraints` and the in-place writer both produce. Read back as a pack and
  matched by the name each dot's joint is written under — `model_joint_name`,
  so an unnamed dot finds its `joint_<n>` — exactly as they were written: the
  axes as they are, a fork's named child as the dot it became, an adjusted
@@ -508,10 +504,9 @@ fn usz AppState.adopt_physics_recorded(&self, RigPhysics physics, uint[] joint_d
  Re-read the weights the mesh's file carries for a rig that is already in the
  document, without touching the rig or the weights it wears.
 
- What Rig › Use the model's own weights needs on a reopened session, and what an
- older session's migration rebuilds its picture from: the dots came back out of
- `<stem>.rigsmith.json`, so the columns have to be found again in the file
- beside it. The names are the join.
+ What Rig › Use the model's own weights needs on a reopened session: the dots
+ came back out of `<stem>.rigsmith.json`, so the columns have to be found again
+ in the file beside it. The names are the join.
 
  @return `Whether the file's skin was read.`
 *>

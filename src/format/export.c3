@@ -1051,8 +1051,7 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 				}
 				out.append_string("],");
 				// Only when some joint is keyed on one channel: a clip keyed on both
-				// everywhere reads the same without it, and so does every file
-				// written before it existed.
+				// everywhere reads the same without it.
 				bool all_both = true;
 				foreach (kind : kinds) if (kind != BOTH) all_both = false;
 				if (!all_both)

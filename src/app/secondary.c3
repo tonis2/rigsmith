@@ -9,10 +9,9 @@
  cannot, so the panel and the MCP tool refuse the same shapes for the same
  reasons and neither has to know the resolver's rules.
 
- Nothing here writes the document except `adopt_bones_recorded`, which is the
- migration for the two places the old per-bone form still arrives from — a
- KHR file and a body-plan pack — and lands, recorded, inside whatever undo
- group the import already opened.
+ Nothing here writes the document except `adopt_bones_recorded`, which takes the
+ per-bone form a KHR file and a body-plan pack arrive in and lands, recorded,
+ inside whatever undo group the import already opened.
 *>
 module crig;
 
@@ -101,13 +100,13 @@ fn void AppState.refresh_dynamic_dots(&self)
 }
 
 <*
- Lands the old per-bone form on the document as chains, one recorded edit per
+ Lands the per-bone form on the document as chains, one recorded edit per
  chain, leaving the group open.
 
  	`usz landed = app.adopt_bones_recorded(bones);`
 
- The migration the two importers share: a KHR file and a body-plan pack both
- still speak in bones, and `secondary_chains_from_bones` says which runs those
+ What the two importers share: a KHR file and a body-plan pack both
+ speak in bones, and `secondary_chains_from_bones` says which runs those
  bones make against the skeleton these dots build. A run whose root already
  carries a chain is left alone rather than overwritten — the document's own
  setup outranks a file's — and a run that crosses one is skipped, since a chain

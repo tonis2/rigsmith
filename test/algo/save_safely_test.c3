@@ -3,7 +3,7 @@
 *>
 module crig_tests::save_safely;
 
-import crig;
+import gltf_edit;
 import std::core::test;
 import std::io;
 import std::io::file;
@@ -20,7 +20,7 @@ fn void a_failed_save_leaves_the_old_file() @test
 	// A folder stands where the temporary file has to go, so the write fails.
 	(void)path::mkdir(kept.tconcat(".tmp"), true);
 	bool failed;
-	if (catch crig::save_safely(kept, "new")) failed = true;
+	if (catch gltf_edit::save_safely(kept, "new")) failed = true;
 	test::@check(failed, "the save should have failed");
 	char[] left = file::load(mem, kept)!!;
 	defer alloc::free(mem, left);
@@ -32,7 +32,7 @@ fn void a_save_replaces_the_file() @test
 	(void)path::mkdir(FOLDER, true);
 	String target = FOLDER.tconcat("/replaced.txt");
 	(void)file::save(target, "old");
-	crig::save_safely(target, "new")!!;
+	gltf_edit::save_safely(target, "new")!!;
 	char[] now = file::load(mem, target)!!;
 	defer alloc::free(mem, now);
 	test::@check((String)now == "new", "the save didn't land");

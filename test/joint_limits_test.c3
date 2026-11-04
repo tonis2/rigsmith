@@ -589,23 +589,11 @@ fn void limits_round_trip_through_the_project_session() @test
 		&& held.axes[2].same(limits.axes[2]), "an active or parked axis value changed");
 	test::@check(held.has_saved_frame && near(held.saved_frame.v.w, 1.0f),
 		"the normalized saved frame did not round-trip");
-
-	String older = `{"version":12,"dots":[{"id":1,"position":[0,0,0]}],"edges":[]}`;
-	crig::RigDocument? legacy = crig::parse_session(mem, older);
-	if (catch legacy)
-	{
-		test::@check(false, "a session from before limits no longer opens");
-		return;
-	}
-	crig::RigDocument old = legacy;
-	defer old.free();
-	test::@check(!old.rotation_limits_of(1).constrained && old.rotation_limits.len() == 0,
-		"an older session invented constraints");
 }
 
 fn void malformed_limit_sessions_are_refused() @test
 {
-	String inverted = `{"version":13,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"rotation_limits":[{"id":1,"active":true,"axes":[{"allow":true,"minimum":1,"maximum":-1,"locked":0},{"allow":true,"minimum":-3,"maximum":3,"locked":0},{"allow":true,"minimum":-3,"maximum":3,"locked":0}],"frame":[0,0,0,1]}]}`;
+	String inverted = `{"version":33,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"rotation_limits":[{"id":1,"active":true,"axes":[{"allow":true,"minimum":1,"maximum":-1,"locked":0},{"allow":true,"minimum":-3,"maximum":3,"locked":0},{"allow":true,"minimum":-3,"maximum":3,"locked":0}],"frame":[0,0,0,1]}]}`;
 	crig::RigDocument? bad = crig::parse_session(mem, inverted);
 	if (try crig::RigDocument accepted = bad)
 	{
@@ -613,7 +601,7 @@ fn void malformed_limit_sessions_are_refused() @test
 		test::@check(false, "a session with an inverted axis range was accepted");
 	}
 
-	String repeated = `{"version":13,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"rotation_limits":[{"id":1,"active":true,"axes":[{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0}],"frame":[0,0,0,1]},{"id":1,"active":true,"axes":[{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0}],"frame":[0,0,0,1]}]}`;
+	String repeated = `{"version":33,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"rotation_limits":[{"id":1,"active":true,"axes":[{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0}],"frame":[0,0,0,1]},{"id":1,"active":true,"axes":[{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0},{"allow":true,"minimum":-1,"maximum":1,"locked":0}],"frame":[0,0,0,1]}]}`;
 	bad = crig::parse_session(mem, repeated);
 	if (try crig::RigDocument accepted = bad)
 	{

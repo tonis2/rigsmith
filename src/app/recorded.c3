@@ -124,8 +124,7 @@ fn void AppState.keep_limit_frames_recorded(&self, uint id, Vec3 from, Vec3 to)
  nearest quarter turn of the roll between the two (`limits_rolled_onto`), so the
  joint allows what it did, now about the axes its neighbours use.
 
- What the joint card's Use bone axes does, for a table an older file, a move or
- a mirror pinned.
+ What the joint card's Use bone axes does, for a table a move or a mirror pinned.
 
  @return `False when the table has no saved frame or its bone derives none.`
 *>

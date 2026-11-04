@@ -236,25 +236,6 @@ fn void malformed_authored_payload_is_recoverable() @test
 	test::@check(clips.len == 1, "the valid retry lost its authored clip");
 }
 
-fn void legacy_whole_pose_omissions_remain_rest_keys() @test
-{
-	io::printn("legacy authored clips expand omissions to explicit rest keys");
-	const String LEGACY = `{"authored_clips":[{"name":"legacy","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[{"joint":"a","axis":[1,0,0],"angle":0.5,"move":[0,0,0],"bone":[0,1,0]}]},{"time":1,"dots":[{"joint":"b","axis":[0,1,0],"angle":0.25,"move":[0,0,0],"bone":[1,0,0]}]}]}]}`;
-	AnimTemplate[]? parsed = crig::parse_session_clips(mem, LEGACY);
-	if (catch parsed) { test::@check(false, "legacy authored clip did not parse"); return; }
-	AnimTemplate[] clips = parsed;
-	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].keyframes[0].dots.len == 2
-		&& clips[0].keyframes[1].dots.len == 2,
-		"legacy omissions were not expanded across the joint union");
-	if (clips.len != 1) return;
-	test::@check(clips[0].keyframes[0].dots[1].joint_name == "b"
-		&& clips[0].keyframes[0].dots[1].angle == 0.0f
-		&& clips[0].keyframes[1].dots[1].joint_name == "a"
-		&& clips[0].keyframes[1].dots[1].angle == 0.0f,
-		"legacy omissions did not become explicit rest values");
-}
-
 fn void app_save_and_reload_restores_authored_bindings() @test
 {
 	io::printn("AppState saves and reloads its authored pack and binding");
@@ -648,9 +629,9 @@ fn AnimTemplate aimed()
 	return clip;
 }
 
-fn void look_at_targets_round_trip_in_version_22() @test
+fn void look_at_targets_round_trip() @test
 {
-	io::printn("look-at targets and locks round-trip through a v22 session");
+	io::printn("look-at targets and locks round-trip through a session");
 	RigDocument doc = {};
 	defer doc.free();
 	AnimTemplate clip = aimed();
@@ -679,28 +660,6 @@ fn void look_at_targets_round_trip_in_version_22() @test
 	test::@check(clips[0].aim_targets[1].name == "Gaze" && !clips[0].aim_targets[1].mute, "the second target changed");
 }
 
-fn void version_21_aims_with_keys_become_targets_and_locks() @test
-{
-	io::printn("a v21 aim that carries keys reads as a target plus a lock");
-	const String OLD = `{"authored_clips":[{"name":"old","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}],"aims":[`
-		`{"joint":"head","forward":[0,0,1],"spread":2,"weights":[0.6,0.4,0,0],"influence":0.5,"mute":true,"keys":[{"time":0.25,"at":[1,2,3],"interp":"hold"},{"time":0.5,"at":[4,5,6]}]},`
-		`{"joint":"hand_L","forward":[1,0,0],"spread":1,"weights":[1,0,0,0],"influence":1,"mute":false,"keys":[{"time":0,"at":[0,0,1]}]}]}]}`;
-	AnimTemplate[]? parsed = crig::parse_session_clips(mem, OLD);
-	if (catch parsed) { test::@check(false, "a version 21 clip did not parse"); return; }
-	AnimTemplate[] clips = parsed;
-	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].aims.len == 2 && clips[0].aim_targets.len == 2, "the migration made %d locks, %d targets",
-		clips[0].aims.len, clips[0].aim_targets.len);
-	if (clips[0].aims.len != 2 || clips[0].aim_targets.len != 2) return;
-	test::@check(clips[0].aim_targets[0].name == "Target 1" && clips[0].aim_targets[1].name == "Target 2", "targets are not named in order");
-	test::@check(clips[0].aims[0].joint == "head" && clips[0].aims[0].target == "Target 1" && clips[0].aims[0].spread == 2
-		&& clips[0].aims[0].influence == 0.5f && clips[0].aims[0].mute, "the lock settings were lost");
-	test::@check(clips[0].aims[1].target == "Target 2", "the second lock points at the wrong target");
-	AnimAimTarget first = clips[0].aim_targets[0];
-	test::@check(first.keys.len == 2 && first.keys[0].time == 0.25f && first.keys[0].at == (Vec3){ 1, 2, 3 }
-		&& first.keys[0].interpolation == HOLD && first.keys[1].at == (Vec3){ 4, 5, 6 }, "the keys moved to the target wrongly");
-}
-
 fn void duplicate_target_names_and_orphan_locks() @test
 {
 	io::printn("duplicate target names are refused, a lock on a missing target is dropped");
@@ -727,47 +686,66 @@ fn void duplicate_target_names_and_orphan_locks() @test
 		"the orphan lock was kept (%d locks)", clips[0].aims.len);
 }
 
-fn void version_20_clips_read_with_no_aims() @test
+fn void a_clip_with_no_aims_key_reads_with_none() @test
 {
 	io::printn("a clip with no aims key reads as a clip with none");
 	const String OLD = `{"authored_clips":[{"name":"old","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}]}]}`;
 	AnimTemplate[]? parsed = crig::parse_session_clips(mem, OLD);
-	if (catch parsed) { test::@check(false, "a version 20 clip did not parse"); return; }
+	if (catch parsed) { test::@check(false, "a clip with no aims did not parse"); return; }
 	AnimTemplate[] clips = parsed;
 	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].aims.len == 0, "an old clip grew aims");
+	test::@check(clips.len == 1 && clips[0].aims.len == 0, "a clip grew aims");
+}
+
+fn bool clips_refused(String text) @local
+{
+	AnimTemplate[]? parsed = crig::parse_session_clips(mem, text);
+	if (catch parsed) return true;
+	crig::free_animations(mem, parsed);
+	return false;
 }
 
 fn void malformed_aims_are_refused() @test
 {
-	io::printn("look-at targets with a bad shape are refused");
-	const String HEAD = `{"authored_clips":[{"name":"c","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}],"aims":[`;
-	const String TAIL = `]}]}`;
-	String[8] bad = {
+	io::printn("look-at targets and locks with a bad shape are refused");
+	const String HEAD = `{"authored_clips":[{"name":"c","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}],`;
+	const String TARGET = `{"name":"T","mute":false,"keys":[{"time":0,"at":[0,0,0]}]}`;
+	const String LOCK = `{"joint":"head","target":"T","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false}`;
+
+	String good = string::format(mem, `%s"aim_targets":[%s],"aims":[%s]}]}`, HEAD, TARGET, LOCK);
+	defer good.free(mem);
+	test::@check(!clips_refused(good), "the good target and lock were refused");
+
+	String[4] targets = {
 		// no keys
-		`{"joint":"head","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[]}`,
-		// spread out of range
-		`{"joint":"head","forward":[0,0,1],"spread":5,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[{"time":0,"at":[0,0,0]}]}`,
-		`{"joint":"head","forward":[0,0,1],"spread":0,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[{"time":0,"at":[0,0,0]}]}`,
+		`{"name":"T","mute":false,"keys":[]}`,
 		// times not increasing
-		`{"joint":"head","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[{"time":0.5,"at":[0,0,0]},{"time":0.5,"at":[0,0,0]}]}`,
+		`{"name":"T","mute":false,"keys":[{"time":0.5,"at":[0,0,0]},{"time":0.5,"at":[0,0,0]}]}`,
 		// negative time
-		`{"joint":"head","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[{"time":-1,"at":[0,0,0]}]}`,
+		`{"name":"T","mute":false,"keys":[{"time":-1,"at":[0,0,0]}]}`,
 		// a point with two numbers
-		`{"joint":"head","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false,"keys":[{"time":0,"at":[0,0]}]}`,
+		`{"name":"T","mute":false,"keys":[{"time":0,"at":[0,0]}]}`,
+	};
+	foreach (i, entry : targets)
+	{
+		String text = string::format(mem, `%s"aim_targets":[%s]}]}`, HEAD, entry);
+		defer text.free(mem);
+		test::@check(clips_refused(text), "malformed target %d was accepted", i);
+	}
+
+	String[4] locks = {
+		// spread out of range
+		`{"joint":"head","target":"T","forward":[0,0,1],"spread":5,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false}`,
+		`{"joint":"head","target":"T","forward":[0,0,1],"spread":0,"weights":[0.5,0.3,0.2,0],"influence":1,"mute":false}`,
 		// influence out of range
-		`{"joint":"head","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":2,"mute":false,"keys":[{"time":0,"at":[0,0,0]}]}`,
-		// not a list
+		`{"joint":"head","target":"T","forward":[0,0,1],"spread":3,"weights":[0.5,0.3,0.2,0],"influence":2,"mute":false}`,
+		// not an object
 		`7`,
 	};
-	foreach (i, entry : bad)
+	foreach (i, entry : locks)
 	{
-		String text = string::format(mem, "%s%s%s", HEAD, entry, TAIL);
+		String text = string::format(mem, `%s"aim_targets":[%s],"aims":[%s]}]}`, HEAD, TARGET, entry);
 		defer text.free(mem);
-		AnimTemplate[]? parsed = crig::parse_session_clips(mem, text);
-		bool refused = false;
-		if (catch parsed) refused = true;
-		test::@check(refused, "malformed aim %d was accepted", i);
-		if (try parsed) crig::free_animations(mem, parsed);
+		test::@check(clips_refused(text), "malformed lock %d was accepted", i);
 	}
 }

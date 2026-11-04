@@ -66,8 +66,6 @@ fn void AppState.drop_playback_rig(&self)
 	self.playback_rig_built = false;
 }
 
-fn PaintColumn[] AppState.paint_columns(&self, Allocator allocator, uint[] dot_ids) => paint_columns(&self.doc, &self.geometry, allocator, dot_ids);
-
 fn bool[] AppState.held_joints(&self, Allocator allocator, uint[] dot_ids) => held_joints(&self.doc, allocator, dot_ids);
 
 fn PinColumn[] AppState.pin_columns(&self, Allocator allocator, uint[] dot_ids) => pin_columns(&self.doc, &self.geometry, allocator, dot_ids);

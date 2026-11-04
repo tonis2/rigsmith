@@ -40,7 +40,7 @@ fi
 
 # Every weight write goes through replace_column: see rules/weights.md.
 if grep -rnE 'store_column\(|doc\.pins\.(push|pop|clear|get_ref)' src --include='*.c3' \
-	| grep -vE '^src/(app/(pinning|weights_legacy|import_rig)|format/session)\.c3:'; then
+	| grep -vE '^src/(app/(pinning|import_rig)|format/session)\.c3:'; then
 	echo "check_layers: weights are written through replace_column" >&2
 	exit 1
 fi

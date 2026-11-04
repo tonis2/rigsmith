@@ -22,9 +22,8 @@
  look like a body plan.
 
  **A file with no extras at all is still a pack**, just an untagged one — which
- is what every .glb written before packs existed is, and what a plain export out
- of a DCC tool is. It carries its clips and is matched the older way, on a name
- in common with the rig.
+ is what a plain export out of a DCC tool is. It carries its clips and is matched
+ on a name in common with the rig.
 
  **A file on a rig crig recognises is read onto that rig's body plan.** Nothing
  downloaded carries crig metadata, and a downloaded walk names its joints
@@ -110,8 +109,8 @@ fn bool as_written(gltf::GltfStream* stream)
  and reading names is the one thing `algo/match/joint_match.c3` is built never to do.
  So the pack's author says so, in the file.
 
- A pack that does not carry it has no optional joints, which is every pack
- written before this existed and every plan that stops at the wrist.
+ A pack that does not carry it has no optional joints, which is every plan that
+ stops at the wrist.
 *>
 const String PACK_KEY_OPTIONAL = "optional";
 
@@ -125,8 +124,7 @@ const String PACK_KEY_OPTIONAL = "optional";
  `extras` comes back as a string map — the same reason the tag list is one
  comma-separated string; see the note at the top of this file.
 
- A file that does not carry it is a linear, ungrounded pack, which is every pack
- written before this existed.
+ A file that does not carry it is a linear, ungrounded pack.
 *>
 const String PACK_KEY_CLIPS = "clips";
 

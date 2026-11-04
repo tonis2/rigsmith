@@ -363,7 +363,7 @@ fn void image_to_pose_makes_a_saved_pose() @test
 	test::@check(crig::node_folder_slot(POSE) == 0 && crig::node_folder_slot(ANIMATE) == 0, "Image to pose and Animate write no files: no save folder");
 }
 
-fn void references_list_newest_first_and_the_old_studio_counts() @test
+fn void references_list_newest_first() @test
 {
 	String dir = "build/test_capture_references";
 	rig::TriMesh mesh;
@@ -371,7 +371,7 @@ fn void references_list_newest_first_and_the_old_studio_counts() @test
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
 	test::@check(app.capture_reference_for("").len == 0, "no references: none to read with");
 	test::@check(crig::capture_reference_name("Arms / up: 2") == "Arms _ up_ 2", "a pose name as a folder (%s)", crig::capture_reference_name("Arms / up: 2"));
-	String[3] made = { "studio", "Wave", "Crouch" };
+	String[2] made = { "Wave", "Crouch" };
 	foreach (usz i, name : made)
 	{
 		String folder = app.capture_reference_path(name);
@@ -383,10 +383,9 @@ fn void references_list_newest_first_and_the_old_studio_counts() @test
 	List{String} found;
 	found.init(tmem);
 	app.capture_references(tmem, &found);
-	test::@check(found.len() == 3 && found[0] == "Crouch" && found[1] == "Wave" && found[2] == "studio", "newest first, the old studio too: %s", found);
+	test::@check(found.len() == 2 && found[0] == "Crouch" && found[1] == "Wave", "newest first: %s", found);
 	test::@check(app.capture_reference_for("Wave") == app.capture_reference_path("Wave"), "a chosen reference is used");
 	test::@check(app.capture_reference_for("Gone") == app.capture_reference_path("Crouch"), "a missing one falls back to the newest");
-	test::@check(app.capture_reference_path("studio") == app.capture_path("studio"), "the old studio keeps its folder");
 }
 
 // A picture with a light figure at `at` (0..1 across) on grey.
@@ -676,8 +675,8 @@ fn void running_animate_trains_the_finder_first_unless_it_is_there() @test
 	List{usz} early;
 	early.init(tmem);
 	test::@check(@catch(app.node_order(g, animate, &early)) == crig::CAPTURE_NO_REFERENCE, "Animate with no reference saved is refused");
-	(void)path::mkdir(app.capture_path("studio"), true);
-	(void)file::save(app.capture_path("studio/studio.json"), "{}");
+	(void)path::mkdir(app.capture_reference_path("Stand"), true);
+	(void)file::save(string::tformat("%s/studio.json", app.capture_reference_path("Stand")), "{}");
 
 	List{usz} order;
 	order.init(mem);

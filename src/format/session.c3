@@ -5,7 +5,7 @@
  because crig is started with a path and everything it produces belongs where
  the question came from. One object:
 
-     { "version": 32, "mesh": "goat.glb", "root": 3, "next_id": 17,
+     { "version": 33, "mesh": "goat.glb", "root": 3, "next_id": 17,
        "auto_connect": true, "sym_x": 0.42, "plan": "biped",
        "sharpness": 2.5, "knuckle_blend": 0.3,
        "dots": [{"id": 1, "position": [x, y, z], "reach": 0.4, "held": true}, ...],
@@ -77,7 +77,7 @@ alias JsonFloat = gltf_edit::JsonFloat;
 alias JsonVec3 = gltf_edit::JsonVec3;
 alias JsonQuat = gltf_edit::JsonQuat;
 
-faultdef SESSION_IO, SESSION_SHAPE;
+faultdef SESSION_IO, SESSION_SHAPE, SESSION_OLD;
 
 struct ProjectSession
 {
@@ -93,181 +93,9 @@ fn void ProjectSession.free(&self, Allocator allocator)
 	*self = {};
 }
 
-// Bumped when the file's meaning changes; a reader refuses what it does not
-// understand rather than silently rigging half of it.
-//
-// 6 added `skin_from_file`. That is a bump and not merely a new optional key
-// because a reader that ignores it does not lose a label — it binds the mesh
-// with crig's own binder over a rig whose weights were painted somewhere else,
-// and shows a deformation nobody authored.
-//
-// 7 added the pose: `rot` and `move` per dot. Both are optional and a version 6
-// file simply has neither, so the bump is for the other direction — a version 7
-// file read by a version 6 binary would come back as a rig with the pose
-// silently dropped, and the work that went into it gone with no error anywhere.
-//
-// 8 added `paint`, and the bump is for that same direction and a sharper reason.
-// A version 8 file read by a version 7 binary comes back as a rig that binds
-// *differently* — every hand correction gone, so the mesh deforms the way the
-// binder alone says it should, which is exactly the state the corrections were
-// made to get out of. Nothing on screen would say anything was lost.
-//
-// 9 added `physics` and `colliders` — which bones the simulation owns and what
-// they are pushed out of. Same direction and same sharpness: a version 9 file
-// read by a version 8 binary comes back as a rig whose tail no longer moves,
-// with nothing anywhere saying it used to.
-//
-// 10 added `animations`: which of the library's clips are bound to this
-// character. The bump is the same direction again — a version 10 file read by a
-// version 9 binary comes back as a character with no animations, and since the
-// bound set is also what an export ships, the next export would write a rigged
-// model with nothing on it and no error to say why.
-//
-// 11 added `sharpness`: the power this model's weights are raised to. Written
-// only when it is set, so most files still have no such key — and the bump is
-// the same direction as the four above it. A version 11 file read by a version
-// 10 binary binds every boundary back at the binder's own blend, which on the
-// hard-surface model the setting exists for is the mush it was turned up to get
-// rid of, with nothing on screen to say a number was dropped.
-//
-// 12 added `pins`: the vertices handed to a dot outright. Same direction again,
-// and the loudest of them — a pin is a *stated* share rather than a correction
-// riding on the binder, so a version 12 file read by a version 11 binary comes
-// back with every hand-drawn region blended again. Written only when there is
-// one, so a rig that has never used the lasso still has no such key.
-//
-// 13 added `rotation_limits`: the editable per-axis constraint table and its
-// bone-local frame choice. It is omitted for an unconstrained rig, and old
-// files therefore read as entirely free. The bump prevents an older binary
-// from opening constrained work and silently saving it back without limits.
-//
-// 14 added `collision_exclusions`: the region pairs the self-collision check
-// is told to leave alone, as dot-id pairs like `edges`. Omitted when there are
-// none, so a rig that never needed one writes what it always did. Same
-// direction as 13: a version 14 file read by a version 13 binary would come
-// back with the cape colliding with the arm again, and save that back.
-//
-// 15 added `allow_intersections` and `collision_clearance`: whether the
-// self-collision check is off for this rig, and the clearance it measures
-// against. Both are omitted at their defaults — blocking on, the built-in
-// clearance — so a rig that never touched either writes what it always did.
-// A version 15 file read by a version 14 binary would bring the check back on
-// over a rig its author had turned it off for, and save that back.
-//
-// 16 replaced `physics` with `secondary`: one record per chain — root, tip,
-// preset and shared behaviour — where there was one per dynamic bone. The old
-// key is still read and migrated (`secondary_chains_from_bones`), never
-// written. Same direction as every bump above: a version 16 file read by a
-// version 15 binary would find no `physics` at all and come back with every
-// tail the animation's, and save that back.
-//
-// 17 dropped `swing` and `thickness` from a chain: where a chain may turn is
-// its joints' `rotation_limits` now, and how fat it is comes off its own skin.
-// A version 16 file's two values are read and let go — a cone was a bound on
-// the simulation alone and the table is the rig's; a thickness typed by hand
-// is replaced by one measured. The bump is for the reader: a version 17 file
-// is a version 16 file with two keys missing, which a version 16 binary would
-// read as a chain of zero thickness that collides with nothing.
-//
-// 18 moved the joints' rotation limits out of the session and into the model:
-// Save writes them into the .glb as the KHR constraint joints Export writes,
-// and an open reads them back off the model, so the file a library fits from
-// and the file crig reopens are one file with one set of tables. The key is
-// still read — a session from before, or one written for a model that could
-// not take a skin in place (see `session_text`'s `limits`), carries the
-// tables the model does not — but a version 18 file ordinarily has none, which
-// a version 17 binary would read as a rig with every joint free.
-//
-// 19 added the complete character's non-destructive placement. Older sessions
-// open at the identity transform; older readers must not silently drop a model
-// move or rotation when saving the project again.
-//
-// 20 added animation layers to authored clips (`authored_clips[i].layers`). They
-// are optional and live in the sidecar only — a glb carries the flattened
-// channels and no layer data — so a version 19 file reads as a clip with none.
-//
-// 21 added look-at targets to authored clips (`authored_clips[i].aims`), written
-// after the layers. They are optional and sidecar-only too — a glb carries the
-// aimed head as ordinary keys when exported — so a version 20 file reads as a
-// clip with none.
-//
-// 22 split look-at into shared targets and locks: `aim_targets` carries each
-// target's name and keys, and `aims` is now a lock (`joint`, `target`, forward,
-// spread, weights, influence, mute) with no keys of its own. A version 21 aim
-// that carries keys reads as a target "Target N" plus a lock on it.
-//
-// 23 rolls a bone that runs nearly along a world axis by a fixed rule
-// (`frame_seed`) instead of by whichever way it leans by a degree. A rotation
-// limit table read from an older file, with no frame of its own, is pinned to
-// the frame it was written against wherever the two rules disagree.
-//
-// 24 added clip pins to authored clips (`authored_clips[i].pins`), written after
-// the aims: a joint, where it is held (`at`, a fraction of the rig's height, and
-// `orient`), a window (`from`, `to`, `blend`) and what is held. They are optional
-// and sidecar-only — a glb carries the held foot as ordinary keys when exported —
-// so a version 23 file reads as a clip with none.
-//
-// 25 added a joint's pose weight (`dots[i].pose_weight`), a multiplier on how
-// much the joint's body part holds its ground when a pose is pulled. Written only
-// when set; a version 24 file reads as every joint at the mesh's own weight.
-//
-// 26 let one joint hold several clip pins whose windows do not overlap (a jump's
-// takeoff and landing), and gave a pin `travel`, the speed its held point slides
-// at — a stance foot on an in-place cycle's treadmill. Written only when moving; a
-// version 25 file reads as pins that stand still.
-//
-// 27 gave each weight pin a fourth number, `by`: the dot whose edit wrote the row
-// (an Apply, a brush stroke, a lasso), or 0 for nobody's. Reset reads it to take
-// back one joint's work and nothing a neighbour wrote. A version 26 pin, with
-// three numbers, reads as nobody's.
-//
-// 28 added `knuckle_blend`: how wide the blend at each knuckle of a finger is,
-// as a share of a segment. Written only when set; a version 27 file reads as the
-// default. The bump is the usual direction — a version 28 file read by a version
-// 27 binary would bind its fingers at a blend nobody chose, with nothing on
-// screen to say the setting was dropped.
-//
-// 29 rolls a digit's limit axes by its hand (`along_the_knuckles`) wherever the
-// world axis would turn its X sideways, so X bends every finger toward the
-// palm. A table read from an older file, with no frame of its own, is pinned to
-// the frame it was written against wherever the two rules disagree, as at 23;
-// the joint card's Use bone axes carries it over when asked.
-//
-// 30 lets clips share a layer: `authored_clips[i].layers[l]` may carry a
-// `link` (the id every clip holding it shares), a `length` (the seconds its keys
-// span, on its own clock) and a `fit` (how that length meets the clip's). Absent
-// in an older file, which reads as unshared layers on the clip's own clock. The
-// bump is the usual direction — a version 29 binary would play a shared layer's
-// keys in the clip's seconds and stop keeping its copies in step.
-//
-// 31 ends the automatic weights at a band: a joint holds a vertex only while it
-// is nearly as near as the vertex's owner (`rig::window_bind`), and a share asked
-// for is written as a stated row rather than a multiplier. Nothing in the file
-// changed shape; the bump is so a rig saved by an older binary says once, on
-// opening, that its weights were re-derived (`WINDOWED_SESSION`). A dot may
-// carry `grow` (model units) and `band` (a share of its bone) — the Weights
-// card's Grow and Soft edge — written only when set.
-//
-// 32 makes a joint's weights its own once edited: a dot may carry `"held":
-// true`, and each held dot's whole column is written under `"weights"` — one
-// entry per dot, its vertex indices and weights as little-endian u32 and f32
-// arrays in base64, nonzero weights only. `pins`, whose rows were laid over one
-// automatic bind for every joint, is read from older files and turned into held
-// columns as they load (`AppState.migrate_held_weights`); it is never written.
-//
-// 33 adds what the animation tools build by hand: a layer is a strip with a
-// `track`, an `offset` and a `speed` (where a piece on its own clock plays, and
-// how fast), and may be a linked piece with a `source` — the animation whose
-// flattened keys it holds; a clip may carry `paths` (curves a joint follows,
-// with `points` and timed `slices`) and the `gait` preset it was written from.
-// Absent in an older file: every layer on a track of its own at the clip's
-// start, no paths, no preset. The bump is the usual direction — a version 32
-// binary would play every strip from zero and drop the paths a walk's feet
-// follow.
+// Bumped only to break older files on purpose, which are then refused: see
+// rules/files.md. Adding a key does not need it.
 const uint SESSION_VERSION = 33;
-
-// The first version whose weights end at a band — see 31 above.
-const uint WINDOWED_SESSION = 31;
 
 <*
  One held dot's column as a session entry: `{"dot":id,"vertices":"…","values":"…"}`,
@@ -541,12 +369,9 @@ fn String session_text(
 		pinned++;
 	}
 
-	// No "paint" and no "pins": the multipliers and the rows older sessions
-	// carried are read below and turned into held columns as they load
-	// (`AppState.migrate_held_weights`), so a document has none to write.
 	text.append_string("]");
 
-	// The held joints' columns, one entry per dot — see version 32. Binary in
+	// The held joints' columns, one entry per dot. Binary in
 	// base64 because a column is the whole mesh: as JSON numbers a fully edited
 	// figure of fifty thousand vertices would be several megabytes of text.
 	// Only held dots that still exist: a deleted dot's entries wait in the
@@ -564,7 +389,7 @@ fn String session_text(
 	}
 	if (written > 0) text.append_char(']');
 
-	// The chains, on the same terms as the paint and the attachments above:
+	// The chains, on the same terms as the attachments above:
 	// keyed by a dot, and dropped here when the dot they name is gone rather than
 	// when it went, because until the file is written a deletion is still one
 	// Ctrl+Z from coming back. A chain whose tip is gone is kept — the record is
@@ -573,10 +398,8 @@ fn String session_text(
 	//
 	// **Omitted entirely when there is none**, unlike the four lists above, which
 	// are always written even when empty. Those are the shape of a session and a
-	// reader may lean on them; this arrived in version 16 (as `physics` in 9) and
-	// every earlier file simply has no such key, so writing `"secondary": []` on
-	// every rig that has never used it would be a line of noise in every session
-	// crig has ever saved.
+	// reader may lean on them; `"secondary": []` on every rig that has never used
+	// it would be a line of noise.
 	//
 	// One object per chain rather than a flat array: seven values, and seven
 	// positional values is a format nobody can read back without counting.
@@ -602,7 +425,7 @@ fn String session_text(
 	}
 	if (capsules > 0) text.append_char(']');
 
-	// Joint constraints live in the model since version 18, so they are written
+	// Joint constraints live in the model, so they are written
 	// here only on request — for a model that could not take them. Sparse when
 	// they are: most joints on most imported rigs are free and need no object
 	// saying so. Like physics, stale entries are retained in memory for undo and
@@ -881,15 +704,14 @@ fn void append_key_dots(DString* text, AnimKeyDot[] dots) @private
 <*
  Reads a session back into a fresh document.
 
- Settings that are absent take the editor's defaults, so a file written before
- a setting existed still loads: chaining on, and `sym_x` from the caller — the
- app passes the mesh's own bounds centre, which is what a fresh document would
- have guessed. A `mirror` flag from a session written while placing mirrored as
- it went is read as nothing, which is what it now is.
+ Settings that are absent take the editor's defaults: chaining on, and `sym_x`
+ from the caller — the app passes the mesh's own bounds centre, which is what a
+ fresh document would have guessed.
 
  @param fallback_sym_x : `Used when the file names no symmetry plane.`
  @return? SESSION_IO : `The file could not be read.`
  @return? SESSION_SHAPE : `It parsed, but it is not a session crig wrote.`
+ @return? SESSION_OLD : `A session of an older version.`
 *>
 fn RigDocument? read_session(Allocator allocator, String path, float fallback_sym_x = 0.0f)
 {
@@ -921,7 +743,7 @@ fn ProjectSession? read_project_session(Allocator allocator, String path, float 
 	if (catch parsed) return SESSION_SHAPE~;
 	defer parsed.free();
 	RigDocument? doc = session_document(allocator, parsed, fallback_sym_x);
-	if (catch doc) return SESSION_SHAPE~;
+	if (catch fault error = doc) return error~;
 	AnimTemplate[]? clips = session_clips(allocator, parsed);
 	if (catch clips)
 	{
@@ -1053,7 +875,6 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 		}
 	}
 	float previous = -1.0f;
-	bool explicit_channels = false;
 	for (sz k = 0; k < keys.get_len(); k++)
 	{
 		Object* key = keys.get_at(k);
@@ -1068,29 +889,7 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 			Object* dot = dots.get_at(d);
 			String joint = dot.get_string("joint")!;
 			for (sz p = 0; p < d; p++) if (clip.keyframes[k].dots[p].joint_name == joint) return SESSION_SHAPE~;
-			clip.keyframes[k].dots[d] = session_key_dot(allocator, dot, &explicit_channels)!;
-		}
-	}
-	if (!explicit_channels)
-	{
-		foreach (&frame : clip.keyframes)
-		{
-			AnimDotList expanded;
-			expanded.init(allocator);
-			foreach (dot : frame.dots) expanded.push(dot);
-			foreach (source : clip.keyframes) foreach (candidate : source.dots)
-			{
-				bool present = false;
-				foreach (held : expanded.array_view()) if (held.joint_name == candidate.joint_name)
-				{
-					present = true;
-					break;
-				}
-				if (!present) expanded.push({ .joint_name = candidate.joint_name.copy(allocator), .channels = BOTH });
-			}
-			if (frame.dots.len > 0) alloc::free(allocator, frame.dots);
-			frame.dots = expanded.to_array(allocator);
-			expanded.free();
+			clip.keyframes[k].dots[d] = session_key_dot(allocator, dot)!;
 		}
 	}
 	if (try Object* layers = entry.get("layers"))
@@ -1132,8 +931,7 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 	}
 	if (target_count + aim_count > 0)
 	{
-		// Room for every listed target and, for a version 21 file, one more per aim.
-		AnimAimTarget[] targets = alloc::new_array(allocator, AnimAimTarget, (sz)(target_count + aim_count));
+		AnimAimTarget[] targets = alloc::new_array(allocator, AnimAimTarget, (sz)target_count);
 		AnimAim[] locks = alloc::new_array(allocator, AnimAim, (sz)aim_count);
 		usz targets_used;
 		usz locks_used;
@@ -1142,7 +940,7 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 		{
 			free_aim_targets(allocator, targets[:targets_used]);
 			free_aims(allocator, locks[:locks_used]);
-			if (targets_used == 0) alloc::free(allocator, targets);
+			if (targets_used == 0 && targets.len > 0) alloc::free(allocator, targets);
 			if (locks_used == 0 && locks.len > 0) alloc::free(allocator, locks);
 		};
 		for (usz t = 0; t < target_count; t++)
@@ -1155,20 +953,9 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 		{
 			Object* held = aim_list.get_at((sz)a);
 			if (!held.is_keyable()) return SESSION_SHAPE~;
-			String target;
-			if (held.get("keys") ?? null)
-			{
-				// Version 21: the aim carried its own keys; they become a target.
-				AnimAimTarget migrated = session_aim_target(allocator, held, next_target_name(allocator, targets[:targets_used]))!;
-				targets[targets_used++] = migrated;
-				target = migrated.name;
-			}
-			else
-			{
-				target = held.get_string("target")!;
-				// A lock on a target the clip lacks is dropped, not refused.
-				if (aim_target_index_of(targets[:targets_used], target) < 0) continue;
-			}
+			String target = held.get_string("target")!;
+			// A lock on a target the clip lacks is dropped, not refused.
+			if (aim_target_index_of(targets[:targets_used], target) < 0) continue;
 			AnimAim lock = session_aim(allocator, held, target)!;
 			locks[locks_used++] = lock;
 			for (usz p = 0; p + 1 < locks_used; p++) if (locks[p].joint == lock.joint) return SESSION_SHAPE~;
@@ -1176,7 +963,7 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 		adopted = true;
 		clip.aim_targets = targets_used > 0 ? targets[:targets_used] : {};
 		clip.aims = locks_used > 0 ? locks[:locks_used] : {};
-		if (targets_used == 0) alloc::free(allocator, targets);
+		if (targets_used == 0 && targets.len > 0) alloc::free(allocator, targets);
 		if (locks_used == 0 && locks.len > 0) alloc::free(allocator, locks);
 	}
 	if (try Object* found = entry.get("pins"))
@@ -1286,25 +1073,16 @@ fn AnimAimKey[]? session_aim_keys(Allocator allocator, Object* keys) @private
 	return out;
 }
 
-// One look-at target of a clip, named by its "name" or, for a version 21 aim
-// that has none, by `fallback` (taken over; freed when the name is not used).
-// Refused for an empty name or bad keys.
-fn AnimAimTarget? session_aim_target(Allocator allocator, Object* entry, String fallback = "") @private
+// One look-at target of a clip. Refused for an empty name or bad keys.
+fn AnimAimTarget? session_aim_target(Allocator allocator, Object* entry) @private
 {
-	bool complete = false;
-	defer if (!complete && fallback.len > 0) alloc::free(allocator, fallback.ptr);
 	if (!entry.is_keyable()) return SESSION_SHAPE~;
-	String name = fallback;
-	if (fallback.len == 0)
-	{
-		name = entry.get_string("name")!;
-		if (name.len == 0) return SESSION_SHAPE~;
-	}
+	String name = entry.get_string("name")!;
+	if (name.len == 0) return SESSION_SHAPE~;
 	AnimAimKey[] keys = session_aim_keys(allocator, entry.get("keys")!)!;
-	complete = true;
 	AnimAimTarget target = {
-		.name = fallback.len > 0 ? fallback : name.copy(allocator),
-		.mute = fallback.len > 0 ? false : (entry.get_bool("mute") ?? false),
+		.name = name.copy(allocator),
+		.mute = entry.get_bool("mute") ?? false,
 		.keys = keys,
 	};
 	return target;
@@ -1355,7 +1133,6 @@ fn AnimLayer? session_layer(Allocator allocator, Object* entry) @private
 		if (!is_list(keys)) return SESSION_SHAPE~;
 		layer.keyframes = alloc::new_array(allocator, AnimKeyframe, keys.get_len());
 		float previous = -1.0f;
-		bool explicit_channels = false;
 		for (sz k = 0; k < keys.get_len(); k++)
 		{
 			Object* key = keys.get_at(k);
@@ -1370,7 +1147,7 @@ fn AnimLayer? session_layer(Allocator allocator, Object* entry) @private
 				Object* dot = dots.get_at(d);
 				String joint = dot.get_string("joint")!;
 				for (sz p = 0; p < d; p++) if (layer.keyframes[(usz)k].dots[(usz)p].joint_name == joint) return SESSION_SHAPE~;
-				layer.keyframes[(usz)k].dots[(usz)d] = session_key_dot(allocator, dot, &explicit_channels)!;
+				layer.keyframes[(usz)k].dots[(usz)d] = session_key_dot(allocator, dot)!;
 			}
 		}
 	}
@@ -1378,9 +1155,8 @@ fn AnimLayer? session_layer(Allocator allocator, Object* entry) @private
 	return layer;
 }
 
-// One key entry; the joint name is copied. `explicit_channels` is raised when
-// the entry states its channels.
-fn AnimKeyDot? session_key_dot(Allocator allocator, Object* dot, bool* explicit_channels) @private
+// One key entry; the joint name is copied.
+fn AnimKeyDot? session_key_dot(Allocator allocator, Object* dot) @private
 {
 	String joint = dot.get_string("joint")!;
 	if (joint.len == 0) return SESSION_SHAPE~;
@@ -1391,7 +1167,6 @@ fn AnimKeyDot? session_key_dot(Allocator allocator, Object* dot, bool* explicit_
 		String? stated = dot.get_string("channels");
 		if (catch stated) return SESSION_SHAPE~;
 		channels = stated;
-		*explicit_channels = true;
 	}
 	if (channels != "both" && channels != "rotation" && channels != "translation") return SESSION_SHAPE~;
 	float angle = (float)dot.get_float("angle")!;
@@ -1445,6 +1220,7 @@ fn AnimKeyDot? session_key_dot(Allocator allocator, Object* dot, bool* explicit_
  @param text : `The session object's JSON. Borrowed.`
  @param fallback_sym_x : `Used when the text names no symmetry plane.`
  @return? SESSION_SHAPE : `It parsed, but it is not a session crig wrote.`
+ @return? SESSION_OLD : `A session of an older version.`
 *>
 fn RigDocument? parse_session(Allocator allocator, String text, float fallback_sym_x = 0.0f)
 {
@@ -1463,11 +1239,8 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 	double? version = parsed.get_float("version");
 	if (catch version) return SESSION_SHAPE~;
 
-	// Any version up to this one, because every field a later version added is
-	// optional on the way in — a version 1 file simply names no joints, and its
-	// dots come back unnamed. Refusing it would strand the sessions already
-	// sitting beside people's meshes for the sake of a field they predate.
-	if (version < 1 || version > SESSION_VERSION) return SESSION_SHAPE~;
+	if (version < SESSION_VERSION) return SESSION_OLD~;
+	if (version > SESSION_VERSION) return SESSION_SHAPE~;
 
 	// Built here rather than inside the parse so a file that fails validation
 	// halfway can be freed: the lists have already taken whatever was adopted
@@ -1475,12 +1248,10 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 	RigDocument doc = {
 		.auto_connect = true,
 		.sym_x = fallback_sym_x,
-		.read_version = (uint)version,
 	};
 	doc.dots.init(allocator);
 	doc.edges.init(allocator);
 	doc.attachments.init(allocator);
-	doc.paint.init(allocator);
 	doc.pins.init(allocator);
 	doc.secondary.init(allocator);
 	doc.colliders.init(allocator);
@@ -1493,74 +1264,7 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 		doc.free();
 		return SESSION_SHAPE~;
 	}
-	if (version < 23) keep_legacy_limit_frames(&doc);
-	if (version < 29) keep_cardinal_limit_frames(&doc);
 	return doc;
-}
-
-<*
- Pins each derived limit table of a pre-23 session to the frame it was written
- against, where the near-axis rule now rolls that bone another way. The numbers
- then keep turning the joint about the axes they always did; a table whose frame
- the rule left alone stays derived.
-*>
-fn void keep_legacy_limit_frames(RigDocument* doc) @private
-{
-	if (doc.rotation_limits.len() == 0) return;
-	@pool()
-	{
-		uint[] ids;
-		rig::Skeleton? skeleton = build_skeleton(doc, tmem, &ids);
-		if (catch skeleton) return;
-		JointRotationLimits[] pinned = alloc::new_array(tmem, JointRotationLimits, doc.rotation_limits.len());
-		usz count = 0;
-		foreach (limits : doc.rotation_limits.array_view())
-		{
-			if (limits.has_saved_frame) continue;
-			JointLimitFrame now = joint_limit_frame(&skeleton, ids, limits);
-			if (!now.usable()) continue;
-			JointLimitFrame was = legacy_limit_frame(now);
-			if (math::abs(now.rotation.v.dot(was.rotation.v)) > 0.99999f) continue;
-			JointRotationLimits held = limits;
-			held.has_saved_frame = true;
-			held.saved_frame = was.rotation;
-			pinned[count++] = held;
-		}
-		foreach (limits : pinned[:count]) doc.set_rotation_limits(limits.dot_id, limits);
-	};
-}
-
-<*
- Pins each derived limit table of a pre-29 session to the frame it was written
- against, where its digit is now rolled by its hand (`cardinal_limit_frame`).
- The numbers keep turning the joint about the axes they always did; every
- table off a hand, and every finger the world axis already suited, stays
- derived.
-*>
-fn void keep_cardinal_limit_frames(RigDocument* doc) @private
-{
-	if (doc.rotation_limits.len() == 0) return;
-	@pool()
-	{
-		uint[] ids;
-		rig::Skeleton? skeleton = build_skeleton(doc, tmem, &ids);
-		if (catch skeleton) return;
-		JointRotationLimits[] pinned = alloc::new_array(tmem, JointRotationLimits, doc.rotation_limits.len());
-		usz count = 0;
-		foreach (limits : doc.rotation_limits.array_view())
-		{
-			if (limits.has_saved_frame) continue;
-			JointLimitFrame now = joint_limit_frame(&skeleton, ids, limits);
-			if (!now.usable()) continue;
-			JointLimitFrame was = cardinal_limit_frame(now);
-			if (math::abs(now.rotation.v.dot(was.rotation.v)) > 0.99999f) continue;
-			JointRotationLimits held = limits;
-			held.has_saved_frame = true;
-			held.saved_frame = was.rotation;
-			pinned[count++] = held;
-		}
-		foreach (limits : pinned[:count]) doc.set_rotation_limits(limits.dot_id, limits);
-	};
 }
 
 <*
@@ -1599,22 +1303,16 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 		doc.model_transform.rotation = doc.model_transform.orientation();
 	}
-	// Optional, like every field added after version 1: a file written before
-	// body plans were recorded simply declares none, and the library falls back
-	// to matching on names the rig has in common with a clip.
+	// Optional: a rig with no plan declares none, and the library falls back to
+	// matching on names the rig has in common with a clip.
 	if (try String p = parsed.get_string("plan")) doc.set_plan(p);
-	// Absent means the binder, which is what every rig built in crig uses and what
-	// every session written before importing existed was bound with.
-	// Never written since version 32, whose held columns carry the file's weights
-	// themselves; an older session's flag is kept for the load to migrate.
-	if (try bool s = parsed.get_bool("skin_from_file")) doc.legacy_skin_from_file = s;
-	// Version 11, and absent in every file the writer had nothing to say about —
-	// which is read as unset, the binder's own blend. Through the setter rather
+	// Absent when the writer had nothing to say, read as the binder's own blend.
+	// Through the setter rather
 	// than assigned, so a hand-edited file naming a power outside the band the
 	// arithmetic survives is clamped here instead of reaching the binder.
 	if (try double g = parsed.get_float("sharpness")) doc.set_sharpness((float)g);
-	// Version 28, and absent wherever the writer had nothing to say — read as the
-	// default. Through the stored form, so 0 here is a hard switch and a value
+	// Absent when the writer had nothing to say, read as the default. Through the
+	// stored form, so 0 here is a hard switch and a value
 	// past the widest blend is clamped rather than reaching the binder.
 	if (try double k = parsed.get_float("knuckle_blend")) doc.set_knuckle_blend(knuckle_blend_stored((float)k));
 
@@ -1630,21 +1328,20 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		String name = "";
 		if (try String n = entry.get_string("name")) name = n;
 
-		// Absent in every session written before reaches existed, which reads as
-		// the unlimited one those rigs were bound with.
+		// Absent is unlimited.
 		float reach = 0.0f;
 		if (try double r = entry.get_float("reach")) reach = (float)r;
-		// Absent before version 25 and for every joint at the mesh's own weight.
+		// Absent for every joint at the mesh's own weight.
 		float pose_weight = 0.0f;
 		if (try double w = entry.get_float("pose_weight")) pose_weight = (float)w;
 
 		// insert_dot refuses the duplicate and the null id, which is the
 		// validation above said out loud; and it keeps next_id honest.
 		if (!doc.insert_dot(id, position, name, reach, pose_weight)) return SESSION_SHAPE~;
-		// Absent before version 31 and for every joint on its automatic edge.
+		// Absent for every joint on its automatic edge.
 		if (try double g = entry.get_float("grow")) doc.set_grow(id, (float)g);
 		if (try double b = entry.get_float("band")) doc.set_band(id, (float)b);
-		// Absent before version 32 and for every joint on the automatic weights.
+		// Absent for every joint on the automatic weights.
 		if (try bool held = entry.get_bool("held")) doc.set_held(id, held);
 
 	}
@@ -1675,8 +1372,7 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 	if (try uint r = parsed.get_uint("root")) root = r;
 	doc.root_id = doc.find(root) != null ? root : (doc.dots.len() > 0 ? doc.dots[0].id : 0);
 
-	// Optional, unlike dots and edges: every session written before shells
-	// existed has none, and a rig with nothing pinned writes an empty list.
+	// Optional, unlike dots and edges.
 	if (try Object* pinned = parsed.get("attachments"))
 	{
 		if (!is_list(pinned)) return SESSION_SHAPE~;
@@ -1690,53 +1386,7 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Optional for the same reason, and refused on the same terms — a triple that
-	// is not a triple, or a dot that is not in the document, means this is not a
-	// session crig wrote.
-	//
-	// **Vertex indices are not checked against a mesh**, because there is no mesh
-	// here: `core/` reads the document alone, and the file is found from the
-	// mesh's path rather than carrying it. A dab past the end of whatever is
-	// eventually loaded is dropped by `paint_columns` when the bind asks for it,
-	// which is the same answer a stale attachment gets.
-	if (try Object* painted = parsed.get("paint"))
-	{
-		if (!is_list(painted)) return SESSION_SHAPE~;
-		for (sz i = 0; i < painted.get_len(); i++)
-		{
-			Object* dab = painted.get_at(i);
-			if (!is_list(dab) || dab.get_len() != 3) return SESSION_SHAPE~;
-			if (!doc.set_paint(
-				dab.get_uint_at(0)!,
-				dab.get_uint_at(1)!,
-				(float)dab.get_float_at(2)!)) return SESSION_SHAPE~;
-		}
-	}
-
-	// Version 12, and read on the paint's terms exactly: optional, since every
-	// file written before the lasso existed has no such key, and a triple that is
-	// not a triple or a dot that is not in the document means this is not a
-	// session crig wrote.
-	//
-	// Vertex indices are not checked against a mesh here either — there is no
-	// mesh in `core/` to check them against, and one past the end of whatever is
-	// eventually loaded is dropped by `pin_columns` when the bind asks for it.
-	// Version 27 added a fourth number, whose edit wrote the row; it is read past.
-	if (try Object* stated = parsed.get("pins"))
-	{
-		if (!is_list(stated)) return SESSION_SHAPE~;
-		for (sz i = 0; i < stated.get_len(); i++)
-		{
-			Object* pin = stated.get_at(i);
-			if (!is_list(pin) || pin.get_len() < 3 || pin.get_len() > 4) return SESSION_SHAPE~;
-			if (!doc.set_pin(
-				pin.get_uint_at(0)!,
-				pin.get_uint_at(1)!,
-				(float)pin.get_float_at(2)!)) return SESSION_SHAPE~;
-		}
-	}
-
-	// Version 32: each held dot's column, as `append_held_column` wrote it. A
+	// Each held dot's column, as `append_held_column` wrote it. A
 	// column naming a dot the file did not place, or arrays that do not pair up,
 	// mean this is not a session crig wrote.
 	if (try Object* columns = parsed.get("weights"))
@@ -1748,19 +1398,16 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Version 16. Absent in every file written before it, which is either a rig
-	// whose bones are all the animation's or one carrying the version 9 `physics`
-	// key read below — so absence is read as none rather than refused, the rule
-	// every optional key here follows.
+	// Absence is read as none rather than refused, the rule every optional key
+	// here follows.
 	//
 	// **A chain naming a root the file did not place is dropped, not refused.**
-	// That is a softer rule than the paint and the attachments get, and
+	// That is a softer rule than the attachments get, and
 	// deliberately: a tail whose base joint this rig does not carry should cost
 	// that tail rather than the whole session. An unknown preset costs only its
 	// label. Every other malformation — a list that is not a list, an entry that
 	// is not an object, a value out of its range — still says this is not a
-	// session crig wrote. A version 16 entry's `swing` and `thickness` are not
-	// read at all: see the version note.
+	// session crig wrote.
 	if (try Object* chains = parsed.get("secondary"))
 	{
 		if (!is_list(chains)) return SESSION_SHAPE~;
@@ -1783,42 +1430,6 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Version 9 to 15: one entry per dynamic bone. Read into the old shape and
-	// migrated against the skeleton these dots build, so a tail saved under the
-	// old model reopens as the chain it was — `secondary_chains_from_bones` says
-	// exactly how much of it survives. A file carrying both keys is not one crig
-	// wrote, and the chains already placed win: a migrated run whose root is
-	// already taken is left alone.
-	if (try Object* dynamic = parsed.get("physics"))
-	{
-		if (!is_list(dynamic)) return SESSION_SHAPE~;
-
-		JiggleSpec[] bones = alloc::new_array(allocator, JiggleSpec, dynamic.get_len());
-		defer alloc::free(allocator, bones);
-		for (sz i = 0; i < dynamic.get_len(); i++)
-		{
-			Object* entry = dynamic.get_at(i);
-			if (!entry.is_keyable()) return SESSION_SHAPE~;
-			bones[i] = {
-				.dot_id = entry.get_uint("id")!,
-				.params = {
-					.stiffness = (float)(entry.get_float("stiffness") ?? 0.0),
-					.damping = (float)(entry.get_float("damping") ?? 0.0),
-					.gravity = (float)(entry.get_float("gravity") ?? 0.0),
-					.radius = (float)(entry.get_float("radius") ?? 0.0),
-				},
-			};
-		}
-
-		SecondaryChain[] migrated = secondary_chains_from_bones(allocator, doc, bones);
-		defer if (migrated.len > 0) alloc::free(allocator, migrated);
-		foreach (chain : migrated)
-		{
-			if (doc.secondary_of(chain.root).present()) continue;
-			doc.set_secondary(chain);
-		}
-	}
-
 	if (try Object* capsules = parsed.get("colliders"))
 	{
 		if (!is_list(capsules)) return SESSION_SHAPE~;
@@ -1831,10 +1442,10 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Version 13, and ordinarily absent since 18, when the tables moved into the
-	// model — a file that has them is from before, or was written beside a model
-	// that could not take them, and either way they are what the rig has until
-	// the model says otherwise (see `AppState.adopt_model_limits`). All three rows
+	// Ordinarily absent: the tables live in the model. A file that has them was
+	// written beside a model that could not take them, and they are what the rig
+	// has until the model says otherwise (see `AppState.adopt_model_limits`). All
+	// three rows
 	// are present in a written entry so the document round-trips the inactive
 	// values too — turning an axis off and on later must restore what the user
 	// entered, not defaults guessed on reload.
@@ -1880,8 +1491,7 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Version 14. Absent means the default rules alone, which is every older
-	// session. Validated on the edges' terms: `add_exclusion` refuses a pair
+	// Absent means the default rules alone. Validated on the edges' terms: `add_exclusion` refuses a pair
 	// naming one dot twice, a dot that is not here, or one already listed.
 	if (try Object* excluded = parsed.get("collision_exclusions"))
 	{
@@ -1896,7 +1506,7 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 		}
 	}
 
-	// Version 15. Absent is the default either way; a clearance that is not a
+	// Absent is the default either way; a clearance that is not a
 	// sensible fraction of the model is a fault, not a value to clamp.
 	if (try bool allowed = parsed.get_bool("allow_intersections")) doc.allow_intersections = allowed;
 	if (try double clearance = parsed.get_float("collision_clearance"))
@@ -1965,10 +1575,9 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 			if (name.len == 0 || !is_list(pose_dots) || pose_dots.get_len() == 0) continue;
 			AnimKeyframe held = { .dots = alloc::new_array(mem, AnimKeyDot, pose_dots.get_len()) };
 			bool whole = true;
-			bool explicit_channels;
 			for (sz d = 0; d < pose_dots.get_len(); d++)
 			{
-				AnimKeyDot? dot = session_key_dot(mem, pose_dots.get_at(d), &explicit_channels);
+				AnimKeyDot? dot = session_key_dot(mem, pose_dots.get_at(d));
 				if (catch dot) { whole = false; break; }
 				held.dots[d] = dot;
 			}

@@ -533,7 +533,7 @@ fn void PipelineGraph.save(&self)
 	if (try slash = self.file.rindex_of_char('/')) (void)path::mkdir(self.file[:(usz)slash], true);
 	String text = self.to_json();
 	defer text.free(mem);
-	(void)save_safely(self.file, text);
+	(void)gltf_edit::save_safely(self.file, text);
 }
 
 <*

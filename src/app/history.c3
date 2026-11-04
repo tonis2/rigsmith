@@ -926,13 +926,15 @@ fn void AppState.restore_local_export_geometry(&self, ProjectTransform placement
  document they were recorded from, and after a load the ids they name may mean
  other dots entirely. Undo across a load is not a smaller history, it is a
  wrong one. The selection goes with it, for the same reason.
+
+ @return `Whether a session was read.`
 *>
-fn void AppState.load_session(&self)
+fn bool AppState.load_session(&self)
 {
 	if (self.source_path.len == 0)
 	{
 		self.@notice("no mesh path to load beside");
-		return;
+		return false;
 	}
 
 	String path = session_path(mem, self.source_path);
@@ -947,11 +949,15 @@ fn void AppState.load_session(&self)
 		{
 			self.@notice("no saved project at %s", base_name(path));
 		}
+		else if (error == SESSION_OLD)
+		{
+			self.@notice("%s is from an older Rigsmith, so it was not read", base_name(path));
+		}
 		else
 		{
 			self.@notice("%s is not a crig project file", base_name(path));
 		}
-		return;
+		return false;
 	}
 	if (loaded.model_transform_in_mesh && !self.source_has_model_transform)
 	{
@@ -973,13 +979,6 @@ fn void AppState.load_session(&self)
 	self.source_has_model_transform = loaded.model_transform_in_mesh;
 
 	self.mark_rig_stale();
-	// An older session stored that the weights came from the file, never the
-	// weights themselves — see `reload_imported_skin`. Read before the migration,
-	// which rebuilds what that session showed from them and holds them.
-	bool from_file = self.doc.legacy_skin_from_file;
-	if (from_file) (void)self.reload_imported_skin();
-	usz kept = self.doc.read_version < HELD_SESSION ? self.migrate_held_weights() : 0;
-	self.doc.legacy_skin_from_file = false;
 	self.undo_stack.clear();
 	self.select(0);
 
@@ -989,20 +988,6 @@ fn void AppState.load_session(&self)
 	// have JSON-RPC on stdout, where one stray line is a parse error at the far
 	// end. A terminal shows both streams, so the full path is still readable.
 	io::eprintfn("loaded %s (%d joints, %d bones)", path, self.doc.dots.len(), self.doc.edges.len());
-	// A rig saved before the automatic weights ended at a band binds differently
-	// now — tighter, with no joint's tail across the body — and a model that
-	// suddenly deforms otherwise with nothing said would read as a broken file.
-	if (self.doc.read_version < WINDOWED_SESSION && !from_file && self.doc.dots.len() > 1)
-	{
-		self.@notice("loaded %s · its weights were re-derived: each joint now ends a band past its neighbours instead of reaching the whole body",
-			base_name(path));
-		return;
-	}
-	if (kept > 0)
-	{
-		self.@notice("loaded %s · %d %s keep their edited weights · Reset any to make it follow the joint",
-			base_name(path), kept, kept == 1 ? "joint" : "joints");
-		return;
-	}
 	self.@notice("loaded %s · %d joints, %d bones", base_name(path), self.doc.dots.len(), self.doc.edges.len());
+	return true;
 }

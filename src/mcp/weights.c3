@@ -5,9 +5,8 @@
  Weights are derived rather than authored — every rig edit rebinds from scratch —
  so nothing here owns any of it. What these do is *report* on the bind and state
  rows over it: paint_weights a share, pin_weights the blunt form, both the one
- layer of hand edits the brush writes too (the multipliers sessions from before
- carry still apply until reset). `AppState` does the arithmetic; this file is the
- selection language, the payloads, and the refusals.
+ layer of hand edits the brush writes too. `AppState` does the arithmetic; this
+ file is the selection language, the payloads, and the refusals.
 
  The pairing that repeats: `show_weights` puts a picture in front of a person and
  `get_weights` answers the caller, and neither is the other's precondition. The

@@ -741,8 +741,8 @@ struct Character
 
 	 Read on import, where it becomes every joint's held column
 	 (`AppState.adopt_model_weights`), and again only when asked for — Rig › Use
-	 the model's own weights, or an older session's migration. Kept rather than
-	 re-read because the file is the whole skin, and a .glb is slow to parse.
+	 the model's own weights. Kept rather than re-read because the file is the
+	 whole skin, and a .glb is slow to parse.
 	*>
 	ImportedSkin imported_skin;
 

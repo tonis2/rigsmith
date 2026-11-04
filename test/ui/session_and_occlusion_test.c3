@@ -179,14 +179,10 @@ fn void a_session_survives_a_quoted_dot_name() @test
 }
 
 <*
- A session written before joint names existed still opens.
-
- Version 2 added a name to every dot. Everything the newer version writes is
- optional on the way in, so the older file is readable as-is — and refusing it
- would strand every session already sitting beside someone's mesh, which is the
- one thing a file format saved next to the user's own work must not do.
+ A session from an older version is refused, and the rig on screen stays.
+ One version is read: see rules/files.md.
 *>
-fn void an_older_session_still_loads() @test
+fn void an_older_session_is_refused() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -196,23 +192,14 @@ fn void an_older_session_still_loads() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("a session from an older version still opens");
+	io::printn("a session from an older version is refused");
 	fixture.reset();
 	fixture.app.point_at(SESSION_MESH);
 
-	// Version 1, exactly as that version wrote it: no "name" on any dot.
-	String older = `{
-	  "version": 1,
-	  "mesh": "ui_test_cube.glb",
-	  "root": 1,
-	  "next_id": 2,
-	  "auto_connect": true,
-	  "mirror": false,
-	  "sym_x": 0,
-	  "dots": [{"id":1,"position":[0.25,0.5,0.75]},{"id":2,"position":[-0.25,0,0]}],
-	  "edges": [[1,2]]
-	}`;
+	fixture.click(SPOT_B);
+	sz dots = fixture.doc().dots.len();
 
+	String older = `{ "version": 32, "dots": [{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]},{"id":3,"position":[0,2,0]}], "edges": [[1,2]] }`;
 	if (catch io::file::save(SESSION_FILE, (char[])older))
 	{
 		test::@check(false, "SKIPPED — could not write the older session");
@@ -221,12 +208,9 @@ fn void an_older_session_still_loads() @test
 
 	fixture.app.load_session();
 
-	test::@check(fixture.doc()
-		.dots.len() == 2 && fixture.doc().edges.len() == 1, "the older file loads rather than being refused");
-
-	Dot* first = fixture.doc().find(1);
-	test::@check(first != null && first.name.len == 0, "and its dots come back unnamed");
-	test::@check(fixture.doc().plan.len == 0, "and declaring no body plan, which is the honest answer");
+	test::@check(fixture.notice_text().ends_with("is from an older Rigsmith, so it was not read"),
+		"the load did not say why: %s", fixture.notice_text());
+	test::@check(fixture.doc().dots.len() == dots, "and the rig on screen is left alone");
 
 	(void)io::file::delete(SESSION_FILE);
 	fixture.app.point_at("");
@@ -378,7 +362,7 @@ fn void a_blend_sharpness_survives_undo_and_the_session() @test
 	// A file naming a power the arithmetic cannot carry is clamped on the way in
 	// rather than reaching the binder: the reader goes through the setter.
 	RigDocument? absurd = crig::parse_session(mem,
-		`{"version":11,"mesh":"cube.glb","root":0,"next_id":1,"sharpness":40,"dots":[],"edges":[]}`);
+		`{"version":33,"mesh":"cube.glb","root":0,"next_id":1,"sharpness":40,"dots":[],"edges":[]}`);
 	if (try absurd)
 	{
 		RigDocument clamped = absurd;
@@ -454,22 +438,22 @@ fn void a_knuckle_blend_survives_undo_and_the_session() @test
 	defer back.free();
 	test::@check(back.knuckle_blend_fraction() == 0.0f, "a hard switch came back as %f", back.knuckle_blend_fraction());
 
-	RigDocument? older = crig::parse_session(mem,
-		`{"version":27,"mesh":"cube.glb","root":0,"next_id":1,"dots":[],"edges":[]}`);
-	if (try older)
+	RigDocument? unset = crig::parse_session(mem,
+		`{"version":33,"mesh":"cube.glb","root":0,"next_id":1,"dots":[],"edges":[]}`);
+	if (try unset)
 	{
-		RigDocument old = older;
-		defer old.free();
-		test::@check(old.knuckle_blend == 0.0f && old.knuckle_blend_fraction() == crig::KNUCKLE_BLEND_DEFAULT,
-			"a version 27 session came back with a knuckle blend of %f", old.knuckle_blend_fraction());
+		RigDocument plain = unset;
+		defer plain.free();
+		test::@check(plain.knuckle_blend == 0.0f && plain.knuckle_blend_fraction() == crig::KNUCKLE_BLEND_DEFAULT,
+			"a session with no knuckle blend came back with %f", plain.knuckle_blend_fraction());
 	}
 	else
 	{
-		test::@check(false, "a version 27 session did not parse");
+		test::@check(false, "a session with no knuckle blend did not parse");
 	}
 
 	RigDocument? wide = crig::parse_session(mem,
-		`{"version":28,"mesh":"cube.glb","root":0,"next_id":1,"knuckle_blend":3,"dots":[],"edges":[]}`);
+		`{"version":33,"mesh":"cube.glb","root":0,"next_id":1,"knuckle_blend":3,"dots":[],"edges":[]}`);
 	if (try wide)
 	{
 		RigDocument clamped = wide;
@@ -1065,7 +1049,7 @@ fn void session_refuses_what_it_did_not_write() @test
 	sz dots = fixture.doc().dots.len();
 
 	String[3] impostors = { // The right keys, the wrong shape.
-		`{ "version": 1, "dots": "not a list", "edges": [] }`, // The right shape, from a version this build has never seen. Refused on
+		`{ "version": 33, "dots": "not a list", "edges": [] }`, // The right shape, from a version this build has never seen. Refused on
 		// the version alone, which is the whole reason the field is written.
 		`{ "version": 99, "dots": [], "edges": [] }`, // Someone else's JSON that happens to share the name. A reader that
 		// only checks the version when one is present accepts every file that
@@ -3112,7 +3096,6 @@ fn void held_columns_round_trip_through_the_session() @test
 	doc.dots.init(mem);
 	doc.edges.init(mem);
 	doc.attachments.init(mem);
-	doc.paint.init(mem);
 	doc.pins.init(mem);
 	defer doc.free();
 

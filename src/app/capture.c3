@@ -22,7 +22,7 @@
 
  What is kept goes in a folder beside the model, `<model>.capture/`: the
  training set (`renders/`), the finder (`finder.safetensors`), the reference
- pictures (`references/<pose>/`; `studio/` from before; a second Train node
+ pictures (`references/<pose>/`; a second Train node
  keeps its own under `<node>/`, or in its save folder), and `capture.json`,
  which remembers a finder chosen from elsewhere. A clip writes nothing there.
  The model file itself is never written.
@@ -620,12 +620,8 @@ fn String capture_reference_name(String pose)
 	return name.len > 0 ? name : "pose";
 }
 
-// A reference's folder: "studio" is the capture folder's own, from before references. Temporary.
-fn String AppState.capture_reference_path(&self, String name)
-{
-	if (name == "studio") return self.capture_path("studio");
-	return self.capture_path(string::tformat("references/%s", name));
-}
+// A reference's folder. Temporary.
+fn String AppState.capture_reference_path(&self, String name) => self.capture_path(string::tformat("references/%s", name));
 
 <*
  The references saved for this character, newest first (by their studio.json),
@@ -650,11 +646,6 @@ fn void AppState.capture_references(&self, Allocator allocator, List{String}* ou
 				times.push((long)time);
 			}
 		}
-	}
-	if (try time = file::last_modified(self.capture_path("studio/studio.json")))
-	{
-		names.push("studio");
-		times.push((long)time);
 	}
 	// Newest first; a tie by name.
 	sz count = names.len();

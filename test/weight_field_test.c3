@@ -171,34 +171,25 @@ fn void taking_the_knee_off_a_shin_moves_no_other_joint() @test
 }
 
 <*
- A rig saved before the weights ended at a band says so once, when it opens:
- the same dots bind tighter now, and a model that deforms otherwise with nothing
- said would read as a broken file.
+ A sidecar from an older version is ignored on open: the model comes up on its
+ own rig, and nothing marks it as safe to save over.
 *>
-fn void an_older_session_says_its_weights_were_re_derived() @test
+fn void an_old_sidecar_leaves_the_models_own_rig() @test
 {
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_field(&app, &mesh);
-	defer close_field(&app, &mesh);
-
-	app.save_beside_mesh();
+	char[] original = file::load(mem, "assets/animations/humanoid.glb")!!;
+	defer alloc::free(mem, original);
+	file::save(FIELD_COPY, original)!!;
 	String path = crig::session_path(mem, FIELD_COPY);
 	defer path.free(mem);
-	char[] saved = file::load(mem, path)!!;
-	defer alloc::free(mem, saved);
-	String text = (String)saved;
-	test::@check(text.contains(`"version": 33`), "the session is not version 33");
+	file::save(path, `{"version":1,"dots":[{"id":1,"position":[0,0,0]}],"edges":[]}`)!!;
 
-	String older = text.replace(mem, `"version": 33`, `"version": 30`);
-	defer older.free(mem);
-	file::save(path, older)!!;
-	app.load_session();
-	test::@check(app.notice().contains("re-derived"), "an older session opened saying: %s", app.notice());
+	rig::TriMesh mesh = rig::load_gltf(mem, FIELD_COPY)!!;
+	crig::AppState app = crig::new_app(mesh, FIELD_COPY);
+	defer close_field(&app, &mesh);
+	app.adopt_source_rig();
 
-	app.save_beside_mesh();
-	app.load_session();
-	test::@check(!app.notice().contains("re-derived"), "a current session still said: %s", app.notice());
+	test::@check(app.doc.dots.len() > 1, "the model's own rig did not open: %d dots", app.doc.dots.len());
+	test::@check(!app.saves_in_place, "an ignored sidecar still marked the model safe to save over");
 }
 
 fn uint field_dot(crig::AppState* app, String name)
@@ -356,69 +347,6 @@ fn void a_grown_joint_keeps_its_weights_when_its_dot_moves() @test
 	test::@check(rows_apart(automatic, moved_automatic) > 0, "the automatic weights did not follow the moved knee");
 }
 
-<*
- The multipliers a session before version 31 carried come back as held
- columns: the vertex shows what the multiplier made of it, and nothing writes
- multipliers again.
-*>
-fn void an_older_sessions_multipliers_load_as_stated_rows() @test
-{
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_field(&app, &mesh);
-	defer close_field(&app, &mesh);
-
-	uint knee = field_dot(&app, "knee_L");
-	crig::RigView view = app.open_rig(mem)!!;
-	usz bones = view.len();
-	usz joint = (usz)view.joint_of(knee);
-	float[] base = app.weights(mem, &view, AUTOMATIC);
-	view.free(mem);
-	defer alloc::free(mem, base);
-	// A vertex the knee shares, so a multiplier on it moves the share.
-	uint shared = 0;
-	for (usz v = 0; v < app.geometry.positions.len; v++)
-	{
-		float share = crig::joint_share(base[v * bones:bones], joint);
-		if (share > 0.2f && share < 0.8f) { shared = (uint)v; break; }
-	}
-	test::@check(shared != 0, "the knee shares no vertex");
-	float[] row = alloc::new_array(mem, float, (sz)bones);
-	defer alloc::free(mem, row);
-	row[..] = base[(usz)shared * bones:bones];
-	row[joint] *= 0.25f;
-	float want = crig::joint_share(row, joint);
-
-	app.save_beside_mesh();
-	String path = crig::session_path(mem, FIELD_COPY);
-	defer path.free(mem);
-	char[] saved = file::load(mem, path)!!;
-	defer alloc::free(mem, saved);
-	String older = ((String)saved).replace(mem, `"version": 33`, `"version": 30`);
-	defer older.free(mem);
-	String painted = older.replace(mem, `"attachments": [`,
-		string::tformat(`"paint": [[%d,%d,0.25]],
-  "attachments": [`, shared, knee));
-	defer painted.free(mem);
-	file::save(path, painted)!!;
-
-	app.load_session();
-	test::@check(app.doc.paint.len() == 0, "the multipliers were kept as multipliers");
-	test::@check(app.doc.pins.len() > 0 && app.weights_held(knee), "the multiplier did not become the knee's held column");
-	crig::RigView after = app.open_rig(mem)!!;
-	defer after.free(mem);
-	float[] shown = app.weights(mem, &after);
-	defer alloc::free(mem, shown);
-	float got = crig::joint_share(shown[(usz)shared * bones:bones], joint);
-	test::@check(math::abs(got - want) < 0.05f, "the knee holds %f of the vertex, the multiplier made it %f", got, want);
-	test::@check(!app.undo_stack.can_undo(), "loading left the conversion on the history");
-}
-
-<*
- The case that started the redesign: the hips put on a boot vertex by hand can
- be taken off again, and the vertex is the leg's as it was — the ankle's weight
- never moved while the hips came and went.
-*>
 fn void taking_the_hips_off_a_vertex_gives_it_back_to_the_leg() @test
 {
 	crig::AppState app;

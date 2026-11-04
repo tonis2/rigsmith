@@ -73,54 +73,6 @@ fn void bones_near_y_or_z_take_world_x_and_leaning_ones_the_least_axis() @test
 	}
 }
 
-// A version 22 table on a bone the rule now rolls the other way comes back
-// pinned to the axes it was written against; one the rule left alone, and the
-// same table written today, stay derived.
-fn void an_older_sessions_tables_keep_the_axes_they_were_written_on() @test
-{
-	crig::AppState app = crig::new_app({});
-	defer app.free();
-	crig::RigDocument* doc = &app.doc;
-	uint knuckle = doc.add_dot({ 0, 1, 0 }, "knuckle");
-	uint tip = doc.add_dot({ 0.1f, 0.997f, 0.007f }, "tip");
-	uint hip = doc.add_dot({ 1, 1, 0 }, "hip");
-	uint knee = doc.add_dot({ 1.25f, 0, 0.12f }, "knee");
-	doc.connect(knuckle, tip);
-	doc.connect(hip, knee);
-	foreach (id : (uint[]){ knuckle, hip })
-	{
-		crig::JointRotationLimits limits = crig::unconstrained_rotation(id);
-		limits.constrained = true;
-		limits.axes[0] = { .allowed = true, .minimum = -1.5f, .maximum = 0.25f };
-		test::@check(doc.set_rotation_limits(id, limits), "the table did not land");
-	}
-	Vec3 now = frame_of(doc, knuckle).axis(X);
-
-	String text = crig::session_text(mem, doc, "hand.glb", limits: true);
-	defer text.free(mem);
-	test::@check(text.contains(`"version": 33`), "the session is not version 33");
-
-	crig::RigDocument? current = crig::parse_session(mem, text);
-	if (catch current) { test::@check(false, "today's session did not read"); return; }
-	crig::RigDocument today = current;
-	defer today.free();
-	test::@check(!today.rotation_limits_of(knuckle).has_saved_frame, "a current table was pinned");
-
-	String older = text.replace(mem, `"version": 33`, `"version": 22`);
-	defer older.free(mem);
-	crig::RigDocument? opened = crig::parse_session(mem, older);
-	if (catch opened) { test::@check(false, "the version 22 session did not read"); return; }
-	crig::RigDocument legacy = opened;
-	defer legacy.free();
-	crig::JointRotationLimits held = legacy.rotation_limits_of(knuckle);
-	test::@check(held.has_saved_frame, "the knuckle's table was left to the new rule");
-	Vec3 was = frame_of(&legacy, knuckle).axis(X);
-	test::@check(math::abs(was.y) > 0.99f && math::abs(now.z) > 0.99f,
-		"the knuckle's X was %s under version 22 and is %s now", was, now);
-	test::@check(held.axes[0].minimum == -1.5f, "the pinned table lost its numbers");
-	test::@check(!legacy.rotation_limits_of(hip).has_saved_frame, "a table the rule did not move was pinned");
-}
-
 // The shipped figure's fingers: every segment curls about its X, closing
 // the hand both sides, and spreads only at the knuckle.
 fn void the_humanoids_fingers_all_curl_about_x() @test

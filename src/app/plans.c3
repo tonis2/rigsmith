@@ -465,7 +465,7 @@ fn ConstraintApplyReport AppState.adopt_preset_constraints(
 
  The file speaks in bones and the document in chains, so the bones are gathered
  by dot and folded into chains by `adopt_bones_recorded` — a tail authored bone
- by bone under the old model lands as one Tail-shaped chain.
+ by bone lands as one Tail-shaped chain.
 
  **The radii are rescaled and the rest is not.** Flexibility, damping, gravity
  and the swing are ratios and angles: they mean the same thing on a mouse and on

@@ -99,7 +99,6 @@ fn crig::RigDocument tail_document(uint[]* ids)
 	doc.dots.init(mem);
 	doc.edges.init(mem);
 	doc.attachments.init(mem);
-	doc.paint.init(mem);
 	doc.secondary.init(mem);
 	doc.colliders.init(mem);
 
@@ -299,7 +298,7 @@ fn void physics_survives_undo_and_a_deletion() @test
 *>
 fn void a_session_carries_the_physics() @test
 {
-	io::printn("a session writes the chain and reads it back, and older files still open");
+	io::printn("a session writes the chain and reads it back");
 
 	uint[] ids;
 	crig::RigDocument doc = tail_document(&ids);
@@ -333,76 +332,53 @@ fn void a_session_carries_the_physics() @test
 	// absence has to survive as absence, or every rig gains a record per save.
 	test::@check(!back.secondary_of(ids[0]).present(), "a bone nobody gave a chain came back with one");
 
-	// --- the older file ---------------------------------------------------------
-
-	String older = `{
-  "version": 8,
-  "mesh": "tail.glb",
-  "root": 1,
-  "next_id": 4,
-  "auto_connect": true,
-  "sym_x": 0,
-  "dots": [{"id":1,"name":"hips","position":[0,1,0]},{"id":2,"name":"tail_1","position":[0,1,-0.3]}],
-  "edges": [[1,2]],
-  "attachments": [],
-  "paint": []
-}`;
-
-	crig::RigDocument? ancient = crig::parse_session(mem, older);
-	if (catch ancient)
+	// A malformed chain is the whole file refused, on the sidecar's usual terms.
+	String broken = `{"version":33,"mesh":"t.glb","root":1,"next_id":3,"auto_connect":true,"sym_x":0,
+  "dots":[{"id":1,"name":"hips","position":[0,1,0]},{"id":2,"name":"tail","position":[0,1,-0.3]}],
+  "edges":[[1,2]],"attachments":[],
+  "secondary":[{"root":2,"tip":2,"flexibility":7}]}`;
+	crig::RigDocument? refused = crig::parse_session(mem, broken);
+	if (try refused)
 	{
-		test::@check(false, "a version 8 session no longer parses");
+		refused.free();
+		test::@check(false, "a flexibility of 7 was read as a session");
+	}
+}
+
+<*
+ Per-bone physics folds into chains: a run of bones is one chain on its root
+ bone's numbers, a fork is a chain per branch, and the skeleton's root is dropped.
+*>
+fn void bones_fold_into_chains() @test
+{
+	crig::RigDocument? parsed = crig::parse_session(mem, `{"version":33,"root":1,"next_id":7,
+  "dots":[{"id":1,"name":"hips","position":[0,1,0]},{"id":2,"name":"tail_1","position":[0,1,-0.3]},
+          {"id":3,"name":"tail_2","position":[0,1,-0.6]},{"id":4,"name":"belly","position":[0,0.88,0.12]},
+          {"id":5,"name":"ear_L","position":[-0.1,1.2,0]},{"id":6,"name":"ear_R","position":[0.1,1.2,0]}],
+  "edges":[[1,2],[2,3],[1,4],[1,5],[1,6]]}`);
+	if (catch parsed)
+	{
+		test::@check(false, "the skeleton did not read");
 		return;
 	}
-	crig::RigDocument old = ancient;
-	defer old.free();
+	crig::RigDocument doc = parsed;
+	defer doc.free();
 
-	test::@check(old.dots.len() == 2, "the older session came back with %d dots", old.dots.len());
-	test::@check(old.secondary.len() == 0 && old.colliders.len() == 0,
-		"a session that said nothing about physics came back claiming some");
+	crig::JiggleSpec[5] bones = {
+		{ .dot_id = 2, .params = { .stiffness = 3200.5f, .damping = 0.875f, .gravity = 1.25f, .radius = 0.0325f } },
+		{ .dot_id = 3, .params = { .stiffness = 1600.25f, .damping = 0.75f, .gravity = 1.25f, .radius = 0.0175f } },
+		{ .dot_id = 5, .params = { .stiffness = 500.0f, .damping = 0.5f, .gravity = 0.5f } },
+		{ .dot_id = 6, .params = { .stiffness = 500.0f, .damping = 0.5f, .gravity = 0.5f } },
+		{ .dot_id = 1, .params = { .stiffness = 2000.0f, .damping = 0.3f, .gravity = 1.0f } },
+	};
+	crig::SecondaryChain[] chains = crig::secondary_chains_from_bones(mem, &doc, bones[..]);
+	defer if (chains.len > 0) alloc::free(mem, chains);
+	test::@check(chains.len == 3, "the bones folded into %d chains, not 3", chains.len);
+	foreach (chain : chains) doc.set_secondary(chain);
 
-	// --- and the per-bone file: a two-bone tail, a fork, and a dynamic root ------
-	//
-	// tail_1 (2) and tail_2 (3) are a run; ear_L (5) and ear_R (6) fork off the
-	// hips; the hips (1) are the skeleton's root. The run takes its root bone's
-	// numbers, the fork becomes a chain per branch, and the root is dropped.
-	String bones = `{
-  "version": 9,
-  "mesh": "tail.glb",
-  "root": 1,
-  "next_id": 7,
-  "auto_connect": true,
-  "sym_x": 0,
-  "dots": [{"id":1,"name":"hips","position":[0,1,0]},{"id":2,"name":"tail_1","position":[0,1,-0.3]},
-           {"id":3,"name":"tail_2","position":[0,1,-0.6]},{"id":4,"name":"belly","position":[0,0.88,0.12]},
-           {"id":5,"name":"ear_L","position":[-0.1,1.2,0]},{"id":6,"name":"ear_R","position":[0.1,1.2,0]}],
-  "edges": [[1,2],[2,3],[1,4],[1,5],[1,6]],
-  "attachments": [],
-  "paint": [],
-  "physics": [{"id":2,"stiffness":3200.5,"damping":0.875,"gravity":1.25,"limit":0.6125,"radius":0.0325},
-              {"id":3,"stiffness":1600.25,"damping":0.75,"gravity":1.25,"limit":0.9,"radius":0.0175},
-              {"id":5,"stiffness":500,"damping":0.5,"gravity":0.5,"limit":0,"radius":0},
-              {"id":6,"stiffness":500,"damping":0.5,"gravity":0.5,"limit":0,"radius":0},
-              {"id":1,"stiffness":2000,"damping":0.3,"gravity":1,"limit":0,"radius":0}],
-  "colliders": [{"id":4,"radius":0.1375}]
-}`;
-
-	crig::RigDocument? carried = crig::parse_session(mem, bones);
-	if (catch carried)
-	{
-		test::@check(false, "a version 9 session with per-bone physics no longer parses");
-		return;
-	}
-	crig::RigDocument moved = carried;
-	defer moved.free();
-
-	test::@check(moved.secondary.len() == 3, "the per-bone file migrated to %d chains, not 3", moved.secondary.len());
-	test::@check(moved.colliders.len() == 1 && math::abs(moved.collider_of(4) - BELLY_RADIUS) < EXACT,
-		"the capsule did not come across");
-
-	crig::SecondaryChain tail = moved.secondary_of(2);
+	crig::SecondaryChain tail = doc.secondary_of(2);
 	test::@check(tail.present() && tail.tip == 3, "the tail did not become one chain from tail_1 to tail_2");
-	test::@check(tail.preset == crig::SecondaryPreset.CUSTOM, "a migrated chain claims a preset");
+	test::@check(tail.preset == crig::SecondaryPreset.CUSTOM, "a folded chain claims a preset");
 	test::@check(math::abs(tail.flexibility - crig::secondary_flexibility(3200.5f)) < EXACT,
 		"the tail's flexibility is %s, not its root bone's stiffness read back", tail.flexibility);
 	test::@check(math::abs(tail.damping - 0.125f) < EXACT, "the tail's damping is %s where 1 - 0.875 is 0.125", tail.damping);
@@ -416,38 +392,10 @@ fn void a_session_carries_the_physics() @test
 		"the chain resolves to a stiffness of %s rather than near its root's 3200.5", expanded.stiffness);
 	test::@check(math::abs(expanded.damping - 0.875f) < EXACT, "the chain resolves to a damping of %s, not 0.875", expanded.damping);
 
-	test::@check(moved.secondary_of(5).present() && moved.secondary_of(5).tip == 5
-		&& moved.secondary_of(6).present() && moved.secondary_of(6).tip == 6,
+	test::@check(doc.secondary_of(5).present() && doc.secondary_of(5).tip == 5
+		&& doc.secondary_of(6).present() && doc.secondary_of(6).tip == 6,
 		"the forked ears did not become a chain per branch");
-	test::@check(!moved.secondary_of(1).present(), "a dynamic bone on the skeleton's root was kept rather than dropped");
-
-	// Saved again, it is written the new way and reads back the same.
-	String rewritten = crig::session_text(mem, &moved, "tail.glb");
-	defer rewritten.free(mem);
-	test::@check(!rewritten.contains(`"physics"`), "a migrated document still writes the old key");
-	crig::RigDocument? twice = crig::parse_session(mem, rewritten);
-	if (try twice)
-	{
-		defer twice.free();
-		test::@check(twice.secondary.len() == 3 && same_chain(twice.secondary_of(2), tail),
-			"a migrated document did not survive its own save");
-	}
-	else
-	{
-		test::@check(false, "a migrated document's session did not read back");
-	}
-
-	// A malformed chain is the whole file refused, on the sidecar's usual terms.
-	String broken = `{"version":16,"mesh":"t.glb","root":1,"next_id":3,"auto_connect":true,"sym_x":0,
-  "dots":[{"id":1,"name":"hips","position":[0,1,0]},{"id":2,"name":"tail","position":[0,1,-0.3]}],
-  "edges":[[1,2]],"attachments":[],"paint":[],
-  "secondary":[{"root":2,"tip":2,"flexibility":7}]}`;
-	crig::RigDocument? refused = crig::parse_session(mem, broken);
-	if (try refused)
-	{
-		refused.free();
-		test::@check(false, "a flexibility of 7 was read as a session");
-	}
+	test::@check(!doc.secondary_of(1).present(), "a dynamic bone on the skeleton's root was kept rather than dropped");
 }
 
 // One clip, so `export_pack_glb` has something to write — it refuses a pack with

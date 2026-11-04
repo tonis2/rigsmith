@@ -25,7 +25,6 @@ import std::math::quaternion;
 alias DotList = List{Dot};
 alias EdgeList = List{Edge};
 alias AttachList = List{ShellAttachment};
-alias PaintList = List{PaintDab};
 alias PinList = List{VertexPin};
 alias JiggleColliderList = List{JiggleCollider};
 alias BoundList = List{BoundClip};
@@ -167,8 +166,8 @@ struct Edge
  about the character, not about the geometry: a sword across a back is nearest
  to a shoulder and strapped to the torso, and nothing in the mesh says so.
 
- **Keyed by dot id, never by joint index**, the same rule the paint layer will
- follow: joint indices are BFS output and shift the moment a dot is added,
+ **Keyed by dot id, never by joint index**: joint indices are BFS output and
+ shift the moment a dot is added,
  deleted or re-rooted, while ids are handed out once and never reused. The shell
  is an index into `rig::MeshShells`, which is derived from the mesh and is stable
  for as long as the mesh is.
@@ -180,80 +179,22 @@ struct ShellAttachment
 }
 
 <*
- One vertex's correction to one dot's hold on it.
-
- **A multiplier, not a weight.** The binder returns `1 / (d² + ε)` —
- unnormalised, spanning orders of magnitude, and only ever read through
- `sparsify_weights`, which renormalises. So absolute scale is already meaningless
- and an *additive* correction would mean something quite different where the base
- is `1e-4` than where it is `1e2`. A multiplier means the same thing either side
- of the normalisation, which is the only kind of correction that survives the
- binder being changed underneath it.
-
- That is also what keeps the dots the source of truth. `final = base × paint`
- with `base` whatever the binder currently produces, so a dragged dot re-derives
- underneath a correction riding on top and no stroke has to be redone.
-
- **Keyed by dot id, never by joint index.** Indices are BFS output and shift the
- moment a dot is added or re-rooted; ids are handed out once and never reused.
- `RigView.paint` is where they become indices, for the one bind that asked.
-
- Absent is `1`, so the ordinary vertex costs nothing to store — a dense layer
- would be 24 MB on a 200k-vertex scan at 30 joints, 99% of it the number one.
-*>
-struct PaintDab
-{
-	uint vertex;
-	uint dot_id;
-	float factor;
-}
-
-<*
- A `PaintDab` with its dot id resolved to a joint index, for one bind.
-
- The document keys paint by dot id and a bind is indexed by joint, so somebody
- has to cross between them. Doing it once per bind rather than once per dab is
- what keeps a big stroke from going quadratic, and `RigView` — which exists to
- hold exactly the things that share a build's joint order — is where it happens.
-
- Not stored anywhere. A joint index is only meaningful for the build that
- produced it; see `RigView` on why mixing one build's order with another's is
- silent rather than loud.
-*>
-struct PaintColumn
-{
-	uint vertex;
-	usz joint;
-	float factor;
-}
-
-<*
  One vertex handed to one dot outright, or to a stated fraction of it.
 
- **A share, not a multiplier, and that is the whole difference from `PaintDab`.**
- A dab scales whatever the binder currently says, so it cannot lift a weight the
- binder left at zero — no finite multiplier reaches a share from nothing, which
- is exactly the leak a region tool is drawn to fix ("the wrong bone got none of
- this"). A pin states the answer instead: `pin_over` writes the column and
- rescales the rest of the row around it, so a vertex the flood never reached can
- still be given to the dot the user can see it belongs to.
-
  **Absolute, and it does not track the dot.** Move the dot afterwards and the
- pin says the same thing it said before, where a dab would re-derive underneath.
+ pin says the same thing it said before.
  That is the price of being able to state a value at all.
 	A pin is therefore work the user owns, like an animation key, rather than a correction
  riding on work the binder owns.
 
  `share` is 0 to 1 and is a share of the *vertex*, the same number every weight
- view and `sparsify_weights` normalise to. **Zero removes the entry** — the
- analog of paint's factor of 1 — so "is anything pinned" stays a length test and
- unpinning leaves nothing behind.
+ view and `sparsify_weights` normalise to. **Zero removes the entry**, so "is
+ anything pinned" stays a length test and unpinning leaves nothing behind.
 
  **Keyed by dot id, never by joint index**, the rule every list in this file
  follows, and **keyed to the mesh** besides: a vertex index means nothing once a
  different model is loaded, or once the same one is re-exported with its
- vertices reordered. That caveat is inherited from the paint layer and is not
- fixed here.
+ vertices reordered. That caveat is not fixed here.
 
  **Only a held dot's entries mean anything** (`Dot.held`): together they are
  its whole column, and a vertex with no entry is one it holds nothing of. An
@@ -272,9 +213,9 @@ struct VertexPin
 <*
  A `VertexPin` with its dot id resolved to a joint index, for one bind.
 
- `PaintColumn`'s sibling in every respect — see there for why the crossing
- happens once per bind rather than once per pin, and why none of these is ever
- stored.
+ The crossing happens once per bind rather than once per pin, which keeps a big
+ stroke from going quadratic. Not stored: a joint index only means something
+ for the build that produced it.
 *>
 struct PinColumn
 {
@@ -316,14 +257,14 @@ fn bool JiggleParams.same(self, JiggleParams other) => self.stiffness == other.s
 
 <*
  Whether these params say nothing at all — the "this bone is the animation's"
- value, which the old per-dot model stored as absence and the migration skips.
+ value, which `secondary_chains_from_bones` skips.
 *>
 fn bool JiggleParams.inert(self) => self.same({});
 
 <*
- One bone under the old per-dot model: the shape files before session version
- 16 and every KHR_physics_rigid_bodies file still speak, and the input
- `secondary_chains_from_bones` turns into `SecondaryChain` records.
+ One bone of per-bone physics: the shape every KHR_physics_rigid_bodies file
+ speaks, and the input `secondary_chains_from_bones` turns into `SecondaryChain`
+ records.
 
  The five numbers are `JiggleParams`, defined next to the solver in
  `algo/sim/jiggle.c3` rather than here, because their units are the solver's and a
@@ -386,31 +327,15 @@ struct RigDocument
 	AttachList attachments;
 
 	<*
-	 Hand corrections to the bind, sparse. Absent is 1 — no correction.
+	 Held dots' stored columns, sparse — see `VertexPin` for what one means.
 
-	 Stale entries wait rather than being swept, for the same reason the two
-	 lists above keep theirs: undo restores a deleted dot under its old id and
-	 the paint on it should come back too. The session writer drops them on the
-	 way out, which is where "deleted" has become permanent.
+	 Stale entries wait rather than being swept: undo restores a deleted dot
+	 under its old id and its weights should come back too. The session writer
+	 drops them on the way out, which is where "deleted" has become permanent.
 
 	 **Keyed to the mesh as well as to the rig.** A vertex index means nothing
 	 once a different model is loaded, and nothing here checks that — what makes
 	 it safe is where it is stored, since the session file is already per-mesh.
-	*>
-	PaintList paint;
-
-	<*
-	 Vertices handed to a dot outright, sparse. Absent is "the layers below
-	 decide" — see `VertexPin` for what one means and why it is not a correction.
-
-	 **Applied last of everything**, after the binder, the sharpness and the
-	 paint, so nothing downstream can clobber a fact the user stated. That order
-	 is `pin_over`'s contract rather than this field's, but it is the reason the
-	 layer is separate from `paint` instead of being a second kind of dab.
-
-	 Stale entries wait rather than being swept, and vertex indices are keyed to
-	 the mesh — both exactly as the paint layer above has them, and for the same
-	 reasons.
 	*>
 	PinList pins;
 
@@ -479,8 +404,8 @@ struct RigDocument
 	 How close counts as touching, as a fraction of the model's bounds
 	 diagonal — the clearance every collision check is measured against. Zero
 	 is unset and reads as `COLLISION_CLEARANCE`, the same convention
-	 `sharpness` uses for the same reason: a zero-initialised document and
-	 every session written before the field existed must mean the default.
+	 `sharpness` uses for the same reason: a zero-initialised document must
+	 mean the default.
 	*>
 	float collision_clearance;
 
@@ -499,9 +424,8 @@ struct RigDocument
 	 to before anything reads it. See `sharpen_weights`.
 
 	 **Zero means unset and is read as 1**, the binder's own blend. That is not a
-	 clamp for tidiness — a zero-initialised document is what every rig starts as
-	 and what every session written before this field existed comes back as, and
-	 reading that zero literally would flatten every weight to 1 and hand the
+	 clamp for tidiness — a zero-initialised document is what every rig starts as,
+	 and reading that zero literally would flatten every weight to 1 and hand the
 	 mesh to whichever joint the tie-break picked.
 
 	 One number for the whole model rather than per dot. The thing it corrects is
@@ -527,10 +451,9 @@ struct RigDocument
 	<*
 	 Which body plan this rig was started from — an animation pack's plan tag.
 
-	 Empty for a hand-built rig, and for every session written before this field
-	 existed. Advisory, and deliberately so: nothing is derived from it except
+	 Empty for a hand-built rig. Advisory, and deliberately so: nothing is derived from it except
 	 which packs the library offers, and a rig that declares nothing is still
-	 matched the older way, on names it has in common with a clip.
+	 matched on names it has in common with a clip.
 
 	 Not carried by the undo stack. Undoing a preset leaves the tag behind on an
 	 empty document, which reads correctly for the wrong reason — every clip
@@ -540,22 +463,6 @@ struct RigDocument
 	 whose only wrong answer is invisible.
 	*>
 	String plan; // owned
-
-	<*
-	 Whether a session before version 32 said this rig wore the mesh file's own
-	 weights. Read so the load can rebuild what that session showed
-	 (`AppState.migrate_held_weights`) and cleared once it has; never written.
-	 Since version 32 the file's weights are held columns like any other edit
-	 (`Dot.held`), stored in the session itself.
-	*>
-	bool legacy_skin_from_file;
-
-	<*
-	 The session version this document was read from, or 0 for one made in this
-	 run. Not saved — a session always writes the current version — and read only
-	 to say once what changed under a rig saved by an older binary.
-	*>
-	uint read_version;
 
 	<*
 	 The clips the user has bound to this character, in the order they chose.
@@ -792,7 +699,6 @@ fn void RigDocument.free(&self)
 	self.dots.free();
 	self.edges.free();
 	self.attachments.free();
-	self.paint.free();
 	self.pins.free();
 	self.secondary.free();
 	self.colliders.free();
@@ -1120,60 +1026,13 @@ fn bool RigDocument.set_sym_x(&self, float x)
 }
 
 <*
- Sets one vertex's correction to one dot's hold on it.
-
-	 Absent means no correction. A factor of exactly 1 removes the entry rather than storing
- it, so "is anything painted" stays a length test and a stroke that puts a vertex
- back where the binder had it leaves nothing behind.
-
- Nothing is refused and nothing is clamped. A factor of 0 is a vertex this dot
- does not hold at all, and a large one is a vertex it holds far more of than the
- binder thought; both are things to want, and `sparsify_weights` normalising
- afterwards is what keeps either from meaning something absolute.
-
- @param vertex : `Index into the mesh this document was painted against.`
- @param factor : `Multiplier on the binder's weight. 1 is no correction. Negative is clamped to 0 — a weight below zero is not a lesser hold, it is a vertex pushed the wrong way.`
- @return `True if anything changed.`
-*>
-fn bool RigDocument.set_paint(&self, uint vertex, uint dot_id, float factor)
-{
-	if (dot_id == 0 || !self.find(dot_id)) return false;
-
-	float held = factor > 0.0f ? factor : 0.0f;
-	bool clean = held == 1.0f;
-
-	foreach (sz i, dab : self.paint.array_view())
-	{
-		if (dab.vertex != vertex || dab.dot_id != dot_id) continue;
-		if (dab.factor == held) return false;
-
-		if (clean)
-		{
-			self.paint.remove_at(i);
-		}
-		else
-		{
-			self.paint.get_ref(i).factor = held;
-		}
-		return true;
-	}
-
-	if (clean) return false;
-	self.paint.push({ .vertex = vertex, .dot_id = dot_id, .factor = held });
-	return true;
-}
-
-<*
  Hands one vertex to one dot outright, or takes the hand-over back.
 
- The pin layer's primitive, and `set_paint`'s sibling — but what it stores is a
- *share* rather than a multiplier, so unlike a dab it can lift a vertex the
- binder gave this dot nothing of. See `VertexPin`, which states the bargain that
- buys: a pin is absolute and does not move with the dot.
+ The pin layer's primitive. See `VertexPin`: a pin is absolute and does not move
+ with the dot.
 
- **A share of exactly 0 removes the entry**, the analog of paint's factor of 1,
- so "is anything pinned" stays a length test and unpinning a region leaves
- nothing behind. Anything outside 0 to 1 is clamped rather than refused: a share
+ **A share of exactly 0 removes the entry**, so "is anything pinned" stays a
+ length test and unpinning a region leaves nothing behind. Anything outside 0 to 1 is clamped rather than refused: a share
  is a fraction of one vertex, and there is no reading of 1.4 that is not simply
  "all of it".
 
@@ -1561,8 +1420,7 @@ struct Edit
 	//
 	// Neither kind carries a name or a payload slot, so `carries_names` and
 	// `carries_payload` are both false for them and `drop_last` has nothing to
-	// release. **A deleted dot keeps both entries** — the `PaintDab` precedent,
-	// see the note on `RigView.paint` — so undoing a delete brings the dot back
+	// release. **A deleted dot keeps both entries**, so undoing a delete brings the dot back
 	// still wobbling, and every consumer skips entries whose dot is gone. For
 	// SET_SECONDARY `id` is the chain's root, and a zero record on either side is
 	// "no chain here".

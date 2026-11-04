@@ -77,10 +77,8 @@ enum AnimChannels
 <*
  How one keyed channel leaves this key on its way to the next one.
 
- `INHERIT` is the compact legacy/default value: it resolves to the clip's
- existing blend (`LINEAR` or `SMOOTH`). The three authored choices are named
- after what the animation UI shows. Keeping an inherit value is what lets every
- clip written before segment interpolation retain exactly the curve it had.
+ `INHERIT` is the default: it resolves to the clip's blend (`LINEAR` or
+ `SMOOTH`). The authored choices are named after what the animation UI shows.
 *>
 enum AnimInterpolation
 {
@@ -158,7 +156,7 @@ fn bool AnimEase.same(self, AnimEase other)
  How a channel key's curve leaves and arrives: the tangents its two neighbouring
  segments read at it.
 
- `AUTO` (the zero value, and what every clip written before tangents is) is the
+ `AUTO` (the zero value) is the
  Catmull-Rom tangent the sampler works out from the neighbouring keys, paced by
  the key's ease. The others replace it:
 
@@ -504,8 +502,7 @@ fn Vec3 AnimKeyframe.offset_of(self, String joint_name)
 <*
  How a clip moves between the keyframes it is given.
 
- `LINEAR` turns by SLERP and slides by a straight line, and is what every
- template written before this existed does. `SMOOTH` fits a cubic through each
+ `LINEAR` turns by SLERP and slides by a straight line. `SMOOTH` fits a cubic through each
  keyframe and its neighbours, so a cycle can be stated as the poses it passes
  through — contact, toe-off, reach — rather than as a resampling of them.
 

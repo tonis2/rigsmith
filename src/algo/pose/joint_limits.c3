@@ -484,16 +484,8 @@ const float LIMIT_FRAME_EDGE_SQ = 1.0e-12f;
 *>
 const float LIMIT_FRAME_NEAR_AXIS = 0.17f;
 
-<*
- The world axis a frame's X is projected from, before session 23.
-
- The cardinal the bone leans on least. Kept for `legacy_limit_frame`, which old
- sessions' tables were written against; on a bone that runs nearly along a world
- axis the two leftover leans are both slight, and which is slighter is a degree
- of placement — a finger whose knuckle sat a hair forward had its X sideways
- while the finger beside it had its X across the palm.
-*>
-fn Vec3 legacy_frame_seed(Vec3 y) @private
+// The cardinal the bone leans on least.
+fn Vec3 least_lean_seed(Vec3 y) @private
 {
 	Vec3 seed = { 1, 0, 0 };
 	float least = math::abs(y.x);
@@ -522,7 +514,7 @@ fn Vec3 frame_seed(Vec3 y) @private
 	float az = math::abs(y.z);
 	if (ay < LIMIT_FRAME_NEAR_AXIS && az < LIMIT_FRAME_NEAR_AXIS) return { 0, 0, 1 };
 	if (ax < LIMIT_FRAME_NEAR_AXIS && (ay < LIMIT_FRAME_NEAR_AXIS || az < LIMIT_FRAME_NEAR_AXIS)) return { 1, 0, 0 };
-	return legacy_frame_seed(y);
+	return least_lean_seed(y);
 }
 
 fn JointLimitFrame frame_from_seed(Vec3 y, Vec3 seed, uint direction_dot) @private
@@ -554,30 +546,6 @@ fn JointLimitFrame frame_along(Vec3 direction, uint direction_dot = 0) @private
 	}
 	Vec3 y = direction * (1.0f / math::sqrt(length_sq));
 	return frame_from_seed(y, frame_seed(y), direction_dot);
-}
-
-<*
- The frame a derived one was before session 23: the same bone, rolled the way
- `legacy_frame_seed` rolled it. What an older session's table was written
- against, so loading one can pin it where it was.
-*>
-fn JointLimitFrame legacy_limit_frame(JointLimitFrame derived)
-{
-	if (!derived.usable()) return derived;
-	Vec3 y = derived.axis(Y);
-	return frame_from_seed(y, legacy_frame_seed(y), derived.direction_dot);
-}
-
-<*
- The frame a derived one was before session 29: the same bone, rolled by the
- world axis `frame_seed` picks rather than by its hand (`along_the_knuckles`).
- What an older session's table was written against, so loading one can pin it
- where it was. For a joint that is no digit it is the derived frame itself.
-*>
-fn JointLimitFrame cardinal_limit_frame(JointLimitFrame derived)
-{
-	if (!derived.usable()) return derived;
-	return frame_along(derived.axis(Y), derived.direction_dot);
 }
 
 <*
@@ -1025,7 +993,7 @@ const float SAVED_FRAME_APART = 0.99996f;
 
 <*
  Whether a table's saved frame sits off the axes its bone derives — for a
- digit, its hand's — by more than `SAVED_FRAME_APART`: a table an older file, a
+ digit, its hand's — by more than `SAVED_FRAME_APART`: a table a
  move or a mirror pinned, which `limits_rolled_onto` can carry back.
 *>
 fn bool saved_frame_apart(rig::Skeleton* skeleton, uint[] dot_ids, JointRotationLimits limits)

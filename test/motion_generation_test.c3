@@ -544,7 +544,7 @@ fn Vec3 json_point(Object* array)
  rig faces −X and names its sides along Z.
 *>
 const String QUADRUPED_FACING_X = `{
-	"version": 12, "mesh": "quadruped.glb", "root": 1, "next_id": 19, "auto_connect": true, "sym_x": 0,
+	"version": 33, "mesh": "quadruped.glb", "root": 1, "next_id": 19, "auto_connect": true, "sym_x": 0,
 	"dots": [
 		{"id":1,"name":"pelvis","position":[0.25999999,0.419999987,0]},
 		{"id":2,"name":"spine","position":[0.0799999982,0.419999987,0]},
@@ -567,7 +567,7 @@ const String QUADRUPED_FACING_X = `{
 		{"id":19,"name":"hind_hoof_R","position":[0.330413342,0.0524437428,0.0726453066]}
 	],
 	"edges": [[1,2],[2,3],[3,4],[4,5],[1,6],[6,7],[3,8],[8,9],[9,10],[1,11],[11,12],[12,13],[3,14],[14,15],[15,16],[1,17],[17,18],[18,19]],
-	"attachments": [], "paint": []
+	"attachments": []
 }`;
 
 fn void copy_file(String from, String to) @local

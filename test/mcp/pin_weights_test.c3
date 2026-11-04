@@ -102,7 +102,7 @@ fn void paint_and_pin_weights_write_one_layer() @test
 
 	f.call_tool("paint_weights", `{"dot":"knee","weight":0.1,"vertices":[0,1]}`)!!.free();
 	f.call_tool("pin_weights", `{"dot":"knee","vertices":[2,3]}`)!!.free();
-	test::@check(f.app.weights_held(knee) && f.app.doc.paint.len() == 0, "the knee's weights were not held as its own");
+	test::@check(f.app.weights_held(knee), "the knee's weights were not held as its own");
 	test::@check(f.app.doc.pin_of(0, knee) == 0.1f && f.app.doc.pin_of(2, knee) == 1.0f, "the two calls did not write the knee's own weights");
 
 	f.call_tool("paint_weights", `{"dot":"knee","reset":true}`)!!.free();

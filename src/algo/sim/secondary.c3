@@ -17,8 +17,8 @@
  document follows: stale entries wait for undo, and the session writer is where
  they are finally dropped.
 
- **The old model is read, never written.** Files before session version 16 and
- every KHR_physics_rigid_bodies file carry the per-bone form, and
+ **The per-bone form never reaches the document.** KHR_physics_rigid_bodies
+ files carry it, and
  `secondary_chains_from_bones` turns those into chains: a run of dynamic bones
  becomes one chain carrying its root bone's numbers. What a run cannot express
  in the new form — a stiffness gradient down a tail, a stiffness of exactly
@@ -26,7 +26,7 @@
  survive, its per-bone gradient does not.
 
  Lives in `core/` with the document it extends: no cui, no window, so a round
- trip and a migration are assertable headless.
+ trip is assertable headless.
 *>
 module crig;
 
@@ -40,8 +40,8 @@ alias SecondaryChainList = List{SecondaryChain};
  Where a chain's editable numbers start from. Presets initialize values a user
  then edits; they are not solver modes, and nothing downstream reads them.
 
- `CUSTOM` is what a migrated setup arrives as — it was tuned by hand under the
- old model and no preset describes it — and what the UI may show once a preset's
+ `CUSTOM` is what a per-bone setup arrives as — it was tuned by hand and no
+ preset describes it — and what the UI may show once a preset's
  numbers have been dragged away from.
 *>
 enum SecondaryPreset : char
@@ -238,8 +238,8 @@ fn float secondary_stiffness(float flexibility)
 }
 
 <*
- The inverse of `secondary_stiffness`, for a setup arriving from the old model
- or from a file: the flexibility that resolves to this stiffness, clamped to the
+ The inverse of `secondary_stiffness`, for a setup arriving from a file: the
+ flexibility that resolves to this stiffness, clamped to the
  range a chain can express. Zero or less — the spring removed outright — reads
  as fully flexible, the nearest thing a chain has to no spring at all.
 *>
@@ -272,8 +272,8 @@ fn JiggleParams SecondaryChain.solver_params(self)
 }
 
 <*
- A chain's behaviour read back out of the old model's numbers: the migration's
- other half, and the inverse of `solver_params` as far as the two forms allow.
+ A chain's behaviour read back out of per-bone numbers: the inverse of
+ `solver_params` as far as the two forms allow.
 
  Damping is exact, gravity is copied, and the stiffness lands on the
  flexibility that resolves nearest to it. A per-bone radius is not carried —
@@ -461,14 +461,14 @@ fn usz secondary_infer_tip(rig::Skeleton* skeleton, usz root)
 }
 
 // ---------------------------------------------------------------------------
-// Migration
+// Per-bone files
 
 <*
- Turns the old per-bone model into chains against this document's own skeleton.
+ Turns per-bone physics into chains against this document's own skeleton.
 
  	`SecondaryChain[] chains = secondary_chains_from_bones(mem, &doc, bones);`
 
- The grouping is the one the old resolver used, so a setup keeps its shape: a
+ A setup keeps its shape: a
  run of dynamic bones, each the sole dynamic child of the one before, is one
  chain; a fork is one chain per branch with the shared parent a chain of its
  own; a dynamic bone on the skeleton's root is dropped, since there is no
@@ -476,7 +476,7 @@ fn usz secondary_infer_tip(rig::Skeleton* skeleton, usz root)
  numbers, read through `secondary_from_params`.
 
  Entries naming dots the document does not hold are skipped. The document is
- not written — the caller records what comes back, so a migration lands in the
+ not written — the caller records what comes back, so the chains land in the
  same undo group as whatever brought the bones in. Empty when nothing resolves;
  the caller frees a non-empty result.
 *>

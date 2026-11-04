@@ -245,9 +245,11 @@ fn void a_finger_the_world_axis_already_suits_keeps_it_exactly() @test
 	Hand hand = add_hand(&app.doc, 1.0f,
 		quaternion::from_axis_angle{float}({ 1, 0, 0 }, 6.0f * (float)math::PI / 180.0f));
 	crig::JointLimitFrame frame = frame_of(&app.doc, hand.digits[2][0]);
-	crig::JointLimitFrame world = crig::cardinal_limit_frame(frame);
-	test::@check(math::abs(frame.rotation.v.dot(world.rotation.v)) > 0.99999f,
-		"the middle finger's frame %s left the world-rolled one %s", frame.axis(X), world.axis(X));
+	// Held out along world X, its X comes from world Z.
+	Vec3 along = frame.axis(Y);
+	Vec3 world = ((Vec3){ 0, 0, 1 } - along * along.z).normalize();
+	test::@check(math::abs(frame.axis(X).dot(world)) > 0.99999f,
+		"the middle finger's frame %s left the world-rolled one %s", frame.axis(X), world);
 	test::@check(math::abs(frame.axis(X).dot(across_the_bone(frame, hand.across()))) >= ALONG_THE_HAND,
 		"the kept frame is not within the hand's keep of its knuckle line");
 }
@@ -394,59 +396,6 @@ fn void using_the_bones_axes_keeps_what_the_table_allows() @test
 		test::@check(app.doc.rotation_limits_of(joint).has_saved_frame, "undo did not bring the saved frame back");
 	}
 	test::@check(!app.use_bone_axes_recorded(hand.digits[2][1]), "a joint with no table took the bone's axes");
-}
-
-<*
- A finger table read from a version 28 session is pinned to the world-rolled
- frame it was written against, where its hand now rolls it, and keeps its
- numbers; one the hand leaves alone, and the same table written today, stay
- derived.
-
- Re-introduce: drop `keep_cardinal_limit_frames` from `session_document`, and
- the index's table is read on its hand's axes — the curl it allowed moved to
- another row.
-*>
-fn void an_older_sessions_finger_tables_keep_their_axes() @test
-{
-	io::printn("an older session's finger tables keep their axes");
-	crig::AppState app = crig::new_app({});
-	defer app.free();
-	crig::RigDocument* doc = &app.doc;
-	Hand hand = add_hand(doc, 1.0f, quaternion::IDENTITY);
-	uint index = hand.digits[1][0];
-	uint middle = hand.digits[2][0];
-	foreach (id : (uint[]){ index, middle })
-	{
-		crig::JointRotationLimits limits = crig::unconstrained_rotation(id);
-		limits.constrained = true;
-		limits.axes[0] = { .allowed = true, .minimum = -1.5f, .maximum = 0.25f };
-		test::@check(doc.set_rotation_limits(id, limits), "the table did not land");
-	}
-	crig::JointLimitFrame now = frame_of(doc, index);
-	Vec3 world = crig::cardinal_limit_frame(now).axis(X);
-	test::@check(math::abs(now.axis(X).dot(world)) < 0.5f, "the index's hand and world axes agree; nothing to pin");
-
-	String text = crig::session_text(mem, doc, "hand.glb", limits: true);
-	defer text.free(mem);
-	test::@check(text.contains(`"version": 33`), "the session is not version 33");
-	crig::RigDocument? current = crig::parse_session(mem, text);
-	if (catch current) { test::@check(false, "today's session did not read"); return; }
-	crig::RigDocument today = current;
-	defer today.free();
-	test::@check(!today.rotation_limits_of(index).has_saved_frame, "a current table was pinned");
-
-	String older = text.replace(mem, `"version": 33`, `"version": 28`);
-	defer older.free(mem);
-	crig::RigDocument? opened = crig::parse_session(mem, older);
-	if (catch opened) { test::@check(false, "the version 28 session did not read"); return; }
-	crig::RigDocument legacy = opened;
-	defer legacy.free();
-	crig::JointRotationLimits held = legacy.rotation_limits_of(index);
-	test::@check(held.has_saved_frame, "the index's table was left to the hand rule");
-	test::@check(frame_of(&legacy, index).axis(X).dot(world) > 0.9999f,
-		"the index's table was pinned to %s, not the axes it was written on", frame_of(&legacy, index).axis(X));
-	test::@check(held.axes[0].minimum == -1.5f, "the pinned table lost its numbers");
-	test::@check(!legacy.rotation_limits_of(middle).has_saved_frame, "a table the hand rule did not move was pinned");
 }
 
 <*

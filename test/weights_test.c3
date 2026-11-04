@@ -1928,10 +1928,6 @@ fn void a_rig_edit_makes_the_riders_stale() @test
 
 <*
  The primitive stores, updates, removes and refuses.
-
- `set_paint`'s claims one layer up, with the one difference that matters: the
- value that removes an entry is 0 here and 1 there, because a pin is a share and
- a dab is a multiplier.
 *>
 fn void a_pin_is_stored_updated_and_removed() @test
 {
@@ -1961,114 +1957,6 @@ fn void a_pin_is_stored_updated_and_removed() @test
 	// A dot that is not in the rig, and the null id.
 	test::@check(!app.doc.set_pin(0, 9999, 1.0f), "a pin was made to a dot that does not exist");
 	test::@check(!app.doc.set_pin(0, 0, 1.0f), "a pin was made to the null dot");
-}
-
-<*
- A share of 1 writes exactly the row a rigidly bound shell gets.
-
- The claim the whole layer rests on. `rig::rigid_shells` zeroes a row and puts a
- single 1 in it, and a lasso drawn over that same piece has to land on the same
- numbers — "near enough" would mean the two routes to a rigid vertex deform
- differently at the seam.
-*>
-fn void a_full_pin_writes_the_rigid_row() @test
-{
-	float[3] dense = { 2.0f, 6.0f, 2.0f };
-	crig::PinColumn[1] pins = {{ .vertex = 0, .joint = 1, .share = 1.0f }};
-
-	crig::pin_over(dense[..], 3, pins[..]);
-
-	test::@check(dense[0] == 0.0f && dense[2] == 0.0f, "the other joints kept a hold on a rigid vertex");
-	test::@check(dense[1] == 1.0f, "the pinned joint came out at %.9f rather than 1", dense[1]);
-}
-
-<*
- A partial pin takes its share and leaves the rest in the proportion it found it.
-
- What makes a fractional pin worth having at all — the smooth op writes these,
- and a rest that was flattened rather than scaled would turn every boundary band
- into a two-way tie.
-*>
-fn void a_half_pin_shares_the_rest_pro_rata() @test
-{
-	float[3] dense = { 2.0f, 6.0f, 2.0f };
-	crig::PinColumn[1] pins = {{ .vertex = 0, .joint = 0, .share = 0.5f }};
-
-	crig::pin_over(dense[..], 3, pins[..]);
-
-	test::@check(dense[0] == 0.5f, "the pinned joint holds %.9f rather than the half asked for", dense[0]);
-	test::@check(math::abs(dense[1] - 0.375f) < 1.0e-6f, "the larger of the rest holds %.9f rather than 0.375", dense[1]);
-	test::@check(math::abs(dense[2] - 0.125f) < 1.0e-6f, "the smaller holds %.9f rather than 0.125", dense[2]);
-
-	float sum = dense[0] + dense[1] + dense[2];
-	test::@check(math::abs(sum - 1.0f) < 1.0e-6f, "the row sums to %.9f", sum);
-
-	// The ratio the binder had between the two un-pinned joints, unchanged.
-	test::@check(math::abs(dense[1] / dense[2] - 3.0f) < 1.0e-5f,
-		"the rest came out at %.9f : 1 where the binder said 3 : 1", dense[1] / dense[2]);
-}
-
-<*
- Two dots each promised most of a vertex are scaled to fit, keeping their ratio.
-
- A refusal would be the wrong answer: both statements are things a user can
- reasonably have said — a region drawn twice, an op writing a top-four — and the
- only division of one vertex that respects both is the proportional one.
-*>
-fn void pins_that_overpromise_are_scaled_to_one() @test
-{
-	float[3] dense = { 5.0f, 5.0f, 5.0f };
-	crig::PinColumn[2] pins = {
-		{ .vertex = 0, .joint = 0, .share = 0.4f },
-		{ .vertex = 0, .joint = 1, .share = 1.0f },
-	};
-
-	crig::pin_over(dense[..], 3, pins[..]);
-
-	float sum = dense[0] + dense[1] + dense[2];
-	test::@check(math::abs(sum - 1.0f) < 1.0e-6f, "the row sums to %.9f rather than 1", sum);
-	test::@check(dense[2] == 0.0f, "an un-pinned joint kept %.9f of a fully promised vertex", dense[2]);
-	test::@check(math::abs(dense[0] - 0.4f / 1.4f) < 1.0e-6f,
-		"the smaller claim came out at %.9f rather than its share of the two", dense[0]);
-	test::@check(math::abs(dense[1] - 1.0f / 1.4f) < 1.0e-6f,
-		"the larger claim came out at %.9f", dense[1]);
-}
-
-<*
- A pin on a row the binder left empty survives normalisation.
-
- The case the layer exists for: where every weight is zero there is no ratio to
- keep and no multiplier that reaches anything, so the pinned column is the only
- thing in the row — and every consumer divides by the row's own sum, which hands
- the vertex to it outright.
-*>
-fn void a_pin_over_an_empty_row_takes_the_whole_vertex() @test
-{
-	float[3] dense = { 0.0f, 0.0f, 0.0f };
-	crig::PinColumn[1] pins = {{ .vertex = 0, .joint = 2, .share = 0.5f }};
-
-	crig::pin_over(dense[..], 3, pins[..]);
-
-	test::@check(dense[0] == 0.0f && dense[1] == 0.0f, "something appeared in a row the binder left empty");
-	test::@check(dense[2] == 0.5f, "the pinned joint holds %.9f", dense[2]);
-
-	float sum = dense[0] + dense[1] + dense[2];
-	test::@check(sum > 0.0f && math::abs(dense[2] / sum - 1.0f) < 1.0e-6f,
-		"the row does not normalise to the pinned joint holding all of it");
-}
-
-// No pins is the ordinary case and has to cost nothing and change nothing.
-fn void no_pins_leaves_the_matrix_alone() @test
-{
-	float[6] dense = { 2.0f, 6.0f, 2.0f, 1.0f, 0.0f, 3.0f };
-	float[6] before = dense;
-
-	crig::pin_over(dense[..], 3, {});
-
-	for (usz i = 0; i < 6; i++)
-	{
-		test::@check(dense[i] == before[i], "cell %d moved from %.9f to %.9f", i, before[i], dense[i]);
-	}
 }
 
 <*

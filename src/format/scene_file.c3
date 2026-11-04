@@ -247,5 +247,5 @@ fn void? write_scene_file(String scene_path, SceneFile* scene)
 {
 	String body = scene_file_text(mem, scene, scene_path);
 	defer body.free(mem);
-	if (catch save_safely(scene_path, body)) return SCENE_IO~;
+	if (catch gltf_edit::save_safely(scene_path, body)) return SCENE_IO~;
 }

@@ -26,7 +26,7 @@ fn void mix_key(ulong* hash, ulong value) @private
  There are exactly two, and every weight tool asks for one of them by name
  rather than assembling its own from the layers underneath. Before there was a
  name for each, five callers each built "the automatic weights" their own way —
- some with the paint multipliers on, some without — and two tools asked the same
+ some with the hand edits on, some without — and two tools asked the same
  question got two answers.
 *>
 enum WeightLayer

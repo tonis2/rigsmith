@@ -56,8 +56,8 @@ struct AnimFoot
  Which joints touch the ground, when, and what "the ground" means.
 
  An empty `feet` is the whole of "this clip has no ground solve", which is every
- clip written before this existed and every clip that has no business having one
- — a wave, a turret, anything that never touches a floor.
+ clip that has no business having one — a wave, a turret, anything that never
+ touches a floor.
 
  `floor` is a height in the rig's own model space, not a fraction of anything: it
  is compared against joint positions, which arrive at whatever scale the mesh was

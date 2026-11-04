@@ -56,6 +56,7 @@ module crig;
 
 import std::collections::list;
 import std::collections::object;
+import gltf_edit;
 
 
 import std::encoding::json;
@@ -301,8 +302,7 @@ struct CrigConfig
 	// The animation aids: onion-skin ghosts of the posed mesh `ghost_past` and
 	// `ghost_future` steps either side of the playhead, each `ghost_step` frames
 	// apart and `ghost_opacity` at most, and the selected joint's motion path.
-	// `load_config` fills the defaults; a config that names the retired
-	// `ghost_keys` gets that many either side.
+	// `load_config` fills the defaults.
 	bool show_ghosts;
 	int ghost_past;
 	int ghost_future;
@@ -492,16 +492,6 @@ fn void CrigConfig.adopt(&self, Object* parsed)
 	if (try bool wanted = parsed.get_bool("brush_xray")) self.brush_xray = wanted;
 	if (try bool wanted = parsed.get_bool("show_ghosts")) self.show_ghosts = wanted;
 	if (try bool wanted = parsed.get_bool("show_motion_path")) self.show_motion_path = wanted;
-	// The retired key count, read as the same number of ghosts each side so an
-	// old config keeps a sensible picture. The new keys win when both are there.
-	if (try double wanted = parsed.get_float("ghost_keys"))
-	{
-		if (wanted >= 1 && wanted <= MAX_GHOST_SIDE)
-		{
-			self.ghost_past = (int)wanted;
-			self.ghost_future = (int)wanted;
-		}
-	}
 	if (try double wanted = parsed.get_float("ghost_past"))
 	{
 		if (wanted >= 0 && wanted <= MAX_GHOST_SIDE) self.ghost_past = (int)wanted;
@@ -929,7 +919,7 @@ fn void CrigConfig.save(&self)
 	String path = string::format(mem, "%s/%s", self.directory, CONFIG_FILE);
 	defer alloc::free(mem, path.ptr);
 
-	(void)save_safely(path, text);
+	(void)gltf_edit::save_safely(path, text);
 }
 
 fn void CrigConfig.free(&self)

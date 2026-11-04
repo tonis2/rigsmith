@@ -635,8 +635,8 @@ fn bool AnimLayer.overlaps(&self, AnimLayer* other, float duration)
  for the same track and overlaps no strip already there; anything else — a
  higher track, a lower one, an overlap — goes on the next track up. So the
  tracks come out numbered from zero without gaps, strips on one track never
- overlap, and a stack that names no tracks (an older file, a fresh layer put on
- top) comes out one layer per track.
+ overlap, and a stack that names no tracks (a fresh layer put on top) comes out
+ one layer per track.
 *>
 fn void layers_settle_tracks(AnimLayer[] layers, float duration)
 {

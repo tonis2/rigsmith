@@ -919,7 +919,7 @@ fn bool anim_track_visible(bool filtering, String[] selected, String joint) @pri
 }
 
 // How the key a lane shows at `at` leaves for the next one, resolved through
-// the clip's blend so a legacy INHERIT key reads as the curve it plays.
+// the clip's blend so an INHERIT key reads as the curve it plays.
 fn AnimInterpolation anim_key_curve(AnimTemplate* clip, String joint, bool rotation, float at) @private
 {
 	if (!clip) return INHERIT;

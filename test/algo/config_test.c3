@@ -190,41 +190,11 @@ fn void an_impossible_dock_ratio_reads_as_the_default() @test
 	test::@check(config.joint_panel_tab == 0, "a tab 40 was adopted");
 }
 
-<*
- A config from before ghosts were frames: `ghost_keys` is read as that many ghosts
- each side, the new keys win over it, and numbers out of range read as defaults.
-*>
-fn void the_retired_ghost_key_count_still_reads() @test
+// Numbers out of range read as defaults.
+fn void impossible_ghost_settings_read_as_defaults() @test
 {
-	String file_path = fresh("old-ghost-keys");
+	String file_path = fresh("ghost-range");
 	defer done(file_path);
-
-	if (catch file::save(file_path, `{ "version": 1, "show_ghosts": true, "ghost_keys": 2 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig old = crig::load_config();
-	test::@check(old.show_ghosts && old.ghost_past == 2 && old.ghost_future == 2,
-		"ghost_keys 2 did not become 2 each side (%d, %d)", old.ghost_past, old.ghost_future);
-	test::@check(old.ghost_step == 1 && old.ghost_opacity == crig::DEFAULT_GHOST_OPACITY
-		&& old.ghost_spread == crig::DEFAULT_GHOST_SPREAD && old.ghost_direction == 0, "and the rest stays default");
-	old.save();
-	old.free();
-
-	crig::CrigConfig again = crig::load_config();
-	test::@check(again.ghost_past == 2 && again.ghost_future == 2, "the migrated counts did not survive a save");
-	again.free();
-
-	if (catch file::save(file_path, `{ "version": 1, "ghost_keys": 2, "ghost_past": 9, "ghost_future": 0, "ghost_step": 3 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig both = crig::load_config();
-	test::@check(both.ghost_past == 9 && both.ghost_future == 0 && both.ghost_step == 3,
-		"the new keys did not win (%d, %d, %d)", both.ghost_past, both.ghost_future, both.ghost_step);
-	both.free();
 
 	if (catch file::save(file_path, `{ "version": 1, "ghost_past": 99, "ghost_future": -1, "ghost_step": 0, "ghost_opacity": 4, "ghost_spread": 3, "ghost_direction": 9 }`[..]))
 	{

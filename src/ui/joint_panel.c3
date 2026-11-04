@@ -631,8 +631,8 @@ fn void JointPanel.build_joint_tab(&self, AppState* app, JointCard* card)
 						};
 					}
 
-					// A table pinned to axes of its own — by an older file, a move or a
-					// mirror — can be moved onto the ones its bone derives, which for a
+					// A table pinned to axes of its own — by a move or a mirror —
+					// can be moved onto the ones its bone derives, which for a
 					// finger are its hand's: the way back to axes that agree with its
 					// neighbours'.
 					if (card.saved_apart)

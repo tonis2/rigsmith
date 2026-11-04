@@ -411,7 +411,7 @@ fn void the_layer_stack_round_trips_through_the_sidecar() @test
 	test::@check(second == text, "a second write of the read stack is different");
 }
 
-fn void a_version_19_sidecar_without_layers_still_reads() @test
+fn void a_sidecar_without_layers_reads_and_other_versions_are_refused() @test
 {
 	RigDocument doc = {};
 	defer doc.free();
@@ -423,25 +423,20 @@ fn void a_version_19_sidecar_without_layers_still_reads() @test
 	test::@check(!text.contains(`"layers"`), "a clip with no layers wrote a layers member");
 	test::@check(text.contains(`"version": 33`), "the sidecar is not version 33");
 
-	String old = text.replace(mem, `"version": 33`, `"version": 19`);
-	defer old.free(mem);
-	RigDocument? opened = crig::parse_session(mem, old);
-	if (catch fault error = opened)
-	{
-		test::@check(false, "a version 19 session was refused: %s", error);
-		return;
-	}
-	RigDocument read = opened;
-	read.free();
-	AnimTemplate[]? clips = crig::parse_session_clips(mem, old);
+	AnimTemplate[]? clips = crig::parse_session_clips(mem, text);
 	if (catch fault error = clips)
 	{
-		test::@check(false, "the version 19 clips did not read: %s", error);
+		test::@check(false, "the clips did not read: %s", error);
 		return;
 	}
 	AnimTemplate[] back = clips;
 	defer crig::free_animations(mem, back);
 	test::@check(back.len == 1 && back[0].layers.len == 0 && back[0].keyframes.len == 1, "a clip with no layers came back with some");
+
+	String old = text.replace(mem, `"version": 33`, `"version": 19`);
+	defer old.free(mem);
+	RigDocument? stale = crig::parse_session(mem, old);
+	test::@check(@catch(stale) == crig::SESSION_OLD, "an older version was not refused as old");
 
 	String future = text.replace(mem, `"version": 33`, `"version": 34`);
 	defer future.free(mem);

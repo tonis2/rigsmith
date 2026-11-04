@@ -674,29 +674,17 @@ fn void exclusions_round_trip_through_the_session_and_stale_ones_are_dropped() @
 	String bare = crig::session_text(mem, &plain, "plain.glb");
 	defer bare.free(mem);
 	test::@check(!bare.contains(`collision_exclusions`), "an unexcluded rig wrote the key anyway");
-
-	// Older sessions have none and open as before.
-	String older = `{"version":13,"dots":[{"id":1,"position":[0,0,0]}],"edges":[]}`;
-	crig::RigDocument? legacy = crig::parse_session(mem, older);
-	if (catch legacy)
-	{
-		test::@check(false, "a session from before exclusions no longer opens");
-		return;
-	}
-	crig::RigDocument old = legacy;
-	defer old.free();
-	test::eq(old.collision_exclusions.len(), (sz)0);
 }
 
 fn void malformed_exclusion_sessions_are_refused() @test
 {
 	String[3] bad = {
 		// Naming a dot that is not there.
-		`{"version":14,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[1,3]]}`,
+		`{"version":33,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[1,3]]}`,
 		// One dot against itself.
-		`{"version":14,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[2,2]]}`,
+		`{"version":33,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[2,2]]}`,
 		// The same pair twice, once reversed.
-		`{"version":14,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[1,2],[2,1]]}`,
+		`{"version":33,"dots":[{"id":1,"position":[0,0,0]},{"id":2,"position":[0,1,0]}],"edges":[],"collision_exclusions":[[1,2],[2,1]]}`,
 	};
 	foreach (usz i, text : bad)
 	{
@@ -707,7 +695,7 @@ fn void malformed_exclusion_sessions_are_refused() @test
 			test::@check(false, "malformed exclusion session %d was accepted", i);
 		}
 	}
-	String shapeless = `{"version":14,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"collision_exclusions":[[1]]}`;
+	String shapeless = `{"version":33,"dots":[{"id":1,"position":[0,0,0]}],"edges":[],"collision_exclusions":[[1]]}`;
 	crig::RigDocument? parsed = crig::parse_session(mem, shapeless);
 	if (try crig::RigDocument accepted = parsed)
 	{
