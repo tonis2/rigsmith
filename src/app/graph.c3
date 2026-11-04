@@ -160,149 +160,37 @@ fn Graph AppState.build_graph(&self, AnimRef ref)
 	if (names.len() == 0) return graph;
 	if (primary.len == 0) primary = names[0];
 
-	List{GraphChannel} channels;
-	channels.init(mem);
-	defer channels.free();
-	List{GraphCurve} curves;
-	curves.init(mem);
-	defer curves.free();
-	List{GraphKey} keys;
-	keys.init(mem);
-	defer keys.free();
-	List{GraphHandle} handles;
-	handles.init(mem);
-	defer handles.free();
-
-	foreach (usz n, name : names.array_view())
-	for (int pass = 0; pass < 2; pass++)
-	{
-		bool rotation = pass == 0;
-		if (clip.channel_count(name, rotation) == 0) continue;
-		uint id = ids[(sz)n];
-		channels.push({ .joint = name.copy(mem), .id = id, .rotation = rotation, .primary = name == primary });
-		bool[3] drawn;
-		bool some;
-		for (int axis = 0; axis < 3; axis++)
-		{
-			drawn[axis] = !self.graph_hidden(id, rotation, axis);
-			some = some || drawn[axis];
-		}
-		if (!some) continue;
-
-		// The channel's keys, in time order.
-		List{float} key_times;
-		key_times.init(mem);
-		defer key_times.free();
-		List{usz} key_frames; // the clip's keyframe of each
-		key_frames.init(mem);
-		defer key_frames.free();
-		foreach (usz f, frame : clip.keyframes)
-		{
-			AnimKeyDot ignored;
-			if (!frame.channel_dot(name, rotation, &ignored)) continue;
-			key_times.push(frame.time);
-			key_frames.push(f);
-		}
-		List{float} times;
-		times.init(mem);
-		defer times.free();
-		for (usz i = 0; i <= GRAPH_SAMPLES; i++) times.push(clip.duration * (float)i / (float)GRAPH_SAMPLES);
-		foreach (at : key_times.array_view()) times.push(at);
-		float[] sorted = times.array_view();
-		sort::quicksort(sorted, &by_float);
-
-		// Sampled once per time, unwrapped along the way, shared by the three axes.
-		Vec3[] values = alloc::new_array(mem, Vec3, (sz)sorted.len);
-		defer alloc::free(mem, values);
-		Vec3 near;
-		foreach (usz i, at : sorted)
-		{
-			values[i] = graph_value(clip, name, rotation, at, near, graph.unit);
-			near = values[i];
-		}
-
-		usz[3] curve_of;
-		for (int axis = 0; axis < 3; axis++)
-		{
-			if (!drawn[axis]) continue;
-			Vec2[] samples = alloc::new_array(mem, Vec2, (sz)sorted.len);
-			foreach (usz i, at : sorted) samples[i] = { at, values[i][axis] };
-			curve_of[axis] = (usz)curves.len();
-			curves.push({ .joint = name.copy(mem), .rotation = rotation, .axis = axis,
-				.primary = name == primary, .samples = samples });
-		}
-
-		AnimChannels channel = rotation ? ROTATION : TRANSLATION;
-		foreach (usz k, at : key_times.array_view())
-		{
-			Vec3 shown;
-			foreach (usz i, t : sorted) if (t == at) { shown = values[i]; break; }
-			bool selected = self.animation_key_selected(ref, at)
-				|| self.animation_channel_key_selected(ref, at, name, channel);
-			usz[3] key_of;
-			for (int axis = 0; axis < 3; axis++)
-			{
-				if (!drawn[axis]) continue;
-				key_of[axis] = (usz)keys.len();
-				keys.push({ .curve = curve_of[axis], .time = at, .value = shown[axis],
-					.shown = shown, .selected = selected });
-			}
-
-			// Handles on this key's own ends: the tangent leaving it and the one
-			// arriving at it, each a third of its segment away.
-			if (!selected) continue;
-			for (int side = 0; side < 2; side++)
-			{
-				bool incoming = side == 1;
-				if (incoming ? k == 0 : (sz)k + 1 >= key_times.len()) continue;
-				// The segment belongs to the key it leaves from.
-				usz owner = incoming ? key_frames[(sz)k - 1] : key_frames[(sz)k];
-				float span = incoming ? at - key_times[(sz)k - 1] : key_times[(sz)k + 1] - at;
-				if (!(span > 0.0f)) continue;
-				AnimKeyDot dot;
-				if (!clip.keyframes[owner].channel_dot(name, rotation, &dot)) continue;
-				AnimInterpolation curve = dot.interpolation(rotation, clip.blend);
-				if (curve == HOLD || curve == LINEAR) continue;
-				Vec3 rate = effective_tangent(*clip, key_frames[(sz)k], name, rotation, incoming);
-				// Per second, in the units the curve is drawn in.
-				Vec3 slope = rotation ? euler_rate_of_angular_rate(shown, rate) : rate * graph.unit;
-				float length = span / 3.0f;
-				for (int axis = 0; axis < 3; axis++)
-				{
-					if (!drawn[axis]) continue;
-					float run = incoming ? -length : length;
-					handles.push({ .key = key_of[axis], .incoming = incoming, .length = length,
-						.at = { at + run, shown[axis] + slope[axis] * run } });
-				}
-			}
-		}
-	}
-	graph.curves = curves.to_array(mem);
-	graph.keys = keys.to_array(mem);
-	graph.handles = handles.to_array(mem);
-	graph.channels = channels.to_array(mem);
-
-	// Two kinds in one plot: each curve fills -1..1 by its own range.
-	bool has_rotation;
-	bool has_position;
-	foreach (curve : graph.curves)
-	{
-		has_rotation = has_rotation || curve.rotation;
-		has_position = has_position || !curve.rotation;
-	}
-	graph.mixed = has_rotation && has_position;
-	if (graph.mixed)
-	{
-		foreach (&curve : graph.curves)
-		{
-			float low = curve.samples[0].y;
-			float high = low;
-			foreach (p : curve.samples) { low = math::min(low, p.y); high = math::max(high, p.y); }
-			curve.mid = (low + high) * 0.5f;
-			curve.half = math::max((high - low) * 0.5f, curve.rotation ? 0.5f : 5.0e-5f * graph.unit);
-		}
-	}
+	GraphLook look = { .app = self, .ref = ref };
+	GraphAsk ask = {
+		.clip = clip,
+		.names = names.array_view(),
+		.ids = ids.array_view(),
+		.primary = primary,
+		.axis_hidden = &graph_axis_hidden,
+		.key_selected = &graph_key_selected,
+		.ctx = &look,
+	};
+	graph_fill(&graph, &ask);
 	return graph;
+}
+
+// What the plot reads back from the app as it draws.
+struct GraphLook @local
+{
+	AppState* app;
+	AnimRef ref;
+}
+
+fn bool graph_axis_hidden(void* ctx, uint id, bool rotation, int axis) @local
+{
+	return ((GraphLook*)ctx).app.graph_hidden(id, rotation, axis);
+}
+
+fn bool graph_key_selected(void* ctx, float at, String name, AnimChannels channel) @local
+{
+	GraphLook* look = ctx;
+	return look.app.animation_key_selected(look.ref, at)
+		|| look.app.animation_channel_key_selected(look.ref, at, name, channel);
 }
 
 // ---------------------------------------------------------------------------
