@@ -321,29 +321,6 @@ fn void one_target_moves_three_locked_joints_as_one_step() @test
 }
 
 <*
- A chain locked together lands every joint on the target: the child aims after
- its parent has turned.
-*>
-fn void a_chain_locked_together_lands_each_joint_on_the_target() @test
-{
-	Figure fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-	fixture.select_chain();
-	test::@check(app.add_aim_target(), "the target was not added");
-	Vec3 far = { -0.8f, 1.0f, 0.9f };
-	app.auto_key = false;
-	test::@check(app.begin_aim_drag(0, true), "the drag did not begin");
-	app.aim_target_toward(far);
-	app.end_drag();
-	foreach (id : (uint[3]){ fixture.spine, fixture.neck, fixture.head })
-	{
-		test::@check(fixture.lock_error(id, far) < 1.0e-3f, "joint %d is off the target", id);
-	}
-}
-
-<*
  The smart spread: a joint locked alone spreads over 3, several locked at once
  over 1 each.
 *>

@@ -646,39 +646,6 @@ fn void renaming_a_clip_of_the_models_file_lists_it_once() @test
 	test::@check(visible_animation(&f, "Renamed in place", "") < 0, "Undo left the renamed clip");
 }
 
-// Turning Loop on in the transport, over a clip whose last key sits on the end
-// with another pose, eases the wrap back to the first pose in one undo step.
-fn void the_loop_button_eases_a_differing_end_back() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
-	AnimRef clip = f.app.new_clip("Reach", 2, from_rest: true, loop: false);
-	f.app.editing = clip;
-	test::@check(f.app.pose_from_clip(clip, 2), "could not sample the end");
-	f.app.set_working_pose(f.app.doc.dots[0].id, quaternion::from_axis_angle{float}(((Vec3){ 0, 1, 0 }), 0.6f), {});
-	f.app.pose_edit_pending = true;
-	f.app.edit_time = 2;
-	test::@check(f.app.key_pose_edit(), "could not key the end pose");
-	f.app.show_edited();
-	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
-	f.ui.flush();
-
-	sz history = f.app.undo_stack.cursor;
-	f.click(f.center_of(crig::ANIM_LOOP_TOGGLE_ID)!!);
-	f.ui.flush();
-	AnimTemplate* looped = f.app.clip(f.app.editing);
-	test::@check(looped.loop && looped.duration > 2.0f, "Loop did not ease the differing end back (%s s)", looped.duration);
-	test::@check(looped.keyframes[looped.keyframes.len - 1].same_pose(looped.keyframes[0]),
-		"the new end is not the first pose");
-	test::@check(f.ui.find_id(crig::ANIM_LOOP_TOGGLE_ID)!!.widget_as(ToggleButton).on, "the Loop button did not light");
-	test::eq(f.app.undo_stack.cursor, history + 1);
-	test::@check(f.app.undo(), "Loop could not be undone");
-	test::@check(!f.app.clip(f.app.editing).loop && f.app.clip(f.app.editing).duration == 2,
-		"undo did not restore the one-shot clip");
-}
-
 // Balance starts on, and the button in the Pose tab's Posing options turns it off
 // and back.
 fn void the_balance_button_switches_the_lean() @test

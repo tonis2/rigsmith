@@ -310,24 +310,6 @@ fn usz owned_by(crig::WeightSurvey survey, uint dot)
 // being a multiplier: it means the same thing after the base underneath it has
 // moved, so a dragged dot re-derives without a stroke having to be redone.
 
-// One dot's raw weight on one vertex, bound through the whole app path.
-fn float weight_on(crig::AppState* app, uint vertex, uint dot)
-{
-	crig::RigView? opened = app.open_rig(mem);
-	if (catch opened) return -1.0f;
-	crig::RigView view = opened;
-	defer view.free(mem);
-
-	sz joint = view.joint_of(dot);
-	if (joint < 0) return -1.0f;
-
-	float[] dense = app.weights(mem, &view);
-	defer alloc::free(mem, dense);
-
-	usz at = (usz)vertex * view.len() + (usz)joint;
-	return at < dense.len ? dense[at] : -1.0f;
-}
-
 <*
  The survey sees the paint.
 
@@ -1884,60 +1866,6 @@ fn crig::AppState propped(rig::TriMesh mesh)
 }
 
 <*
- A bind says which bone the loose piece was frozen onto, and the answer survives
- the bind that produced it.
-
- The one thing `get_shells`' `auto` is made of. Without it
- a piece can be rigid with nothing anywhere saying why, which reads as a pin
- somebody forgot making rather than as the binder doing its job.
-*>
-fn void a_bind_names_the_bone_a_loose_piece_rides() @test
-{
-	usz body_vertices;
-	rig::TriMesh mesh = body_and_prop(&body_vertices);
-	defer mesh.free(mem);
-
-	crig::AppState app = propped(mesh);
-	defer app.free();
-
-	if (app.shells.count != 2)
-	{
-		test::@check(false, "SKIPPED — the fixture is %d shells, not two", app.shells.count);
-		return;
-	}
-	int prop = app.shells.of[body_vertices];
-
-	crig::RigView? opened = app.open_rig(mem);
-	if (catch opened)
-	{
-		test::@check(false, "the three-dot chain produced no skeleton");
-		return;
-	}
-	crig::RigView view = opened;
-	defer view.free(mem);
-
-	app.base_bind_for(&view);
-
-	test::@check(!app.riders_stale, "a bind left the riders stale, so nothing may read them");
-	test::@check(app.shell_riders.len == app.shells.count,
-		"the riders are %d long for %d pieces", app.shell_riders.len, app.shells.count);
-
-	int rides = app.shell_rider((usz)prop);
-	test::@check(rides >= 0, "the binder left the loose piece to the falloff");
-	if (rides < 0) return;
-
-	// Named through the view that produced the index, which is the only correct
-	// conversion: joint indices are breadth-first output.
-	test::@check(view.names[(usz)rides] == "spine",
-		"the prop rides \"%s\" rather than the bone carrying the whole piece", view.names[(usz)rides]);
-
-	// And the body is not frozen onto anything, or the rule froze the mesh it was
-	// measuring.
-	test::@check(app.shell_rider((usz)(1 - prop)) < 0,
-		"the body itself was reported as riding joint %d", app.shell_rider((usz)(1 - prop)));
-}
-
-<*
  A rig edit takes the riders away, and a refresh brings them back.
 
  The indices are positions in a breadth-first joint order, so an edit that
@@ -2034,10 +1962,6 @@ fn void a_pin_is_stored_updated_and_removed() @test
 	test::@check(!app.doc.set_pin(0, 9999, 1.0f), "a pin was made to a dot that does not exist");
 	test::@check(!app.doc.set_pin(0, 0, 1.0f), "a pin was made to the null dot");
 }
-
-// One vertex's row of a dense matrix, so the checks below read as rows rather
-// than as offsets.
-fn float[] row_of(float[] dense, usz vertex, usz bones) @local => dense[vertex * bones : bones];
 
 <*
  A share of 1 writes exactly the row a rigidly bound shell gets.

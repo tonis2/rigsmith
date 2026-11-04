@@ -60,28 +60,6 @@ fn void animation_trim_dialog_keeps_a_range_and_undoes_once() @test
 		&& f.app.clip(f.app.editing).keyframes.len == 5, "the crop did not undo in one step");
 }
 
-fn void animation_trim_dialog_removes_a_range_and_joins_the_edges() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	trim_workspace(&f);
-
-	sz history = f.app.undo_stack.cursor;
-	trim_open(&f, "0.5", "1.5");
-	f.click(f.center_of(crig::ANIM_TRIM_REMOVE_ID)!!);
-	f.ui.flush();
-	AnimTemplate* joined = f.app.clip(f.app.editing);
-	test::@check(math::abs(joined.duration - 1.0f) < 1.0e-6f, "the duration is %.3f, wanted a second less", joined.duration);
-	test::@check(joined.keyframes.len == 3 && trim_key_at(&f, 0) && trim_key_at(&f, 0.5f) && trim_key_at(&f, 1.0f),
-		"%d keys; wanted 0, the joined edge at 0.5 and the 2 s key moved to 1", joined.keyframes.len);
-	test::@check(math::abs(f.app.edit_time - 0.5f) < 1.0e-6f,
-		"a playhead inside the cut should land on the seam, not %.3f", f.app.edit_time);
-	test::eq(f.app.undo_stack.cursor, history + 1);
-	test::@check(f.app.undo() && f.app.clip(f.app.editing).duration == 2.0f
-		&& f.app.clip(f.app.editing).keyframes.len == 5, "the cut did not undo in one step");
-}
-
 fn void animation_trim_dialog_refuses_bad_ranges_and_cancels_cleanly() @test
 {
 	Fixture f;

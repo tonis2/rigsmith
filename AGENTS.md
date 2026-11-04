@@ -15,7 +15,7 @@ Only run c3c test full leak checks when told directly.
 
 The tests should only use .glb files in the assets folder, no fixtures
 
-Algorithm tests go in test/algo and need no editor: tools/test_algo.sh runs them in seconds.
+Algorithm tests go in test/algo and need no editor. Run a suite with c3c test --test-filter <suite>; CI runs them all through tools/test_algo.sh.
 
 # Layers
 

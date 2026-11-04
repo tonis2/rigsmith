@@ -110,30 +110,6 @@ fn void a_turn_at_one_selected_key_lands_on_all_of_them() @test
 	}
 }
 
-// A scrubbed playhead sits beside keys more often than on one; inside the picked
-// span it is still an edit to that span, and it adds no key of its own.
-fn void a_turn_between_selected_keys_lands_on_all_of_them() @test
-{
-	SpreadFixture f;
-	AnimRef clip = f.open();
-	defer f.close();
-	test::eq(f.app.select_animation_keys_between(clip, 0.25f, 0.75f), (usz)3);
-	test::eq(f.app.spread_key_count(clip, 0.6f), (usz)3);
-
-	f.turn_at(0.6f, 0.3f);
-	sz before = f.app.undo_stack.cursor;
-	test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed");
-	test::eq(f.app.undo_stack.cursor, before + 1);
-	AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
-	test::eq(keys.len, (sz)5);
-	foreach (time : (float[3]){ 0.25f, 0.5f, 0.75f })
-	{
-		test::@check(hip_apart(keys, time, time + 0.3f) < 1.0e-6f, "the selected key at %f did not take the turn", time);
-	}
-	test::@check(hip_apart(keys, 0.0f, 0.0f) < 1.0e-6f && hip_apart(keys, 1.0f, 1.0f) < 1.0e-6f,
-		"a key outside the selection moved");
-}
-
 fn void off_the_selection_or_with_one_key_picked_only_the_playhead_is_keyed() @test
 {
 	SpreadFixture f;

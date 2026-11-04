@@ -38,7 +38,7 @@ fn LegPose rest_leg(crig::RigView* view) @local
 	};
 }
 
-fn void LegPose.free(&self) @local
+fn void LegPose.free(&self)
 {
 	self.pose.free(mem);
 	alloc::free(mem, self.palette);
