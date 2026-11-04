@@ -422,25 +422,7 @@ fn FootPinReport[]? AppState.pin_clip_feet(
 	asked.init(tmem);
 	if (auto)
 	{
-		AnimGround derived;
-		defer derived.free(mem);
-		bool read = false;
-		foreach (joint : joints)
-		{
-			sz before = asked.len();
-			foreach (foot : clip.ground.feet)
-			{
-				if (foot.joint != joint || foot.off_floor) continue;
-				asked.push(foot_window_seconds(joint, foot, clip));
-			}
-			if (asked.len() > before) continue;
-			if (!read)
-			{
-				derived = derived_contacts(&view.skeleton, names, clip, every_run: true);
-				read = true;
-			}
-			foreach (foot : derived.feet) if (foot.joint == joint) asked.push(foot_window_seconds(joint, foot, clip));
-		}
+		foot_windows_of(&asked, &view.skeleton, names, clip, joints);
 	}
 	else
 	{
@@ -477,20 +459,7 @@ fn FootPinReport[]? AppState.pin_clip_feet(
 	}
 	if (measured) *measured = travel;
 
-	// The floor the spec sets, against the one its contacts rest on.
-	float floor_shift = 0.0f;
-	if (clip.ground.floor_set)
-	{
-		usz[16] contact;
-		bool[16] down;
-		GroundContacts found = ground_contacts(&view.skeleton, names, clip.ground, 0.0f, contact[..], down[..]);
-		if (found.count > 0)
-		{
-			float rest = view.skeleton.joints[contact[0]].y;
-			for (usz i = 1; i < found.count; i++) rest = math::min(rest, view.skeleton.joints[contact[i]].y);
-			floor_shift = clip.ground.floor - rest;
-		}
-	}
+	float floor_shift = pin_floor_shift(&view.skeleton, names, clip.ground);
 
 	AnimPinList next;
 	next.init(mem);
@@ -519,27 +488,9 @@ fn FootPinReport[]? AppState.pin_clip_feet(
 
 		rig::Pose pose = self.evaluated_clip_pose(mem, &view, clip, ref, opens);
 		defer pose.free(mem);
-		Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
-		if (catch built) continue;
-		defer alloc::free(mem, built);
-		Vec3 where = view.skeleton.joints[j].transform(built[j]);
-		where.y = view.skeleton.joints[j].y + floor_shift;
-
-		AnimPin pin = pin_defaults(mem, names[j], where / height, from, to);
-		pin.blend = math::min(blend, (to - from) * 0.5f);
-		pin.travel = -travel / height;
-		if (flat)
-		{
-			Quaternionf[]? world = pose.world_rotations(mem, &view.skeleton);
-			if (try world)
-			{
-				Quaternionf turned = world[j];
-				Quaternionf yaw = { 0.0f, turned.v.y, 0.0f, turned.v.w };
-				pin.orient = yaw.v.length_sq() > 1.0e-12f ? yaw.normalize() : quaternion::IDENTITY;
-				pin.rotation = true;
-				alloc::free(mem, world);
-			}
-		}
+		AnimPin? made = foot_pin_at(mem, &view.skeleton, pose, j, names[j], from, to, floor_shift, blend, travel, flat);
+		if (catch made) continue;
+		AnimPin pin = made;
 		// A window that runs into one already written on this joint is dropped: a
 		// joint holds one pin at a time.
 		bool clash = false;
@@ -563,15 +514,7 @@ fn FootPinReport[]? AppState.pin_clip_feet(
 	// leg cannot stretch that far — so the windows pinned become its contacts too.
 	if (!clip.ground.solves())
 	{
-		AnimFoot[] feet = alloc::new_array(mem, AnimFoot, (sz)(pinned.pins.len - first_new));
-		for (usz i = first_new; i < pinned.pins.len; i++)
-		{
-			AnimPin* pin = &pinned.pins[i];
-			float down = pin.from / clip.duration;
-			float up = pin.to / clip.duration;
-			if (clip.loop && up > 1.0f) up -= 1.0f;
-			feet[i - first_new] = { .joint = pin.joint.copy(mem), .down = down, .up = math::min(up, 1.0f) };
-		}
+		AnimFoot[] feet = pins_as_feet(mem, pinned.pins[first_new..], clip);
 		pinned.ground.free(mem);
 		pinned.ground = { .feet = feet };
 	}

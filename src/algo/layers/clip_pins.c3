@@ -65,3 +65,98 @@ fn void free_pin_list(AnimPinList* list)
 	foreach (&pin : *list) pin.free(mem);
 	list.clear();
 }
+
+<*
+ Each joint's windows read off the clip: its ground spec's, or every run the joint
+ spends down when the spec does not name it.
+
+ @param [&inout] out : `Receives the windows, in seconds.`
+*>
+fn void foot_windows_of(FootWindowList* out, rig::Skeleton* skeleton, String[] names, AnimTemplate clip, String[] joints)
+{
+	AnimGround derived;
+	defer derived.free(mem);
+	bool read = false;
+	foreach (joint : joints)
+	{
+		sz before = out.len();
+		foreach (foot : clip.ground.feet)
+		{
+			if (foot.joint != joint || foot.off_floor) continue;
+			out.push(foot_window_seconds(joint, foot, clip));
+		}
+		if (out.len() > before) continue;
+		if (!read)
+		{
+			derived = derived_contacts(skeleton, names, clip, every_run: true);
+			read = true;
+		}
+		foreach (foot : derived.feet) if (foot.joint == joint) out.push(foot_window_seconds(joint, foot, clip));
+	}
+}
+
+// The floor the spec sets, against the one its contacts rest on.
+fn float pin_floor_shift(rig::Skeleton* skeleton, String[] names, AnimGround ground)
+{
+	if (!ground.floor_set) return 0.0f;
+	usz[16] contact;
+	bool[16] down;
+	GroundContacts found = ground_contacts(skeleton, names, ground, 0.0f, contact[..], down[..]);
+	if (found.count == 0) return 0.0f;
+	float rest = skeleton.joints[contact[0]].y;
+	for (usz i = 1; i < found.count; i++) rest = math::min(rest, skeleton.joints[contact[i]].y);
+	return ground.floor - rest;
+}
+
+<*
+ A pin holding joint `j` where `pose` has it, on the floor.
+
+ @param floor_shift : `From pin_floor_shift.`
+ @param travel : `The body's velocity the clip leaves out, model units a second.`
+ @param flat : `Hold the foot's angle too, turned only about the vertical.`
+ @return? rig::POSE_SIZE_MISMATCH : `The pose doesn't fit the skeleton.`
+*>
+fn AnimPin? foot_pin_at(Allocator allocator, rig::Skeleton* skeleton, rig::Pose pose, usz j, String name, float from, float to,
+	float floor_shift, float blend, Vec3 travel, bool flat)
+{
+	float height = skeleton.height();
+	Matrix4f[] built = rig::joint_palette(mem, skeleton, pose)!;
+	defer alloc::free(mem, built);
+	Vec3 where = skeleton.joints[j].transform(built[j]);
+	where.y = skeleton.joints[j].y + floor_shift;
+
+	AnimPin pin = pin_defaults(allocator, name, where / height, from, to);
+	pin.blend = math::min(blend, (to - from) * 0.5f);
+	pin.travel = -travel / height;
+	if (flat)
+	{
+		Quaternionf[]? world = pose.world_rotations(mem, skeleton);
+		if (try world)
+		{
+			Quaternionf turned = world[j];
+			Quaternionf yaw = { 0.0f, turned.v.y, 0.0f, turned.v.w };
+			pin.orient = yaw.v.length_sq() > 1.0e-12f ? yaw.normalize() : quaternion::IDENTITY;
+			pin.rotation = true;
+			alloc::free(mem, world);
+		}
+	}
+	return pin;
+}
+
+<*
+ Pinned windows as ground contacts, for a clip with no ground spec.
+
+ @return `Owned by the caller.`
+*>
+fn AnimFoot[] pins_as_feet(Allocator allocator, AnimPin[] pins, AnimTemplate clip)
+{
+	AnimFoot[] feet = alloc::new_array(allocator, AnimFoot, (sz)pins.len);
+	foreach (i, &pin : pins)
+	{
+		float down = pin.from / clip.duration;
+		float up = pin.to / clip.duration;
+		if (clip.loop && up > 1.0f) up -= 1.0f;
+		feet[i] = { .joint = pin.joint.copy(allocator), .down = down, .up = math::min(up, 1.0f) };
+	}
+	return feet;
+}
