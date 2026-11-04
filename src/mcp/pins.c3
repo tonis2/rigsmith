@@ -546,9 +546,11 @@ fn String? tool_pin_feet(Object* args, void* user_data, DString* detail) @privat
 			if (try view = opened)
 			{
 				defer view.free(mem);
-				usz[GAIT_FEET_MAX] feet;
-				usz count = gait_find_feet(&view.skeleton, view.names, feet[..]);
-				foreach (foot : feet[:count]) joints.push(view.names[foot].tcopy());
+				GroundFloor level = floor_of_solve(&view.skeleton, {}, 0.0f, false);
+				foreach (usz j, name : view.names)
+				{
+					if (name.len > 0 && level.foot_top(&view.skeleton, j)) joints.push(name.tcopy());
+				}
 			}
 		}
 		if (joints.len() == 0)

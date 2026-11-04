@@ -27,7 +27,7 @@
 - **Tests:** `test/rules/clip_time_test.c3`.
 
 ## A foot is found by its shape
-- **Rule:** a rig's feet are `ankle_L` and `ankle_R` when it has them, and otherwise what `gait_find_feet` finds.
+- **Rule:** a rig's feet are `ankle_L` and `ankle_R` when it has them, and otherwise what `GroundFloor.foot_top` finds, the top of each foot.
 - **Why:** Pin feet refused every rig spelt another way.
 - **Tests:** `test/rules/feet_test.c3`.
 
