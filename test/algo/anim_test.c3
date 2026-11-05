@@ -757,7 +757,7 @@ fn void nothing_ends_up_below_the_floor() @test
 
 <*
  A foot the spec leaves out is kept out of the floor too. Planting one foot must
- not drive the other through the ground — the bounce a single Add contact left on
+ not drive the other through the ground — the bounce a single contact left on
  a generated run, the body pulled down to a lifted foot and the other leg buried.
 *>
 fn void an_undeclared_foot_stays_out_of_the_floor() @test

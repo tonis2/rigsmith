@@ -159,10 +159,6 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 
 	// Guide poses offer None and every bound clip, and a clip bound while the
 	// pane is up joins the list.
-	(void)fixture.app.add_node(crig::NodeKind.GUIDE, { 0, 600 });
-	g.changed();
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.ui.flush();
 	Select* guide = node_select(fixture, crig::NODE_GUIDE_ID)!!;
 	test::@check(guide.options.len >= 1 && guide.options[0] == "None" && guide.selected == 0, "the guide chooser does not start on None");
 	crig::AnimKeyframe[] frames = alloc::new_array(mem, crig::AnimKeyframe, 1);
@@ -190,10 +186,10 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 
 	// The bar opens the train template on its own canvas.
 	template = node_select(fixture, crig::NODES_TEMPLATE_ID)!!;
-	template.on_change(fixture.ui, 2);
+	template.on_change(fixture.ui, 1);
 	fixture.feed(VIEWPORT_CENTER);
 	fixture.ui.flush();
-	test::@check(fixture.app.open_template == 2 && fixture.app.config.nodes_template == 2, "the choice is not kept");
+	test::@check(fixture.app.open_template == 1 && fixture.app.config.nodes_template == 1, "the choice is not kept");
 	foreach (run : (String[]){ "node-run-train", "node-run-animate" })
 	{
 		test::@check(@ok(fixture.ui.find_id(run)), "no %s on the train template", run);
@@ -215,7 +211,7 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
 	// Animate's mirror check starts off; a click turns it on, another back off.
 	usz animate = (usz)g.find("animate");
-	test::@check(g.at(animate).params[1] == "0", "Animate does not start with the mirror check off (%s)", g.at(animate).params[1]);
+	test::@check(g.at(animate).params[1] == "", "Animate's mirror check does not start unset (%s)", g.at(animate).params[1]);
 	test::@check(!mirror_lit(fixture), "the mirror icon is lit while the check is off");
 	node_press(fixture, crig::NODE_MIRROR_ID);
 	test::@check(g.at(animate).params[1] == "1", "a click did not turn the mirror check on (%s)", g.at(animate).params[1]);
@@ -228,6 +224,21 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	fixture.feed({ 0, 0 });
 	fixture.feed({ 0, 0 });
 	test::@check(!mirror_lit(fixture), "the mirror icon still shows on after a click turned it off");
+
+	// The source's switch makes it an Image: the wire stays and Animate's card follows.
+	test::@check(@ok(node_field(fixture, "animate", 3)), "a video's Animate has no Frames");
+	source_switch(fixture, 1);
+	test::@check(g.find("video") < 0 && g.at(animate).input[1] == g.find("image"), "the switch did not make an Image on the same wire");
+	test::@check(fixture.ui.find_id(crig::NODE_SOURCE_ID)!!.widget_as(Segmented).selected == 1, "the switch does not show Image");
+	test::@check(!@ok(node_field(fixture, "animate", 3)), "Animate asks for a picture's Frames");
+	// And back, with a run going: refused, and the switch shows what the node is.
+	g.running = (sz)animate;
+	source_switch(fixture, 0);
+	test::@check(g.find("image") >= 0, "the source swapped during a run");
+	test::@check(fixture.ui.find_id(crig::NODE_SOURCE_ID)!!.widget_as(Segmented).selected == 1, "the refused switch stayed on Video");
+	g.running = -1;
+	source_switch(fixture, 0);
+	test::@check(g.find("video") >= 0 && @ok(node_field(fixture, "animate", 3)), "the switch did not go back to Video");
 
 	// Browse on Video takes a folder of frames: Select on a folder picks it.
 	String picked = "build/test_pick_frames";
@@ -258,6 +269,45 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	close_the_chooser(fixture);
 	fixture.type_into(node_field(fixture, "train", 2)!!, "/captures/zidane");
 	test::@check(g.at(g.find("train")).params[2] == "/captures/zidane", "Train's save folder reads '%s'", g.at(g.find("train")).params[2]);
+}
+
+// Each template's note says how to use it, so all of it has to show without scrolling.
+fn void every_templates_note_fits_its_card() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	fixture.reset();
+	crig::build_ui(fixture.ui, &fixture.app);
+	fixture.ui.flush();
+	crig::show_pane_view(fixture.ui, crig::NODES_VIEW, SplitAxis.HORIZONTAL, 2.0f / 3.0f);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	for (usz t = 0; t < crig::TEMPLATES; t++)
+	{
+		fixture.app.open_template_named(t);
+		fixture.feed(VIEWPORT_CENTER);
+		fixture.feed(VIEWPORT_CENTER);
+		fixture.ui.flush();
+		Element* note = node_field(fixture, "note", 0)!!;
+		float hidden = note.widget_as(TextField).clamp_scroll(note, 100000.0f);
+		test::@check(hidden <= 0.0f, "%s's note hides %f px of its text", crig::TEMPLATE_NAMES[t], hidden);
+	}
+}
+
+// Choose row `row` of the source card's Video | Image switch, and let the pane rebuild.
+fn void source_switch(Fixture* fixture, usz row)
+{
+	Element* found = fixture.ui.find_id(crig::NODE_SOURCE_ID)!!;
+	fixture.ui.hovered = found;
+	found.widget_as(Segmented).on_change(fixture.ui, row);
+	fixture.feed({ 0, 0 });
+	fixture.feed({ 0, 0 });
 }
 
 // Press a card's Browse icon for `slot`.

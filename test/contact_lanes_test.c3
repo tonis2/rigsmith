@@ -186,9 +186,9 @@ fn Vec2 contact_point(Element* elem, Timeline* sheet, usz lane, float at)
 	return elem.absolute + (Vec2){ sheet.x_of(elem, at), sheet.lane_y(lane) };
 }
 
-// The sheet: + Contact adds a lane under Poses for the selected foot over its
-// step; its bar's end and body drag, an empty lane drag adds, right-click
-// deletes. One undo each.
+// The sheet: Find contacts adds a lane under Poses for each foot over its steps;
+// a bar's end and body drag, an empty lane drag adds, right-click deletes. One undo
+// each.
 fn void contact_lanes_show_and_edit_on_the_sheet() @test
 {
 	Fixture f;
@@ -202,24 +202,25 @@ fn void contact_lanes_show_and_edit_on_the_sheet() @test
 	Timeline* sheet = contact_sheet(&f, &elem);
 	test::eq(sheet.lanes.len, (sz)1);
 
-	// + Contact with the foot selected, from the playhead at 0.
-	Dot* dot = f.app.dot_named(foot);
-	test::@check(dot != null, "no dot for %s", foot);
-	if (!dot) return;
-	f.app.selected = dot.id;
-	f.app.edit_time = 0;
+	// Find contacts, with nothing selected.
+	f.app.selected = 0;
 	sz history = f.app.undo_stack.cursor;
-	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_ADD_CONTACT_ID);
+	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_FIND_CONTACTS_ID);
 	f.feed({ 0, 0 });
 	f.feed({ 0, 0 });
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	sheet = contact_sheet(&f, &elem);
-	test::eq(sheet.lanes.len, (sz)2);
-	test::@check(sheet.lanes[1].contact && sheet.lanes[1].joint == foot, "the contact lane is not under Poses");
-	test::eq(sheet.bars.len, (sz)1);
-	// The swaying clip never lifts a foot, so its step is the whole cycle.
-	test::@check(near_phase(contact_ground(&f).feet[0].down, 0.0f) && near_phase(contact_ground(&f).feet[0].up, 1.0f),
-		"+ Contact did not plant the foot's step, the whole cycle");
+	test::eq(sheet.lanes.len, (sz)3);
+	test::@check(sheet.lanes[1].contact && sheet.lanes[1].joint == foot && sheet.lanes[2].contact, "the contact lanes are not under Poses");
+	test::eq(sheet.bars.len, (sz)2);
+	// The swaying clip never lifts a foot, so each one's step is the whole cycle.
+	foreach (window : contact_ground(&f).feet)
+	{
+		test::@check(near_phase(window.down, 0.0f) && near_phase(window.up, 1.0f), "%s's step is not the whole cycle", window.joint);
+	}
+
+	// One foot from here on, its window a quarter of the cycle.
+	test::@check(f.app.remove_contact_lane(f.app.editing, contact_ground(&f).feet[1].joint.tcopy()), "the other foot's lane did not go");
 	test::@check(f.app.set_contact_window(f.app.editing, 0, 0.0f, 0.25f), "the window did not shrink to a quarter");
 	f.feed({ 0, 0 });
 	f.feed({ 0, 0 });
@@ -267,15 +268,15 @@ fn void contact_lanes_show_and_edit_on_the_sheet() @test
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	test::eq(contact_ground(&f).feet.len, (sz)1);
 
-	// Curves mode leaves the lanes alone and hides + Contact; Keys brings both back.
+	// Curves mode leaves the lanes alone and turns Find contacts off; Keys brings both back.
 	crig::anim_sheet_mode_chosen(f.ui, 1);
 	f.ui.flush();
 	f.feed({ 0, 0 });
 	f.feed({ 0, 0 });
 	test::@check(f.app.anim_show_curves, "Curves did not open");
 	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
-	test::@check(f.ui.find_id(crig::ANIM_ADD_CONTACT_ID)!!.widget_as(PopupMenuItem).item.disabled,
-		"Add contact is offered in Curves");
+	test::@check(f.ui.find_id(crig::ANIM_FIND_CONTACTS_ID)!!.widget_as(PopupMenuItem).item.disabled,
+		"Find contacts is offered in Curves");
 	f.close_menu();
 	crig::anim_sheet_mode_chosen(f.ui, 0);
 	f.ui.flush();

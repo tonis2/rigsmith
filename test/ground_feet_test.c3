@@ -1,9 +1,8 @@
 <*
  Contacts on a generated-looking walk: the feet sink through the floor as keyed,
- and one Add contact or a Find contacts has to put them on it without the body
- bouncing. Add contact plants the step the playhead is in, on the foot's top
- joint; Find contacts plants every step of every foot; and with one foot
- declared the other is still kept out of the floor.
+ and Find contacts has to put them on it without the body bouncing. It plants
+ every step of every foot on the foot's top joint, and with one foot declared the
+ other is still kept out of the floor.
 *>
 module crig_tests::ui;
 import crig;
@@ -69,44 +68,6 @@ fn usz windows_holding(AnimGround ground, String joint, float phase)
 	return count;
 }
 
-fn void add_contact_plants_the_step_under_the_playhead() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	stepping_workspace(&f);
-	AnimRef ref = f.app.editing;
-	String ankle = foot_top_name(&f, "toe_L");
-	test::@check(ankle.len > 0 && ankle != "toe_L", "toe_L has no foot above it (%s)", ankle);
-
-	f.app.selected = f.app.dot_named("toe_L").id;
-	f.app.edit_time = 0.25f;
-	sz history = f.app.undo_stack.cursor;
-	test::@check(f.app.add_contact_for_selected(ref), "Add contact refused");
-	test::eq(f.app.undo_stack.cursor, history + 1);
-	AnimGround ground = f.app.clip(ref).ground;
-	test::eq(ground.feet.len, (sz)1);
-	if (ground.feet.len != 1) return;
-	AnimFoot window = ground.feet[0];
-	test::@check(window.joint == ankle, "the contact went on %s, not the foot's top %s", window.joint, ankle);
-	test::@check(window.planted(0.25f) && window.planted(0.1f) && window.planted(0.4f),
-		"the window %f–%f does not cover the standing half", window.down, window.up);
-	test::@check(!window.planted(0.7f), "the window %f–%f runs into the swing", window.down, window.up);
-
-	// It is the step the motion shows, not a quarter from the playhead.
-	RigView view = f.app.open_rig(mem)!!;
-	defer view.free(mem);
-	String[1] asked = { ankle };
-	AnimGround runs = f.app.contact_runs(ref, &view, asked[..]);
-	defer runs.free(mem);
-	bool same = false;
-	foreach (run : runs.feet)
-	{
-		if (math::abs(run.down - window.down) < 1e-4f && math::abs(run.up - window.up) < 1e-4f) same = true;
-	}
-	test::@check(same, "the window %f–%f is not one of the foot's steps", window.down, window.up);
-}
-
 fn void find_contacts_plants_every_step_of_both_feet() @test
 {
 	Fixture f;
@@ -131,7 +92,7 @@ fn void find_contacts_plants_every_step_of_both_feet() @test
 }
 
 <*
- The bounce a single Add contact left: one foot declared, the hips keyed low. The
+ The bounce a single contact left: one foot declared, the hips keyed low. The
  body holds one height through the cycle, and no joint of either foot goes below
  where it stood at rest.
 *>
@@ -141,10 +102,8 @@ fn void one_contact_keeps_the_body_level_and_both_feet_out_of_the_floor() @test
 	f.open()!!;
 	defer f.close();
 	stepping_workspace(&f);
-	AnimRef ref = f.app.editing;
-	f.app.selected = f.app.dot_named("toe_L").id;
-	f.app.edit_time = 0.25f;
-	test::@check(f.app.add_contact_for_selected(ref), "Add contact refused");
+	test::@check(f.app.find_contacts(f.app.editing), "Find contacts refused");
+	test::@check(f.app.remove_contact_lane(f.app.editing, foot_top_name(&f, "toe_R")), "the right foot's lane did not go");
 
 	float bob;
 	float sunk;

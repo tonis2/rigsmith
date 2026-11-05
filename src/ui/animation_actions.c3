@@ -148,12 +148,6 @@ fn void anim_tools_check(Ui* ui)
 	anim_check_clicked(ui);
 }
 
-fn void anim_tools_contact(Ui* ui)
-{
-	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
-	anim_add_contact_clicked(ui);
-}
-
 fn void anim_tools_find_contacts(Ui* ui)
 {
 	set_dialog_open(ui, ANIM_TOOLS_MENU_ID, false);
@@ -188,8 +182,8 @@ fn Element* build_anim_tools_menu(Ui* ui)
 	bool unpicked = none || app.selection_count() == 0;
 	MenuStyle style = VIEW_MENU_STYLE.resolved();
 	float width = widgets::PANEL_MIN_W;
-	foreach (label : (String[]) { "Check", "Add contact", "Find contacts", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
-		"Fix flips", "Smooth curves", "Simplify curves", "Flatten keys", "Match loop seam", "Remove joint animation…", "Move joints to layer", "Prevent intersections" })
+	foreach (label : (String[]) { "Check", "Find contacts", "Optimize keys…", "Trim…", "Close loop", "Make loop…",
+		"Remove joint animation…", "Move joints to layer", "Prevent intersections" })
 	{
 		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
 	}
@@ -199,8 +193,6 @@ fn Element* build_anim_tools_menu(Ui* ui)
 		{
 			@node((PopupMenuItem) { .item = { .label = "Check", .on_select = &anim_tools_check, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CHECK_ID);
-			@node((PopupMenuItem) { .item = { .label = "Add contact", .on_select = &anim_tools_contact,
-				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_ADD_CONTACT_ID);
 			@node((PopupMenuItem) { .item = { .label = "Find contacts", .on_select = &anim_tools_find_contacts,
 				.disabled = none || app.anim_show_curves }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_FIND_CONTACTS_ID);
 			@node((PopupMenuItem) { .item = { .label = "Optimize keys…", .on_select = &anim_tools_optimize, .disabled = none },
@@ -211,18 +203,6 @@ fn Element* build_anim_tools_menu(Ui* ui)
 				.disabled = none || !clip.loop }, .style = VIEW_MENU_STYLE, .width = width }).with_id("anim-close-loop");
 			@node((PopupMenuItem) { .item = { .label = "Make loop…", .on_select = &anim_tools_make_loop, .disabled = none },
 				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_MAKE_LOOP_ID);
-			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
-			// Curves: act on the picked keys, else the selected joints' whole curves.
-			@node((PopupMenuItem) { .item = { .label = "Fix flips", .on_select = &anim_tools_curve_flips, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_FLIPS_MENU_ID);
-			@node((PopupMenuItem) { .item = { .label = "Smooth curves", .on_select = &anim_tools_curve_smooth, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SMOOTH_MENU_ID);
-			@node((PopupMenuItem) { .item = { .label = "Simplify curves", .on_select = &anim_tools_curve_simplify, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SIMPLIFY_MENU_ID);
-			@node((PopupMenuItem) { .item = { .label = "Flatten keys", .on_select = &anim_tools_curve_flatten, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_FLATTEN_MENU_ID);
-			@node((PopupMenuItem) { .item = { .label = "Match loop seam", .on_select = &anim_tools_curve_seam, .disabled = none },
-				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_CURVE_SEAM_MENU_ID);
 			@node((MenuSeparator) { .style = style, .size = { width, widgets::SEPARATOR_H } });
 			@node((PopupMenuItem) { .item = { .label = "Remove joint animation…", .on_select = &anim_tools_remove_joints,
 				.disabled = unpicked }, .style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_REMOVE_JOINTS_ID);

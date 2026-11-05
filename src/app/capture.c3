@@ -17,8 +17,8 @@
  3. **The clip** (Nodes: Animate): creature's animate task reads the video
     a frame at a time (image::mp4, no ffmpeg) with the reference's layout
     (`studio.json`) and the finder; the clip lands on the character as
-    Kimodo's do, one undo step. Or one picture (Image to pose), which lands as
-    a saved pose.
+    Kimodo's do, one undo step. Or one picture (an Image into Animate), which
+    lands as a saved pose.
 
  What is kept goes in a folder beside the model, `<model>.capture/`: the
  training set (`renders/`), the finder (`finder.safetensors`), the reference

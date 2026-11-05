@@ -699,7 +699,7 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 							{
 								if (app.anim_show_curves)
 								{
-									build_curve_tools();
+									@node(panel_button("Curve tools ▾", &anim_curve_tools_clicked)).with_id(ANIM_CURVE_TOOLS_ID);
 									@node((AnimCurveKeyField) { }).with_id(ANIM_CURVE_KEY_FIELD_ID);
 								}
 								else if (!app.anim_show_layers)

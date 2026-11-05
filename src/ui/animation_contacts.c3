@@ -6,7 +6,6 @@ import cui;
 import cui::widgets;
 import std::math;
 
-const String ANIM_ADD_CONTACT_ID = "anim-add-contact";
 const String ANIM_FIND_CONTACTS_ID = "anim-find-contacts";
 const String ANIM_CONTACT_MENU_ID = "anim-contact-menu";
 const String ANIM_CONTACT_DELETE_ID = "anim-contact-delete";
@@ -18,13 +17,6 @@ fn void anim_contact_landed(Ui* ui, bool ok) @private
 	AppState* app = ui.inherit(AppState)!!;
 	if (ok) app.show_edited();
 	refresh_animations_view(ui);
-}
-
-fn void anim_add_contact_clicked(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	if (!anim_can_rewrite(ui) || !app.clip(app.editing)) return;
-	anim_contact_landed(ui, app.add_contact_for_selected(app.editing));
 }
 
 // Every foot's steps read off the motion, in place of the clip's foot contacts.

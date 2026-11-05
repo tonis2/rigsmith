@@ -38,7 +38,6 @@ enum NodeKind : char
 	ANIMATE,
 	NOTE,
 	IMAGE,
-	POSE,
 	REFERENCE,
 }
 
@@ -51,8 +50,7 @@ enum NodeLink : char
 	PROMPT_TEXT,
 	POSES,
 	FINDER,
-	FOOTAGE,
-	STILL,
+	SOURCE,
 	LAYOUT,
 }
 
@@ -63,20 +61,20 @@ struct NodeInput
 	bool optional;
 }
 
-const usz NODE_KINDS = 14;
+const usz NODE_KINDS = 13;
 const usz NODE_PARAMS = 5;
 const usz NODE_INPUTS = 4;
 const float NODE_W = 230;
 const float NOTE_W = 260;
 const Color NOTE_HEADER = { 0.55, 0.45, 0.18, 1.0 };
 const String[NODE_KINDS] NODE_TYPES = { "kimodo_text_encoder", "kimodo_model", "dinov3_backbone", "prompt", "guide_poses",
-	"text_to_motion", "finder_file", "train_finder", "video", "animate", "note", "image", "image_to_pose", "reference_file" };
+	"text_to_motion", "finder_file", "train_finder", "video", "animate", "note", "image", "reference_file" };
 const String[NODE_KINDS] NODE_TITLES = { "Kimodo encoder", "Kimodo model", "DINOv3 backbone", "Prompt", "Guide poses",
-	"Text to motion", "Finder file", "Train finder", "Video", "Animate", "Note", "Image", "Image to pose", "Reference file" };
+	"Text to motion", "Finder file", "Train finder", "Video", "Animate", "Note", "Image", "Reference file" };
 const String[NODE_KINDS] NODE_CATEGORIES = { "Models", "Models", "Models", "Generate", "Generate", "Generate",
-	"Capture", "Capture", "Capture", "Capture", "Notes", "Capture", "Capture", "Capture" };
+	"Capture", "Capture", "Capture", "Capture", "Notes", "Capture", "Capture" };
 const String[NODE_KINDS] NODE_ID_BASES = { "text_encoder", "motion_model", "backbone", "prompt", "guide", "generate",
-	"finder", "train", "video", "animate", "note", "image", "pose", "reference" };
+	"finder", "train", "video", "animate", "note", "image", "reference" };
 // Each kind's settings by slot; "" = no setting there.
 const String[NODE_PARAMS][NODE_KINDS] NODE_PARAM_NAMES = {
 	{ "path", "tokenizer", "", "", "" },
@@ -91,7 +89,6 @@ const String[NODE_PARAMS][NODE_KINDS] NODE_PARAM_NAMES = {
 	{ "name", "mirror", "folder", "frames", "" },
 	{ "text", "", "", "", "" },
 	{ "path", "", "", "", "" },
-	{ "name", "mirror", "folder", "", "" },
 	{ "path", "", "", "", "" },
 };
 const NodeInput[NODE_INPUTS][NODE_KINDS] NODE_INPUT_TABLE = {
@@ -100,17 +97,14 @@ const NodeInput[NODE_INPUTS][NODE_KINDS] NODE_INPUT_TABLE = {
 	{},
 	{ [0] = { "backbone", BACKBONE, false } },
 	{},
-	{ { "finder", FINDER, false }, { "video", FOOTAGE, false }, { "backbone", BACKBONE, false }, { "reference", LAYOUT, true } },
-	{}, {},
-	// Animate's order, so the same slots read the same things.
-	{ { "finder", FINDER, false }, { "image", STILL, false }, { "backbone", BACKBONE, false }, { "reference", LAYOUT, true } },
-	{},
+	{ { "finder", FINDER, false }, { "source", SOURCE, false }, { "backbone", BACKBONE, false }, { "reference", LAYOUT, true } },
+	{}, {}, {},
 };
-const usz[NODE_KINDS] NODE_INPUT_COUNTS = { 0, 0, 0, 0, 0, 4, 0, 1, 0, 4, 0, 0, 4, 0 };
-const String[9] NODE_LINK_NAMES = { "text_encoder", "motion_model", "backbone", "prompt", "poses", "finder", "video", "image", "reference" };
-const Color[9] NODE_LINK_COLORS = {
+const usz[NODE_KINDS] NODE_INPUT_COUNTS = { 0, 0, 0, 0, 0, 4, 0, 1, 0, 4, 0, 0, 0 };
+const String[8] NODE_LINK_NAMES = { "text_encoder", "motion_model", "backbone", "prompt", "poses", "finder", "source", "reference" };
+const Color[8] NODE_LINK_COLORS = {
 	{ 0.45, 0.85, 0.45, 1.0 }, { 0.95, 0.60, 0.20, 1.0 }, { 0.91, 0.32, 0.36, 1.0 }, { 0.85, 0.88, 0.95, 1.0 },
-	{ 0.40, 0.90, 0.75, 1.0 }, { 0.30, 0.68, 0.95, 1.0 }, { 0.72, 0.50, 0.98, 1.0 }, { 0.95, 0.55, 0.80, 1.0 }, { 0.92, 0.82, 0.35, 1.0 },
+	{ 0.40, 0.90, 0.75, 1.0 }, { 0.30, 0.68, 0.95, 1.0 }, { 0.72, 0.50, 0.98, 1.0 }, { 0.92, 0.82, 0.35, 1.0 },
 };
 const String[3] NODE_OPTIMIZE_NAMES = { "off", "light", "strong" };
 
@@ -126,11 +120,10 @@ fn bool node_output(NodeKind kind, NodeLink* link)
 		case GUIDE: *link = POSES;
 		case FINDER_FILE:
 		case TRAIN: *link = FINDER;
-		case VIDEO: *link = FOOTAGE;
-		case IMAGE: *link = STILL;
+		case VIDEO:
+		case IMAGE: *link = SOURCE;
 		case REFERENCE: *link = LAYOUT;
 		case TEXT_TO_MOTION:
-		case POSE:
 		case ANIMATE:
 		case NOTE: return false;
 	}
@@ -176,19 +169,9 @@ fn String node_default(NodeKind kind, usz slot)
 				case 4: return "light";
 			}
 		case TRAIN: if (slot == 0) return "1500"; if (slot == 1) return "448";
-		// Mirror: off for a video, where it costs a second look a frame.
-		case ANIMATE: if (slot == 1) return "0";
-		case POSE: if (slot == 1) return "1";
 		default: break;
 	}
 	return "";
-}
-
-// Whether an Animate or Image to pose node also looks mirrored; unset is its default.
-fn bool node_mirror_on(PipelineNode* n)
-{
-	String m = n.params[1].trim();
-	return (m.len > 0 ? m : node_default(n.kind, 1)) != "0";
 }
 
 // How many of the video's first frames an Animate node reads; 0 = all of them.
@@ -615,50 +598,34 @@ fn sz named_index(List{String}* named, String id) @local
 // ---------------------------------------------------------------------------
 // Templates: documents of the same shape, each opened on its own canvas.
 
-const usz TEMPLATES = 5;
-const String[TEMPLATES] TEMPLATE_NAMES = { "Text to motion", "Text to motion through guide poses",
-	"Video capture: train a finder", "Video capture: from a finder file", "Pose from a picture" };
-const String[TEMPLATES] TEMPLATE_SLUGS = { "text_to_motion", "guided", "train_finder", "finder_file", "pose_from_picture" };
+const usz TEMPLATES = 3;
+const String[TEMPLATES] TEMPLATE_NAMES = { "Text to motion", "Capture: train a finder", "Capture: from a finder file" };
+const String[TEMPLATES] TEMPLATE_SLUGS = { "text_to_motion", "train_finder", "finder_file" };
 const String[TEMPLATES] TEMPLATE_DOCS = {
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "Set the Kimodo encoder and model once: they are kept for every template.\n\nWrite what the character does in Prompt, then Run Text to motion (or Ctrl+Return in the prompt). The clip lands in Animations." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "Set the Kimodo encoder and model once: they are kept for every template.\n\nWrite what the character does in Prompt, then Run Text to motion (or Ctrl+Return in the prompt). The clip lands in Animations.\n\nTo pass through set poses, key them in a clip on this character and pick it in Guide poses." } },
 		{ "id": "text_encoder", "type": "kimodo_text_encoder", "pos": [0, 0] },
 		{ "id": "motion_model", "type": "kimodo_model", "pos": [0, 140] },
 		{ "id": "prompt", "type": "prompt", "pos": [0, 260], "params": { "text": "A person walks forward and waves with the right hand." } },
-		{ "id": "generate", "type": "text_to_motion", "pos": [300, 60], "params": { "text_encoder": { "from": "text_encoder.text_encoder" },
-			"motion_model": { "from": "motion_model.motion_model" }, "prompt": { "from": "prompt.prompt" } } } ] }`,
-	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "Like Text to motion, but the motion passes through the poses of a clip.\n\nKey the poses it has to hit in a clip on this character, pick it in Guide poses, then Run." } },
-		{ "id": "text_encoder", "type": "kimodo_text_encoder", "pos": [0, 0] },
-		{ "id": "motion_model", "type": "kimodo_model", "pos": [0, 140] },
-		{ "id": "prompt", "type": "prompt", "pos": [0, 260], "params": { "text": "A person walks forward, then sits down." } },
 		{ "id": "guide", "type": "guide_poses", "pos": [0, 410] },
 		{ "id": "generate", "type": "text_to_motion", "pos": [300, 60], "params": { "text_encoder": { "from": "text_encoder.text_encoder" },
 			"motion_model": { "from": "motion_model.motion_model" }, "prompt": { "from": "prompt.prompt" }, "poses": { "from": "guide.poses" } } } ] }`,
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Set the DINOv3 backbone, then Run Train finder once per character.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there).\n4. Choose the video, and the reference it was made from in Reference file (empty takes the closest saved one), then Run Animate." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Set the DINOv3 backbone, then Run Train finder once per character.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there), or pose it with an image model (Copy image prompt).\n4. Choose what it made in Video, or switch that node to Image for a picture, and the reference it came from in Reference file (empty takes the closest saved one).\n5. Run Animate: a video lands in Animations, a picture in Poses." } },
 		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
 		{ "id": "train", "type": "train_finder", "pos": [0, 140], "params": { "backbone": { "from": "backbone.backbone" } } },
 		{ "id": "video", "type": "video", "pos": [0, 330] },
 		{ "id": "reference", "type": "reference_file", "pos": [0, 490] },
 		{ "id": "animate", "type": "animate", "pos": [300, 140], "params": { "finder": { "from": "train.finder" },
-			"video": { "from": "video.video" }, "backbone": { "from": "backbone.backbone" }, "reference": { "from": "reference.reference" } } } ] }`,
+			"source": { "from": "video.source" }, "backbone": { "from": "backbone.backbone" }, "reference": { "from": "reference.reference" } } } ] }`,
 	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Choose a finder trained before in Finder file.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there).\n4. Choose the video, and the reference it was made from in Reference file (empty takes the closest saved one), then Run Animate." } },
+		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. Choose a finder trained before in Finder file.\n2. In Animations, ⋯ › Reference picture…: pick the frame or a saved pose, the size and the folder, then Draw.\n3. Animate the picture with a video model (Copy video prompt there), or pose it with an image model (Copy image prompt).\n4. Choose what it made in Video, or switch that node to Image for a picture, and the reference it came from in Reference file (empty takes the closest saved one).\n5. Run Animate: a video lands in Animations, a picture in Poses." } },
 		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
 		{ "id": "finder", "type": "finder_file", "pos": [0, 140] },
 		{ "id": "video", "type": "video", "pos": [0, 300] },
 		{ "id": "reference", "type": "reference_file", "pos": [0, 460] },
 		{ "id": "animate", "type": "animate", "pos": [300, 140], "params": { "finder": { "from": "finder.finder" },
-			"video": { "from": "video.video" }, "backbone": { "from": "backbone.backbone" }, "reference": { "from": "reference.reference" } } } ] }`,
-	`{ "nodes": [
-		{ "id": "note", "type": "note", "pos": [-300, 0], "params": { "text": "1. In Animations, ⋯ › Reference picture…: pick a saved pose near the one you want, then Draw.\n2. Copy image prompt there, and give it to an image model with the picture.\n3. Choose what it makes in Image, and the reference it came from in Reference file (empty takes the closest saved one).\n4. Run Image to pose: the pose lands in Poses." } },
-		{ "id": "backbone", "type": "dinov3_backbone", "pos": [0, 0] },
-		{ "id": "finder", "type": "finder_file", "pos": [0, 140] },
-		{ "id": "image", "type": "image", "pos": [0, 300] },
-		{ "id": "reference", "type": "reference_file", "pos": [0, 460] },
-		{ "id": "pose", "type": "image_to_pose", "pos": [300, 140], "params": { "finder": { "from": "finder.finder" },
-			"image": { "from": "image.image" }, "backbone": { "from": "backbone.backbone" }, "reference": { "from": "reference.reference" } } } ] }`,
+			"source": { "from": "video.source" }, "backbone": { "from": "backbone.backbone" }, "reference": { "from": "reference.reference" } } } ] }`,
 };
 
 // ---------------------------------------------------------------------------
@@ -685,13 +652,47 @@ fn String AppState.capture_node_finder(&self, PipelineNode* n)
 	return self.capture_node_path(n, "finder.safetensors");
 }
 
-// The clip (or pose) an Animate node makes: its name, or its video's file name. Temporary.
+// The clip (or pose) an Animate node makes: its name, or its source's file name. Temporary.
 fn String PipelineGraph.clip_name(&self, usz node)
 {
 	PipelineNode* n = self.at(node);
 	if (n.params[0].trim().len > 0) return n.params[0].trim();
-	sz video = n.input[1];
-	return capture_clip_name(video >= 0 ? self.at(video).params[0].trim() : "");
+	sz source = n.input[1];
+	return capture_clip_name(source >= 0 ? self.at(source).params[0].trim() : "");
+}
+
+// Whether an Image feeds an Animate node, so it makes a pose rather than a clip.
+fn bool PipelineGraph.reads_still(&self, usz node)
+{
+	sz source = self.at(node).input[1];
+	return source >= 0 && self.at(source).kind == IMAGE;
+}
+
+// Whether an Animate node also looks mirrored. Unset: only at a picture, since on
+// a video it costs a second look a frame.
+fn bool PipelineGraph.mirror_on(&self, usz node)
+{
+	String mirror = self.at(node).params[1].trim();
+	return mirror.len > 0 ? mirror != "0" : self.reads_still(node);
+}
+
+<*
+ A Video node into an Image one, or back. Its wires stay and its path goes, since
+ a file for one is not a file for the other.
+
+ @require self.at(node).kind == VIDEO || self.at(node).kind == IMAGE : "Only a source swaps"
+
+ @return `False while a run goes.`
+*>
+fn bool PipelineGraph.swap_source(&self, usz node)
+{
+	if (self.busy()) return false;
+	PipelineNode* n = self.at(node);
+	NodeKind kind = n.kind == VIDEO ? NodeKind.IMAGE : NodeKind.VIDEO;
+	replace_owned(&n.id, self.fresh_id(kind));
+	n.kind = kind;
+	self.set_param(node, 0, "");
+	return true;
 }
 
 // The setting `slot` of what feeds `node`'s input `k`; "" when unwired.
@@ -701,7 +702,7 @@ fn String PipelineGraph.fed(&self, usz node, usz k, usz slot = 0)
 	return src < 0 ? "" : self.at(src).params[slot].trim();
 }
 
-// The reference folder wired into an Animate or Image to pose node; "" = the closest saved one. Temporary.
+// The reference folder wired into an Animate node; "" = the closest saved one. Temporary.
 fn String PipelineGraph.fed_reference(&self, usz node) => capture_reference_folder(self.fed(node, 3));
 
 // Whether a node's work is there already, so running past it skips it.
@@ -726,8 +727,9 @@ fn bool AppState.node_ready(&self, PipelineGraph* g, usz node)
 		case VIDEO: return first.len > 0 && path::exists((Path)first);
 		case IMAGE: return first.len > 0 && file::is_file(first);
 		case REFERENCE: return first.len == 0 || capture_reference_folder(first).len > 0;
-		case ANIMATE: return self.has_bound_clip_named(g.clip_name(node));
-		case POSE: return self.saved_pose_named(g.clip_name(node)) >= 0;
+		case ANIMATE:
+			if (g.reads_still(node)) return self.saved_pose_named(g.clip_name(node)) >= 0;
+			return self.has_bound_clip_named(g.clip_name(node));
 		case NOTE: return true;
 	}
 }
@@ -739,7 +741,6 @@ fn bool node_is_source(NodeKind kind)
 	{
 		case TEXT_TO_MOTION:
 		case TRAIN:
-		case POSE:
 		case ANIMATE: return false;
 		default: return true;
 	}
@@ -772,8 +773,7 @@ fn void? AppState.run_nodes(&self, PipelineGraph* g, usz[] nodes)
 				if (!self.motion_gpu) return MOTION_NO_GPU~;
 				if (self.llm_plugin_problem("kimodo").len > 0) return MOTION_NO_PLUGIN~;
 			case TRAIN: self.capture_ready(g.fed(i, 0))!;
-			case ANIMATE:
-			case POSE: self.capture_ready(g.fed(i, 2))!;
+			case ANIMATE: self.capture_ready(g.fed(i, 2))!;
 			default: self.capture_ready("", false)!;
 		}
 	}
@@ -822,11 +822,15 @@ fn void? AppState.node_order(&self, PipelineGraph* g, usz node, List{usz}* order
 			if (!capture_size_ok(size)) return CAPTURE_BAD_SIZE~;
 		case ANIMATE:
 			if (g.fed(node, 3).len == 0 && self.capture_reference_for("").len == 0) return CAPTURE_NO_REFERENCE~;
-			if (self.has_bound_clip_named(g.clip_name(node))) return CAPTURE_CLIP_TAKEN~;
-			(void)node_max_frames(n)!;
-		case POSE:
-			if (g.fed(node, 3).len == 0 && self.capture_reference_for("").len == 0) return CAPTURE_NO_REFERENCE~;
-			if (self.saved_pose_named(g.clip_name(node)) >= 0) return CAPTURE_POSE_TAKEN~;
+			if (g.reads_still(node))
+			{
+				if (self.saved_pose_named(g.clip_name(node)) >= 0) return CAPTURE_POSE_TAKEN~;
+			}
+			else
+			{
+				if (self.has_bound_clip_named(g.clip_name(node))) return CAPTURE_CLIP_TAKEN~;
+				(void)node_max_frames(n)!;
+			}
 		case TEXT_TO_MOTION:
 			MotionRequest request;
 			self.node_request(g, node, &request)!;
@@ -846,7 +850,6 @@ fn fault node_unwired(NodeKind kind, usz k) @local
 		case PROMPT_TEXT: return MOTION_NO_PROMPT;
 		case BACKBONE: return CAPTURE_NO_BACKBONE;
 		case FINDER: return CAPTURE_NO_FINDER;
-		case STILL: return CAPTURE_NO_IMAGE;
 		default: return CAPTURE_NO_VIDEO;
 	}
 }
@@ -899,11 +902,10 @@ fn void? AppState.start_node(&self, PipelineGraph* g, usz node)
 			uint size = n.params[1].trim().to_uint() ?? CAPTURE_DEFAULT_SIZE;
 			self.start_capture_training(poses, size, self.capture_node_path(n, "renders"), self.capture_node_finder(n), g.fed(node, 0))!;
 		case ANIMATE:
-		case POSE:
 			String finder = self.capture_node_finder(g.at(n.input[0]));
-			uint max_frames = n.kind == ANIMATE ? node_max_frames(n)! : 0;
-			self.start_capture_animation(g.fed(node, 2), finder, g.fed_reference(node), g.fed(node, 1), g.clip_name(node), node_mirror_on(n), n.kind == POSE,
-				max_frames)!;
+			bool pose = g.reads_still(node);
+			uint max_frames = pose ? 0 : node_max_frames(n)!;
+			self.start_capture_animation(g.fed(node, 2), finder, g.fed_reference(node), g.fed(node, 1), g.clip_name(node), g.mirror_on(node), pose, max_frames)!;
 		default:
 			return CAPTURE_NOT_STARTED~;
 	}

@@ -741,6 +741,49 @@ fn void the_clip_menu_and_from_library() @test
 	if (try Element* back = f.ui.find(AreaTabStrip)) f.click(tab_center(&f, back, 0));
 }
 
+// Curve clean-up belongs to Curves mode: one button there, and nowhere else.
+fn void curve_tools_sit_behind_their_own_button_in_curves_mode() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	multi_pose_workspace(&f);
+	String[5] rows = { crig::ANIM_CURVE_FLIPS_ID, crig::ANIM_CURVE_SMOOTH_ID, crig::ANIM_CURVE_SIMPLIFY_ID,
+		crig::ANIM_CURVE_FLATTEN_ID, crig::ANIM_CURVE_SEAM_ID };
+
+	test::@check(!f.in_tree(crig::ANIM_CURVE_TOOLS_ID), "Curve tools shows outside Curves");
+	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
+	foreach (id : rows) test::@check(!f.in_tree(id), "Clip tools has %s", id);
+	f.close_menu();
+
+	crig::anim_sheet_mode_chosen(f.ui, 1);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	f.feed({ 0, 0 });
+	test::@check(f.in_tree(crig::ANIM_CURVE_TOOLS_ID), "Curves has no Curve tools button");
+	foreach (id : rows) test::@check(!f.in_tree(id), "%s is still a button of its own", id);
+	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
+	foreach (id : rows) test::@check(!f.in_tree(id), "Clip tools has %s in Curves", id);
+	f.close_menu();
+
+	f.open_menu(crig::ANIM_CURVE_TOOLS_ID);
+	foreach (id : rows) test::@check(f.in_tree(id), "Curve tools has no %s", id);
+	f.close_menu();
+
+	// A row acts on the selected joint's curves, as one undo step: these hips hold
+	// still over eight keys, so Simplify has keys to lose.
+	f.app.editing = f.app.author_clip(stepping_clip());
+	f.app.show_edited();
+	f.app.select(f.app.dot_named("hips").id);
+	f.ui.flush();
+	f.feed({ 0, 0 });
+	f.feed({ 0, 0 });
+	sz history = f.app.undo_stack.cursor;
+	f.pick_menu_item(crig::ANIM_CURVE_TOOLS_ID, crig::ANIM_CURVE_SIMPLIFY_ID);
+	test::@check(f.app.undo_stack.cursor == history + 1, "Simplify landed nothing: %s", f.notice_text());
+	test::@check(!f.in_tree(crig::ANIM_CURVE_SIMPLIFY_ID), "the menu stayed open after a row");
+}
+
 // The View menu keeps Ghosts and Motion path, and reaches the Ghosts panel; all of
 // them are what the viewport's aids read.
 fn void the_view_menu_toggles_ghosts_and_the_motion_path() @test

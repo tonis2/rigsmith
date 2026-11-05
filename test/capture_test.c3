@@ -313,43 +313,54 @@ fn void an_animate_node_starts_with_the_mirror_check_off() @test
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
 	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
-	crig::PipelineNode* animate = g.at((usz)g.find("animate"));
-	test::@check(animate.params[1] == "0" && !crig::node_mirror_on(animate), "a new Animate node reads each frame once (%s)", animate.params[1]);
+	usz node = (usz)g.find("animate");
+	crig::PipelineNode* animate = g.at(node);
+	test::@check(animate.params[1] == "" && !g.mirror_on(node), "a new Animate node reads each frame once (%s)", animate.params[1]);
 	test::@check((crig::node_max_frames(animate) ?? 99) == 0, "and the whole video");
-	g.set_param((usz)g.find("animate"), 3, " 40 ");
+	g.set_param(node, 3, " 40 ");
 	test::@check((crig::node_max_frames(animate) ?? 0) == 40, "Frames 40 reads the first 40");
 	foreach (bad : (String[]) { "0", "-3", "ten" })
 	{
-		g.set_param((usz)g.find("animate"), 3, bad);
+		g.set_param(node, 3, bad);
 		test::@check(@catch(crig::node_max_frames(animate)) == crig::CAPTURE_BAD_FRAMES, "Frames '%s' is refused", bad);
 	}
+
+	// Unset follows the source, and a click beats it either way.
+	test::@check(g.swap_source((usz)g.find("video")) && g.mirror_on(node), "a picture is also read mirrored");
+	g.set_param(node, 1, "0");
+	test::@check(!g.mirror_on(node), "turned off, it stays off for a picture");
 }
 
-fn void image_to_pose_makes_a_saved_pose() @test
+fn void an_image_into_animate_makes_a_saved_pose() @test
 {
 	String dir = "build/test_nodes_pose";
 	rig::TriMesh mesh;
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
-	app.open_template_named(POSE_TEMPLATE);
+	app.open_template_named(FINDER_TEMPLATE);
 	crig::PipelineGraph* g = app.pipeline();
-	sz animate = g.find("pose");
-	sz image = g.find("image");
-	test::@check(g.count() == 6 && animate >= 0 && image >= 0 && g.at(animate).input[1] == image, "the picture into Image to pose (%d nodes)", g.count());
-	if (animate < 0 || image < 0) return;
-	test::@check(g.at(animate).input[3] == g.find("reference"), "Reference file into Image to pose");
-	test::@check(!g.connect((usz)image, (usz)g.add(crig::NodeKind.ANIMATE, { 600, 0 }), 1), "a picture does not wire into Animate's video");
-	test::@check(!app.node_ready(g, (usz)image), "no picture chosen, not ready");
+	sz animate = g.find("animate");
+	sz video = g.find("video");
+	test::@check(g.count() == 6 && animate >= 0 && video >= 0 && g.at(animate).input[1] == video, "a Video into Animate to start with (%d nodes)", g.count());
+	if (animate < 0 || video < 0) return;
+	test::@check(g.at(animate).input[3] == g.find("reference"), "Reference file into Animate");
+	test::@check(!g.reads_still((usz)animate), "a video makes a clip");
+
+	// Wired in by hand, into the same port the Video had.
+	usz image = g.add(crig::NodeKind.IMAGE, { 0, 600 });
+	test::@check(g.connect(image, (usz)animate, 1) && g.at(animate).input[1] == (sz)image, "a picture takes the source port over");
+	test::@check(g.reads_still((usz)animate), "a picture makes a pose");
+	test::@check(!app.node_ready(g, image), "no picture chosen, not ready");
 
 	// Everything it needs there, so only the pose's name can refuse it.
 	String picture = string::tformat("%s/crouch.png", dir);
 	String finder = string::tformat("%s/finder.safetensors", dir);
 	String backbone = string::tformat("%s/model.ckpt", dir);
 	foreach (made : (String[]) { picture, finder, backbone }) (void)file::save(made, "x");
-	g.set_param((usz)image, 0, picture);
+	g.set_param(image, 0, picture);
 	g.set_param((usz)g.find("finder"), 0, finder);
 	g.set_param((usz)g.find("backbone"), 0, backbone);
-	test::@check(app.node_ready(g, (usz)image), "the picture is there");
+	test::@check(app.node_ready(g, image), "the picture is there");
 	test::@check(g.clip_name((usz)animate) == "crouch", "the pose is named after the picture (%s)", g.clip_name((usz)animate));
 	test::@check(!app.node_ready(g, (usz)animate), "no such pose yet");
 	List{usz} order;
@@ -360,7 +371,49 @@ fn void image_to_pose_makes_a_saved_pose() @test
 	(void)app.store_pose({ .name = "crouch".copy(mem) });
 	test::@check(app.node_ready(g, (usz)animate), "ready once the pose is saved");
 	test::@check(@catch(app.run_node(g, (usz)animate)) == crig::CAPTURE_POSE_TAKEN, "a taken name is refused");
-	test::@check(crig::node_folder_slot(POSE) == 0 && crig::node_folder_slot(ANIMATE) == 0, "Image to pose and Animate write no files: no save folder");
+
+	// Frames is the video's: a picture has one, so a bad count refuses nothing.
+	g.set_param((usz)animate, 3, "ten");
+	test::@check(@catch(app.run_node(g, (usz)animate)) == crig::CAPTURE_POSE_TAKEN, "a picture read Frames");
+	test::@check(crig::node_folder_slot(ANIMATE) == 0, "Animate writes no files: no save folder");
+}
+
+fn void the_source_node_swaps_between_video_and_image() @test
+{
+	String dir = "build/test_nodes_swap";
+	rig::TriMesh mesh;
+	crig::AppState app = capture_app(dir, &mesh);
+	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
+	crig::PipelineGraph* g = app.pipeline_now(FINDER_TEMPLATE);
+	usz source = (usz)g.find("video");
+	usz animate = (usz)g.find("animate");
+	g.set_param(source, 0, "/clips/wave.mp4");
+
+	test::@check(g.swap_source(source), "the swap was refused");
+	test::@check(g.at(source).kind == crig::NodeKind.IMAGE && g.at(source).id == "image", "the Video did not become an Image (%s)", g.at(source).id);
+	test::@check(g.at(source).params[0] == "", "a video's path is not a picture's");
+	test::@check(g.at(animate).input[1] == (sz)source && g.reads_still(animate), "the wire stays, and Animate reads a picture");
+
+	// Saved and read back it is still an Image, on the same wire.
+	g.changed();
+	g.free();
+	g = app.pipeline_now(FINDER_TEMPLATE);
+	source = (usz)g.find("image");
+	animate = (usz)g.find("animate");
+	test::@check(g.at(animate).input[1] == (sz)source && g.reads_still(animate), "the file lost the Image's wire");
+
+	test::@check(g.swap_source(source), "the swap back was refused");
+	test::@check(g.at(source).kind == crig::NodeKind.VIDEO && g.at(source).id == "video", "the Image did not go back (%s)", g.at(source).id);
+	test::@check(!g.reads_still(animate), "Animate still reads a picture");
+
+	// An id another node holds is not taken.
+	(void)g.add(crig::NodeKind.IMAGE, { 0, 700 });
+	test::@check(g.swap_source(source) && g.at(source).id == "image2", "the swap took a held id (%s)", g.at(source).id);
+
+	// Nothing changes under a run.
+	g.running = (sz)animate;
+	test::@check(!g.swap_source(source) && g.at(source).kind == crig::NodeKind.IMAGE, "a source swapped during a run");
+	g.running = -1;
 }
 
 fn void references_list_newest_first() @test
@@ -477,8 +530,8 @@ fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
 }
 
 const usz TEXT_TEMPLATE = 0;
-const usz TRAIN_TEMPLATE = 2;
-const usz POSE_TEMPLATE = 4;
+const usz TRAIN_TEMPLATE = 1;
+const usz FINDER_TEMPLATE = 2;
 
 fn void each_template_opens_on_its_own_canvas() @test
 {
@@ -487,8 +540,9 @@ fn void each_template_opens_on_its_own_canvas() @test
 	crig::AppState app = capture_app(dir, &mesh);
 	defer { app.free(); mesh.free(mem); (void)path::rmtree((Path)dir); }
 	app.config.motion_generator.text_model = "/models/kimodo-text.gguf".copy(mem);
+	test::@check(crig::TEMPLATES == 3, "three templates, not %d", crig::TEMPLATES);
 	crig::PipelineGraph* g = app.pipeline();
-	test::@check(app.open_template == TEXT_TEMPLATE && g.count() == 5, "text to motion's four nodes and its note (%d)", g.count());
+	test::@check(app.open_template == TEXT_TEMPLATE && g.count() == 6, "text to motion's five nodes and its note (%d)", g.count());
 	sz generate = g.find("generate");
 	sz note = g.find("note");
 	if (generate < 0 || note < 0)
@@ -497,11 +551,14 @@ fn void each_template_opens_on_its_own_canvas() @test
 		return;
 	}
 	test::@check(g.at(generate).input[0] == g.find("text_encoder") && g.at(generate).input[1] == g.find("motion_model")
-		&& g.at(generate).input[2] == g.find("prompt") && g.at(generate).input[3] == -1, "the models and the prompt into Text to motion");
+		&& g.at(generate).input[2] == g.find("prompt"), "the models and the prompt into Text to motion");
+	sz guide = g.find("guide");
+	test::@check(guide >= 0 && g.at(generate).input[3] == guide, "Guide poses is wired in");
+	test::@check(guide >= 0 && g.at(guide).params[0] == "" && app.node_ready(g, (usz)guide), "and starts on None, which needs nothing");
 	test::@check(g.at(note).params[0].contains("Prompt"), "the note says how to use it");
 	test::@check(g.at(g.find("text_encoder")).params[0] == "/models/kimodo-text.gguf", "the text encoder starts with the config's path");
 	g.rebuild_view(&app);
-	test::@check(g.shown_wires.len() == 3 && g.shown_ports.len() == 7, "three wires, seven ports (%d, %d)", g.shown_wires.len(), g.shown_ports.len());
+	test::@check(g.shown_wires.len() == 4 && g.shown_ports.len() == 8, "four wires, eight ports (%d, %d)", g.shown_wires.len(), g.shown_ports.len());
 	g.set_param((usz)g.find("prompt"), 0, "a bow");
 
 	app.open_template_named(TRAIN_TEMPLATE);
@@ -516,7 +573,7 @@ fn void each_template_opens_on_its_own_canvas() @test
 	test::@check(app.pipeline().at(app.pipeline().find("prompt")).params[0] == "a bow", "switching back keeps the edit");
 	test::@check(app.reset_template(TEXT_TEMPLATE), "reset");
 	g = app.pipeline();
-	test::@check(g.count() == 5 && g.at(g.find("prompt")).params[0] != "a bow", "reset puts the template back");
+	test::@check(g.count() == 6 && g.at(g.find("prompt")).params[0] != "a bow", "reset puts the template back");
 	test::@check(g.at(g.find("text_encoder")).params[0] == "/models/kimodo-text.gguf", "model paths stay");
 }
 

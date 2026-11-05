@@ -2023,6 +2023,9 @@ fn void animation_dialogs() @private
 	@node((Dialog) { .body = &build_anim_tools_menu,
 		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_TOOLS_MENU_ID);
+	@node((Dialog) { .body = &build_anim_curve_tools_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CURVE_TOOLS_MENU_ID);
 	// Ghosts' settings float over the dock, and move: dragged by the bar.
 	@node((Dialog) { .title = "Ghosts", .body = &build_anim_ghosts_body,
 		.style = DIALOG_STYLE }).with_id(ANIM_GHOSTS_DIALOG_ID);

@@ -2,9 +2,9 @@
  The Nodes pane: text to motion and video capture as graphs
  (`app/pipeline_graph.c3`) in cui's node editor, one per template, picked in
  the bar on top. Model nodes hold the weights, Prompt and Guide poses feed Text
- to motion; Finder file, Train finder and Video feed Animate, and an Image
- feeds Image to pose. Reference file picks the reference either one reads through
- (they are drawn from the Animations menu). Nodes are added from the menu (double-click, Space or Tab, or a wire
+ to motion; Finder file, Train finder and a Video or Image feed Animate. Reference
+ file picks the reference it reads through (they are drawn from the Animations
+ menu). Nodes are added from the menu (double-click, Space or Tab, or a wire
  dropped on nothing), wired by dragging, and run from their cards.
 
  One pipeline job runs at a time; the MCP tools share it.
@@ -33,19 +33,24 @@ const String NODE_GUIDE_ID = "node-guide";
 const String NODE_OPTIMIZE_ID = "node-optimize";
 const String NODE_SIZE_ID = "node-size";
 const String NODE_MIRROR_ID = "node-mirror";
+const String NODE_SOURCE_ID = "node-source";
 // The pose chooser's first row: the rig's rest pose rather than a clip.
 // A card's body, inside its padding.
 const float NODE_INNER = NODE_W - 16;
 const float NODE_TEXT = 11;
 const float NODE_PROMPT_H = 56;
 const float NODES_BAR_H = 30;
-// A note card's text field, and roughly how many characters fit a line of it.
+// A note card's text field, roughly how many characters fit a line of it, a line's
+// height and the field's padding top and bottom.
 const float NOTE_INNER = NOTE_W - 16;
-const usz NOTE_LINE_CHARS = 38;
+const usz NOTE_LINE_CHARS = 30;
+const float NOTE_LINE_H = 19;
+const float NOTE_PADDING = 12;
 
 // By `KeyReduction` ordinal.
 String[3] generate_optimize_levels = { "Off", "Light", "Strong" };
 String[CAPTURE_SIZES.len] train_size_names = { "448 px", "512 px", "640 px", "768 px", "896 px", "1024 px" };
+String[2] node_source_names = { "Video", "Image" };
 // The bar's choices; a Select borrows its options, so not the const itself.
 String[TEMPLATES] nodes_template_names = TEMPLATE_NAMES;
 
@@ -418,25 +423,31 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 				folder_field(2);
 				if (!running) self.status(ready ? finder_summary(app.capture_node_finder(n)) : "Not trained yet", ready);
 			case VIDEO:
-				path_field(0, "the clip, or a folder of its frames", "Choose video — the .mp4 or .mov (H.264) the video model made from a reference picture, or a folder of its frames");
-				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 			case IMAGE:
-				path_field(0, "reference.png in a new pose", "Choose picture — a reference picture moved into a new pose by an image model: the same two views, the same framing");
+				@node((Segmented) { .options = node_source_names[..], .selected = n.kind == IMAGE ? 1 : 0, .on_change = &node_source_chosen,
+					.style = SEGMENTED_STYLE }).with_id(NODE_SOURCE_ID);
+				if (n.kind == VIDEO)
+				{
+					path_field(0, "the clip, or a folder of its frames", "Choose video — the .mp4 or .mov (H.264) the video model made from a reference picture, or a folder of its frames");
+				}
+				else
+				{
+					path_field(0, "reference.png in a new pose", "Choose picture — a reference picture moved into a new pose by an image model: the same two views, the same framing");
+				}
 				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 			case REFERENCE:
 				path_field(0, "empty: the closest saved reference", "Choose the reference — the one the video or picture was made from: its folder, reference.png or studio.json. Empty takes the saved reference that looks most like the first frame");
 				@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 			case ANIMATE:
-			case POSE:
-				bool pose = n.kind == POSE;
+				bool pose = g.reads_still(i);
 				@tree((Row) { .gap = 4, .cross_align = CENTER })
 				{
 					String named = string::tformat("%s name: %s", pose ? "pose" : "clip", g.clip_name(i));
 					@node((TextField) { .width = NODE_INNER - 2 * (TOOL_CELL_W + 4), .style = TEXT_FIELD_STYLE, .placeholder = self.hold(named),
 						.on_change = &node_param0_changed }).with_id(NODE_FIELD_IDS[0]);
 					@card_icon(MIRROR_GLYPH, "Mirror check — also reads each frame mirrored, so left and right don't swap. Off is about 40% faster at finding joints.",
-						&node_mirror_clicked, node_mirror_on(n) ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
-					self.run_icon(n.kind, running, pose ? "Image to pose — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
+						&node_mirror_clicked, g.mirror_on(i) ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
+					self.run_icon(n.kind, running, pose ? "Animate — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
 						: "Animate — reads the video a frame at a time into a clip on the character, with the finder and the picture's layout; save the model to keep it");
 				};
 				if (!pose)
@@ -469,7 +480,7 @@ fn float note_height(String text) @private
 {
 	usz lines;
 	foreach (para : text.tsplit("\n")) lines += math::max(para.len + NOTE_LINE_CHARS - 1, NOTE_LINE_CHARS) / NOTE_LINE_CHARS;
-	return (float)math::max(lines, (usz)3) * 15 + 10;
+	return (float)math::max(lines, (usz)3) * NOTE_LINE_H + NOTE_PADDING;
 }
 
 fn void NodesPanel.status(&self, String text, bool lit)
@@ -656,9 +667,21 @@ fn void node_mirror_clicked(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	sz node = node_card_clicked(ui);
 	if (node < 0) return;
-	app.set_node_param((usz)node, 1, node_mirror_on(app.pipeline().at((usz)node)) ? "0" : "1");
+	app.set_node_param((usz)node, 1, app.pipeline().mirror_on((usz)node) ? "0" : "1");
 	// The card rebuilds, so the icon shows the new state.
 	app.pipeline().version++;
+}
+
+// The Video | Image switch on a source's card. A refusal rebuilds it too, so the
+// switch goes back to what the node is.
+fn void node_source_chosen(Ui* ui, usz row) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	PipelineGraph* g = app.pipeline();
+	sz node = node_card_clicked(ui);
+	if (node < 0 || (g.at(node).kind == IMAGE) == (row == 1)) return;
+	if (!g.swap_source((usz)node)) app.@notice("Stop the run first: its nodes are running");
+	g.changed();
 }
 
 fn void node_new_seed_clicked(Ui* ui) @private
@@ -746,8 +769,11 @@ fn void nodes_wires_changed(Ui* ui) @private
 fn void nodes_connect(Ui* ui, usz from, usz to) @private
 {
 	PipelineGraph* g = ui.inherit(AppState)!!.pipeline();
-	if (!g.connect(g.ports()[from].node, g.ports()[to].node, (usz)g.ports()[to].input)) return;
+	usz node = g.ports()[to].node;
+	if (!g.connect(g.ports()[from].node, node, (usz)g.ports()[to].input)) return;
 	nodes_wires_changed(ui);
+	// Animate's card shows what its source makes.
+	if (g.at(node).kind == ANIMATE) g.version++;
 }
 
 fn void nodes_disconnect(Ui* ui, usz wire) @private
