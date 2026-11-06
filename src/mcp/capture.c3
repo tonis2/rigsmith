@@ -186,6 +186,14 @@ fn String capture_status_json(AppState* app) @private
 	out.appendf(`],"reference":%s,"running":%s,"stage":"%s","step":%d,"steps":%d,"failed":%s,"last":"`,
 		references.len() > 0 ? "true" : "false", job.running ? "true" : "false", job.stage, job.step, job.steps, job.failed ? "true" : "false");
 	json_escape_into(&out, job.last());
+	String stage_text = job.train_stage_text();
+	defer if (stage_text.len > 0) stage_text.free(mem);
+	String count_text = job.train_count_text();
+	defer if (count_text.len > 0) count_text.free(mem);
+	out.append_string(`","status":"`);
+	json_escape_into(&out, stage_text);
+	if (stage_text.len > 0) out.append_string(" · ");
+	json_escape_into(&out, count_text);
 	out.append_string(`"}`);
 	return out.copy_str(mem);
 }

@@ -89,7 +89,7 @@ fn void a_stopped_training_set_carries_on_from_its_first_missing_chunk() @test
 
 fn void the_train_task_is_valid_json_with_its_paths() @test
 {
-	String text = crig::capture_train_json("/AI models/model.ckpt", "/m/zid \"x\".capture/renders", "/m/f.safetensors");
+	String text = crig::capture_train_json("/AI models/model.ckpt", "/m/zid \"x\".capture/renders", "/m/f.safetensors", 4000);
 	defer text.free(mem);
 	Object*? parsed = json::parse(mem, text);
 	if (catch parsed)
@@ -103,6 +103,134 @@ fn void the_train_task_is_valid_json_with_its_paths() @test
 	test::@check((parsed.get_string("model") ?? "") == "/AI models/model.ckpt", "the backbone");
 	Object*? layers = parsed.get("layers");
 	test::@check(@ok(layers) && layers!!.get_len() == 1, "the 20th block's features beside the last's");
+	test::@check(!@ok(parsed.get("half_check")), "no second training on half the poses");
+	test::@check((parsed.get_int("limit") ?? 0) == 4000, "a folder left with more poses is cut to this run's");
+	test::@check((int)crig::CAPTURE_MEMORY_GB == (parsed.get_int("memory_gb") ?? 0), "the plugin's memory cap is the node's");
+	test::@check((int)crig::CAPTURE_RANK == (parsed.get_int("rank") ?? 0), "the plugin's feature width is the node's");
+}
+
+// The Zidane finder's report (2026-11-04) said 3640 pictures at 768 px.
+fn void a_run_says_how_many_pictures_fit() @test
+{
+	test::eq(crig::capture_train_pictures(1000, 768), (usz)3640);
+	test::eq(crig::capture_train_pictures(1500, 768), (usz)3640);
+	test::eq(crig::capture_train_pictures(500, 768), (usz)2000);
+	test::eq(crig::capture_train_pictures(1000, 448), (usz)4000);
+	test::eq(crig::capture_train_pictures(5000, 1024), (usz)2048);
+}
+
+fn void a_run_says_how_long_it_takes() @test
+{
+	// The measured run took 38 min 51 s after drawing, and 3 min 54 s of that went.
+	double minutes = crig::capture_train_seconds(1000, 768) / 60;
+	test::@check(minutes > 35 && minutes < 39, "1000 poses at 768 px (%.1f min)", minutes);
+	test::@check(crig::capture_train_seconds(500, 768) < crig::capture_train_seconds(1000, 768) * 0.6, "fewer poses take less");
+	test::@check(crig::capture_train_seconds(1000, 448) < crig::capture_train_seconds(1000, 768), "smaller pictures take less");
+	test::@check(crig::capture_train_seconds(1500, 768) > crig::capture_train_seconds(1000, 768), "more poses are still drawn");
+}
+
+fn void the_node_says_what_a_run_will_do() @test
+{
+	String cut = crig::capture_train_summary(1000, 768);
+	defer cut.free(mem);
+	test::@check(cut == "3640 of 4000 pictures fit · ~37 min", "a set too big for the GPU (%s)", cut);
+	String whole = crig::capture_train_summary(500, 448);
+	defer whole.free(mem);
+	test::@check(whole.starts_with("2000 pictures · ~"), "a set that fits (%s)", whole);
+}
+
+fn void each_step_line_lands_in_its_stage() @test
+{
+	test::eq(crig::train_stage_of(crig::step_what("  step 12/3640, encoding pictures"), DRAW), crig::TrainStage.READ_BODY);
+	test::eq(crig::train_stage_of(crig::step_what("  step 48/3640, principal components"), DRAW), crig::TrainStage.READ_BODY);
+	test::eq(crig::train_stage_of(crig::step_what("  step 1/4320, training"), READ_BODY), crig::TrainStage.FIT_BODY);
+	test::eq(crig::train_stage_of(crig::step_what("  step 9/7280, encoding hands"), FIT_BODY), crig::TrainStage.READ_HANDS);
+	test::eq(crig::train_stage_of(crig::step_what("  step 2/8640, training hands"), READ_HANDS), crig::TrainStage.FIT_HANDS);
+	test::eq(crig::train_stage_of(crig::step_what("  step 5/9, something new"), FIT_BODY), crig::TrainStage.FIT_BODY);
+	test::eq(crig::train_stage_of(crig::step_what("  step 5/9"), FIT_BODY), crig::TrainStage.FIT_BODY);
+	test::eq(crig::train_stage_of(crig::step_what("  step 5/9,"), FIT_BODY), crig::TrainStage.FIT_BODY);
+}
+
+fn void a_training_says_its_stage_and_the_whole_runs_time() @test
+{
+	crig::CaptureJob job;
+	job.pace = 1;
+	job.running = true;
+	job.render_total = 1000;
+	job.render_size = 768;
+
+	job.stage = RENDERING;
+	job.step = 300;
+	job.steps = 1000;
+	String drawing = job.train_stage_text();
+	defer drawing.free(mem);
+	test::@check(drawing == "Stage 1 of 5 · Drawing poses", "%s", drawing);
+	String drawn = job.train_count_text();
+	defer drawn.free(mem);
+	test::@check(drawn == "300 of 1000 · about 36 min left", "%s", drawn);
+
+	// Between the drawing and the plugin's first step.
+	job.stage = TRAINING;
+	job.train_stage = READ_BODY;
+	job.step = job.steps = 0;
+	String loading = job.train_count_text();
+	defer loading.free(mem);
+	test::@check(loading == "Loading DINOv3 · about 35 min left", "%s", loading);
+
+	crig::capture_line(&job, "  step 1820/3640, encoding pictures");
+	String reading = job.train_stage_text();
+	defer reading.free(mem);
+	test::@check(reading == "Stage 2 of 5 · Reading pictures", "%s", reading);
+	String half_read = job.train_count_text();
+	defer half_read.free(mem);
+	test::@check(half_read == "1820 of 3640 · about 25 min left", "%s", half_read);
+
+	// An epoch's report is kept for a failure to quote, and moves nothing.
+	crig::capture_line(&job, "  epoch 5/40: loss 155.0, held out: median 8.7px");
+	test::@check(job.last() == "epoch 5/40: loss 155.0, held out: median 8.7px", "the last line is kept (%s)", job.last());
+	String after = job.train_stage_text();
+	defer after.free(mem);
+	test::@check(after == reading, "the stage stays (%s)", after);
+	test::eq(job.step, (uint)1820);
+
+	crig::capture_line(&job, "  step 8640/8640, training hands");
+	String last_stage = job.train_stage_text();
+	defer last_stage.free(mem);
+	test::@check(last_stage == "Stage 5 of 5 · Training the hands", "%s", last_stage);
+	String ending = job.train_count_text();
+	defer ending.free(mem);
+	test::@check(ending == "8640 of 8640 · under a minute left", "%s", ending);
+
+	job.stage = ANIMATING;
+	test::@check(job.train_stage_text().len == 0, "an animation is not a training");
+	test::@check(job.train_count_text().len == 0, "nor is its count");
+}
+
+fn void a_slower_machine_corrects_the_time_left() @test
+{
+	crig::CaptureJob job;
+	job.pace = 1;
+	job.running = true;
+	job.stage = TRAINING;
+	job.render_total = 1000;
+	job.render_size = 768;
+	job.train_stage = READ_BODY;
+	job.stage_first = 0;
+	job.step = 364;
+	job.steps = 3640;
+
+	// A tenth of the stage should take 116 s here; it took twice that.
+	double expected = crig::train_stage_seconds(READ_BODY, 1000, 768) * 0.1;
+	job.measure_pace(expected * 2);
+	test::@check(job.pace > 1.99 && job.pace < 2.01, "twice as slow (%.2f)", job.pace);
+	double left = crig::capture_train_seconds_left(READ_BODY, job.progress(), job.pace, 1000, 768);
+	double at_rates = crig::capture_train_seconds_left(READ_BODY, job.progress(), 1, 1000, 768);
+	test::@check(left > at_rates * 1.99 && left < at_rates * 2.01, "the whole run's time doubles");
+
+	// Too early to tell: the speed stands.
+	job.pace = 1;
+	job.measure_pace(crig::TRAIN_PACE_AFTER - 1);
+	test::eq(job.pace, 1.0);
 }
 
 fn void a_finder_says_what_it_is() @test
@@ -124,26 +252,6 @@ fn void a_finder_says_what_it_is() @test
 	String said = crig::finder_summary(finder);
 	test::@check(said == "2 points · 5.50 px held out", "its points and held-out error (%s)", said);
 	test::@check(crig::finder_summary("build/no_such_finder.safetensors") == "", "a missing file says nothing");
-}
-
-fn void a_finder_trained_on_half_the_poses_says_how_well() @test
-{
-	String finder = "build/test_capture_half.safetensors";
-	String meta = `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5},"held_out_px_half":{"median":6.25}}}`;
-	DString header = dstring::new(mem);
-	defer header.free();
-	header.append_string(`{"__metadata__":{"finder":`);
-	gltf_edit::escape_json_string(&header, meta);
-	header.append_string("}}");
-	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
-	defer alloc::free(mem, bytes);
-	ulong n = (ulong)header.len();
-	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
-	bytes[8..] = ((char[])header.str_view())[..];
-	(void)file::save(finder, bytes);
-	defer (void)file::delete(finder);
-	String said = crig::finder_summary(finder);
-	test::@check(said == "2 points · 5.50 px held out (half the poses 6.25 px)", "the half set's error (%s)", said);
 }
 
 fn void a_finder_with_hands_says_so() @test

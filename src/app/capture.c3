@@ -7,9 +7,9 @@
  1. **A joint finder** for this character: a training set drawn the way
     render_poses draws it (poses inside the rig's limits and frames of its
     clips, from the front, the studio's front-left three-quarter and both
-    sides), a few poses a frame so the window keeps repainting, then creature's `train` task on it, about half an hour
-    on one GPU, at the node's picture size (bigger is finer and slower). Or a
-    finder trained before, chosen as a file.
+    sides), a few poses a frame so the window keeps repainting, then creature's `train` task on it, at the node's
+    picture size (bigger is finer and slower). `TrainStage` lists the stages and
+    what they cost. Or a finder trained before, chosen as a file.
  2. **A reference picture**, from the Animations ⋯ menu: render_studio's two cameras
     side by side, a front-left three-quarter view and the right side, on the
     frame at the playhead or a saved pose. A video
@@ -39,6 +39,7 @@ import std::io::file;
 import std::io::path;
 import std::core::string;
 import std::math;
+import std::time;
 import std::collections::list;
 import gltf_edit;
 import image;
@@ -54,16 +55,22 @@ faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GP
 
 // The training set's size by default, and how many poses one frame draws.
 const usz CAPTURE_DEFAULT_POSES = 1500;
+const uint CAPTURE_MIN_POSES = 50;
+const uint CAPTURE_MAX_POSES = 20000;
 const usz CAPTURE_CHUNK = 8;
 // The training pictures' sides in pixels a finder can be trained at (multiples
 // of DINOv3's 16-px patch, up to render_poses' 1024), and the default.
 const uint[6] CAPTURE_SIZES = { 448, 512, 640, 768, 896, 1024 };
 const uint CAPTURE_DEFAULT_SIZE = 448;
 // The finder's training as the Zidane finder that fits best was trained: the
-// last block's features beside the 20th's.
-// Also trained on half the poses, to tell whether more would help; a set too
-// big for the GPU is cut to the pictures that fit.
-const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "half_check": true, "fit_memory": true`;
+// last block's features beside the 20th's. A set too big for the GPU is cut to
+// the pictures that fit.
+const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "fit_memory": true`;
+// Every picture's features stay on the GPU while the finder trains, which caps
+// the pictures a run uses. Sent to the plugin, so the node's count matches it.
+const uint CAPTURE_MEMORY_GB = 12;
+const uint CAPTURE_RANK = 384;
+const uint CAPTURE_PATCH = 16;
 // No motion blur: the studio's videos are shot sharp.
 const float CAPTURE_BLUR = 0;
 // Random poses with the legs bent hard: wide stances, squats, kicks.
@@ -76,6 +83,30 @@ enum CaptureStage
 	TRAINING,   // creature's train task
 	ANIMATING,  // creature's animate task
 }
+
+// What a finder's training does, in order, and the node's name for each stage.
+enum TrainStage : (String label)
+{
+	DRAW { "Drawing poses" },
+	READ_BODY { "Reading pictures" },
+	FIT_BODY { "Training the body" },
+	READ_HANDS { "Reading hands" },
+	FIT_HANDS { "Training the hands" },
+}
+
+// Seconds a stage took, from one run at 768 px (2026-11-04, 3640 pictures): per
+// picture for the body, whose cost grows with the picture's area, and per crop
+// for the hands, whose crops are always one size. Another GPU is corrected by
+// `CaptureJob.pace` once a run is going.
+const double TRAIN_RATE_SIZE = 768;
+const double TRAIN_DRAW_RATE = 0.028;
+const double TRAIN_READ_BODY_RATE = 0.319;
+const double TRAIN_FIT_BODY_RATE = 0.065;
+const double TRAIN_READ_HANDS_RATE = 0.0912;
+const double TRAIN_FIT_HANDS_RATE = 0.0047;
+const usz TRAIN_HAND_CROPS = 2;
+// How long a stage runs before its speed says anything.
+const double TRAIN_PACE_AFTER = 3;
 
 <*
  The capture step running now, if any, and how the last one ended. Every
@@ -96,6 +127,13 @@ struct CaptureJob
 	usz render_next;
 	usz render_total;
 	uint render_size;
+	// The training's stage, the step it began at and for how long it has run, and
+	// how this run's speed compares to the measured rates (2 = twice as slow).
+	TrainStage train_stage;
+	bool stage_timed;
+	uint stage_first;
+	Clock stage_clock;
+	double pace;
 	// The clip being made: its name, its video, picture or frames' folder (the
 	// training set's, while training), and their rate.
 	String name;
@@ -165,6 +203,10 @@ fn void CaptureJob.clear(&self)
 	self.failed = false;
 	self.step = self.steps = 0;
 	self.last_length = 0;
+	self.train_stage = DRAW;
+	self.stage_timed = false;
+	self.stage_first = 0;
+	self.pace = 1;
 }
 
 fn void CaptureJob.free(&self)
@@ -191,8 +233,77 @@ fn void capture_line(void* context, String line)
 	{
 		job.step = step;
 		job.steps = steps;
+		if (job.stage == TRAINING) job.note_train_step(train_stage_of(step_what(line), job.train_stage));
 	}
 	job.set_last(line.trim());
+}
+
+// What a "  step N/M, what" line is counting; "" when it does not say.
+fn String step_what(String line)
+{
+	String text = line.trim();
+	sz? comma = text.index_of_char(',');
+	if (catch comma) return "";
+	return text[(usz)comma + 1..].trim();
+}
+
+// The stage a step line's `what` belongs to; `now` for one that names none.
+fn TrainStage train_stage_of(String what, TrainStage now)
+{
+	switch (what)
+	{
+		case "encoding pictures":
+		case "principal components": return READ_BODY;
+		case "training": return FIT_BODY;
+		case "encoding hands": return READ_HANDS;
+		case "training hands": return FIT_HANDS;
+		default: return now;
+	}
+}
+
+// A step of `stage` has run: start its clock if it is new, and measure its speed.
+fn void CaptureJob.note_train_step(&self, TrainStage stage)
+{
+	if (!self.stage_timed || stage != self.train_stage)
+	{
+		self.train_stage = stage;
+		self.stage_timed = true;
+		self.stage_first = self.step;
+		self.stage_clock = clock::now();
+		return;
+	}
+	self.measure_pace(self.stage_clock.to_now().to_sec());
+}
+
+// This run's speed against the rates, `seconds` into the stage running now.
+fn void CaptureJob.measure_pace(&self, double seconds)
+{
+	if (seconds < TRAIN_PACE_AFTER || self.steps == 0 || self.step <= self.stage_first) return;
+	double done = (double)(self.step - self.stage_first) / (double)self.steps;
+	self.pace = seconds / (train_stage_seconds(self.train_stage, self.render_total, self.render_size) * done);
+}
+
+// "Stage 2 of 5 · Reading pictures", or "" outside a training. Owned.
+fn String CaptureJob.train_stage_text(&self)
+{
+	if (self.stage != RENDERING && self.stage != TRAINING) return "";
+	return string::format(mem, "Stage %d of %d · %s", self.train_stage.ordinal + 1, TrainStage::values.len, self.train_stage.label);
+}
+
+// "1200 of 3640 · about 31 min left", or "" outside a training. Owned.
+fn String CaptureJob.train_count_text(&self)
+{
+	if (self.stage != RENDERING && self.stage != TRAINING) return "";
+	double seconds = capture_train_seconds_left(self.train_stage, self.progress(), self.pace, self.render_total, self.render_size);
+	if (self.steps == 0) return string::format(mem, "Loading DINOv3 · %s", capture_time_left(seconds));
+	return string::format(mem, "%d of %d · %s", self.step, self.steps, capture_time_left(seconds));
+}
+
+// "about 31 min left", or "under a minute left". Temporary.
+fn String capture_time_left(double seconds)
+{
+	if (seconds < 60) return "under a minute left";
+	return string::tformat("about %d min left", (long)(seconds / 60 + 0.5));
 }
 
 // ---------------------------------------------------------------------------
@@ -286,11 +397,6 @@ fn String finder_summary(String finder_path)
 		if (try Object* held = report.get("held_out_px"))
 		{
 			if (try double median = held.get_float("median")) out.appendf("%s%.2f px held out", out.len() > 0 ? " · " : "", median);
-		}
-		// Trained on half the poses as well: close to the full figure, more poses would not help.
-		if (try Object* half = report.get("held_out_px_half"))
-		{
-			if (try double median = half.get_float("median")) out.appendf(" (half the poses %.2f px)", median);
 		}
 	}
 	// A finder that looks again at the hands says how well.
@@ -402,13 +508,74 @@ fn void? AppState.start_capture_training(&self, usz poses, uint size, String ren
 	job.step = (uint)job.render_next;
 	job.steps = (uint)job.render_total;
 	job.set_last(job.render_next > 0 ? "carrying on with the training set" : "drawing the training set");
-	self.@notice("Drawing %d poses of the character at %d px to train its joint finder on…", job.render_total, size);
+	self.@notice("Training the joint finder on %d poses at %d px: %d stages, %s", job.render_total, size, TrainStage::values.len, capture_time_left(capture_train_seconds(job.render_total, size)));
 }
 
 fn bool capture_size_ok(uint size)
 {
 	foreach (s : CAPTURE_SIZES) if (s == size) return true;
 	return false;
+}
+
+fn bool capture_poses_ok(uint poses) => poses >= CAPTURE_MIN_POSES && poses <= CAPTURE_MAX_POSES;
+
+<*
+ The pictures a run of `poses` at `size` trains on: every one drawn, or as many
+ as fit the GPU, which the plugin's `fit_memory` cuts it to.
+*>
+fn usz capture_train_pictures(usz poses, uint size)
+{
+	usz side = (usz)size / CAPTURE_PATCH;
+	usz fits = ((usz)CAPTURE_MEMORY_GB << 30) / (side * side * CAPTURE_RANK * 4);
+	return math::min(poses * CAPTURE_CAMERAS, fits);
+}
+
+// How long `stage` of a run takes at the measured rates, in seconds.
+fn double train_stage_seconds(TrainStage stage, usz poses, uint size)
+{
+	double area = ((double)size / TRAIN_RATE_SIZE) * ((double)size / TRAIN_RATE_SIZE);
+	double pictures = (double)capture_train_pictures(poses, size);
+	switch (stage)
+	{
+		case DRAW: return (double)(poses * CAPTURE_CAMERAS) * TRAIN_DRAW_RATE * area;
+		case READ_BODY: return pictures * TRAIN_READ_BODY_RATE * area;
+		case FIT_BODY: return pictures * TRAIN_FIT_BODY_RATE * area;
+		case READ_HANDS: return pictures * TRAIN_HAND_CROPS * TRAIN_READ_HANDS_RATE;
+		case FIT_HANDS: return pictures * TRAIN_HAND_CROPS * TRAIN_FIT_HANDS_RATE;
+	}
+}
+
+// A whole run's length at the measured rates, in seconds.
+fn double capture_train_seconds(usz poses, uint size)
+{
+	return capture_train_seconds_left(DRAW, 0, 1, poses, size);
+}
+
+<*
+ What is left of a run, in seconds: the rest of `stage`, `done` of it finished,
+ and every stage after it, at `pace` times the measured rates.
+*>
+fn double capture_train_seconds_left(TrainStage stage, float done, double pace, usz poses, uint size)
+{
+	double left = train_stage_seconds(stage, poses, size) * (1.0 - (double)done);
+	foreach (later : TrainStage::values)
+	{
+		if (later.ordinal > stage.ordinal) left += train_stage_seconds(later, poses, size);
+	}
+	return left * pace;
+}
+
+<*
+ What a run of `poses` at `size` will do, for the node before it starts:
+ "3640 of 4000 pictures fit · ~37 min". Owned.
+*>
+fn String capture_train_summary(usz poses, uint size)
+{
+	usz drawn = poses * CAPTURE_CAMERAS;
+	usz used = capture_train_pictures(poses, size);
+	long minutes = math::max((long)(capture_train_seconds(poses, size) / 60 + 0.5), (long)1);
+	if (used < drawn) return string::format(mem, "%d of %d pictures fit · ~%d min", used, drawn, minutes);
+	return string::format(mem, "%d pictures · ~%d min", used, minutes);
 }
 
 // A training set drawn at another size, from other cameras, with other draw
@@ -498,11 +665,12 @@ fn void AppState.draw_capture_chunk(&self)
 	job.render_next += shoot.count;
 	job.step = (uint)job.render_next;
 	if (job.render_next < job.render_total) return;
-	self.start_capture_engine(TRAINING, capture_train_json(job.backbone, job.frames, job.finder));
+	self.start_capture_engine(TRAINING, capture_train_json(job.backbone, job.frames, job.finder, job.render_total * CAPTURE_CAMERAS));
 }
 
-// The train task's settings, as JSON. Owned.
-fn String capture_train_json(String backbone, String renders, String finder)
+// The train task's settings, as JSON. `pictures` caps a folder left with more
+// than this run asked for: the plugin reads every chunk in it. Owned.
+fn String capture_train_json(String backbone, String renders, String finder, usz pictures)
 {
 	DString out = dstring::new(mem);
 	defer out.free();
@@ -512,7 +680,7 @@ fn String capture_train_json(String backbone, String renders, String finder)
 	gltf_edit::escape_json_string(&out, renders);
 	out.append_string(",\n  \"out\": ");
 	gltf_edit::escape_json_string(&out, finder);
-	out.appendf(",\n  %s\n}\n", CAPTURE_TRAIN_EXTRA);
+	out.appendf(",\n  %s,\n  \"limit\": %d,\n  \"memory_gb\": %d,\n  \"rank\": %d\n}\n", CAPTURE_TRAIN_EXTRA, pictures, CAPTURE_MEMORY_GB, CAPTURE_RANK);
 	return out.copy_str(mem);
 }
 
@@ -980,6 +1148,8 @@ fn void AppState.start_capture_engine(&self, CaptureStage stage, String json)
 	job.stage = stage;
 	job.step = job.steps = 0;
 	job.running = true;
+	job.train_stage = READ_BODY;
+	job.stage_timed = false;
 	if (catch engine.start(self.motion_gpu, "creature", json, plugins, &capture_line, job))
 	{
 		self.fail_capture(engine.error().len > 0 ? engine.error() : "the pipeline would not start");

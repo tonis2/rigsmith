@@ -21,3 +21,4 @@ rule test changed, that is a rule change: stop and ask the owner.
 - [Shortcuts](shortcuts.md)
 - [Posing](posing.md)
 - [Rigging](rigging.md)
+- [Capture](capture.md)

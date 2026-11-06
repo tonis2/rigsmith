@@ -418,10 +418,14 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 					small_label("Size");
 					@node((Select) { .options = train_size_names[..], .selected = train_size_row(n.params[1]),
 						.width = 72, .style = VIEW_MENU_STYLE, .on_change = &node_size_chosen }).with_id(NODE_SIZE_ID);
-					self.run_icon(n.kind, running, "Train — draws the character in this many poses from the front and both sides, then teaches the finder where its joints are: about half an hour. A stopped run carries on. Size — the pictures' side: bigger finds joints more precisely but trains slower (896 is about 4× 448). Changing it draws the set again.");
+					self.run_icon(n.kind, running, "Train — draws each pose from four cameras, then teaches the finder where its joints are, in five stages. The line below says how many pictures it uses and about how long it takes. Size — the pictures' side: bigger finds joints more precisely but trains slower (896 is about 4× 448). Changing it draws the set again.");
 				};
 				folder_field(2);
-				if (!running) self.status(ready ? finder_summary(app.capture_node_finder(n)) : "Not trained yet", ready);
+				if (!running)
+				{
+					self.status(ready ? finder_summary(app.capture_node_finder(n)) : "Not trained yet", ready);
+					@node((LiveLabel) { .text_of = &node_status_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
+				}
 			case VIDEO:
 			case IMAGE:
 				@node((Segmented) { .options = node_source_names[..], .selected = n.kind == IMAGE ? 1 : 0, .on_change = &node_source_chosen,
@@ -467,6 +471,7 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 		{
 			@node((LiveLabel) { .text_of = n.kind == TEXT_TO_MOTION ? &generate_status_text : &capture_status_text,
 				.size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
+			if (n.kind == TRAIN) @node((LiveLabel) { .text_of = &capture_count_text, .size = { NODE_INNER, 16 }, .text_size = NODE_TEXT, .color = TEXT_DIM });
 		}
 		else if (g.failed == (sz)i)
 		{
@@ -493,7 +498,7 @@ fn void NodesPanel.run_icon(&self, NodeKind kind, bool running, String tip)
 {
 	if (running)
 	{
-		String stop = kind == TEXT_TO_MOTION ? "Stop — throws away what it had made" : "Stop — a stopped training set carries on where it stopped";
+		String stop = kind == TRAIN ? "Stop — keeps the drawn pictures, and the body once it has trained; the rest starts over" : "Stop — throws away what it had made";
 		@card_icon(STOP_GLYPH, stop, &node_stop_clicked).with_id("node-stop");
 		return;
 	}
@@ -566,6 +571,11 @@ fn String node_status_text(Element* elem) @private
 			String lower = first.to_lower_tcopy();
 			if (first.len > 0 && !lower.ends_with(".mp4") && !lower.ends_with(".mov") && !lower.ends_with(".m4v")) return "Not an .mp4 or .mov".copy(mem);
 			return "H.264 .mp4 or .mov, read in Rigsmith".copy(mem);
+		case TRAIN:
+			uint? poses = first.to_uint();
+			if (catch poses) return "";
+			if (!capture_poses_ok(poses)) return "";
+			return capture_train_summary(poses, n.params[1].trim().to_uint() ?? CAPTURE_DEFAULT_SIZE);
 		case REFERENCE:
 			if (first.len == 0) return "The closest saved reference".copy(mem);
 			String folder = capture_reference_folder(first);
@@ -1080,9 +1090,17 @@ fn String capture_status_text(Element* elem) @private
 	if (!job.running) return "";
 	switch (job.stage)
 	{
-		case RENDERING: return string::format(mem, "Pose %d of %d", job.step, job.steps);
+		case RENDERING:
+		case TRAINING: return job.train_stage_text();
 		default: return job.last().len > 0 ? job.last().copy(mem) : "";
 	}
+}
+
+// The second line of a training's status: how far, and how long is left. Owned.
+fn String capture_count_text(Element* elem) @private
+{
+	CaptureJob* job = &elem.inherit(AppState)!!.capture_job;
+	return job.running ? job.train_count_text() : "";
 }
 
 // ---------------------------------------------------------------------------

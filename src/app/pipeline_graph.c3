@@ -816,7 +816,7 @@ fn void? AppState.node_order(&self, PipelineGraph* g, usz node, List{usz}* order
 		case TRAIN:
 			uint? poses = n.params[0].trim().to_uint();
 			if (catch poses) return CAPTURE_BAD_POSES~;
-			if (poses < 50 || poses > 20000) return CAPTURE_BAD_POSES~;
+			if (!capture_poses_ok(poses)) return CAPTURE_BAD_POSES~;
 			uint? size = n.params[1].trim().to_uint();
 			if (catch size) return CAPTURE_BAD_SIZE~;
 			if (!capture_size_ok(size)) return CAPTURE_BAD_SIZE~;
