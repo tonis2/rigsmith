@@ -19,3 +19,8 @@
 - **Rule:** an Animate node reads each frame mirrored as well, for a video and for a picture, until its Mirror check is turned off. MCP `capture` has the same default.
 - **Why:** with it off, a 5 second run lost 2 of its 12 steps. The two views read the legs opposite ways, the fit landed between them, and the legs hung near the middle while the video's feet were wide apart. The same run with it on took all 12, for 205 s against 134 s (2026-11-06).
 - **Tests:** `test/capture_test.c3`: `an_animate_node_starts_with_the_mirror_check_on`. `test/ui/workspace_areas_test.c3`: `the_nodes_pane_is_open_and_keeps_what_is_typed`.
+
+## A view that slips is put back in step
+- **Rule:** when one half of a studio video jumps back partway through and stays behind, its repeated frames are cut and both views end that much sooner. The notice says so, because the clip comes out shorter than its video. Views in step are not touched.
+- **Why:** `nero_walk.mp4`'s three-quarter half jumped back 14 frames at 2.2 s. From there the halves showed different moments, and the only pose fitting both had the legs crossed, for half the clip, with the Mirror check on (2026-11-06).
+- **Tests:** `test/capture_test.c3`: `the_animate_notice_says_when_a_view_slipped`. In llm-runner, `llm/tests/creature_sync.js`.

@@ -1278,7 +1278,8 @@ fn void AppState.land_capture_pose(&self, char[] glb, String summary)
 
 <*
  The fit's numbers from the animate task's answer, for the notice:
- "reprojection 9.4 px, root moved 6 cm". Temporary.
+ "reprojection 9.4 px, root moved 6 cm". Temporary. A view put back in step is
+ named too, since it leaves the clip shorter than its video.
 *>
 fn String capture_result_summary(String result)
 {
@@ -1298,6 +1299,17 @@ fn String capture_result_summary(String result)
 		{
 			out.appendf("%sin %s", out.len() > 0 ? ", " : "", capture_duration(total));
 			if (try double fit = seconds.get_float("fit")) out.appendf(" (fit %s)", capture_duration(fit));
+		}
+	}
+	if (try Object* sync = report.get("sync"))
+	{
+		if (try Object* slip = sync.get("slip"))
+		{
+			double fps = parsed.get_float("fps") ?? 24.0;
+			double frames = slip.get_float("frames") ?? 0.0;
+			double frame = slip.get_float("frame") ?? 0.0;
+			out.appendf("%sviews slipped %.0f frames at %.1f s", out.len() > 0 ? ", " : "", frames, frame / fps);
+			if (slip.get_bool("put_back") ?? false) out.appendf(", put back, clip %.1f s shorter", frames / fps);
 		}
 	}
 	return out.len() > 0 ? out.str_view() : "done";

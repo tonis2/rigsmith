@@ -414,6 +414,16 @@ fn void the_animate_notice_says_how_long_it_took() @test
 	test::@check(crig::capture_result_summary(`{"report": {}}`) == "done", "an empty report is just done");
 }
 
+fn void the_animate_notice_says_when_a_view_slipped() @test
+{
+	String put_back = crig::capture_result_summary(`{"fps": 24, "report": {"reprojection_px": {"median": 10.65}, "sync": {"slip": {"frame": 52, "frames": 14, "put_back": true}}}}`);
+	test::@check(put_back == "reprojection 10.7 px, views slipped 14 frames at 2.2 s, put back, clip 0.6 s shorter", "the notice reads '%s'", put_back);
+	String only_seen = crig::capture_result_summary(`{"fps": 24, "report": {"sync": {"slip": {"frame": 52, "frames": 14, "put_back": false}}}}`);
+	test::@check(only_seen == "views slipped 14 frames at 2.2 s", "the notice reads '%s'", only_seen);
+	String in_step = crig::capture_result_summary(`{"fps": 24, "report": {"sync": {"retimed": false}}}`);
+	test::@check(in_step == "done", "views in step say nothing, not '%s'", in_step);
+}
+
 fn void an_animate_node_starts_with_the_mirror_check_on() @test
 {
 	String dir = "build/test_nodes_mirror";
