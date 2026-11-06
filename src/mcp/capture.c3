@@ -34,7 +34,7 @@ const String CAPTURE_SCHEMA = `{"type":"object","properties":{
 	"picture":{"type":"string","description":"animate, instead of video: one .png or .jpg in the reference picture's layout (reference.png edited into a pose); it lands as a saved pose."},
 	"name":{"type":"string","description":"animate: the clip's (or pose's) name. Default the video's (or picture's) file name."},
 	"reference":{"type":"string","description":"animate: the reference the video or picture was made from, by name as status lists them. Default the one its first frame looks like."},
-	"mirror":{"type":"boolean","description":"animate: also read each frame mirrored, so left and right do not swap. Default true; false is about 40% faster at finding joints."}
+	"mirror":{"type":"boolean","description":"animate: also read each frame mirrored, so left and right do not swap. Default true; false is about a third faster, but a fast run can lose steps."}
 },"required":["action"]}`;
 
 fn String? tool_capture(Object* args, void* user_data, DString* detail) @private

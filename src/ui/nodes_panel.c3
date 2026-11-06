@@ -449,7 +449,7 @@ fn void NodesPanel.card_body(&self, AppState* app, PipelineGraph* g, usz i)
 					String named = string::tformat("%s name: %s", pose ? "pose" : "clip", g.clip_name(i));
 					@node((TextField) { .width = NODE_INNER - 2 * (TOOL_CELL_W + 4), .style = TEXT_FIELD_STYLE, .placeholder = self.hold(named),
 						.on_change = &node_param0_changed }).with_id(NODE_FIELD_IDS[0]);
-					@card_icon(MIRROR_GLYPH, "Mirror check — also reads each frame mirrored, so left and right don't swap. Off is about 40% faster at finding joints.",
+					@card_icon(MIRROR_GLYPH, "Mirror check — also reads each frame mirrored, so left and right don't swap. Off is about a third faster, but a fast run can lose steps.",
 						&node_mirror_clicked, g.mirror_on(i) ? LIT : PLAIN).with_id(NODE_MIRROR_ID);
 					self.run_icon(n.kind, running, pose ? "Animate — finds the joints in the picture and saves the pose in Poses, read through the reference's layout"
 						: "Animate — reads the video a frame at a time into a clip on the character, with the finder and the picture's layout; save the model to keep it");

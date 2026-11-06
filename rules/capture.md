@@ -14,3 +14,8 @@
 - **Rule:** a run trains the body once.
 - **Why:** a second training on half the poses took about 4 minutes of every run. Its weights were thrown away, and all it gave was one figure.
 - **Tests:** `test/capture_test.c3`: `the_train_task_is_valid_json_with_its_paths`.
+
+## A video is read mirrored unless turned off
+- **Rule:** an Animate node reads each frame mirrored as well, for a video and for a picture, until its Mirror check is turned off. MCP `capture` has the same default.
+- **Why:** with it off, a 5 second run lost 2 of its 12 steps. The two views read the legs opposite ways, the fit landed between them, and the legs hung near the middle while the video's feet were wide apart. The same run with it on took all 12, for 205 s against 134 s (2026-11-06).
+- **Tests:** `test/capture_test.c3`: `an_animate_node_starts_with_the_mirror_check_on`. `test/ui/workspace_areas_test.c3`: `the_nodes_pane_is_open_and_keeps_what_is_typed`.

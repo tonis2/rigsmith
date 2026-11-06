@@ -209,21 +209,21 @@ fn void the_nodes_pane_is_open_and_keeps_what_is_typed() @test
 	test::@check(!@ok(fixture.ui.find_id("node-reference")), "Video has no Reference dropdown: its first frame finds it");
 	fixture.type_into(node_field(fixture, "video", 0)!!, "/clips/wave.mp4");
 	test::@check(g.at(g.find("video")).params[0] == "/clips/wave.mp4", "the video node's path reads '%s'", g.at(g.find("video")).params[0]);
-	// Animate's mirror check starts off; a click turns it on, another back off.
+	// Animate's mirror check starts on; a click turns it off, another back on.
 	usz animate = (usz)g.find("animate");
 	test::@check(g.at(animate).params[1] == "", "Animate's mirror check does not start unset (%s)", g.at(animate).params[1]);
-	test::@check(!mirror_lit(fixture), "the mirror icon is lit while the check is off");
+	test::@check(mirror_lit(fixture), "the mirror icon is dark while the check is on");
 	node_press(fixture, crig::NODE_MIRROR_ID);
-	test::@check(g.at(animate).params[1] == "1", "a click did not turn the mirror check on (%s)", g.at(animate).params[1]);
+	test::@check(g.at(animate).params[1] == "0", "a click did not turn the mirror check off (%s)", g.at(animate).params[1]);
 	// The next frames redraw the icon by themselves.
 	fixture.feed({ 0, 0 });
 	fixture.feed({ 0, 0 });
-	test::@check(mirror_lit(fixture), "the mirror icon still shows off after a click turned it on");
-	node_press(fixture, crig::NODE_MIRROR_ID);
-	test::@check(g.at(animate).params[1] == "0", "a second click did not turn it back off (%s)", g.at(animate).params[1]);
-	fixture.feed({ 0, 0 });
-	fixture.feed({ 0, 0 });
 	test::@check(!mirror_lit(fixture), "the mirror icon still shows on after a click turned it off");
+	node_press(fixture, crig::NODE_MIRROR_ID);
+	test::@check(g.at(animate).params[1] == "1", "a second click did not turn it back on (%s)", g.at(animate).params[1]);
+	fixture.feed({ 0, 0 });
+	fixture.feed({ 0, 0 });
+	test::@check(mirror_lit(fixture), "the mirror icon still shows off after a click turned it on");
 
 	// The source's switch makes it an Image: the wire stays and Animate's card follows.
 	test::@check(@ok(node_field(fixture, "animate", 3)), "a video's Animate has no Frames");

@@ -414,7 +414,7 @@ fn void the_animate_notice_says_how_long_it_took() @test
 	test::@check(crig::capture_result_summary(`{"report": {}}`) == "done", "an empty report is just done");
 }
 
-fn void an_animate_node_starts_with_the_mirror_check_off() @test
+fn void an_animate_node_starts_with_the_mirror_check_on() @test
 {
 	String dir = "build/test_nodes_mirror";
 	rig::TriMesh mesh;
@@ -423,7 +423,7 @@ fn void an_animate_node_starts_with_the_mirror_check_off() @test
 	crig::PipelineGraph* g = app.pipeline_now(TRAIN_TEMPLATE);
 	usz node = (usz)g.find("animate");
 	crig::PipelineNode* animate = g.at(node);
-	test::@check(animate.params[1] == "" && !g.mirror_on(node), "a new Animate node reads each frame once (%s)", animate.params[1]);
+	test::@check(animate.params[1] == "" && g.mirror_on(node), "a new Animate node also reads each frame mirrored (%s)", animate.params[1]);
 	test::@check((crig::node_max_frames(animate) ?? 99) == 0, "and the whole video");
 	g.set_param(node, 3, " 40 ");
 	test::@check((crig::node_max_frames(animate) ?? 0) == 40, "Frames 40 reads the first 40");
@@ -433,10 +433,12 @@ fn void an_animate_node_starts_with_the_mirror_check_off() @test
 		test::@check(@catch(crig::node_max_frames(animate)) == crig::CAPTURE_BAD_FRAMES, "Frames '%s' is refused", bad);
 	}
 
-	// Unset follows the source, and a click beats it either way.
-	test::@check(g.swap_source((usz)g.find("video")) && g.mirror_on(node), "a picture is also read mirrored");
+	// A click turns it off, whatever the source.
 	g.set_param(node, 1, "0");
-	test::@check(!g.mirror_on(node), "turned off, it stays off for a picture");
+	test::@check(!g.mirror_on(node), "turned off, it stays off for a video");
+	test::@check(g.swap_source((usz)g.find("video")) && !g.mirror_on(node), "and for a picture");
+	g.set_param(node, 1, "1");
+	test::@check(g.mirror_on(node), "turned back on, it reads mirrored again");
 }
 
 fn void an_image_into_animate_makes_a_saved_pose() @test

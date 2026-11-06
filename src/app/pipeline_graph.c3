@@ -668,12 +668,11 @@ fn bool PipelineGraph.reads_still(&self, usz node)
 	return source >= 0 && self.at(source).kind == IMAGE;
 }
 
-// Whether an Animate node also looks mirrored. Unset: only at a picture, since on
-// a video it costs a second look a frame.
+// Whether an Animate node also looks mirrored: on unless turned off. Without it
+// a fast run can lose steps, the views reading the legs opposite ways.
 fn bool PipelineGraph.mirror_on(&self, usz node)
 {
-	String mirror = self.at(node).params[1].trim();
-	return mirror.len > 0 ? mirror != "0" : self.reads_still(node);
+	return self.at(node).params[1].trim() != "0";
 }
 
 <*
