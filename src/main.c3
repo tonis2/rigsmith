@@ -468,7 +468,12 @@ fn int run_loop(
 			quiet,
 			&runtime.pointer
 		);
-		if (poll.closed) break;
+		// Said in the terminal, because a window that just goes leaves nothing to go on.
+		if (poll.closed)
+		{
+			io::printn("rigsmith: closing: the window was closed");
+			break;
+		}
 
 		// A widget handler that asked for a new tree was held while cui was walking
 		// the old one. This is the first moment it is not.
@@ -484,8 +489,16 @@ fn int run_loop(
 
 		// Answers nothing, cheaply, when nothing is listening.
 		usz handled = listener.pump(server);
-		if (runtime.quit_wanted) break;
-		if (app.quit_requested) break;
+		if (runtime.quit_wanted)
+		{
+			io::printn("rigsmith: closing: a script asked");
+			break;
+		}
+		if (app.quit_requested)
+		{
+			io::printn("rigsmith: closing: File › Quit");
+			break;
+		}
 		runtime.take_render_resize();
 
 		long elapsed_ns = (long)since_start.to_now();
