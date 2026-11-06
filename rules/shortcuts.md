@@ -10,6 +10,11 @@
 - **Why:** with a dot in hand X means lock to X, not delete it.
 - **Tests:** `test/ui/key_order_test.c3`.
 
+## A key is let go when the window loses the keyboard
+- **Rule:** when Rigsmith loses the keyboard, every held key reads as released, with a normal key-up. A held mouse button stays held. Every backend in the window library does this, through `EventMap.release_keys`.
+- **Why:** no release arrives after focus leaves, so Alt+Tab left Alt down. Every drag then swapped Keep angle while the cell stayed lit, until a restart (2026-11-06).
+- **Tests:** `a_key_held_as_the_keyboard_leaves_is_let_go` (Wayland), `a_key_held_as_x11_focus_goes_is_let_go`. Windows and macOS have no test and haven't been run.
+
 ## Esc backs out one layer at a time
 - **Rule:** the mode first, then picked keys, then the joint selection. Leaving a mode doesn't lose your place.
 - **Tests:** `esc_backs_out_a_layer_at_a_time`.

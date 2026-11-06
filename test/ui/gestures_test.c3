@@ -2961,3 +2961,47 @@ fn void shift_click_builds_a_selection() @test
 		test::@check(fixture.app.selection_count() == 1, "and a plain click replaces it with one dot");
 	}
 }
+
+<*
+ A key held as the window loses the keyboard is let go. No release follows, so
+ Alt would stay down and swap Keep angle on every drag until a restart.
+*>
+fn void a_key_held_as_the_keyboard_leaves_is_let_go() @test
+{
+	$if env::LINUX:
+		c3w::WaylandWindow window;
+		window.event_map.init(mem);
+		defer window.event_map.free();
+		window.event_map.set(LEFT_ALT, true);
+		window.event_map.set(LEFT_SHIFT, true);
+		window.event_map.set(LEFT_MOUSE, true);
+
+		c3w::kbLeave(&window, null, 0, null);
+
+		test::@check(!window.event_map.is_pressed(LEFT_ALT), "Alt stayed down after the keyboard left");
+		test::@check(!window.event_map.is_pressed(LEFT_SHIFT), "Shift stayed down after the keyboard left");
+		test::@check(window.event_map.is_pressed(LEFT_MOUSE), "the mouse button went with the keyboard");
+		usz released = 0;
+		foreach (event : window.event_log.view()) if (event.type == KEY_RELEASED) released++;
+		test::@check(released == 2, "%d key releases logged, not one for each held key", released);
+	$endif
+}
+
+// X11 says the same with a FocusOut: a held key is let go, a held button is not.
+fn void a_key_held_as_x11_focus_goes_is_let_go() @test
+{
+	$if env::LINUX:
+		c3w::X11Window window;
+		window.event_map.init(mem);
+		defer window.event_map.free();
+		window.event_map.set(LEFT_ALT, true);
+		window.event_map.set(LEFT_MOUSE, true);
+
+		c3w::KeyPressEvent focus_out = { .type = 10 };
+		c3w::x11_handleEvent(&window, &focus_out);
+
+		test::@check(!window.event_map.is_pressed(LEFT_ALT), "Alt stayed down after focus left");
+		test::@check(window.event_map.is_pressed(LEFT_MOUSE), "the mouse button went with the focus");
+		test::@check(window.event_log.view().len == 1, "%d events logged, not one key release", window.event_log.view().len);
+	$endif
+}
