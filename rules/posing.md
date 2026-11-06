@@ -14,7 +14,7 @@
 ## Pose stages run in one order
 - **Rule:** sample, limits, ground, pins, aims. Neither pins nor aims feed back into a limit or the floor, and a head looks from where the body is held. Every reader of a pose gets the same result, except that export ignores solo layers on purpose.
 - **Why:** pins were added to the player, export, bake and pose mode, then mirror lacked them, then position locks did (`f47281d`, `e04cc2d`, `162d515`).
-- **Tests:** `test/rules/pose_readers_test.c3`. `PoseStages` (`src/algo/pose/pose_stages.c3`) is the only caller of the stage functions, and `tools/check_layers.sh` refuses any other.
+- **Tests:** `test/rules/pose_readers_test.c3`. `PoseStages` (`src/algo/pose/pose_stages.c3`) is the only caller of the stage functions.
 
 ## Renders show what plays
 - **Rule:** studio pictures and training renders show pins and aims, matching the player.

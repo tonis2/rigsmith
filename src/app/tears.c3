@@ -2,8 +2,8 @@
  Joined surfaces: copies of one point (a seam split for UVs or hard edges) and
  layers lying close over each other that the automatic weights move together.
 
- Every column write keeps them together (`join_column`). Find / Fix tears
- repair the seams older edits split, which a pose opens as holes.
+ Every column write keeps them together (`join_column`). Fix weights repairs
+ the seams older edits split, which a pose opens as holes.
 *>
 module crig;
 
@@ -125,9 +125,10 @@ fn TearPatch[] AppState.tear_patches(&self, Allocator allocator)
  copy the edits moved furthest from the automatic weights, so what was painted
  stays. An unused row is never the one taken.
 
+ @param commit : `Close the undo group — false when another fix joins this step.`
  @return `How many vertices changed.`
 *>
-fn usz AppState.fix_tears(&self, TearPatch[] tears)
+fn usz AppState.fix_tears(&self, TearPatch[] tears, bool commit = true)
 {
 	usz count = self.geometry.positions.len;
 	rig::MeshAdjacency* around = self.adjacency_for();
@@ -204,7 +205,7 @@ fn usz AppState.fix_tears(&self, TearPatch[] tears)
 		if (differs) written += self.replace_column(&view, view.dot_ids[j], column, commit: false);
 	}
 	if (written == 0) return 0;
-	self.undo_stack.commit();
+	if (commit) self.undo_stack.commit();
 	return changed;
 }
 
@@ -238,37 +239,6 @@ fn void AppState.drop_tears(&self)
 
 // Whether the last survey still describes the bind: nothing has been edited since.
 fn bool AppState.tears_current(&self) => self.tears_checked && self.tears_revision == self.undo_stack.revision;
-
-<*
- Fix every tear the last survey found (`fix_tears`), then survey again so the
- card says what is left.
-
- @return `How many vertices changed.`
-*>
-fn usz AppState.fix_found_tears(&self)
-{
-	if (!self.tears_current() || self.tears.len == 0)
-	{
-		self.@notice("find tears first");
-		return 0;
-	}
-	usz found = self.tears.len;
-	usz fixed = self.fix_tears(self.tears);
-	usz left = self.find_tears();
-	if (fixed == 0)
-	{
-		self.@notice("nothing to change");
-	}
-	else if (left == 0)
-	{
-		self.@notice("closed %d %s (%d vertices)", found, found == 1 ? "tear" : "tears", fixed);
-	}
-	else
-	{
-		self.@notice("closed %d vertices · %d %s left", fixed, left, left == 1 ? "tear" : "tears");
-	}
-	return fixed;
-}
 
 // While the Weights card lists tears, mark their vertices red on whichever view is up.
 fn void AppState.overlay_tear_tints(&self)

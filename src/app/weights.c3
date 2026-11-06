@@ -621,16 +621,15 @@ fn StrayIsland[] AppState.stray_islands(&self, Allocator allocator)
  A stray is an island of one joint's weight cut off from the rest of it, so
  the fix is that joint's alone: its weight on the island's vertices goes to 0
  and every other joint keeps what it holds there. The joint is held from then
- on (`replace_column`). A vertex nobody else held is left unused rather than
- handed to somebody — the Unused view shows it, and the brush or the lasso
- gives it to the joint it belongs to.
+ on (`replace_column`). A vertex nothing else holds keeps the joint: taken off,
+ it would fall to the root or a crumb, a new spike. It stays a stray, for the
+ brush or the lasso.
 
- @param emptied : `Filled with how many vertices were left holding nothing. Null to not ask.`
+ @param commit : `Close the undo group — false when another fix joins this step.`
  @return `How many vertices changed; 0 when nothing did.`
 *>
-fn usz AppState.fix_strays(&self, StrayIsland[] strays, usz* emptied = null)
+fn usz AppState.fix_strays(&self, StrayIsland[] strays, bool commit = true)
 {
-	if (emptied) *emptied = 0;
 	usz count = self.geometry.positions.len;
 	if (strays.len == 0 || count == 0) return 0;
 	self.flush_edges();
@@ -663,16 +662,18 @@ fn usz AppState.fix_strays(&self, StrayIsland[] strays, usz* emptied = null)
 			foreach (v : other.vertices)
 			{
 				if ((usz)v >= count || column[v] == 0.0f) continue;
+				float rest = 0.0f;
+				for (usz b = 0; b < bones; b++) if ((sz)b != joint) rest += painted[(usz)v * bones + b];
+				if (rest < STRAY_REST_FLOOR) continue;
 				column[v] = 0.0f;
-				float total = 0.0f;
-				for (usz b = 0; b < bones; b++) if ((sz)b != joint) total += painted[(usz)v * bones + b];
-				if (emptied && total <= UNUSED_TOTAL) (*emptied)++;
+				// Two strays on a vertex must not each count on the other staying.
+				painted[(usz)v * bones + (usz)joint] = 0.0f;
 			}
 		}
 		changed += self.replace_column(&view, stray.dot, column, commit: false);
 	}
 	if (changed == 0) return 0;
-	self.undo_stack.commit();
+	if (commit) self.undo_stack.commit();
 	return changed;
 }
 
@@ -708,35 +709,38 @@ fn void AppState.drop_strays(&self)
 fn bool AppState.strays_current(&self) => self.strays_checked && self.strays_revision == self.undo_stack.revision;
 
 <*
- Fix every stray the last survey found (`fix_strays`), then survey again so the
- card says what is left.
+ Check every joint and fix what it finds, as one undo step, then survey again so
+ the card lists what is left. Tears close first: the stray survey reads one copy
+ of a point, so a stray on the other only shows once the copies agree.
 
- @return `How many vertices were restated.`
+ @return `How many vertices changed.`
 *>
-fn usz AppState.fix_found_strays(&self)
+fn usz AppState.fix_weights(&self)
 {
-	if (!self.strays_current() || self.strays.len == 0)
+	self.flush_edges();
+	TearPatch[] tears = self.tear_patches(mem);
+	defer free_tears(mem, tears);
+	usz closed = self.fix_tears(tears, commit: false);
+
+	StrayIsland[] strays = self.stray_islands(mem);
+	defer free_strays(mem, strays);
+	usz changed = closed + self.fix_strays(strays, commit: false);
+	if (changed > 0) self.undo_stack.commit();
+
+	usz left = self.find_tears() + self.find_strays();
+	// The red only paints over a weight view.
+	if (left > 0 && !self.tinting()) self.show_tint(TERRITORY);
+	if (tears.len + strays.len == 0)
 	{
-		self.@notice("find strays first");
+		self.@notice("no strays or tears");
 		return 0;
 	}
-	usz emptied = 0;
-	usz fixed = self.fix_strays(self.strays, &emptied);
-	usz left = self.find_strays();
-	String unused = emptied > 0 ? string::tformat(" · %d left unused, View › Unused weights shows them", emptied) : "";
-	if (fixed == 0)
-	{
-		self.@notice("nothing to change");
-	}
-	else if (left == 0)
-	{
-		self.@notice("fixed %d stray vertices%s", fixed, unused);
-	}
-	else
-	{
-		self.@notice("fixed %d stray vertices · %d %s left%s", fixed, left, left == 1 ? "stray" : "strays", unused);
-	}
-	return fixed;
+	DString said = dstring::temp();
+	said.appendf("found %d %s, %d %s · changed %d %s", tears.len, tears.len == 1 ? "tear" : "tears",
+		strays.len, strays.len == 1 ? "stray" : "strays", changed, changed == 1 ? "vertex" : "vertices");
+	if (left > 0) said.appendf(" · %d left, marked red", left);
+	self.@notice("%s", said.str_view());
+	return changed;
 }
 
 <*

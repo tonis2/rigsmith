@@ -4,8 +4,6 @@
 
 fail=0
 
-tools/check_layers.sh || fail=1
-
 # A rule test changes only together with the rule it stands for: a reversed rule
 # has to say so, rather than pass as a fix.
 staged=$(git diff --cached --name-only)

@@ -377,7 +377,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "fix_strays",
-		.description = "Take every stray get_weights lists off its dot — an island of a dot's weight cut off from the rest of it, which a pose pulls out of the body as a spike. That dot's weight on the island goes to 0 and no other dot's changes; a vertex nobody else held is left unused (emptied counts them). One call is one undo step. The Weights card's Find strays and Fix strays are the same two calls. Answers how many strays it found, how many vertices it changed, and the strays left, as get_weights lists them.",
+		.description = "Take every stray get_weights lists off its dot — an island of a dot's weight cut off from the rest of it, which a pose pulls out of the body as a spike. That dot's weight on the island goes to 0 and no other dot's changes; a vertex nothing else holds keeps the dot and stays listed, since it would otherwise follow the root. One call is one undo step. The Weights card's Fix weights runs fix_tears, then this, as one step. Answers how many strays it found, how many vertices it changed, and the strays left, as get_weights lists them.",
 		.input_schema = `{"type":"object","properties":{}}`,
 		.handler = &tool_fix_strays,
 		.user_data = app,
@@ -385,7 +385,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "fix_tears",
-		.description = "Close every tear get_weights lists: copies of one point (a UV seam or hard edge) that edits gave different weights, so a pose opens a hole. Every copy takes the row of the one the edits moved furthest from the automatic weights, so what was painted stays. One call is one undo step. Edits keep copies together from then on: every weight edit gives all copies of a point one weight, and carries to a layer lying under the painted one. The Weights card's Find tears and Fix tears are the same two calls. Answers how many tears it found, how many vertices changed, and the tears left, as get_weights lists them.",
+		.description = "Close every tear get_weights lists: copies of one point (a UV seam or hard edge) that edits gave different weights, so a pose opens a hole. Every copy takes the row of the one the edits moved furthest from the automatic weights, so what was painted stays. One call is one undo step. Edits keep copies together from then on: every weight edit gives all copies of a point one weight, and carries to a layer lying under the painted one. The Weights card's Fix weights runs this, then fix_strays, as one step. Answers how many tears it found, how many vertices changed, and the tears left, as get_weights lists them.",
 		.input_schema = `{"type":"object","properties":{}}`,
 		.handler = &tool_fix_tears,
 		.user_data = app,

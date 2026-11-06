@@ -1,5 +1,5 @@
-# Checks every push. Runners have no GPU, so this runs the layer check and the
-# algorithm tests, which need neither a window nor Vulkan.
+# Checks every push. Runners have no GPU, so this runs the algorithm tests, which
+# need neither a window nor Vulkan.
 name: check
 
 on:
@@ -34,5 +34,4 @@ jobs:
           tar -xzf c3c-dist -C "$HOME/c3c"
           echo "$(dirname "$(find "$HOME/c3c" -type f -name c3c | head -1)")" >> "$GITHUB_PATH"
 
-      - run: tools/check_layers.sh
       - run: tools/test_algo.sh

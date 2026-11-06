@@ -569,24 +569,22 @@ fn String? tool_pin_weights(Object* args, void* user_data, DString* detail) @pri
 }
 
 <*
- fix_strays: the Weights card's Fix strays over the wire. Each stray get_weights
+ fix_strays: the stray half of the Weights card's Fix weights. Each stray get_weights
  lists is taken off its dot — that dot's weight on the island goes to 0 and no
  other dot's changes (`AppState.fix_strays`) — as one undo step. Answers how
- many it found, how many vertices moved, how many were left holding nothing,
- and the strays left in get_weights' words.
+ many it found, how many vertices moved, and the strays left in get_weights' words.
 *>
 fn String? tool_fix_strays(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
 	StrayIsland[] strays = app.stray_islands(mem);
 	defer free_strays(mem, strays);
-	usz emptied = 0;
-	usz fixed = app.fix_strays(strays, &emptied);
+	usz fixed = app.fix_strays(strays);
 	app.refresh_ui();
 
 	DString out = dstring::new(mem);
 	defer out.free();
-	out.appendf(`{"found":%d,"fixed":%d,"emptied":%d`, strays.len, fixed, emptied);
+	out.appendf(`{"found":%d,"fixed":%d`, strays.len, fixed);
 	strays_json(app, &out);
 	out.append_char('}');
 	return out.copy_str(mem);

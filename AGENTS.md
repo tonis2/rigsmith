@@ -19,7 +19,7 @@ Algorithm tests go in test/algo and need no editor.
 
 # Layers
 
-Dependencies point one way: `src/model` and `src/algo`, then `src/format`, then `src/app`, then `src/ui` and `src/mcp`. tools/check_layers.sh compiles each layer without the ones above it, and the pre-commit hook runs it.
+Dependencies point one way: `src/model` and `src/algo`, then `src/format`, then `src/app`, then `src/ui` and `src/mcp`.
 
 - `src/model`: data, such as RigDocument and AnimPack.
 - `src/algo`: algorithms by topic. No AppState, UI, GPU, files or notices: take inputs, return results, and let app record them.

@@ -69,12 +69,10 @@ const String WEIGHTS_APPLY_ID = "weights-apply";
 const String WEIGHTS_RESET_ID = "weights-reset";
 const String WEIGHTS_READOUT_ID = "weights-readout";
 const String WEIGHTS_KNUCKLE_ID = "weights-knuckle";
-const String WEIGHTS_FIND_STRAYS_ID = "weights-find-strays";
-const String WEIGHTS_FIX_STRAYS_ID = "weights-fix-strays";
+const String WEIGHTS_FIX_ID = "weights-fix";
 const String WEIGHTS_STRAYS_ID = "weights-strays";
-const String WEIGHTS_FIND_TEARS_ID = "weights-find-tears";
-const String WEIGHTS_FIX_TEARS_ID = "weights-fix-tears";
 const String WEIGHTS_TEARS_ID = "weights-tears";
+const String WEIGHTS_CLEAN_ID = "weights-clean";
 
 // The Part selector's rows, in `AreaPart` order.
 String[3] weights_part_labels = { "Own bone", "With children", "UV islands" };
@@ -809,7 +807,7 @@ fn void JointPanel.build_weights_tab(&self, AppState* app, JointCard* card)
 				{
 					@node((Label) { .text = "Select a joint to pick the part of the mesh it moves.",
 						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP });
-					weights_stray_icons(app);
+					weights_fix_icon();
 				}
 				else
 				{
@@ -875,7 +873,7 @@ fn void JointPanel.build_weights_tab(&self, AppState* app, JointCard* card)
 						};
 					}
 					// The hand tools — brush, lasso, and a look at the weights without
-					// them — and the model's strays at the far end, a different job.
+					// them — and Fix weights at the far end, a job for the whole model.
 					@tree((Row) { .size = { WEIGHTS_CARD_W, 0 }, .main_align = SPACE_BETWEEN,
 						.cross_align = CENTER })
 					{
@@ -895,7 +893,7 @@ fn void JointPanel.build_weights_tab(&self, AppState* app, JointCard* card)
 								"Lasso pin · shift+T     drag · circle vertices     ctrl-drag · unpin     hold alt · through the model")
 								.with_id(WEIGHTS_LASSO_ID);
 						};
-						weights_stray_icons(app);
+						weights_fix_icon();
 					};
 					// What is written to the joint, on a row of its own: the commit and
 					// its undoing are the last step, and the ones not to hit by mistake.
@@ -912,15 +910,22 @@ fn void JointPanel.build_weights_tab(&self, AppState* app, JointCard* card)
 					@node((Label) { .text = weights_readout(app, &self.readout),
 						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_READOUT_ID);
 				}
-				if (app.strays_current())
+				bool strays_left = app.strays_current() && app.strays.len > 0;
+				bool tears_left = app.tears_current() && app.tears.len > 0;
+				if (strays_left)
 				{
 					@node((Label) { .text = strays_readout(app, &self.strays_text),
 						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_STRAYS_ID);
 				}
-				if (app.tears_current())
+				if (tears_left)
 				{
 					@node((Label) { .text = tears_readout(app, &self.tears_text),
 						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_TEARS_ID);
+				}
+				if (app.strays_current() && app.tears_current() && !strays_left && !tears_left)
+				{
+					@node((Label) { .text = "No strays or tears.",
+						.size = 12.0f, .color = TEXT_DIM, .overflow = WRAP }).with_id(WEIGHTS_CLEAN_ID);
 				}
 			};
 		};
@@ -1637,11 +1642,9 @@ fn String weights_readout(AppState* app, char[] buffer) @private
 // How many joints the stray line names before it only counts.
 const usz STRAYS_NAMED = 4;
 
-// What the last stray survey found, one entry per joint. Shown only while the
-// survey is current; what a survey looks for is Find strays' tooltip.
+// The strays Fix weights left, one entry per joint, while its survey is current.
 fn String strays_readout(AppState* app, char[] buffer) @private
 {
-	if (app.strays.len == 0) return "No strays: every joint's weight stays with the rest of it.";
 	DString text = dstring::temp();
 	usz joints = 0;
 	usz unnamed = 0;
@@ -1667,10 +1670,9 @@ fn String strays_readout(AppState* app, char[] buffer) @private
 	return string::bformat(buffer, "%s", text.str_view());
 }
 
-// What the last tear survey found: how many, and the joints that differ across the worst.
+// The tears Fix weights left: how many, and the joints that differ across the worst.
 fn String tears_readout(AppState* app, char[] buffer) @private
 {
-	if (app.tears.len == 0) return "No tears: every copy of a point carries one weight.";
 	usz pairs = 0;
 	foreach (tear : app.tears) pairs += tear.links.len;
 	DString text = dstring::temp();
@@ -1686,33 +1688,14 @@ fn String tears_readout(AppState* app, char[] buffer) @private
 	return string::bformat(buffer, "%s", text.str_view());
 }
 
-<*
- Find strays and Find tears, and each Fix once a survey that is still current
- found some. The whole model's, not the joint's, so the card shows them with no
- joint too.
-*>
-fn void weights_stray_icons(AppState* app) @private
+// The whole model's, not the joint's, so the card shows it with no joint too.
+fn void weights_fix_icon() @private
 {
 	@tree((Row) { .gap = CARD_ICON_GAP, .cross_align = CENTER })
 	{
-		@card_icon(FIND_STRAYS_GLYPH,
-			"Find strays — weight a joint holds far from the rest of it, which a pose pulls out of the body as a spike. They show red",
-			&weights_find_strays_pressed).with_id(WEIGHTS_FIND_STRAYS_ID);
-		if (app.strays_current() && app.strays.len > 0)
-		{
-			@card_icon(FIX_STRAYS_GLYPH,
-				"Fix strays — hand the red vertices back to the automatic weights, or to the mesh around them. One undo step",
-				&weights_fix_strays_pressed, COMMIT).with_id(WEIGHTS_FIX_STRAYS_ID);
-		}
-		@card_icon(FIND_TEARS_GLYPH,
-			"Find tears — points stored as two vertices (a UV seam or hard edge) that edits gave different weights, which a pose opens as a hole. They show red",
-			&weights_find_tears_pressed).with_id(WEIGHTS_FIND_TEARS_ID);
-		if (app.tears_current() && app.tears.len > 0)
-		{
-			@card_icon(FIX_TEARS_GLYPH,
-				"Fix tears — give every copy of a red point the weights you painted on it. One undo step",
-				&weights_fix_tears_pressed, COMMIT).with_id(WEIGHTS_FIX_TEARS_ID);
-		}
+		@card_icon(FIX_WEIGHTS_GLYPH,
+			"Fix weights — check every joint for tears and strays and fix them. What can't be fixed shows red. One undo step",
+			&weights_fix_pressed, COMMIT).with_id(WEIGHTS_FIX_ID);
 	};
 }
 
@@ -1888,34 +1871,10 @@ fn void weights_apply_pressed(Ui* ui) @private
 	refresh_joint_panel(ui);
 }
 
-fn void weights_find_strays_pressed(Ui* ui) @private
+fn void weights_fix_pressed(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
-	app.find_strays();
-	app.refresh_ui();
-	refresh_joint_panel(ui);
-}
-
-fn void weights_fix_strays_pressed(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.fix_found_strays();
-	app.refresh_ui();
-	refresh_joint_panel(ui);
-}
-
-fn void weights_find_tears_pressed(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.find_tears();
-	app.refresh_ui();
-	refresh_joint_panel(ui);
-}
-
-fn void weights_fix_tears_pressed(Ui* ui) @private
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.fix_found_tears();
+	app.fix_weights();
 	app.refresh_ui();
 	refresh_joint_panel(ui);
 }

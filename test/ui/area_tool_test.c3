@@ -460,72 +460,14 @@ fn void the_n_panel_starts_closed() @test
 }
 
 <*
- The Weights card finds strays and fixes them. On a clean cube Find strays says
- there are none and offers no fix; with the lowest corner pinned across to the
- chest and listed, the card names it, Fix strays takes it off the chest, and
- the card says nothing is left.
+ Fix weights checks the model in one click. On a clean cube it says so, with or
+ without a joint picked; with one copy of a corner given to the chest past the
+ guard it closes the tear and says the same.
 
- Re-introduce: in `AppState.fix_found_strays`, skip the survey after the fix,
- and the card goes back to its hint instead of saying none are left.
+ Re-introduce: in `AppState.fix_weights`, skip the surveys after the fixes, and
+ the card goes back to its hint instead of saying nothing is left.
 *>
-fn void the_card_finds_and_fixes_strays() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the Weights card finds strays and fixes them");
-	fixture.reset();
-	uint chest = fixture.two_dots();
-	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
-	test::@check(fixture.app.weights_card_open(), "the Weights tab did not open the card");
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card offered a fix before looking");
-
-	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_STRAYS_ID)!!);
-	String said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("No strays"), "a clean cube reads \"%s\"", said);
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card offered to fix nothing");
-
-	// The cube is too small to hold a stray of its own, so one is listed by hand.
-	uint lowest = 0;
-	foreach (v, position : fixture.app.geometry.positions)
-	{
-		if (position.y < fixture.app.geometry.positions[lowest].y) lowest = (uint)v;
-	}
-	uint[1] corner = { lowest };
-	fixture.app.set_weight_vertices(corner[..], chest, 1.0f);
-	fixture.app.drop_strays();
-	fixture.app.strays = alloc::new_array(mem, crig::StrayIsland, 1);
-	fixture.app.strays[0] = { .dot = chest, .vertices = alloc::new_array(mem, uint, 1) };
-	fixture.app.strays[0].vertices[0] = lowest;
-	fixture.app.strays_checked = true;
-	fixture.app.strays_revision = fixture.app.undo_stack.revision;
-	fixture.app.strays_generation++;
-	fixture.feed(VIEWPORT_CENTER);
-	said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("chest 1 vertex"), "the listed stray reads \"%s\"", said);
-
-	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_STRAYS_ID)!!);
-	float held = 0.0f;
-	foreach (pin : fixture.app.doc.pins.array_view()) if (pin.vertex == lowest && pin.dot_id == chest) held = pin.share;
-	test::@check(held < 0.99f, "the fixed corner is still wholly the chest's");
-	said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("No strays"), "after the fix the card reads \"%s\"", said);
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_STRAYS_ID), "the card still offers a fix");
-}
-
-<*
- The Weights card finds tears and fixes them: a clean cube has none and no fix
- is offered; with one copy of a corner given to the chest past the guard, the
- card counts the tear, Fix tears closes it, and the card says none are left.
-
- Re-introduce: in `AppState.fix_found_tears`, skip the survey after the fix.
-*>
-fn void the_card_finds_and_fixes_tears() @test
+fn void the_card_fixes_weights_in_one_click() @test
 {
 	// The cube with corner 0 stored twice: its first triangle uses the copy, 8.
 	rig::TriMesh shared = cube();
@@ -551,16 +493,22 @@ fn void the_card_finds_and_fixes_tears() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("the Weights card finds tears and fixes them");
+	io::printn("the Weights card fixes weights in one click");
 	fixture.reset();
 	uint chest = fixture.two_dots();
 	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card offered a fix before looking");
+	test::@check(fixture.app.weights_card_open(), "the Weights tab did not open the card");
+	test::@check(!fixture.in_tree(crig::WEIGHTS_CLEAN_ID), "the card spoke before looking");
 
-	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_TEARS_ID)!!);
-	String said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("No tears"), "a clean cube reads \"%s\"", said);
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card offered to fix nothing");
+	uint picked = fixture.app.selected;
+	fixture.app.selected = 0;
+	fixture.feed(VIEWPORT_CENTER);
+	test::@check(fixture.in_tree(crig::WEIGHTS_FIX_ID), "the card hid the fix with no joint picked");
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_ID)!!);
+	String said = fixture.ui.find_id(crig::WEIGHTS_CLEAN_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No strays or tears"), "a clean cube reads \"%s\"", said);
+	fixture.app.selected = picked;
+	fixture.feed(VIEWPORT_CENTER);
 
 	// One copy given to the chest and the other taken off it, past the guard.
 	crig::RigView view = fixture.app.open_rig(mem)!!;
@@ -570,13 +518,48 @@ fn void the_card_finds_and_fixes_tears() @test
 	column[0] = 1.0f;
 	column[shared.positions.len] = 0.0f;
 	fixture.app.store_column(chest, column);
+	fixture.feed(VIEWPORT_CENTER);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_CLEAN_ID), "the card still reads clean after an edit");
 
-	fixture.click(fixture.center_of(crig::WEIGHTS_FIND_TEARS_ID)!!);
-	said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("1 tear"), "the split corner reads \"%s\"", said);
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_ID)!!);
+	said = fixture.ui.find_id(crig::WEIGHTS_CLEAN_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("No strays or tears"), "after the fix the card reads \"%s\"", said);
+	test::@check(fixture.app.tears_current() && fixture.app.tears.len == 0, "the tear is still there");
+	test::@check(!fixture.in_tree(crig::WEIGHTS_TEARS_ID), "the card still lists a tear");
+}
 
-	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_TEARS_ID)!!);
-	said = fixture.ui.find_id(crig::WEIGHTS_TEARS_ID)!!.widget_as(Label).text;
-	test::@check(said.starts_with("No tears"), "after the fix the card reads \"%s\"", said);
-	test::@check(!fixture.in_tree(crig::WEIGHTS_FIX_TEARS_ID), "the card still offers a fix");
+<*
+ What a click could not fix stays on the card by name. The cube is too small to
+ hold a stray of its own, so one is listed by hand; weights_test fixes real ones.
+
+ Re-introduce: in `JointPanel.build_weights_tab`, show the clean line whenever
+ the surveys are current, and the leftover is hidden.
+*>
+fn void the_card_names_what_it_could_not_fix() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	io::printn("the Weights card names what it could not fix");
+	fixture.reset();
+	uint chest = fixture.two_dots();
+	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
+	fixture.click(fixture.center_of(crig::WEIGHTS_FIX_ID)!!);
+	test::@check(fixture.in_tree(crig::WEIGHTS_CLEAN_ID), "a clean cube has no clean line");
+
+	fixture.app.drop_strays();
+	fixture.app.strays = alloc::new_array(mem, crig::StrayIsland, 1);
+	fixture.app.strays[0] = { .dot = chest, .vertices = alloc::new_array(mem, uint, 1) };
+	fixture.app.strays_checked = true;
+	fixture.app.strays_revision = fixture.app.undo_stack.revision;
+	fixture.app.strays_generation++;
+	fixture.feed(VIEWPORT_CENTER);
+	String said = fixture.ui.find_id(crig::WEIGHTS_STRAYS_ID)!!.widget_as(Label).text;
+	test::@check(said.starts_with("chest 1 vertex"), "the listed stray reads \"%s\"", said);
+	test::@check(!fixture.in_tree(crig::WEIGHTS_CLEAN_ID), "the card reads clean over a stray");
 }

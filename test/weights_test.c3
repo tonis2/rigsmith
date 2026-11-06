@@ -3368,7 +3368,7 @@ fn void assign(crig::AppState* app, uint[] vertices, uint dot)
 }
 
 <*
- Fix strays takes a stray's joint off it and touches nothing else: on a grid
+ Fix weights takes a stray's joint off it and touches nothing else: on a grid
  given to B and K at its bottom rows, K put on a top vertex beside B is a stray.
  Fixed, K holds none of it and B exactly what it held; a second survey finds
  nothing, and one undo brings the stray back.
@@ -3399,7 +3399,7 @@ fn void fixing_a_stray_takes_its_joint_off_it() @test
 	uint[1] top = { 76 };
 	app.set_weight_vertices(top[..], k, 1.0f);
 	test::eq(app.find_strays(), (usz)1);
-	usz fixed = app.fix_found_strays();
+	usz fixed = app.fix_weights();
 	test::eq(fixed, (usz)1);
 	test::@check(weight_of(&app, 76, k) == 0.0f, "the fixed vertex still holds K %f", weight_of(&app, 76, k));
 	test::@check(weight_of(&app, 76, b) == 1.0f, "the fix moved B to %f", weight_of(&app, 76, b));
@@ -3580,8 +3580,8 @@ fn void paint_carries_to_the_layer_under_it() @test
 }
 
 <*
- Find tears finds copies of a point that edits split, and Fix tears gives both
- the painted copy's row: one undo step, and a second survey finds nothing.
+ The tear survey finds copies of a point that edits split, and the tear fix gives
+ both the painted copy's row: one undo step, and a second survey finds nothing.
 
  Re-introduce: in `AppState.fix_tears`, take the copy nearest its automatic
  row, and the paint is lost from both.
@@ -3614,12 +3614,241 @@ fn void fixing_a_tear_keeps_the_painted_copy() @test
 	test::eq(app.find_tears(), (usz)1);
 	test::@check(app.tears[0].links.len == 1, "the tear has %d pairs, not one", app.tears[0].links.len);
 
-	test::@check(app.fix_found_tears() > 0, "the fix changed nothing");
+	test::@check(app.fix_tears(app.tears) > 0, "the fix changed nothing");
 	test::@check(weight_of(&app, 40, k) == 1.0f && weight_of(&app, twin, k) == 1.0f,
 		"the copies hold %f and %f, not the painted 1", weight_of(&app, 40, k), weight_of(&app, twin, k));
-	test::@check(app.tears_current() && app.tears.len == 0, "the survey after the fix still finds tears");
+	test::eq(app.find_tears(), (usz)0);
 
 	test::@check(app.undo(), "nothing to undo");
 	test::@check(weight_of(&app, 40, k) == was && weight_of(&app, twin, k) == 1.0f, "undo did not bring the tear back");
 	test::@check(!app.tears_current(), "the survey outlived the undo");
+}
+
+<*
+ One click clears every joint: on a seamed grid holding a tear and a stray,
+ Fix weights leaves neither and one undo brings both back. With nothing wrong it
+ writes nothing and adds no undo step.
+
+ Re-introduce: in `AppState.fix_weights`, let each fix commit on its own, and
+ the undo brings back only the stray.
+*>
+fn void one_fix_closes_tears_and_strays_in_one_undo() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	uint twin = seamed_grid(&positions, &indices);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	// K reaches the row under the seam, so what the tear hands it is no stray.
+	assign(&app, every[36..], b);
+	assign(&app, every[:36], k);
+
+	uint before = app.undo_stack.revision;
+	test::eq(app.fix_weights(), (usz)0);
+	test::@check(app.undo_stack.revision == before, "a clean rig added an undo step");
+	test::@check(app.tears_current() && app.strays_current(), "a clean rig was not surveyed");
+
+	crig::RigView view = app.open_rig(mem)!!;
+	float[] column = app.column_of(mem, &view, k);
+	view.free(mem);
+	defer alloc::free(mem, column);
+	column[twin] = 1.0f;
+	app.store_column(k, column);
+	uint[1] top = { 76 };
+	app.set_weight_vertices(top[..], k, 1.0f);
+	test::eq(app.find_tears(), (usz)1);
+	test::eq(app.find_strays(), (usz)1);
+
+	test::@check(app.fix_weights() > 0, "the fix changed nothing");
+	test::@check(app.tears_current() && app.tears.len == 0, "a tear is left");
+	test::@check(app.strays_current() && app.strays.len == 0, "a stray is left");
+	test::@check(weight_of(&app, 76, k) == 0.0f, "the stray still holds K %f", weight_of(&app, 76, k));
+	test::@check(weight_of(&app, 40, k) == weight_of(&app, twin, k), "the copies hold K %f and %f",
+		weight_of(&app, 40, k), weight_of(&app, twin, k));
+
+	test::@check(app.undo(), "nothing to undo");
+	test::@check(weight_of(&app, 76, k) == 1.0f, "undo did not bring the stray back");
+	test::@check(weight_of(&app, 40, k) == 0.0f && weight_of(&app, twin, k) == 1.0f, "undo did not bring the tear back");
+}
+
+<*
+ The stray survey reads one copy of a point, so a stray on the other copy only
+ shows once the tear is closed. Closed first, it leaves both copies in one click.
+
+ Re-introduce: in `AppState.fix_weights`, fix strays before tears, and the tear
+ spreads K over both copies with nothing left to take it off.
+*>
+fn void a_stray_on_a_torn_point_goes_from_both_copies() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	uint twin = seamed_grid(&positions, &indices);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	// Joined, the seam sits on B's bone, so the copy holding K is the one the edits moved.
+	app.doc.connect(b, k);
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	assign(&app, every[18..], b);
+	assign(&app, every[:18], k);
+
+	crig::RigView view = app.open_rig(mem)!!;
+	float[] column = app.column_of(mem, &view, k);
+	view.free(mem);
+	defer alloc::free(mem, column);
+	column[twin] = 1.0f;
+	app.store_column(k, column);
+	test::eq(app.find_tears(), (usz)1);
+	test::eq(app.find_strays(), (usz)0);
+
+	test::@check(app.fix_weights() > 0, "the fix changed nothing");
+	test::@check(weight_of(&app, 40, k) == 0.0f && weight_of(&app, twin, k) == 0.0f,
+		"the copies still hold K %f and %f", weight_of(&app, 40, k), weight_of(&app, twin, k));
+	test::@check(weight_of(&app, 40, b) == 1.0f && weight_of(&app, twin, b) == 1.0f, "the fix moved B");
+	test::@check(app.tears.len == 0 && app.strays.len == 0, "something is left");
+}
+
+<*
+ A stray's joint stays on a vertex nothing else really holds. Taken off, the
+ vertex would fall to the root, or ride whatever crumb is left at full share, and
+ the fix would make the spike it was for. Top vertices 76, 77 and 78 are one
+ island of K: B holds 76 fully, 77 not at all, and 78 by a crumb.
+
+ Re-introduce: in `AppState.fix_strays`, take the joint off every vertex of the
+ island, and 77 and 78 hold nothing real.
+*>
+fn void a_stray_keeps_its_joint_where_nothing_else_holds_the_vertex() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	assign(&app, every[18..], b);
+	assign(&app, every[:18], k);
+
+	uint[3] island = { 76, 77, 78 };
+	app.set_weight_vertices(island[..], k, 1.0f);
+	uint[1] alone = { 77 };
+	app.set_weight_vertices(alone[..], b, 0.0f);
+	uint[1] crumb = { 78 };
+	app.set_weight_vertices(crumb[..], b, 0.00001f);
+	test::eq(app.find_strays(), (usz)1);
+
+	test::eq(app.fix_weights(), (usz)1);
+	test::@check(weight_of(&app, 76, k) == 0.0f, "the vertex B holds still holds K %f", weight_of(&app, 76, k));
+	test::@check(weight_of(&app, 77, k) == 1.0f, "the vertex only K held lost it: %f", weight_of(&app, 77, k));
+	test::@check(weight_of(&app, 78, k) == 1.0f, "the vertex left with a crumb lost K: %f", weight_of(&app, 78, k));
+	test::@check(app.strays_current() && app.strays.len == 1, "what the fix left is not listed");
+}
+
+<*
+ Two strays on one vertex are each other's only company, so one stays: each
+ joint taken off counts against the next.
+
+ Re-introduce: in `AppState.fix_strays`, read the rest of a row from the weights
+ as they were, and both come off.
+*>
+fn void two_strays_on_a_vertex_leave_one_joint_on_it() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint m = app.doc.add_dot({ 0, -0.5f, 0.5f }, "M");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	assign(&app, every[36..], b);
+	assign(&app, every[18:18], m);
+	assign(&app, every[:18], k);
+
+	uint[1] top = { 76 };
+	app.set_weight_vertices(top[..], k, 1.0f);
+	app.set_weight_vertices(top[..], m, 1.0f);
+	app.set_weight_vertices(top[..], b, 0.0f);
+	test::eq(app.find_strays(), (usz)2);
+
+	app.fix_weights();
+	float kept = weight_of(&app, 76, k) + weight_of(&app, 76, m);
+	test::@check(kept == 1.0f, "K and M hold %f of the vertex between them, not one joint's 1", kept);
+}
+
+<*
+ The red only paints over a weight view, so Fix weights turns one on when it
+ leaves something to find. A view already up stays, and a clean rig turns none on.
+
+ Re-introduce: in `AppState.fix_weights`, drop the `show_tint` call, and the card
+ says red with none on the mesh.
+*>
+fn void what_fix_weights_leaves_shows_on_the_mesh() @test
+{
+	List{Vec3} positions;
+	positions.init(mem);
+	defer positions.free();
+	List{uint} indices;
+	indices.init(mem);
+	defer indices.free();
+	grid_into(&positions, &indices, { 0, 0, 0 }, 2.0f, 9);
+
+	crig::AppState app = crig::new_app({ .positions = positions.array_view(), .indices = indices.array_view() });
+	defer app.free();
+	uint b = app.doc.add_dot({ 0, 0.5f, 0.5f }, "B");
+	uint k = app.doc.add_dot({ 0, -1, 0.5f }, "K");
+	uint[] every = alloc::new_array(mem, uint, positions.len());
+	defer alloc::free(mem, every);
+	foreach (v, &vertex : every) *vertex = (uint)v;
+	assign(&app, every[18..], b);
+	assign(&app, every[:18], k);
+	app.show_tint(OFF);
+
+	app.fix_weights();
+	test::@check(app.tint_mode == OFF, "a clean rig turned a view on");
+
+	uint[1] top = { 76 };
+	app.set_weight_vertices(top[..], k, 1.0f);
+	app.set_weight_vertices(top[..], b, 0.0f);
+	app.fix_weights();
+	test::@check(app.strays.len == 1, "the stray with nothing else on it is not left");
+	test::@check(app.tint_mode == TERRITORY, "what was left has no view to show in");
+
+	app.show_tint(FALLOFF);
+	app.fix_weights();
+	test::@check(app.tint_mode == FALLOFF, "the fix swapped the view that was up");
 }

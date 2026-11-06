@@ -9,10 +9,10 @@
 
  Composed like the tool column (`tool_column.c3`) and from its parts: cui's
  `Tooltip` around `tool_button`, with the glyph an SVG in assets/icons/card. A lit cell is
- a switch that is on (Mirror, the brush); a commit (Apply, Fix strays) keeps the
+ a switch that is on (Mirror, the brush); a commit (Apply, Fix weights) keeps the
  plain cell and draws its glyph in the accent, so the two never read alike. An
- action with nothing to act on stays off the card rather than greyed — Fix
- strays appears once Find strays has something for it.
+ action with nothing to act on stays off the card rather than greyed — Clear and
+ Invert appear once UV islands are being picked.
 *>
 module crig;
 
@@ -42,10 +42,7 @@ enum CardGlyph : (String svg)
 	SHRINK_GLYPH { $embed("../../assets/icons/card/shrink.svg") },
 	CLEAR_GLYPH { $embed("../../assets/icons/card/clear.svg") },
 	INVERT_GLYPH { $embed("../../assets/icons/card/invert.svg") },
-	FIND_STRAYS_GLYPH { $embed("../../assets/icons/card/find_strays.svg") },
-	FIX_STRAYS_GLYPH { $embed("../../assets/icons/card/fix_strays.svg") },
-	FIND_TEARS_GLYPH { $embed("../../assets/icons/card/find_tears.svg") },
-	FIX_TEARS_GLYPH { $embed("../../assets/icons/card/fix_tears.svg") },
+	FIX_WEIGHTS_GLYPH { $embed("../../assets/icons/card/fix_weights.svg") },
 	LASSO_GLYPH { $embed("../../assets/icons/card/lasso.svg") },
 	// The Path toolbar's.
 	PEN_GLYPH { $embed("../../assets/icons/card/pen.svg") },

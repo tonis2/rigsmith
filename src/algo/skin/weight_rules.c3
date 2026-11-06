@@ -45,6 +45,10 @@ const float BAND_SHARE_DEFAULT = 0.5f;
 // A joint holds a vertex, for the stray survey, at this share or more.
 const float STRAY_SHARE = 0.25f;
 
+// What the rest of a row must hold for a stray's joint to come off it. Under this
+// it is crumbs, which would take the whole vertex at full share.
+const float STRAY_REST_FLOOR = 0.01f;
+
 <*
  A vertex whose joints together hold no more than this is unused: nothing
  moves it, so posed or exported it falls back to the root (`sparsify_weights`).
