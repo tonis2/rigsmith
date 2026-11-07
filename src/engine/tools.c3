@@ -107,6 +107,7 @@ fn String? ToolTable.invoke(&self, String name, String arguments, DString* detai
 
 	// The character the call names, if it names one — see `mcp/cast_tools.c3`.
 	route_character((AppState*)tool.user_data, parsed, detail)!;
+	@log_note("script: %s", name);
 	return tool.handler(parsed, tool.user_data, detail);
 }
 

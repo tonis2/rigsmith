@@ -183,6 +183,10 @@ fn int main(String[] args)
 		return 0;
 	}
 
+	// Before anything opens, so the log has the whole run, crash included.
+	int watched_exit;
+	if (watch_run(args, &watched_exit)) return watched_exit;
+
 	// Before the config, the font or the library is read: a packaged build is
 	// started from anywhere, and its assets are beside the executable — under
 	// Contents/Resources in a macOS .app, usr/share/rigsmith in an AppImage.
@@ -290,6 +294,7 @@ fn int main(String[] args)
 	mcp::Server server = three::new_mcp_server(&tool_host);
 	// After three's three, so a name crig takes cannot shadow one the engine uses.
 	install_tools(&app, &server);
+	log_tool_calls(&server);
 
 	// The readback hook `render` and crig's own `screenshot` call through. It was
 	// null in every run before this — `AppState.screenshot`'s doc explains why:
@@ -316,6 +321,9 @@ fn int main(String[] args)
 	mcp::Listener listener;
 	serve_mcp(&listener, window, port > 0 ? port : app.config.mcp_port);
 	defer listener.stop();
+
+	// Last before the loop, so no startup notice replaces it.
+	show_last_crash(&app);
 
 	int code = run_loop(renderer, window, &runtime, &server, &listener);
 
