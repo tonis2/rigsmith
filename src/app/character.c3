@@ -988,16 +988,9 @@ fn Character new_character(rig::TriMesh geometry, String source_path,
 		.area_seed = -1,
 		.area_hover_island = -1,
 
-		.doc = {
-			// On by default: placing a chain of joints is the common case, and
-			// having to connect them afterwards doubles the clicks for it.
-			.auto_connect = true,
-
-			// The mesh's own middle, not x = 0. crig never normalizes, so a
-			// model authored off-origin would otherwise mirror to somewhere
-			// outside itself.
-			.sym_x = geometry.bounds().center().x,
-		},
+		// The mesh's own middle, not x = 0. crig never normalizes, so a model
+		// authored off-origin would otherwise mirror to somewhere outside itself.
+		.doc = new_document(geometry.bounds().center().x),
 	};
 	// A List has to be given its allocator before anything is pushed, and doing
 	// it here rather than lazily means every toggle is a plain push — a lazy

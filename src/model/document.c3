@@ -690,6 +690,28 @@ fn void RigDocument.set_plan(&self, String plan)
 	self.plan = plan.len > 0 ? plan.copy(mem) : "";
 }
 
+<*
+ An empty document whose lists own their memory from the start.
+
+ A List never given an allocator borrows temp memory on its first push, and a
+ script's pool frees that under it; the next push then crashes in realloc.
+*>
+fn RigDocument new_document(float sym_x, Allocator allocator = mem)
+{
+	// Auto-connect on: placing a chain of joints is the common case.
+	RigDocument doc = { .auto_connect = true, .sym_x = sym_x };
+	doc.dots.init(allocator);
+	doc.edges.init(allocator);
+	doc.attachments.init(allocator);
+	doc.pins.init(allocator);
+	doc.secondary.init(allocator);
+	doc.colliders.init(allocator);
+	doc.rotation_limits.init(allocator);
+	doc.collision_exclusions.init(allocator);
+	doc.animations.init(allocator);
+	return doc;
+}
+
 fn void RigDocument.free(&self)
 {
 	foreach (&dot : self.dots.array_view())

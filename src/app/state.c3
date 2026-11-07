@@ -1179,10 +1179,7 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	self.owns_path = path.len > 0;
 
 	self.doc.free();
-	self.doc = {
-		.auto_connect = true,
-		.sym_x = geometry.bounds().center().x,
-	};
+	self.doc = new_document(geometry.bounds().center().x);
 
 	self.undo_stack.clear();
 

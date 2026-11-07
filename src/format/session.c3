@@ -1245,19 +1245,7 @@ fn RigDocument? session_document(Allocator allocator, Object* parsed, float fall
 	// Built here rather than inside the parse so a file that fails validation
 	// halfway can be freed: the lists have already taken whatever was adopted
 	// before the bad entry, and a fault carries no document back to free.
-	RigDocument doc = {
-		.auto_connect = true,
-		.sym_x = fallback_sym_x,
-	};
-	doc.dots.init(allocator);
-	doc.edges.init(allocator);
-	doc.attachments.init(allocator);
-	doc.pins.init(allocator);
-	doc.secondary.init(allocator);
-	doc.colliders.init(allocator);
-	doc.rotation_limits.init(allocator);
-	doc.collision_exclusions.init(allocator);
-	doc.animations.init(allocator);
+	RigDocument doc = new_document(fallback_sym_x, allocator);
 
 	if (catch parse_document(allocator, &doc, parsed))
 	{
