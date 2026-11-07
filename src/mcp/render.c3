@@ -230,6 +230,8 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 
 	if (!apply_framing(app, args, detail)) return RENDER_REFUSED~;
 	if (!apply_camera(app, args, detail)) return RENDER_REFUSED~;
+	// The bones are painted from the camera; without a clip nothing else repaints them.
+	app.refresh_ui();
 
 	Vec4 window = { 0, 0, 1, 1 };
 	Vec4 crop = whole_window ? window : app.viewport_share;
