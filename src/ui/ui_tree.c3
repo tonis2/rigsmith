@@ -887,6 +887,14 @@ fn void menu_reapply_plan_limits(Ui* ui)
 	app.refresh_ui();
 }
 
+// Limits read off the rig for every joint that has none — see `AppState.suggest_limits`.
+fn void menu_suggest_limits(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.say_limit_suggestion(app.suggest_limits());
+	app.refresh_ui();
+}
+
 fn void menu_show_floor(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -1331,10 +1339,11 @@ MenuItem[6] edit_items = {
 // cell in the Assets pane is the answer. So the item is here and it opens the
 // same panel a skinless import raises, which still gets its list from the packs.
 // The Assets route is unchanged.
-MenuItem[15] rig_items = {
+MenuItem[16] rig_items = {
 	{ .label = "Apply body plan…", .on_select = &menu_apply_body_plan, .state = &query_any_mesh },
 	{ .label = "Rotate skeleton…", .on_select = &open_skeleton_rotation_dialog, .state = &query_any_dots },
 	{ .label = "Re-apply plan limits", .on_select = &menu_reapply_plan_limits, .state = &query_any_dots },
+	{ .label = "Suggest limits", .on_select = &menu_suggest_limits, .state = &query_any_dots },
 	{ .separator = true },
 	{ .label = "Connect selected", .shortcut = Shortcut.CONNECT.label, .on_select = &menu_connect_selection, .state = &query_connectable },
 	// The two jobs of one tool, adjacent and in the order the plain letter walks

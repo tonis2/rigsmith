@@ -466,3 +466,113 @@ fn void a_long_joint_card_scrolls_inside_the_view() @test
 	f.scroll(scroller.absolute + (Vec2){ scroller.size.x * 0.5f, 40.0f }, { 0.0, -3.0 }, precise: false);
 	test::@check(scroll.scroll_offset > 0, "the wheel did not reach the rows below the fold");
 }
+
+fn void x_limited_knee(Fixture* f, uint joint)
+{
+	crig::JointRotationLimits limits = crig::unconstrained_rotation(joint);
+	limits.constrained = true;
+	limits.axes[0] = { .allowed = true, .minimum = -0.5f, .maximum = 0.5f };
+	limits.axes[1].allowed = false;
+	limits.axes[2].allowed = false;
+	test::@check(f.app.doc.set_rotation_limits(joint, limits), "the test limit table was refused");
+}
+
+fn void a_limit_knob_drags_its_end_of_the_range() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	JointPanelRig made = joint_panel_rig(&f);
+	x_limited_knee(&f, made.joint);
+	AnimRef clip = f.app.new_clip("Knobs", 2.0f, from_rest: true);
+	f.app.edit_time = 1.0f;
+	test::@check(f.app.park_clip(clip, f.app.edit_time), "the animation would not park");
+	f.app.stop_animation();
+	f.app.select(made.joint);
+	f.feed({ 0, 0 });
+
+	Element* dials = f.ui.find_id(crig::JOINT_DIALS_ID)!!;
+	Vec2 x_centre = crig::dial_centre(dials, 0);
+	sz history = f.app.undo_stack.cursor;
+	Vec2 press = dials.absolute + crig::dial_knob(x_centre, 0.5f);
+	f.feed(press);
+	f.feed(press, left: true);
+	crig::JointDials* widget = dials.widget_as(crig::JointDials);
+	test::@check(widget.held_mark == 2 && f.app.drag.dot == 0,
+		"pressing the X max knob did not grab it (mark %d, drag %d)", widget.held_mark, f.app.drag.dot);
+
+	// Live: the knob, its field and the model move; the table waits for the release.
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.8f), left: true);
+	Element* still = f.ui.find_id(crig::JOINT_DIALS_ID)!!;
+	test::@check(still == dials && widget.held_mark == 2, "the card rebuilt under the knob drag");
+	Element* max_field = f.ui.find_id(crig::JOINT_LIMIT_X_MAX_ID)!!;
+	test::@check(max_field.widget_as(TextField).value() == "46.0",
+		"the max field did not follow the knob (%s)", max_field.widget_as(TextField).value());
+	test::@check(math::abs(f.app.doc.rotation_limits_of(made.joint).axes[0].maximum - 0.5f) < 1.0e-5f,
+		"the table was written before the release");
+	test::@check(f.app.pose_palette.len > 0, "the joint was not previewed at the knob");
+	test::@check(!f.app.pose_edit_active, "dragging a knob opened a pose edit");
+
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.8f));
+	float max = f.app.doc.rotation_limits_of(made.joint).axes[0].maximum;
+	test::@check(math::abs(max - 46.0f * (float)math::PI / 180.0f) < 1.0e-4f
+		&& f.app.undo_stack.cursor == history + 1,
+		"the release wrote max %.4f (history %d -> %d)", max, history, f.app.undo_stack.cursor);
+	test::@check(f.app.pose_palette.len == 0, "the preview stayed on after the release");
+	(void)f.app.undo();
+	test::@check(math::abs(f.app.doc.rotation_limits_of(made.joint).axes[0].maximum - 0.5f) < 1.0e-5f,
+		"undo did not put the max back");
+
+	// The min knob stops at the max.
+	f.feed({ 0, 0 });
+	dials = f.ui.find_id(crig::JOINT_DIALS_ID)!!;
+	press = dials.absolute + crig::dial_knob(x_centre, -0.5f);
+	f.feed(press);
+	f.feed(press, left: true);
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.0f), left: true);
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.4f), left: true);
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.9f), left: true);
+	f.feed(dials.absolute + crig::dial_knob(x_centre, 0.9f));
+	crig::JointAxisLimit row = f.app.doc.rotation_limits_of(made.joint).axes[0];
+	test::@check(math::abs(row.minimum - row.maximum) < 1.0e-5f && math::abs(row.maximum - 0.5f) < 1.0e-5f,
+		"the min knob crossed the max (%.3f, %.3f)", row.minimum, row.maximum);
+}
+
+fn void the_knobs_set_limits_off_pose() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	JointPanelRig made = joint_panel_rig(&f);
+	x_limited_knee(&f, made.joint);
+	f.app.select(made.joint);
+	f.feed({ 0, 0 });
+
+	Element*? found = f.ui.find_id(crig::JOINT_DIALS_ID);
+	if (catch found)
+	{
+		test::@check(false, "a limited joint off Pose had no dials for its range");
+		return;
+	}
+	Element* dials = found;
+	test::@check(dials.widget_as(crig::JointDials).limits_only, "the dials off Pose were not limits only");
+
+	// The face turns nothing: there is no pose here.
+	Vec2 x_centre = crig::dial_centre(dials, 0);
+	f.feed(dials.absolute + x_centre);
+	f.feed(dials.absolute + x_centre, left: true);
+	test::@check(f.app.drag.dot == 0 && dials.widget_as(crig::JointDials).held_mark == 0,
+		"a press on a limits-only dial began something");
+	f.feed(dials.absolute + x_centre);
+
+	Vec2 press = dials.absolute + crig::dial_knob(x_centre, -0.5f);
+	f.feed(press);
+	f.feed(press, left: true);
+	f.feed(dials.absolute + crig::dial_knob(x_centre, -1.0f), left: true);
+	test::@check(f.app.pose_palette.len > 0, "the joint was not previewed at the knob");
+	f.feed(dials.absolute + crig::dial_knob(x_centre, -1.0f));
+	float min = f.app.doc.rotation_limits_of(made.joint).axes[0].minimum;
+	test::@check(math::abs(min + 57.0f * (float)math::PI / 180.0f) < 1.0e-4f,
+		"the min knob wrote %.4f", min);
+	test::@check(f.app.pose_palette.len == 0, "the preview stayed on the rest rig");
+}

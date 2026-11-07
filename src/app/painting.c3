@@ -2,10 +2,10 @@
  The weight brush and the weight request: hand edits to one joint's weights, as
  an operation rather than as storage.
 
- Both write through one primitive, `nudge_column`, into the joint's own column
- (`app/pinning.c3` keeps it), so a weight given or taken means the same thing
- whichever asked — and no other joint's weight moves to make room. A vertex a
- joint is taken off keeps whatever the others hold of it, which may be nothing.
+ The request writes the joint's own column (`nudge_column`) and moves nobody
+ else. The brush paints a share (`brush_rows`): an Add scales the other joints
+ down to make room, a Remove lowers only the joint, and a vertex a joint is
+ taken off keeps whatever the others hold of it, which may be nothing.
 *>
 module crig;
 
@@ -395,10 +395,9 @@ fn uint[] AppState.pick_vertices(&self, Allocator allocator, uint dot_id, PaintP
 
  	`PaintResult did = app.paint_share(knee, vertices, 0.0f);`
 
- **The public verb** — what `paint_weights` says over MCP. Written the way the
- brush writes (`nudge_column`): the joint's own weight, in its own column, so a
- joint can be given a vertex the automatic weights gave it nothing on and no
- other joint's weight moves. What it comes to as a share of the vertex is that
+ **The public verb** — what `paint_weights` says over MCP (`nudge_column`): the
+ joint's own weight, in its own column, so a joint can be given a vertex the
+ automatic weights gave it nothing on and no other joint's weight moves. What it comes to as a share of the vertex is that
  weight over the row's total.
 
  One undoable step.
@@ -420,7 +419,7 @@ fn PaintResult AppState.paint_share(&self, uint dot_id, uint[] vertices, float w
 	float[] pulls = alloc::new_array(mem, float, (sz)vertices.len);
 	defer alloc::free(mem, pulls);
 	foreach (i, &pull : pulls) *pull = i < strengths.len ? strengths[i] : 1.0f;
-	return self.nudge_column(dot_id, vertices, math::clamp(weight, 0.0f, 1.0f), pulls, limb: false);
+	return self.nudge_column(dot_id, vertices, math::clamp(weight, 0.0f, 1.0f), pulls);
 }
 
 
@@ -473,21 +472,26 @@ fn void AppState.overlay_limb_tints(&self, RigView* view, float[] painted)
 }
 
 <*
- One step of a brush stroke, on the joint's own column.
+ One step of a brush stroke: the joint's share of each vertex moved toward the
+ strength (`brush_row`).
 
- 	`app.brush_share(knee, under[:hit], 1.0f, pulls[:hit]);`
+ 	`app.brush_share(knee, under[:hit], 1.0f, pulls[:hit], app.brush_strength);`
 
- `nudge_column` on the joint's limb, with the undo group left open so the
- press-to-release is one step (`end_stroke` closes it), and the refusals kept
- for `end_stroke` to say once rather than on every move.
+ Adding scales the other joints on the vertex down to make room, so they are
+ held from here on; removing lowers only the joint. The limb limit holds. The
+ undo group stays open so the press-to-release is one step (`end_stroke` closes
+ it), and the refusals are kept for `end_stroke` to say once.
 
  @param target : `1 puts the joint on, 0 takes it off.`
- @param strengths : `One per vertex: how far toward the target, 0 to 1.`
+ @param strengths : `One per vertex: how far toward the share, 0 to 1.`
+ @param share : `The share an Add reaches; a Remove brings it down to 1 minus this.`
  @return `How many vertices changed.`
 *>
-fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, float[] strengths)
+fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, float[] strengths, float share = 1.0f)
 {
-	PaintResult did = self.nudge_column(dot_id, vertices, target, strengths, limb: true, clear_alone: true, commit: false);
+	bool adds = target > 0.0f;
+	share = math::clamp(share, 0.0f, 1.0f);
+	PaintResult did = self.brush_rows(dot_id, vertices, adds, share, strengths);
 	if (did.blocked > 0) self.stroke_blocked = true;
 	if (did.emptied > 0) self.stroke_emptied = true;
 	usz changed = did.changed;
@@ -497,36 +501,94 @@ fn usz AppState.brush_share(&self, uint dot_id, uint[] vertices, float target, f
 	{
 		uint[] across = self.mirrored_vertices(mem, &self.stroke_mirror, vertices);
 		defer alloc::free(mem, across);
-		changed += self.nudge_column(self.stroke_twin, across, target, strengths, limb: true, clear_alone: true, commit: false).changed;
+		changed += self.brush_rows(self.stroke_twin, across, adds, share, strengths).changed;
 	}
 	if (changed > 0 && self.skinned()) self.refresh_pose_display();
 	return changed;
 }
 
+// `brush_row` on each vertex, then every column it moved written back.
+fn PaintResult AppState.brush_rows(&self, uint dot_id, uint[] vertices, bool adds, float share, float[] pulls)
+{
+	PaintResult result;
+	usz count = self.geometry.positions.len;
+	if (vertices.len == 0 || count == 0 || !self.doc.find(dot_id)) return result;
+	self.flush_edges();
+
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return result;
+	RigView view = opened;
+	defer view.free(mem);
+	usz bones = view.len();
+	sz joint = view.joint_of(dot_id);
+	if (joint < 0 || bones == 0) return result;
+
+	float[] painted = self.weights(mem, &view);
+	defer if (painted.len > 0) alloc::free(mem, painted);
+	if (painted.len < count * bones) return result;
+	float[] automatic = adds ? self.weights(mem, &view, AUTOMATIC) : (float[]){};
+	defer if (automatic.len > 0) alloc::free(mem, automatic);
+	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
+	defer alloc::free(mem, family);
+
+	float[] rows = alloc::new_array(mem, float, (sz)(count * bones));
+	defer alloc::free(mem, rows);
+	rows[..] = painted[:count * bones];
+	bool[] moved = alloc::new_array(mem, bool, (sz)bones);
+	defer alloc::free(mem, moved);
+
+	foreach (i, v : vertices)
+	{
+		if ((usz)v >= count || i >= pulls.len) continue;
+		usz at = (usz)v * bones;
+		if (adds && joint_share(painted[at:bones], (usz)joint) < AREA_LEAK_FLOOR
+			&& automatic.len >= count * bones && !on_limb(automatic[at:bones], family))
+		{
+			if (pulls[i] > 0.0f) result.blocked++;
+			continue;
+		}
+		float[] row = rows[at:bones];
+		switch (brush_row(row, (usz)joint, adds, share, math::clamp(pulls[i], 0.0f, 1.0f)))
+		{
+			case SAME: continue;
+			case EMPTIED: result.emptied++;
+			case CHANGED: break;
+		}
+		result.changed++;
+		foreach (usz b, weight : row) if (weight != painted[at + b]) moved[b] = true;
+	}
+
+	float[] column = alloc::new_array(mem, float, (sz)count);
+	defer alloc::free(mem, column);
+	usz written = 0;
+	foreach (usz b, did : moved)
+	{
+		if (!did || b >= view.dot_ids.len) continue;
+		for (usz v = 0; v < count; v++) column[v] = rows[v * bones + b];
+		written += self.replace_column(&view, view.dot_ids[b], column, commit: false);
+	}
+	if (written == 0) result = { .blocked = result.blocked };
+	return result;
+}
+
 <*
  Move a joint's weight on each vertex toward a target, in its own column.
 
- 	`PaintResult did = app.nudge_column(knee, vertices, 0.0f, pulls, limb: true);`
+ 	`PaintResult did = app.nudge_column(knee, vertices, 0.0f, pulls);`
 
- **The one weight edit.** The brush and `paint_weights` both come through here,
- so a weight given or taken means the same thing whichever asked. Each vertex
+ What `paint_weights` writes; the brush shares out the row instead (`brush_rows`). Each vertex
  moves `pull` of the way from the joint's weight toward `target`, and that is
  all: the other joints on the vertex keep exactly what they hold, so raising a
  joint blends it with them and taking it off leaves the vertex to them — or to
  nobody, when nobody else holds it (`emptied`). The joint is held from the
  first change on (`replace_column`).
 
- **One refusal.** With `limb`, a vertex off the joint's limb (`limb_family`)
- that it holds nothing of is not given any — counted in `blocked`.
-
  @param target : `The weight to move toward, 0 to 1.`
  @param pulls : `One per vertex: how far toward the target, 0 to 1. A vertex without one is skipped.`
- @param limb : `Refuse to give the joint vertices off its limb.`
- @param clear_alone : `Taking the joint off a vertex no other joint holds takes all of it, whatever the pull — the brush's way, since a remainder there still moves the whole vertex.`
- @param commit : `Close the undo group — false for a stroke still in flight.`
+ @param commit : `Close the undo group.`
 *>
 fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float target, float[] pulls,
-	bool limb, bool clear_alone = false, bool commit = true)
+	bool commit = true)
 {
 	PaintResult result;
 	usz count = self.geometry.positions.len;
@@ -545,11 +607,6 @@ fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float 
 	float[] painted = self.weights(mem, &view);
 	defer if (painted.len > 0) alloc::free(mem, painted);
 	if (painted.len < count * bones) return result;
-	float[] automatic = limb ? self.weights(mem, &view, AUTOMATIC) : (float[]){};
-	defer if (automatic.len > 0) alloc::free(mem, automatic);
-	bool[] family = limb_family(mem, &view.skeleton, (usz)joint);
-	defer alloc::free(mem, family);
-
 	float[] column = alloc::new_array(mem, float, (sz)count);
 	defer alloc::free(mem, column);
 	for (usz v = 0; v < count; v++) column[v] = painted[v * bones + (usz)joint];
@@ -568,21 +625,7 @@ fn PaintResult AppState.nudge_column(&self, uint dot_id, uint[] vertices, float 
 		// the step a later stroke would bother to take.
 		float want = pull >= 1.0f ? target : math::clamp(now + (target - now) * pull, 0.0f, 1.0f);
 		if (math::abs(want - target) <= UNUSED_TOTAL) want = target;
-		// Alone on the vertex, any weight is the whole of it: a soft pass that
-		// stops part of the way has moved nothing anybody can see.
-		if (clear_alone && target == 0.0f && want > 0.0f)
-		{
-			float others = 0.0f;
-			for (usz b = 0; b < bones; b++) if ((sz)b != joint) others += painted[at + b];
-			if (others <= UNUSED_TOTAL) want = 0.0f;
-		}
 		if (want == now || (want != target && math::abs(want - now) < 1.0e-6f)) continue;
-		if (limb && want > now && joint_share(painted[at:bones], (usz)joint) < AREA_LEAK_FLOOR
-			&& automatic.len >= count * bones && !on_limb(automatic[at:bones], family))
-		{
-			result.blocked++;
-			continue;
-		}
 		column[v] = want;
 
 		float total = 0.0f;

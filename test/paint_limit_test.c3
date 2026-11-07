@@ -105,6 +105,44 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
 }
 
 <*
+ The shoulder is painted onto the chest its clavicle hangs from: the socket's
+ mesh belongs to the grandparent when the parent is small.
+
+ Re-introduce: drop the grandparent from `limb_family`, and the chest refuses
+ the shoulder.
+*>
+fn void a_joint_is_painted_onto_the_part_its_parent_hangs_from() @test
+{
+	io::printn("a joint is painted onto the part its parent hangs from");
+	areas::copy_fixture(LIMIT_COPY);
+	defer areas::remove_fixture(LIMIT_COPY);
+
+	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
+	defer mesh.free(mem);
+	crig::AppState app = crig::new_app(mesh, LIMIT_COPY);
+	defer app.free();
+	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
+	(void)app.release_all_recorded();
+	app.mark_rig_stale();
+
+	uint shoulder = areas::named(&app, "shoulder_L");
+	uint chest = areas::named(&app, "chest");
+	test::@check(shoulder != 0 && chest != 0, "the humanoid has no shoulder_L or chest");
+	app.select(shoulder);
+
+	uint[] torso = owned_by(&app, chest, 40);
+	defer alloc::free(mem, torso);
+	test::@check(torso.len > 10, "the chest owns only %d vertices", torso.len);
+	float[] pulls = full_pulls(torso.len);
+	defer alloc::free(mem, pulls);
+
+	app.begin_stroke();
+	test::@check(app.brush_share(shoulder, torso, 1.0f, pulls) > 0, "the chest took none of the shoulder");
+	test::@check(!app.stroke_blocked, "the chest was taken for off the shoulder's limb");
+	app.end_stroke();
+}
+
+<*
  A part reaching off the joint's limb applies only where it is on it: the foot
  is counted as left out and given nothing, and a part wholly off the limb
  writes nothing. What the joint already holds there stays its own on the next

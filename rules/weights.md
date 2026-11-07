@@ -1,9 +1,9 @@
 # Weights
 
 ## An edit to one joint never changes another
-- **Rule:** a joint follows the automatic bind until it is edited. Then it holds its own column. No tool rescales or re-derives another joint's weights.
-- **Why:** predictability. In the owner's words (2026-10-23): "I don't like rigsmith forcing its automatic changes once I try to edit certain joints".
-- **Tests:** `an_edit_to_one_joint_never_changes_another` in `test/rules/weight_rules_test.c3`; `held_weights_test.c3`.
+- **Rule:** a joint follows the automatic bind until it is edited. Then it holds its own column. No tool rescales or re-derives another joint's weights, except the brush's Add: it paints the joint to the share its strength names and scales the other joints on that vertex down to make room. Nothing ever raises another joint.
+- **Why:** predictability. In the owner's words (2026-10-23): "I don't like rigsmith forcing its automatic changes once I try to edit certain joints". The brush exception (2026-11-07): painting head over a face the body held stopped at 50%; "If I paint 100% with weight paint while face is selected, I think rigsmith should automatically remove weight from body joint at that place."
+- **Tests:** `an_edit_to_one_joint_never_changes_another` in `test/rules/weight_rules_test.c3`; `held_weights_test.c3`; `the_brush_paints_a_joint_to_the_share_its_strength_names` in `weights_test.c3`.
 - **Tried and rejected:** handing weight to neighbours when a joint is taken off (`others_of`, `field_row`, `restate_share`). Keeping every vertex owned. Make rigid and Smooth weights wrote several columns and were deleted on 2026-10-26.
 
 ## Rows need not sum to 1

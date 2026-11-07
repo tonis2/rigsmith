@@ -84,6 +84,7 @@ const String JOINT_AXES_FOLLOW_ID = "joint-axes-follow";
 const String JOINT_AXES_BONE_ID = "joint-axes-bone";
 const String JOINT_LIMITS_ACTIVE_ID = "joint-limits-active";
 const String JOINT_LIMITS_RESET_ID = "joint-limits-reset";
+const String JOINT_LIMITS_SUGGEST_ID = "joint-limits-suggest";
 const String JOINT_LIMIT_X_ALLOW_ID = "joint-limit-x-allow";
 const String JOINT_LIMIT_Y_ALLOW_ID = "joint-limit-y-allow";
 const String JOINT_LIMIT_Z_ALLOW_ID = "joint-limit-z-allow";
@@ -347,6 +348,11 @@ fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
 	// capture with it, so the drag would end a frame after it began. The dial
 	// keeps its own numbers live; the card catches up on the release.
 	if (app.drag.dial) return;
+	// A limit knob being dragged: the same, and its table is written on release.
+	if (try Element* dials = elem.find_id(JOINT_DIALS_ID))
+	{
+		if (dials.widget_as(JointDials).held_mark != 0) return;
+	}
 	// The knuckle blend records as its handle moves, and every step moves the
 	// revision the snapshot below watches — a rebuild then would destroy the
 	// slider being held, for the dial's reason. The card catches up on the release.
@@ -743,10 +749,19 @@ fn void JointPanel.build_joint_tab(&self, AppState* app, JointCard* card)
 							{
 								@node(panel_button("Reset", &joint_limits_reset)).with_id(JOINT_LIMITS_RESET_ID);
 							}
+							@node(panel_button("Suggest", &joint_limits_suggest)).with_id(JOINT_LIMITS_SUGGEST_ID);
 						};
 
 						if (card.limits.constrained)
 						{
+							// Off Pose there is nothing to turn, but the knobs still set the range.
+							if (!app.animation_pose_ready() && card.posable_count > 0)
+							{
+								@node((JointDials) { .axes = card.posable, .count = card.posable_count,
+									.limits_only = true }).with_id(JOINT_DIALS_ID);
+								@node((Label) { .text = "Drag a knob to set its end of the range.",
+									.size = 12.0f, .color = TEXT_DIM });
+							}
 							@tree((Grid) { .cell = { JOINT_PANEL_CELL_W, JOINT_PANEL_CELL_H },
 								.gap_x = JOINT_PANEL_GRID_GAP, .gap_y = JOINT_PANEL_GRID_GAP,
 								.size = { JOINT_PANEL_W, 0 } })
@@ -1601,6 +1616,16 @@ fn void joint_limits_reset(Ui* ui) @private
 	AppState* app = ui.inherit(AppState)!!;
 	if (app.selected == 0) return;
 	(void)commit_joint_limits(ui, unconstrained_rotation(app.selected));
+}
+
+// A table read off the rig for this joint alone — see `AppState.suggest_limits`.
+fn void joint_limits_suggest(Ui* ui) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (app.selected == 0) return;
+	app.say_limit_suggestion(app.suggest_limits(only: { app.selected }));
+	app.refresh_ui();
+	refresh_joint_panel(ui);
 }
 
 // ---------------------------------------------------------------------------

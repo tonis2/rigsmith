@@ -640,8 +640,8 @@ fn void a_weight_asked_for_is_the_weight_written() @test
 }
 
 <*
- The brush moves the joint's own weight, so it can raise one the vertex gave
- nothing — and a stroke of several moves is one undo step.
+ The brush raises a joint the vertex gave nothing, and the joint already there
+ makes room — and a stroke of several moves is one undo step.
 *>
 fn void the_brush_raises_a_zero_weight_in_one_step() @test
 {
@@ -664,7 +664,7 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 	app.brush_share(knee, one[..], 1.0f, half[..]);
 	test::@check(math::abs(weight_of(&app, 0, knee) - 0.75f) < 1.0e-5f,
 		"a second half pull landed at %f", weight_of(&app, 0, knee));
-	test::@check(weight_of(&app, 0, hips) == 1.0f, "raising the knee moved the hips to %f", weight_of(&app, 0, hips));
+	test::@check(math::abs(weight_of(&app, 0, hips) - 0.25f) < 1.0e-5f, "the hips kept %f, not the 0.25 left", weight_of(&app, 0, hips));
 	app.end_stroke();
 
 	test::@check(app.undo(), "the stroke left nothing to undo");
@@ -678,6 +678,61 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 	app.brush_share(knee, one[..], 0.0f, all[..]);
 	app.end_stroke();
 	test::@check(weight_of(&app, 0, knee) == 0.0f, "a full take-off left %f", weight_of(&app, 0, knee));
+}
+
+<*
+ The brush's strength is the share it leaves. An Add takes the joint up to it
+ and scales the others down in their ratio; going over again changes nothing.
+ A Remove brings the joint down to 1 minus it, through its own weight alone.
+
+ Re-introduce: write only the painted column in `brush_rows`, and the full Add
+ stops at half the vertex.
+*>
+fn void the_brush_paints_a_joint_to_the_share_its_strength_names() @test
+{
+	crig::AppState app = chained();
+	defer app.free();
+
+	uint hips = dot_named(&app, "hips");
+	uint knee = dot_named(&app, "knee");
+	uint foot = dot_named(&app, "foot");
+	uint[1] one = { 0 };
+	float[1] all = { 1.0f };
+
+	// Full strength: the knee takes the vertex whole, the hips come off it.
+	state_row(&app, 0, hips, 1.0f);
+	app.begin_stroke();
+	test::@check(app.brush_share(knee, one[..], 1.0f, all[..], 1.0f) > 0, "the full Add changed nothing");
+	app.end_stroke();
+	test::@check(math::abs(share_of(&app, 0, knee) - 1.0f) < 1.0e-5f, "a full Add left the knee %f", share_of(&app, 0, knee));
+	test::eq(weight_of(&app, 0, hips), 0.0f);
+
+	// Half strength leaves the hips half, and a second stroke leaves it there.
+	state_row(&app, 0, hips, 1.0f);
+	for (int pass = 0; pass < 2; pass++)
+	{
+		app.begin_stroke();
+		app.brush_share(knee, one[..], 1.0f, all[..], 0.5f);
+		app.end_stroke();
+		test::@check(math::abs(share_of(&app, 0, knee) - 0.5f) < 1.0e-5f, "pass %d left the knee %f", pass, share_of(&app, 0, knee));
+		test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) < 1.0e-5f, "pass %d left the hips %f", pass, share_of(&app, 0, hips));
+	}
+
+	// Two others make room in their ratio: 0.6 and 0.4 become 0.3 and 0.2.
+	state_row(&app, 0, hips, 0.6f, foot);
+	app.begin_stroke();
+	app.brush_share(knee, one[..], 1.0f, all[..], 0.5f);
+	app.end_stroke();
+	test::@check(math::abs(weight_of(&app, 0, hips) - 0.3f) < 1.0e-5f, "the hips went to %f", weight_of(&app, 0, hips));
+	test::@check(math::abs(weight_of(&app, 0, foot) - 0.2f) < 1.0e-5f, "the foot went to %f", weight_of(&app, 0, foot));
+
+	// A half Remove lowers the hips to half and raises nobody.
+	state_row(&app, 0, hips, 0.8f, knee);
+	app.begin_stroke();
+	app.brush_share(hips, one[..], 0.0f, all[..], 0.5f);
+	app.end_stroke();
+	test::@check(math::abs(share_of(&app, 0, hips) - 0.5f) < 1.0e-5f, "a half Remove left the hips %f", share_of(&app, 0, hips));
+	test::@check(math::abs(weight_of(&app, 0, knee) - 0.2f) < 1.0e-5f, "the knee moved to %f", weight_of(&app, 0, knee));
 }
 
 <*
@@ -1312,8 +1367,8 @@ fn void a_brush_remove_clears_a_vertex_nobody_else_holds() @test
 	app.brush_share(hips, both[..], 0.0f, soft[..]);
 	app.end_stroke();
 	test::eq(weight_of(&app, 0, hips), 0.0f);
-	test::@check(math::abs(weight_of(&app, 1, hips) - 0.56f) < 1.0e-5f,
-		"a soft pass on a shared vertex went %s of the way, not 0.56", weight_of(&app, 1, hips));
+	test::@check(math::abs(share_of(&app, 1, hips) - 0.56f) < 1.0e-5f,
+		"a soft pass on a shared vertex left a share of %s, not 0.56", share_of(&app, 1, hips));
 
 	crig::RigView? opened = app.open_rig(mem);
 	if (catch opened) { test::@check(false, "no rig"); return; }
@@ -3528,7 +3583,7 @@ fn void painting_one_copy_of_a_point_paints_both() @test
 
 	uint[1] other = { twin };
 	float[1] pull = { 1.0f };
-	app.nudge_column(k, other[..], 0.75f, pull[..], limb: false);
+	app.nudge_column(k, other[..], 0.75f, pull[..]);
 	test::@check(weight_of(&app, 40, k) == 0.75f && weight_of(&app, twin, k) == 0.75f,
 		"the brush gave the copies %f and %f", weight_of(&app, 40, k), weight_of(&app, twin, k));
 

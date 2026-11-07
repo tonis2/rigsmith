@@ -26,6 +26,10 @@
  drag is one pose edit and Auto-key keys it once; Escape mid-drag cancels
  through the shortcut every gesture answers to, and the dial notices on its next
  event that the gesture is gone.
+
+ Each limit end has a knob just outside the ring: dragging it sets that end,
+ previews the joint there, and writes the table once on release. On Joints the
+ card builds `limits_only` dials, with no bead and nothing to turn.
 *>
 module crig;
 
@@ -35,7 +39,7 @@ import std::math;
 
 const String JOINT_DIALS_ID = "joint-dials";
 
-const float JOINT_DIAL_ROW_H = 62.0f;
+const float JOINT_DIAL_ROW_H = 72.0f;
 const float JOINT_DIAL_RADIUS = 23.0f;
 const float JOINT_DIAL_WIDTH = 2.0f;
 const float JOINT_DIAL_ACTIVE_WIDTH = 3.2f;
@@ -48,6 +52,12 @@ const float JOINT_DIAL_LABEL_SIZE = 12.0f;
 // How far outside the ring a press still takes the dial. The disc inside it is
 // all handle: a knob is grabbed anywhere on its face.
 const float JOINT_DIAL_GRIP = 6.0f;
+// The limit knobs, outside the ring so they never cover the bead.
+const float JOINT_DIAL_KNOB_OUT = 7.0f;
+const float JOINT_DIAL_KNOB = 3.0f;
+const float JOINT_DIAL_KNOB_GRIP = 7.0f;
+const float JOINT_DIAL_FINE_STEP = (float)math::PI / 180.0f;
+const float JOINT_DIAL_COARSE_STEP = 5.0f * (float)math::PI / 180.0f;
 
 struct JointDials (Widget)
 {
@@ -58,6 +68,12 @@ struct JointDials (Widget)
 	float anchor; // the pointer's angle about the held dial at the last move
 	float start;  // the joint's angle about the held axis when the press landed
 	float turned; // the sweep since, unwrapped
+	bool limits_only; // no bead and no turn: the limit knobs alone
+	int lit_mark;     // hovered knob as column * 2 + end + 1, zero for none
+	int held_mark;    // the knob being dragged, the same way
+	float mark_angle; // where the held knob is
+	uint mark_dot;    // the joint it was grabbed on
+	JointRotationLimits before; // the table at the press
 }
 
 <*
@@ -70,7 +86,8 @@ struct JointDials (Widget)
 *>
 struct DialState
 {
-	bool ready;
+	bool limits_ready; // the table and its frame can be read
+	bool ready;        // and there is a pose to read the angles off
 	JointRotationLimits limits;
 	Vec3 angles;
 }
@@ -78,7 +95,7 @@ struct DialState
 fn DialState dial_state(AppState* app) @private
 {
 	DialState out;
-	if (app.selected == 0 || !app.animation_pose_ready()) return out;
+	if (app.selected == 0) return out;
 
 	RigView? opened = app.open_rig(mem);
 	if (catch opened) return out;
@@ -89,6 +106,8 @@ fn DialState dial_state(AppState* app) @private
 	out.limits = app.doc.rotation_limits_of(app.selected);
 	JointLimitFrame frame = joint_limit_frame(&view.skeleton, view.dot_ids, out.limits);
 	if (!frame.usable()) return out;
+	out.limits_ready = true;
+	if (!app.animation_pose_ready()) return out;
 
 	PosedJoint pose = joint_panel_pose(app, &view, app.selected);
 	out.angles = joint_angles_from_rotation(frame, pose.rotation);
@@ -119,10 +138,13 @@ fn Vec2 dial_centre(Element* elem, usz column)
 }
 
 // Where an angle sits on a dial: zero at the top, positive anticlockwise.
-fn Vec2 dial_point(Vec2 centre, float angle)
+fn Vec2 dial_point(Vec2 centre, float angle, float radius = JOINT_DIAL_RADIUS)
 {
-	return centre + (Vec2){ -math::sin(angle), -math::cos(angle) } * JOINT_DIAL_RADIUS;
+	return centre + (Vec2){ -math::sin(angle), -math::cos(angle) } * radius;
 }
+
+// Where a limit end's knob sits.
+fn Vec2 dial_knob(Vec2 centre, float angle) => dial_point(centre, angle, JOINT_DIAL_RADIUS + JOINT_DIAL_KNOB_OUT);
 
 // The inverse: the angle a pixel is at about a dial's centre.
 fn float dial_angle_at(Vec2 centre, Vec2 pixel)
@@ -156,6 +178,7 @@ fn void JointDials.paint(&self, Element* elem, Painter* painter) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	DialState state = dial_state(app);
+	JointRotationLimits limits = self.shown_limits(state);
 
 	for (usz column = 0; column < self.count; column++)
 	{
@@ -170,27 +193,27 @@ fn void JointDials.paint(&self, Element* elem, Painter* painter) @dynamic
 		// card has to show.
 		painter.arc(centre, JOINT_DIAL_RADIUS, 0.0f, (float)math::TAU, width, base.dim(JOINT_DIAL_DIM));
 
-		if (state.ready)
+		if (state.limits_ready)
 		{
 			// The allowed span, bright. A free axis is a whole bright ring; an
 			// endpoint past the half turn the dial can show clamps correctly but
 			// has no mark of its own, as on the rings before.
 			float lo = -(float)math::PI;
 			float hi = (float)math::PI;
-			if (state.limits.constrained)
+			if (limits.constrained)
 			{
-				JointAxisLimit limit = state.limits.axes[axis];
+				JointAxisLimit limit = limits.axes[axis];
 				lo = math::max(limit.minimum, lo);
 				hi = math::min(limit.maximum, hi);
 			}
-			float strength = active || lit ? 1.0f : JOINT_DIAL_IDLE;
+			float strength = active || lit || self.held_mark > 0 ? 1.0f : JOINT_DIAL_IDLE;
 			if (hi > lo) painter.arc(centre, JOINT_DIAL_RADIUS, dial_arc_start(hi), hi - lo, width, base.dim(strength));
 
-			if (state.limits.constrained)
+			if (limits.constrained)
 			{
-				JointAxisLimit limit = state.limits.axes[axis];
+				JointAxisLimit limit = limits.axes[axis];
 				float[2] ends = { limit.minimum, limit.maximum };
-				foreach (boundary : ends)
+				foreach (usz end, boundary : ends)
 				{
 					if (boundary < -(float)math::PI || boundary > (float)math::PI) continue;
 					bool reached = active && math::abs(state.angles[axis] - boundary) < 0.015f;
@@ -200,13 +223,23 @@ fn void JointDials.paint(&self, Element* elem, Painter* painter) @dynamic
 							.border_width = reached ? 1.0f : 0.0f,
 							.border_color = PANEL,
 						});
+					// The knob that sets this end, on a tick out from the ring.
+					int mark = (int)(column * 2 + end) + 1;
+					bool hot = self.held_mark == mark || self.lit_mark == mark;
+					painter.line(dial_point(centre, boundary, JOINT_DIAL_RADIUS + JOINT_DIAL_WIDTH),
+						dial_knob(centre, boundary), 1.5f, hot ? ACCENT : base.dim(JOINT_DIAL_IDLE));
+					painter.circle(dial_knob(centre, boundary), hot ? JOINT_DIAL_KNOB + 1.5f : JOINT_DIAL_KNOB, {
+						.color = hot ? ACCENT : base.dim(JOINT_DIAL_IDLE),
+						.border_width = 1.0f,
+						.border_color = PANEL,
+					});
 				}
 			}
 		}
 
 		// The bead is the current value, on the ring the spans occupy, so
 		// reaching a limit reads as the bead arriving at its mark.
-		if (state.ready)
+		if (state.ready && !self.limits_only)
 		{
 			painter.circle(dial_point(centre, state.angles[axis]), JOINT_DIAL_MARK, {
 				.color = base.dim(active || lit ? 1.0f : 0.85f),
@@ -219,17 +252,65 @@ fn void JointDials.paint(&self, Element* elem, Painter* painter) @dynamic
 		Vec2 size = elem.ui.text.measure(0, name, JOINT_DIAL_LABEL_SIZE);
 		painter.text(centre - size * 0.5f, name, {
 			.size = JOINT_DIAL_LABEL_SIZE,
-			.color = state.ready ? base : TEXT_DIM,
+			.color = state.limits_ready ? base : TEXT_DIM,
 		});
 	}
+}
+
+// The table on show: the document's, with the held knob's end where the drag has it.
+fn JointRotationLimits JointDials.shown_limits(&self, DialState state)
+{
+	JointRotationLimits limits = state.limits;
+	if (self.held_mark == 0) return limits;
+	usz column = (usz)(self.held_mark - 1) / 2;
+	JointAxisLimit* row = &limits.axes[self.axes[column].component()];
+	if ((self.held_mark - 1) % 2 == 0)
+	{
+		row.minimum = self.mark_angle;
+	}
+	else
+	{
+		row.maximum = self.mark_angle;
+	}
+	return limits;
+}
+
+<*
+ The limit knob under a pixel, as column * 2 + end + 1, or zero.
+
+ Only outside the ring: a press on the ring or the face still turns the joint,
+ even where a limit mark sits on it.
+*>
+fn int JointDials.mark_at(&self, Element* elem, DialState state, Vec2 pixel)
+{
+	if (!state.limits_ready || !state.limits.constrained) return 0;
+	int best = 0;
+	float nearest = JOINT_DIAL_KNOB_GRIP;
+	for (usz column = 0; column < self.count; column++)
+	{
+		Vec2 centre = dial_centre(elem, column);
+		if ((pixel - centre).length() < JOINT_DIAL_RADIUS + JOINT_DIAL_WIDTH) continue;
+		JointAxisLimit limit = state.limits.axes[self.axes[column].component()];
+		float[2] ends = { limit.minimum, limit.maximum };
+		foreach (usz end, boundary : ends)
+		{
+			if (boundary < -(float)math::PI || boundary > (float)math::PI) continue;
+			float away = (pixel - dial_knob(centre, boundary)).length();
+			if (away >= nearest) continue;
+			nearest = away;
+			best = (int)(column * 2 + end) + 1;
+		}
+	}
+	return best;
 }
 
 fn void JointDials.on_hover(&self, Element* elem, bool entered) @dynamic
 {
 	if (entered) return;
-	if (self.lit != 0)
+	if (self.lit != 0 || self.lit_mark != 0)
 	{
 		self.lit = 0;
+		self.lit_mark = 0;
 		elem.request_paint();
 	}
 	elem.set_cursor(Cursor.DEFAULT);
@@ -243,21 +324,30 @@ fn bool JointDials.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 	{
 		case PRESS:
 			if (event.button != MouseButton.LEFT) return false;
+			if (self.grab_mark(elem, app, event.pos)) return true;
+			if (self.limits_only) return false;
 			int column = self.dial_at(elem, event.pos);
 			if (column < 0) return false;
 			self.grab(elem, app, (usz)column, event.pos);
 			return true; // consuming the press captures the pointer
 		case MOVE:
+			if (self.held_mark != 0)
+			{
+				self.drag_mark(elem, app, event);
+				return true;
+			}
 			if (self.held == 0)
 			{
-				int over = self.dial_at(elem, event.pos);
+				int mark = self.mark_at(elem, dial_state(app), event.pos);
+				int over = mark > 0 || self.limits_only ? -1 : self.dial_at(elem, event.pos);
 				int lit = over < 0 ? 0 : over + 1;
-				if (lit != self.lit)
+				if (lit != self.lit || mark != self.lit_mark)
 				{
 					self.lit = lit;
+					self.lit_mark = mark;
 					elem.request_paint();
 				}
-				elem.set_cursor(lit > 0 ? Cursor.CROSSHAIR : Cursor.DEFAULT);
+				elem.set_cursor(mark > 0 ? Cursor.OPEN_HAND : (lit > 0 ? Cursor.CROSSHAIR : Cursor.DEFAULT));
 				return false;
 			}
 			// The gesture can end underneath the hand — Escape cancels it from the
@@ -277,6 +367,11 @@ fn bool JointDials.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			// and the turn it is carrying must still land here rather than hang
 			// until Escape.
 			if (event.button != MouseButton.LEFT) return false;
+			if (self.held_mark != 0)
+			{
+				self.release_mark(elem, app);
+				return true;
+			}
 			bool dial_turn = app.drag.dot != 0 && app.drag.dial;
 			if (self.held == 0 && !dial_turn) return false;
 			self.held = 0;
@@ -336,5 +431,94 @@ fn void JointDials.sweep(&self, Element* elem, AppState* app, Vec2 pixel)
 	// card holds its subtree still for the drag, so nothing rebuilds them.
 	refresh_joint_degree_fields(elem.ui, app);
 	app.refresh_ui();
+	elem.request_paint();
+}
+
+<*
+ A press on a limit knob: from here the drag sets that end of the range.
+
+ @return "Whether a knob was under the press"
+*>
+fn bool JointDials.grab_mark(&self, Element* elem, AppState* app, Vec2 pixel)
+{
+	// A gesture already in flight owns the pointer.
+	if (app.drag.dot != 0) return false;
+	DialState state = dial_state(app);
+	int mark = self.mark_at(elem, state, pixel);
+	if (mark == 0) return false;
+
+	usz column = (usz)(mark - 1) / 2;
+	JointAxisLimit row = state.limits.axes[self.axes[column].component()];
+	self.held_mark = mark;
+	self.mark_dot = app.selected;
+	self.before = state.limits;
+	self.mark_angle = (mark - 1) % 2 == 0 ? row.minimum : row.maximum;
+	self.start = self.mark_angle;
+	self.anchor = dial_angle_at(dial_centre(elem, column), pixel);
+	self.turned = 0.0f;
+	elem.set_cursor(Cursor.CLOSED_HAND);
+	(void)app.show_limit_preview(app.selected, self.axes[column], self.mark_angle);
+	app.refresh_ui();
+	elem.request_paint();
+	return true;
+}
+
+<*
+ One move of a knob drag: snapped to a degree (five with Ctrl), kept on its own
+ side of the other end, and shown on the model and in its field.
+*>
+fn void JointDials.drag_mark(&self, Element* elem, AppState* app, MouseEvent event)
+{
+	// The selection moved on under the drag: let go and write nothing.
+	if (app.selected != self.mark_dot)
+	{
+		self.held_mark = 0;
+		app.end_limit_preview();
+		elem.request_paint();
+		return;
+	}
+	usz column = (usz)(self.held_mark - 1) / 2;
+	bool low = (self.held_mark - 1) % 2 == 0;
+	JointRotationAxis axis = self.axes[column];
+	float now = dial_angle_at(dial_centre(elem, column), event.pos);
+	self.turned += wrapped_to_pi(now - self.anchor);
+	self.anchor = now;
+
+	float step = event.mods.ctrl ? JOINT_DIAL_COARSE_STEP : JOINT_DIAL_FINE_STEP;
+	float angle = math::round((self.start + self.turned) / step) * step;
+	JointAxisLimit row = self.before.axes[axis.component()];
+	float floor = low ? -(float)math::PI : row.minimum;
+	float ceiling = low ? row.maximum : (float)math::PI;
+	angle = math::clamp(angle, floor, ceiling);
+	if (angle == self.mark_angle) return;
+	self.mark_angle = angle;
+
+	(void)app.show_limit_preview(app.selected, axis, angle);
+	if (try Element* body = elem.ui.find_id(JOINT_PANEL_ID))
+	{
+		usz c = axis.component();
+		set_joint_degree_field(body, low ? JOINT_LIMIT_MIN_IDS[c] : JOINT_LIMIT_MAX_IDS[c], angle);
+	}
+	app.refresh_ui();
+	elem.request_paint();
+}
+
+// The knob let go: the pose shown goes back, and a moved end is one undo step.
+fn void JointDials.release_mark(&self, Element* elem, AppState* app)
+{
+	JointRotationLimits limits = self.shown_limits({ .limits = self.before });
+	bool moved = app.selected == self.mark_dot && !limits.same(self.before);
+	self.held_mark = 0;
+	elem.set_cursor(Cursor.DEFAULT);
+	app.end_limit_preview();
+	if (moved)
+	{
+		(void)commit_joint_limits(elem.ui, limits);
+	}
+	else
+	{
+		app.refresh_ui();
+		refresh_joint_panel(elem.ui);
+	}
 	elem.request_paint();
 }

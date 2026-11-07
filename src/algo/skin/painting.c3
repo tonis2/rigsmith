@@ -212,9 +212,11 @@ struct PaintPick
 
 <*
  The joints whose part of the body `joint` may be painted onto: itself, its
- parent, the parent's other children, and everything below it — and for a digit
+ parent, the parent's other children, the joint the parent hangs from, and
+ everything below it — and for a digit
  (`Skeleton.digits`) the whole hand: the joint the fingers hang from and every
- digit under it.
+ digit under it. The grandparent because a small parent (a collarbone, a fang's
+ base) leaves the socket in the mesh of the joint above it.
 
  	`bool[] family = limb_family(mem, &view.skeleton, joint);`
 
@@ -245,6 +247,7 @@ fn bool[] limb_family(Allocator allocator, rig::Skeleton* skeleton, usz joint)
 	bool[] family = alloc::new_array(allocator, bool, (sz)n);
 	if (joint >= n) return family;
 	int parent = skeleton.parents[joint];
+	if (parent >= 0 && skeleton.parents[(usz)parent] >= 0) family[(usz)skeleton.parents[(usz)parent]] = true;
 	for (usz j = 0; j < n; j++)
 	{
 		if (j == joint || (parent >= 0 && ((int)j == parent || skeleton.parents[j] == parent)))
@@ -294,6 +297,67 @@ fn bool on_limb(float[] automatic, bool[] family)
 		if (b < family.len && family[b]) held += weight;
 	}
 	return sum <= 0.0f || held >= LIMB_FLOOR * sum;
+}
+
+// What one brush dab did to a row.
+enum BrushRow
+{
+	SAME,
+	CHANGED,
+	EMPTIED,
+}
+
+<*
+ Move a joint's share of one weight row toward `share` by `pull`, the brush's way.
+
+ Adding only raises the share, and scales the other joints down in proportion
+ so the row sums to 1: at 1 the joint takes the vertex whole. Removing only
+ lowers it, through the joint's own weight alone, so nobody else is raised; a
+ joint alone on the vertex comes off it all the way.
+
+ @param [inout] row : "One weight per joint"
+ @param share : "The share to reach, 0 to 1"
+ @param pull : "How far toward it, 0 to 1"
+ @require joint < row.len : "Joint out of range"
+*>
+fn BrushRow brush_row(float[] row, usz joint, bool adds, float share, float pull)
+{
+	if (pull <= 0.0f) return SAME;
+	float total = 0.0f;
+	foreach (weight : row) total += weight;
+	float own = row[joint];
+	float others = math::max(total - own, 0.0f);
+	float now = total > UNUSED_TOTAL ? own / total : 0.0f;
+
+	if (adds)
+	{
+		// Nobody holds it, or the joint alone: any weight of it is the whole vertex.
+		if (others <= UNUSED_TOTAL)
+		{
+			if (own > UNUSED_TOTAL) return SAME;
+			row[..] = 0.0f;
+			row[joint] = 1.0f;
+			return CHANGED;
+		}
+		if (now >= share - UNUSED_TOTAL) return SAME;
+		float want = pull >= 1.0f ? share : now + (share - now) * pull;
+		if (math::abs(want - share) <= UNUSED_TOTAL) want = share;
+		float scale = (1.0f - want) / others;
+		foreach (usz b, &weight : row) *weight = b == joint ? want : *weight * scale;
+		return CHANGED;
+	}
+
+	if (own <= 0.0f) return SAME;
+	if (others <= UNUSED_TOTAL)
+	{
+		row[joint] = 0.0f;
+		return EMPTIED;
+	}
+	float floor = 1.0f - share;
+	if (now <= floor + UNUSED_TOTAL) return SAME;
+	float want = pull >= 1.0f ? floor : now + (floor - now) * pull;
+	row[joint] = want <= UNUSED_TOTAL ? 0.0f : others * want / (1.0f - want);
+	return CHANGED;
 }
 
 // The colour of mesh the selected joint cannot be painted onto: darker than the

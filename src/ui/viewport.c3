@@ -2109,9 +2109,8 @@ fn Vec3 camera_right(AppState* app, OrbitCamera* camera)
  vertices that change nothing, which is what keeps a slow drag over painted
  mesh from filling the ledger with entries that undo to themselves.
 
- The target is 0 or 1 rather than a settable value: the brush takes a joint off
- the mesh or puts it on, in its own weights — see `AppState.brush_share` — and
- anything between is what `paint_weights` is for, where a number can be typed.
+ The strength is the share the stroke leaves: an Add takes the joint up to it,
+ a Remove down to 1 minus it — see `AppState.brush_share`.
 
  The stroke paints against the body on screen — the rest mesh, or the posed
  one under a parked clip or a pose draft — see `AppState.brush_vertices`.
@@ -2140,11 +2139,12 @@ fn usz Viewport.paint_at(&self, Element* elem, Vec2 at)
 	usz hit = app.brush_vertices(under, strength, vp, elem.size, app.model_eye(camera), at, app.brush_radius, self.brush_xray);
 	if (hit == 0) return 0;
 
-	// Not the falloff itself but the part of it this stroke has not already
-	// given — see `begin_stroke`. A hand that stops moving asks for nothing.
-	for (usz i = 0; i < hit; i++) strength[i] = app.stroke_pull(under[i], strength[i]);
+	// The circle's falloff without the strength, which names the share instead;
+	// and only the part this stroke has not already given — see `begin_stroke`.
+	float gain = math::max(app.brush_strength, BRUSH_STRENGTH_MIN);
+	for (usz i = 0; i < hit; i++) strength[i] = app.stroke_pull(under[i], math::min(strength[i] / gain, 1.0f));
 
-	app.brush_share(app.selected, under[:hit], self.brush_adds ? 1.0f : 0.0f, strength[:hit]);
+	app.brush_share(app.selected, under[:hit], self.brush_adds ? 1.0f : 0.0f, strength[:hit], app.brush_strength);
 	elem.request_paint();
 	return hit;
 }
