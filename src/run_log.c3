@@ -63,62 +63,6 @@ fn void rotate_logs(String folder) => @pool()
 }
 
 <*
- A signal's number in words, or "" for one nothing here expects.
-*>
-fn String signal_words(CInt signal)
-{
-	switch (signal)
-	{
-		case libc::SIGHUP: return "hangup: the terminal closed";
-		case libc::SIGINT: return "interrupt: Ctrl+C";
-		case libc::SIGILL: return "illegal instruction: a panic";
-		case libc::SIGABRT: return "abort";
-		case libc::SIGBUS: return "bus error";
-		case libc::SIGFPE: return "arithmetic error";
-		case libc::SIGKILL: return "killed: out of memory, or by the system";
-		case libc::SIGSEGV: return "segmentation fault";
-		case libc::SIGTERM: return "terminated";
-		default: return "";
-	}
-}
-
-<*
- The signal a wait status ended in: by the signal itself, or by the 128 + n
- exit the C3 runtime takes after printing a crash. 0 for an ordinary exit.
-*>
-fn CInt ending_signal(CInt status)
-{
-	CInt signal = status & 0x7f;
-	if (signal != 0) return signal;
-	CInt code = (status >> 8) & 0xff;
-	if (code > 128 && signal_words(code - 128).len > 0) return code - 128;
-	return 0;
-}
-
-<*
- How a run ended, from its wait status, as the log's last line says it.
-
- The caller owns the result.
-*>
-fn String ending_sentence(Allocator allocator, CInt status)
-{
-	CInt signal = status & 0x7f;
-	if (signal != 0)
-	{
-		String words = signal_words(signal);
-		if (words.len == 0) return string::format(allocator, "killed by signal %d", signal);
-		return string::format(allocator, "killed by signal %d (%s)", signal, words);
-	}
-	CInt code = (status >> 8) & 0xff;
-	CInt caught = ending_signal(status);
-	if (caught != 0)
-	{
-		return string::format(allocator, "exit %d, after signal %d (%s)", code, caught, signal_words(caught));
-	}
-	return string::format(allocator, "exit %d", code);
-}
-
-<*
  Copy `bytes` into `out`, putting `stamp` at the start of every line.
 
  `at_line_start` carries across calls, because a pipe hands lines over in pieces.
@@ -157,16 +101,6 @@ macro void @log_note(String format, args...)
 			String line = string::tformat("%s%s\n", clock_stamp(&clock), string::tformat(format, ...args));
 			write_all(run_log_fd, line);
 		};
-	}
-}
-
-fn void write_all(CInt fd, char[] bytes)
-{
-	while (bytes.len > 0)
-	{
-		sz written = libc::write(fd, bytes.ptr, bytes.len);
-		if (written <= 0) return;
-		bytes = bytes[written..];
 	}
 }
 
@@ -252,6 +186,72 @@ import libc;
 
 extern fn Pid_t fork_process() @cname("fork") @local;
 extern fn CInt dup_onto(CInt from, CInt onto) @cname("dup2") @local;
+
+<*
+ A signal's number in words, or "" for one nothing here expects.
+*>
+fn String signal_words(CInt signal)
+{
+	switch (signal)
+	{
+		case libc::SIGHUP: return "hangup: the terminal closed";
+		case libc::SIGINT: return "interrupt: Ctrl+C";
+		case libc::SIGILL: return "illegal instruction: a panic";
+		case libc::SIGABRT: return "abort";
+		case libc::SIGBUS: return "bus error";
+		case libc::SIGFPE: return "arithmetic error";
+		case libc::SIGKILL: return "killed: out of memory, or by the system";
+		case libc::SIGSEGV: return "segmentation fault";
+		case libc::SIGTERM: return "terminated";
+		default: return "";
+	}
+}
+
+<*
+ The signal a wait status ended in: by the signal itself, or by the 128 + n
+ exit the C3 runtime takes after printing a crash. 0 for an ordinary exit.
+*>
+fn CInt ending_signal(CInt status)
+{
+	CInt signal = status & 0x7f;
+	if (signal != 0) return signal;
+	CInt code = (status >> 8) & 0xff;
+	if (code > 128 && signal_words(code - 128).len > 0) return code - 128;
+	return 0;
+}
+
+<*
+ How a run ended, from its wait status, as the log's last line says it.
+
+ The caller owns the result.
+*>
+fn String ending_sentence(Allocator allocator, CInt status)
+{
+	CInt signal = status & 0x7f;
+	if (signal != 0)
+	{
+		String words = signal_words(signal);
+		if (words.len == 0) return string::format(allocator, "killed by signal %d", signal);
+		return string::format(allocator, "killed by signal %d (%s)", signal, words);
+	}
+	CInt code = (status >> 8) & 0xff;
+	CInt caught = ending_signal(status);
+	if (caught != 0)
+	{
+		return string::format(allocator, "exit %d, after signal %d (%s)", code, caught, signal_words(caught));
+	}
+	return string::format(allocator, "exit %d", code);
+}
+
+fn void write_all(CInt fd, char[] bytes)
+{
+	while (bytes.len > 0)
+	{
+		sz written = libc::write(fd, bytes.ptr, bytes.len);
+		if (written <= 0) return;
+		bytes = bytes[written..];
+	}
+}
 
 <*
  Fork Rigsmith off and watch it, when there is a log to write.
@@ -383,3 +383,6 @@ fn CInt watch_output(CInt from, CInt log_fd, Pid_t child) @local
 module crig @feat(!LINUX) @feat(!DARWIN);
 
 fn bool watch_run(String[] args, int* exit_code) => false;
+
+// Never reached: without a watcher there is no log to write to.
+fn void write_all(CInt fd, char[] bytes) {}
