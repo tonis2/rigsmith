@@ -24,8 +24,9 @@
  training set (`renders/`), the finder (`finder.safetensors`), the reference
  pictures (`references/<pose>/`; a second Train node
  keeps its own under `<node>/`, or in its save folder), and `capture.json`,
- which remembers a finder chosen from elsewhere. A clip writes nothing there.
- The model file itself is never written.
+ which remembers a finder chosen from elsewhere. A clip writes nothing there:
+ what its run read (`tracks.json`, `reads.png`, `report.json`) is kept beside
+ its reference, in `runs/<clip>/`. The model file itself is never written.
 
  One pipeline job runs at a time in the process, so a capture step and a text
  to motion job wait for each other.
@@ -71,6 +72,8 @@ const String CAPTURE_TRAIN_EXTRA = `"layers": [20], "fit_memory": true`;
 const uint CAPTURE_MEMORY_GB = 12;
 const uint CAPTURE_RANK = 384;
 const uint CAPTURE_PATCH = 16;
+// How many frames of a clip its reads sheet draws.
+const uint CAPTURE_DRAWN_FRAMES = 9;
 // No motion blur: the studio's videos are shot sharp.
 const float CAPTURE_BLUR = 0;
 // Random poses with the legs bent hard: wide stances, squats, kicks.
@@ -167,6 +170,8 @@ struct CaptureJob
 	// Set when a clip has landed, for the interface to select; taken once.
 	AnimRef landed;
 	bool landed_pending;
+	// Where the last clip's run kept what it read; "" before one has.
+	String run;
 }
 
 fn String CaptureJob.last(&self) => (String)self.last_line[:self.last_length];
@@ -212,16 +217,16 @@ fn void CaptureJob.clear(&self)
 fn void CaptureJob.free(&self)
 {
 	self.clear();
-	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose })
+	foreach (held : (String[]) { self.reference_studio, self.reference_clip, self.reference_pose, self.run })
 	{
 		if (held.len > 0) alloc::free(mem, held.ptr);
 	}
-	self.reference_studio = self.reference_clip = self.reference_pose = "";
+	self.reference_studio = self.reference_clip = self.reference_pose = self.run = "";
 }
 
 <*
  A line the pipeline printed: a step count moves the bar, and the last line is
- kept, which on a failure says why.
+ kept, which on a failure says why. Every other line goes to the run log.
 *>
 fn void capture_line(void* context, String line)
 {
@@ -234,6 +239,10 @@ fn void capture_line(void* context, String line)
 		job.step = step;
 		job.steps = steps;
 		if (job.stage == TRAINING) job.note_train_step(train_stage_of(step_what(line), job.train_stage));
+	}
+	else
+	{
+		@log_note("capture: %s", line.trim());
 	}
 	job.set_last(line.trim());
 }
@@ -1103,7 +1112,7 @@ fn String capture_clip_name(String video)
 }
 
 // The animate task's settings, as JSON: the rig as it is now, limits and all,
-// asking for the tracks too so a clip can be fitted again without the GPU. Owned.
+// asking for the tracks and a reads sheet too, which the run keeps. Owned.
 fn String AppState.capture_animate_json(&self)
 {
 	CaptureJob* job = &self.capture_job;
@@ -1127,7 +1136,10 @@ fn String AppState.capture_animate_json(&self)
 	gltf_edit::escape_json_string(&out, job.name);
 	if (job.mirror_off) out.append_string(",\n  \"flip\": false");
 	if (job.max_frames > 0) out.appendf(",\n  \"max_frames\": %d", job.max_frames);
-	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\"]\n}\n", job.fps);
+	// A video starts on the reference picture; a picture is that pose changed.
+	if (!job.pose) out.append_string(",\n  \"start\": \"reference\"");
+	out.appendf(",\n  \"draw\": %d", job.pose ? 1 : CAPTURE_DRAWN_FRAMES);
+	out.appendf(",\n  \"fps\": %.4f,\n  \"outputs\": [\"glb\", \"tracks\"]\n}\n", job.fps);
 	return out.copy_str(mem);
 }
 
@@ -1218,6 +1230,13 @@ fn void AppState.tick_capture(&self)
 			if (handed.len > 0) glb[..] = handed[..];
 			defer if (glb.len > 0) alloc::free(mem, glb);
 			String summary = capture_result_summary(job.engine.result());
+			String folder = capture_run_folder(job.studio, job.name);
+			bool kept = keep_capture_run(folder, job.engine.output("tracks.json"), job.engine.output("reads.png"), job.engine.result());
+			if (job.run.len > 0) alloc::free(mem, job.run.ptr);
+			job.run = kept ? folder.copy(mem) : "";
+			String off = capture_reads_summary(job.engine.result());
+			if (off.len > 0) summary = string::tformat("%s · %s", summary, off);
+			if (kept) summary = string::tformat("%s · reads kept in %s", summary, folder);
 			job.close_engine();
 			job.running = false;
 			job.stage = IDLE;
@@ -1274,6 +1293,94 @@ fn void AppState.land_capture_pose(&self, char[] glb, String summary)
 	self.pose_library_row = (usz)self.store_pose(made);
 	job.set_last(summary);
 	self.@notice("Pose \"%s\" from the picture (%s) · in Poses", job.name, summary);
+}
+
+<*
+ Where the run of clip `name` keeps what it read: beside its reference, in
+ `studio`. Temporary.
+*>
+fn String capture_run_folder(String studio, String name) => string::tformat("%s/runs/%s", studio, capture_reference_name(name));
+
+<*
+ Keep a run's evidence in `folder`: the tracks the finder read, the sheet of
+ frames with the reads drawn on them, and the task's answer with its report.
+
+ @return "Whether anything was kept"
+*>
+fn bool keep_capture_run(String folder, char[] tracks, char[] reads, String result)
+{
+	if (tracks.len == 0 && reads.len == 0) return false;
+	if (!path::is_dir((Path)folder) && @catch(path::mkdir(folder, true))) return false;
+	bool kept;
+	if (tracks.len > 0 && @ok(file::save(string::tformat("%s/tracks.json", folder), tracks))) kept = true;
+	if (reads.len > 0 && @ok(file::save(string::tformat("%s/reads.png", folder), reads))) kept = true;
+	if (result.len > 0 && @ok(file::save(string::tformat("%s/report.json", folder), (char[])result))) kept = true;
+	return kept;
+}
+
+// A read counts as off the fit when it weighs this much and this share of its
+// frames sit over 30 px from where the fit put its joint.
+const double CAPTURE_READ_WEIGHT = 0.5;
+const double CAPTURE_READ_OFF = 0.25;
+const usz CAPTURE_READS_NAMED = 3;
+
+<*
+ The joints the fit could not follow, from the animate task's answer:
+ "5 joints read off the fit, worst knee_r (side), toe_l (three_quarter)", or
+ "" when every sure read was followed. Temporary.
+*>
+fn String capture_reads_summary(String result)
+{
+	Object*? parsed = json::parse(tmem, result);
+	if (catch parsed) return "";
+	Object*? report = parsed.get("report");
+	if (catch report) return "";
+	Object*? reads = report.get("reads");
+	if (catch reads) return "";
+	String[CAPTURE_READS_NAMED] names;
+	double[CAPTURE_READS_NAMED] shares;
+	usz off;
+	for (sz v = 0; v < reads.get_len(); v++)
+	{
+		Object* view = reads.get_at(v);
+		String where = "";
+		if (try Object* studio = report.get("studio"))
+		{
+			if (try Object* views = studio.get("views")) if (v < views.get_len()) where = views.get_at(v).get_string("name") ?? "";
+		}
+		for (sz p = 0; p < view.get_len(); p++)
+		{
+			Object* row = view.get_at(p);
+			if (row.get_len() < 4) continue;
+			double share = row.get_float_at(3) ?? 0.0;
+			if ((row.get_float_at(1) ?? 0.0) < CAPTURE_READ_WEIGHT || share < CAPTURE_READ_OFF) continue;
+			off++;
+			String name = row.get_string_at(0) ?? "";
+			if (where.len > 0) name = string::tformat("%s (%s)", name, where);
+			// Kept in order, the worst first.
+			for (usz i = 0; i < CAPTURE_READS_NAMED; i++)
+			{
+				if (names[i].len > 0 && shares[i] >= share) continue;
+				for (usz k = CAPTURE_READS_NAMED - 1; k > i; k--)
+				{
+					names[k] = names[k - 1];
+					shares[k] = shares[k - 1];
+				}
+				names[i] = name;
+				shares[i] = share;
+				break;
+			}
+		}
+	}
+	if (off == 0) return "";
+	DString out = dstring::new(tmem);
+	out.appendf("%d %s read off the fit, worst ", off, off == 1 ? "joint" : "joints");
+	foreach (usz i, name : names)
+	{
+		if (name.len == 0) break;
+		out.appendf("%s%s", i > 0 ? ", " : "", name);
+	}
+	return out.str_view();
 }
 
 <*

@@ -23,7 +23,9 @@
  floor row, each view's columns and how a point p of the model lands in it —
  across, the view's left edge plus half its width plus (p - origin)·right
  times pixels_per_unit; down, the floor row minus (p - origin)·up times
- pixels_per_unit — and the shown pose's joints as the cameras saw them.
+ pixels_per_unit — and the shown pose's joints as the cameras saw them
+ (`pixels`), with which of them each view has in sight (`shown`: 0 where
+ another part of the body is in front).
 
  The cameras stand STUDIO_DISTANCE rig sizes away, zoomed in to the scale: the
  renderer has no orthographic projection, and from that far the perspective
@@ -45,6 +47,7 @@ import image::png;
 import rig;
 import three;
 import std::collections::object;
+import std::collections::list;
 import std::encoding::json;
 import std::io::file;
 import std::io::path;
@@ -358,8 +361,17 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 	char[] rgb = alloc::new_array(mem, char, (sz)((usz)layout.width * layout.height * 3));
 	defer alloc::free(mem, rgb);
 	float[][2] seen;
+	bool[][2] in_sight;
 	float worst = 0.0f;
 	defer foreach (s : seen) if (s.len > 0) alloc::free(mem, s);
+	defer foreach (s : in_sight) if (s.len > 0) alloc::free(mem, s);
+	// The posed bones, for the overlay's question of whose skin is in front.
+	List{RigBone} bones;
+	bones.init(tmem);
+	foreach (usz j, parent : view.skeleton.parents)
+	{
+		if (parent >= 0) bones.push({ .a = view.dot_ids[(usz)parent], .b = view.dot_ids[j], .from = at[(usz)parent], .to = at[j] });
+	}
 	for (usz v = 0; v < 2; v++)
 	{
 		StudioView half = layout.views[v];
@@ -389,6 +401,19 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 			seen[v][j * 2 + 1] = shown.y;
 			worst = math::max(worst, (shown - layout.pixel(v, world[j])).length());
 		}
+
+		// Which joints the view shows: no other part of the body in front of them.
+		Matrix4f[] was_palette = app.pose_palette;
+		app.pose_palette = palette;
+		app.next_pose_generation();
+		Vec3 eye = app.model_eye(&camera);
+		in_sight[v] = alloc::new_array(mem, bool, (sz)at.len);
+		foreach (usz j, p : at)
+		{
+			Dot* dot = app.doc.find(view.dot_ids[j]);
+			in_sight[v][j] = !app.rig_point_hidden(eye, p, dot ? app.dot_body_radius(*dot) : -1.0f, bones.array_view(), view.dot_ids[j]);
+		}
+		app.pose_palette = was_palette;
 	}
 	layout.divide(rgb);
 
@@ -442,6 +467,14 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 			if (j > 0) out.append_char(',');
 			out.appendf("[%s,%s]", (JsonFloat)seen[v][j * 2], (JsonFloat)seen[v][j * 2 + 1]);
 		}
+		out.append_char(']');
+	}
+	out.append_string(`],"shown":[`);
+	for (usz v = 0; v < 2; v++)
+	{
+		if (v > 0) out.append_char(',');
+		out.append_char('[');
+		for (usz j = 0; j < at.len; j++) out.append_string(j > 0 ? (in_sight[v][j] ? ",1" : ",0") : (in_sight[v][j] ? "1" : "0"));
 		out.append_char(']');
 	}
 	out.append_string("]}");

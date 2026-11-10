@@ -201,6 +201,43 @@ fn void capture_names_what_it_cannot_do() @test
 	test::@check(f.refuses_tool("capture", `{"action":"train"}`, "save it"), "a model with no file has no capture folder");
 	test::@check(f.refuses_tool("capture", `{"action":"use_finder","finder":"/no/such.safetensors"}`, "not there"), "a missing finder is refused");
 	test::@check(f.refuses_tool("capture", `{"action":"animate"}`, "video"), "animate needs a video");
+	test::@check(f.refuses_tool("capture", `{"action":"reads"}`, "no animate run"), "reads needs a run to have finished");
+}
+
+// capture's reads says where the last run kept its files, and gives its report.
+fn void capture_reads_gives_the_last_runs_files() @test
+{
+	Fixture fixture;
+	fixture.open_authored();
+	defer fixture.close();
+	Fixture* f = &fixture;
+
+	String run = "build/test_capture_reads/runs/wave";
+	defer (void)path::rmtree((Path)"build/test_capture_reads");
+	test::@check(crig::keep_capture_run(run, "[]", "png", `{"report":{"reads":[[["hips",1,2.5,0]]]}}`), "a run's files are kept");
+	f.app.capture_job.run = run.copy(mem);
+
+	Object*? reads = f.call_tool("capture", `{"action":"reads"}`);
+	if (catch reads)
+	{
+		test::@check(false, "reads answers once a run has finished");
+		return;
+	}
+	defer reads.free();
+	test::@check((reads.get_string("run") ?? "") == run, "it names the run's folder");
+	test::@check((reads.get_string("reads") ?? "") == "build/test_capture_reads/runs/wave/reads.png", "the sheet: %s", reads.get_string("reads") ?? "");
+	test::@check((reads.get_string("tracks") ?? "") == "build/test_capture_reads/runs/wave/tracks.json", "the tracks: %s", reads.get_string("tracks") ?? "");
+	Object*? answer = reads.get("answer");
+	test::@check(@ok(answer) && @ok(answer!!.get("report")), "and the task's answer with its report");
+
+	Object*? status = f.call_tool("capture", `{"action":"status"}`);
+	if (catch status)
+	{
+		test::@check(false, "status answers");
+		return;
+	}
+	defer status.free();
+	test::@check((status.get_string("run") ?? "") == run, "status names the last run too");
 }
 
 // plugins lists the folder the pipelines run from, and refuses to link what is

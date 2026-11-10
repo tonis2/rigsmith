@@ -9,7 +9,8 @@
  (a saved `pose`, or `clip` at `time`; the rest pose without either), `animate` reads
  a video (`video`, `name`, `mirror`, `reference`) into a clip, or one picture in a
  reference's layout (`picture`) into a saved pose, `stop` stops the running step. A started step answers at once; ask
- `status` for its progress.
+ `status` for its progress. `reads` says where the last clip's run kept what
+ it read, and gives its report.
 *>
 module crig;
 
@@ -21,7 +22,7 @@ import std::collections::list;
 faultdef CAPTURE_REFUSED;
 
 const String CAPTURE_SCHEMA = `{"type":"object","properties":{
-	"action":{"type":"string","enum":["status","train","use_finder","reference","animate","stop"],"description":"What to do."},
+	"action":{"type":"string","enum":["status","train","use_finder","reference","animate","reads","stop"],"description":"What to do. reads: where the last animate run kept what it read (reads.png: frames with the fitted bones and every read drawn on them; tracks.json) and its report, whose reads list each point per view as [name, weight, median miss in px, share of frames over 30 px off]."},
 	"poses":{"type":"integer","description":"train: the training set's size. Default 1500."},
 	"size":{"type":"integer","description":"train: the pictures' side in pixels: 448, 512, 640, 768, 896 or 1024; bigger finds joints more precisely but trains slower. Default 448."},
 	"finder":{"type":"string","description":"use_finder: a .safetensors trained before."},
@@ -40,9 +41,9 @@ const String CAPTURE_SCHEMA = `{"type":"object","properties":{
 fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 {
 	AppState* app = (AppState*)user_data;
-	if (!takes_object(args, detail, `capture takes an object: {"action": "status" | "train" | "use_finder" | "reference" | "animate" | "stop", ...}`)) return CAPTURE_REFUSED~;
+	if (!takes_object(args, detail, `capture takes an object: {"action": "status" | "train" | "use_finder" | "reference" | "animate" | "reads" | "stop", ...}`)) return CAPTURE_REFUSED~;
 	String action;
-	if (!required_string(args, "action", &action, detail, `capture needs "action": status, train, use_finder, reference, animate or stop.`)) return CAPTURE_REFUSED~;
+	if (!required_string(args, "action", &action, detail, `capture needs "action": status, train, use_finder, reference, animate, reads or stop.`)) return CAPTURE_REFUSED~;
 	switch (action)
 	{
 		case "status":
@@ -138,10 +139,12 @@ fn String? tool_capture(Object* args, void* user_data, DString* detail) @private
 				mirror = given;
 			}
 			if (catch err = app.start_capture_animation(app.config.motion_generator.creature_model, app.capture_finder(), reference.len > 0 ? app.capture_reference_for(reference) : "", video, named, mirror, pose)) return capture_refused(detail, err);
+		case "reads":
+			return capture_reads_json(app, detail);
 		case "stop":
 			(void)app.stop_capture();
 		default:
-			detail.appendf(`capture has no action "%s": status, train, use_finder, reference, animate or stop.`, action);
+			detail.appendf(`capture has no action "%s": status, train, use_finder, reference, animate, reads or stop.`, action);
 			return CAPTURE_REFUSED~;
 	}
 	app.refresh_ui();
@@ -152,6 +155,35 @@ fn String? capture_refused(DString* detail, fault err) @private
 {
 	detail.append_string(capture_fault_text(err));
 	return CAPTURE_REFUSED~;
+}
+
+// The last animate run's folder, its files and its report, as JSON. Owned.
+fn String? capture_reads_json(AppState* app, DString* detail) @private
+{
+	String run = app.capture_job.run;
+	if (run.len == 0)
+	{
+		detail.append_string("no animate run has finished in this session, so there are no reads to show.");
+		return CAPTURE_REFUSED~;
+	}
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.append_string(`{"run":"`);
+	json_escape_into(&out, run);
+	foreach (name : (String[]) { "reads.png", "tracks.json" })
+	{
+		String at = string::tformat("%s/%s", run, name);
+		if (!file::exists(at)) continue;
+		out.appendf(`","%s":"`, name[:name.index_of_char('.') ?? name.len]);
+		json_escape_into(&out, at);
+	}
+	out.append_string(`"`);
+	if (try char[] report = file::load_temp(string::tformat("%s/report.json", run)))
+	{
+		if (report.len > 0) out.appendf(`,"answer":%s`, (String)report);
+	}
+	out.append_string("}");
+	return out.copy_str(mem);
 }
 
 // What the character's capture has and what is running, as JSON. Owned.
@@ -194,6 +226,8 @@ fn String capture_status_json(AppState* app) @private
 	json_escape_into(&out, stage_text);
 	if (stage_text.len > 0) out.append_string(" · ");
 	json_escape_into(&out, count_text);
+	out.append_string(`","run":"`);
+	json_escape_into(&out, job.run);
 	out.append_string(`"}`);
 	return out.copy_str(mem);
 }

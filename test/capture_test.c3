@@ -307,7 +307,7 @@ fn void a_plugins_folder_without_creature_is_refused_before_the_gpu() @test
 	test::@check(crig::capture_fault_text(crig::CAPTURE_NO_PLUGIN).contains("Plugins"), "the notice says where to fix it");
 }
 
-fn void the_animate_task_asks_for_the_clip_only() @test
+fn void the_animate_task_asks_for_the_clip_and_what_it_read() @test
 {
 	String dir = "build/test_capture_animate";
 	(void)path::mkdir(dir, true);
@@ -329,7 +329,10 @@ fn void the_animate_task_asks_for_the_clip_only() @test
 	}
 	defer parsed.free();
 	Object*? outputs = parsed.get("outputs");
-	test::@check(@ok(outputs) && outputs!!.get_len() == 1 && (outputs!!.get_string_at(0) ?? "") == "glb", "the clip and nothing to write beside the model");
+	test::@check(@ok(outputs) && outputs!!.get_len() == 2 && (outputs!!.get_string_at(0) ?? "") == "glb" && (outputs!!.get_string_at(1) ?? "") == "tracks",
+		"the clip and the tracks it was fitted to: %s", text);
+	test::@check((parsed.get_int("draw") ?? 0) == 9, "and nine frames of its reads drawn: %s", text);
+	test::@check((parsed.get_string("start") ?? "") == "reference", "a video's first frame is the reference picture: %s", text);
 	test::@check(!@ok(parsed.get("flip")), "the mirror check is on unless turned off");
 	app.capture_job.mirror_off = true;
 	String once = app.capture_animate_json();
@@ -370,6 +373,47 @@ fn void the_animate_task_asks_for_the_clip_only() @test
 	defer read_pose.free();
 	Object*? frames = read_pose.get("frames");
 	test::@check(@ok(frames) && frames!!.get_len() == 1 && (frames!!.get_string_at(0) ?? "") == "/pictures/crouch.png", "the picture itself: %s", pose);
+	test::@check((read_pose.get_int("draw") ?? 0) == 1, "a picture's reads are one frame: %s", pose);
+	test::@check(!@ok(read_pose.get("start")), "a picture is the reference reposed, so it does not start on it: %s", pose);
+}
+
+fn void a_run_keeps_what_it_read_beside_its_reference() @test
+{
+	String studio = "build/test_capture_run/references/rear up";
+	defer (void)path::rmtree((Path)"build/test_capture_run");
+	String folder = crig::capture_run_folder(studio, "warn/2");
+	test::@check(folder == "build/test_capture_run/references/rear up/runs/warn_2", "a run's folder is under its reference, by the clip's name: %s", folder);
+
+	test::@check(!crig::keep_capture_run(folder, {}, {}, `{"report": {}}`), "a run that handed back nothing keeps nothing");
+	test::@check(!path::exists((Path)folder), "and makes no folder");
+
+	test::@check(crig::keep_capture_run(folder, "[]", "png", `{"report": {"reads": []}}`), "the tracks, the sheet and the answer are kept");
+	foreach (name : (String[]) { "tracks.json", "reads.png", "report.json" })
+	{
+		test::@check(file::exists(string::tformat("%s/%s", folder, name)), "%s is in the run's folder", name);
+	}
+	char[] report = file::load_temp(string::tformat("%s/report.json", folder)) ?? {};
+	test::@check((String)report == `{"report": {"reads": []}}`, "the answer as the task gave it: %s", (String)report);
+
+	// A second run of the same clip replaces the first's files.
+	test::@check(crig::keep_capture_run(folder, "[1]", {}, ""), "tracks alone are kept too");
+	char[] again = file::load_temp(string::tformat("%s/tracks.json", folder)) ?? {};
+	test::@check((String)again == "[1]", "the later run's tracks: %s", (String)again);
+}
+
+fn void the_animate_notice_names_the_joints_read_off_the_fit() @test
+{
+	// [name, weight, median miss, share of frames over 30 px off], per view.
+	String result = `{"report": {"studio": {"views": [{"name": "three_quarter"}, {"name": "side"}]}, "reads": [
+		[["hips", 1, 3.1, 0], ["knee_l", 0.9, 12, 0.3], ["toe_l", 0.2, 80, 0.9]],
+		[["hips", 1, 2.5, 0.1], ["knee_r", 1, 44, 0.7], ["toe_r", 0.6, 20, 0.25], ["heel_r", 0.8, 31, 0.5]]]}}`;
+	String off = crig::capture_reads_summary(result);
+	test::@check(off == "4 joints read off the fit, worst knee_r (side), heel_r (side), knee_l (three_quarter)",
+		"sure reads the fit left behind, the worst first, an unsure one left out: '%s'", off);
+	String one = crig::capture_reads_summary(`{"report": {"reads": [[["tail", 1, 50, 1]]]}}`);
+	test::@check(one == "1 joint read off the fit, worst tail", "one view has no name to give: '%s'", one);
+	test::@check(crig::capture_reads_summary(`{"report": {"reads": [[["hips", 1, 3, 0.1]]]}}`) == "", "reads the fit followed say nothing");
+	test::@check(crig::capture_reads_summary(`{"report": {}}`) == "", "nor does a report without them");
 }
 
 fn void a_reference_is_saved_under_the_chosen_folder_or_with_the_character() @test

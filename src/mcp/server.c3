@@ -543,7 +543,7 @@ fn ToolTable new_tool_table(AppState* app)
 	// Hidden with them: the Capture pane's steps, for an agent.
 	server.add_tool({
 		.name = "capture",
-		.description = "The Capture pane's steps (video to animation through llm-runner's creature plugin, in-process): status (the character's capture folder, finder, reference picture and the running step), train (draw a training set of `poses` and train a joint finder, about 40 min at 768 px; status says how long is left), use_finder (a .safetensors trained before), reference (draw the two-camera studio picture from `clip` at `time`, or the rest pose), animate (read `video` — the picture animated by a video model — into a clip named `name`), stop. Started steps answer at once; poll status.",
+		.description = "The Capture pane's steps (video to animation through llm-runner's creature plugin, in-process): status (the character's capture folder, finder, reference picture and the running step), train (draw a training set of `poses` and train a joint finder, about 40 min at 768 px; status says how long is left), use_finder (a .safetensors trained before), reference (draw the two-camera studio picture from `clip` at `time`, or the rest pose), animate (read `video` — the picture animated by a video model — into a clip named `name`), reads (where the last animate run kept reads.png, the frames with the fit and every read drawn on them, and its report), stop. Started steps answer at once; poll status.",
 		.input_schema = CAPTURE_SCHEMA,
 		.handler = &tool_capture,
 		.user_data = app,
