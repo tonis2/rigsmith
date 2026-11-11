@@ -1,5 +1,6 @@
 # Prerequisites
 .codex
+plan.md
 *.d
 mixamo_to_pack.py
 # Object files
@@ -24,6 +25,7 @@ demo.*
 *.a
 *.la
 *.lo
+bugs.md
 
 # Shared objects (inc. Windows DLLs)
 *.dll
