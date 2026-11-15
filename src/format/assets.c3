@@ -374,6 +374,7 @@ fn void read_file(Allocator allocator, AssetEntryList* found, String file, int l
 
 	foreach (usz i, animation : stream.gltf.animations)
 	{
+		if (is_rest_clip(&stream, i)) continue;
 		found.push({
 			.kind = ANIMATION,
 			.name = asset_name(allocator, animation.name, stem, i),
@@ -477,6 +478,7 @@ fn void read_current_animations(Allocator allocator, AssetEntryList* found, Stri
 
 	foreach (usz i, animation : stream.gltf.animations)
 	{
+		if (is_rest_clip(&stream, i)) continue;
 		found.push({
 			.kind = ANIMATION,
 			.name = asset_name(allocator, animation.name, stem, i),

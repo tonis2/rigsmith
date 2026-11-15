@@ -431,7 +431,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 			animated ? clips : (AnimTemplate[]){}, name, SKIN_INFLUENCES,
 			carries_physics ? physics : (RigPhysics){},
 			carries_physics ? constraints : (ConstraintRig){},
-			&physical_bodies, motion: motion, motion_report: &shaped))
+			&physical_bodies, motion: motion, motion_report: &shaped, rest_first: true))
 		{
 			self.@notice("could not write %s: %s", base_name(path), error);
 			return;

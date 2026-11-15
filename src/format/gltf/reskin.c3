@@ -324,6 +324,10 @@ struct Reskin
 	// it. Empty removes the tag; a plain word, no escaping needed.
 	String plan;
 
+	// The name of the clip among `clips` that holds the rest pose, written to
+	// `extras.restClip`; empty when there is none.
+	String rest_clip;
+
 	<*
 	 New vertex positions for the parts, in the caller's space and in the same
 	 rows as `weights` — or empty, the ordinary case, which leaves the file's
@@ -1950,6 +1954,18 @@ fn void? write_constraint_roots(Allocator allocator, String* working, Reskin inp
 	else
 	{
 		without_root_member(allocator, working, plan_path[..])!;
+	}
+
+	// Which clip is the rest pose, so a reader does not list it; cleared when none is.
+	JsonStep[2] rest_path = { { .key = GLTF_EXTRAS }, { .key = GLTF_REST_CLIP } };
+	if (input.rest_clip.len > 0)
+	{
+		JsonEdit[1] rest = { { .path = rest_path[..], .value = input.rest_clip } };
+		swap_in(allocator, working, patch_gltf_text(allocator, *working, rest[..])!);
+	}
+	else
+	{
+		without_root_member(allocator, working, rest_path[..])!;
 	}
 
 	with_extension_declared(allocator, working, "extensionsUsed", written > 0)!;

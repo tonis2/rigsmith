@@ -269,7 +269,7 @@ fn bool AppState.import_rig_from_source(&self)
 	usz bound_clips = 0;
 	foreach (usz i, anim : stream.gltf.animations)
 	{
-		if (!clip_drives_joints(anim, joint_nodes)) continue;
+		if (is_rest_clip(&stream, i) || !clip_drives_joints(anim, joint_nodes)) continue;
 		String label = clip_label(mem, &stream, anim, i);
 		defer label.free(mem);
 		if (self.bind_clip_recorded(self.source_path, label)) bound_clips++;

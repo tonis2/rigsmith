@@ -41,6 +41,7 @@ module crig;
 
 import rig;
 import gltf;
+import gltf_edit;
 import std::io;
 import std::io::path;
 import std::sort;
@@ -146,6 +147,18 @@ const String PACK_WEIGHTS_AUTOMATIC = "automatic";
 // remain real `KHR_physics_rigid_bodies` joints; this string only preserves
 // which child defined a fork and whether the artist adjusted that derived frame.
 const String PACK_KEY_CONSTRAINT_FRAMES = "constraintFrames";
+
+<*
+ Whether animation `index` is the rest pose an export writes first
+ (`extras.restClip`), which is not a clip and is never listed or bound.
+*>
+fn bool is_rest_clip(gltf::GltfStream* stream, usz index)
+{
+	if (index >= (usz)stream.gltf.animations.len()) return false;
+	String? marked = stream.gltf.extras.get(gltf_edit::GLTF_REST_CLIP);
+	if (catch marked) return false;
+	return marked.len > 0 && stream.gltf.animations[(sz)index].name == marked;
+}
 
 <*
  Read one .glb as a pack.
@@ -264,6 +277,7 @@ fn AnimPack? read_pack(
 	tally.clips_found = found;
 	for (usz i = 0; i < found; i++)
 	{
+		if (is_rest_clip(&stream, i)) continue;
 		if (defer_clips)
 		{
 			// A stub: the name and length the browser and the timeline need, and the

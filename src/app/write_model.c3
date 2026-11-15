@@ -185,6 +185,7 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 	// `gltf_edit::ReskinClip`. Read from the file about to be rewritten, so what is
 	// preserved is what that file actually held.
 	gltf_edit::ReskinClip[] clips = self.model_clips(&view, chosen, motion, report);
+	String rest_clip = add_rest_clip(mem, &clips, &view.skeleton);
 	defer free_reskin_clips(mem, clips);
 
 	// The joints' limits go into the file as well, as the KHR joints an export
@@ -204,6 +205,7 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 		.clips = clips,
 		.constraints = limits,
 		.plan = self.doc.plan,
+		.rest_clip = rest_clip,
 		// Only once the model has been resized here: otherwise the file's own
 		// positions are already the mesh's, and rewriting them would grow nothing
 		// but the chance of drift.

@@ -308,6 +308,7 @@ fn void? export_pack_glb(
  @param physics : `Which bones the simulation owns and what they collide with, in joint order. Empty writes no physics extension at all — see format/physics_gltf.c3.`
  @param constraints : `Reusable anatomical limits in joint order. Exact parent/child rows become coincident KHR attachment frames.`
  @param physical_report : `Filled with generated/skipped target hull counts and their raw binary payload when given.`
+ @param rest_first : `Write the rest pose as the first clip when there are clips, named in extras.restClip.`
  @return? ANIM_EXPORT_SHAPE_MISMATCH : `The skeleton is empty, or there are fewer names than joints.`
  @return? ANIM_EXPORT_UNNAMED_JOINT : `A joint has no name, so no clip could ever address it.`
  @return? gltf::WRITE_FAILED : `The file could not be opened, written or flushed.`
@@ -327,7 +328,8 @@ fn void? export_rigged_animated_glb(
 	PhysicalBodyWriteReport* physical_report = null,
 	ProjectTransform model_transform = {},
 	ExportMotion motion = {},
-	ExportMotionReport* motion_report = null)
+	ExportMotionReport* motion_report = null,
+	bool rest_first = false)
 {
 	usz joints = skeleton.len();
 	if (joints == 0 || names.len < joints) return ANIM_EXPORT_SHAPE_MISMATCH~;
@@ -440,6 +442,16 @@ fn void? export_rigged_animated_glb(
 		joint_nodes.array_view(), rest);
 
 	// --- the clips ----------------------------------------------------------
+
+	bool keyed = false;
+	foreach (template : templates) if (template.keyframes.len > 0) keyed = true;
+	if (rest_first && keyed)
+	{
+		String rest_name = rest_clip_name(allocator, templates);
+		defer rest_name.free(allocator);
+		write_rest_animation(&builder, skeleton, rest_name, rest, joint_nodes.array_view());
+		builder.set_extra(gltf_edit::GLTF_REST_CLIP, rest_name);
+	}
 
 	foreach (template : templates)
 	{
@@ -1748,6 +1760,86 @@ fn gltf_edit::ReskinClip[] reskin_clips(
 	}
 
 	return out.to_array(allocator);
+}
+
+// What the rest clip is called, unless a clip already has that name.
+const String REST_CLIP_NAME = "Rest";
+
+<*
+ A name for the rest clip that none of `clips` has: "Rest", else "Rest 2", "Rest 3"….
+ The caller owns it.
+*>
+macro String rest_clip_name(Allocator allocator, clips)
+{
+	for (usz n = 1; ; n++)
+	{
+		String name = n == 1 ? REST_CLIP_NAME.copy(allocator) : string::format(allocator, "%s %d", REST_CLIP_NAME, n);
+		bool taken = false;
+		foreach (clip : clips) if (clip.name == name) taken = true;
+		if (!taken) return name;
+		name.free(allocator);
+	}
+}
+
+<*
+ Put the rest pose first among `clips`, as one key on every joint, when any clip
+ is written: Blender poses a model by its first clip on import.
+
+ @param [&inout] clips : `Replaced by the longer list; still freed with free_reskin_clips.`
+ @return `The rest clip's name, borrowed from the list, or "" when none was added.`
+*>
+fn String add_rest_clip(Allocator allocator, gltf_edit::ReskinClip[]* clips, rig::Skeleton* skeleton)
+{
+	bool written = false;
+	foreach (clip : *clips) if (clip.writable()) written = true;
+	usz joints = skeleton.len();
+	if (!written || joints == 0) return "";
+
+	float[] times = alloc::new_array(allocator, float, 1);
+	gltf_edit::ReskinCurve[] curves = alloc::new_array(allocator, gltf_edit::ReskinCurve, (sz)joints);
+	for (usz j = 0; j < joints; j++)
+	{
+		// Joint nodes rest unrotated in this frame, on their offset from the parent.
+		Quaternionf[] turns = alloc::new_array(allocator, Quaternionf, 1);
+		turns[0] = { 0, 0, 0, 1 };
+		Vec3[] slides = alloc::new_array(allocator, Vec3, 1);
+		slides[0] = rest_offset(skeleton, j);
+		curves[j] = { .joint = j, .turns = turns, .slides = slides };
+	}
+
+	gltf_edit::ReskinClip[] grown = alloc::new_array(allocator, gltf_edit::ReskinClip, (sz)clips.len + 1);
+	grown[0] = { .name = rest_clip_name(allocator, *clips), .times = times, .curves = curves };
+	grown[1..] = (*clips)[..];
+	alloc::free(allocator, *clips);
+	*clips = grown;
+	return grown[0].name;
+}
+
+<*
+ The rest pose as `export_rigged_animated_glb`'s first animation: each joint node
+ keyed at the rest transform `gltf::add_skeleton` gave it.
+*>
+fn void write_rest_animation(gltf::GltfBuilder* builder, rig::Skeleton* skeleton, String name,
+	Quaternionf[] rest, uint[] joint_nodes) @local
+{
+	const Quaternionf UNROTATED = { 0, 0, 0, 1 };
+	usz joints = skeleton.len();
+	uint clip = builder.add_animation(name);
+	float[1] at = { 0.0f };
+	uint input = builder.add_times(at[..]);
+	for (usz j = 0; j < joints; j++)
+	{
+		int parent = skeleton.parents[j];
+		bool rooted = parent < 0 || (usz)parent >= joints;
+		Quaternionf into_parent = rooted || rest.len < joints ? UNROTATED : rest[(usz)parent].conjugate();
+		Quaternionf[1] turn = { into_parent * (rest.len < joints ? UNROTATED : rest[j]) };
+		Vec3[1] slide = { into_parent * rest_offset(skeleton, j) };
+		uint node = j < joint_nodes.len ? joint_nodes[j] : (uint)j;
+		builder.add_channel(clip, builder.add_sampler(clip, input, builder.add_rotations(turn[..])), node,
+			gltf::AnimationProperty.ROTATION);
+		builder.add_channel(clip, builder.add_sampler(clip, input, builder.add_vectors(slide[..])), node,
+			gltf::AnimationProperty.TRANSLATION);
+	}
 }
 
 <*

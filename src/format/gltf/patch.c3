@@ -121,6 +121,10 @@ struct JsonMember
 *>
 const String GLTF_EXTRAS = "extras";
 
+// The `extras` member naming the clip that holds the rest pose, written first so
+// a tool that poses a model by its first clip (Blender) shows the rest. Not a clip.
+const String GLTF_REST_CLIP = "restClip";
+
 <*
  Rewrite a glTF file's metadata where it lies.
 
