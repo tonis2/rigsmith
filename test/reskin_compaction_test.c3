@@ -424,9 +424,15 @@ fn void delete_model_animation_removes_it_from_the_file() @test
 	// Gone from the binding and from the file on disk; other clips survive.
 	test::eq(app.doc.bound_index(path, victim), (sz)-1);
 	gltf::GltfStream after = gltf::open(path, mem)!!;
-	sz remaining = after.gltf.animations.len();
+	// The rest pose a save writes first is not a clip.
+	sz remaining = 0;
 	bool still_there = false;
-	foreach (anim : after.gltf.animations) if (anim.name == victim) still_there = true;
+	foreach (usz i, anim : after.gltf.animations)
+	{
+		if (crig::is_rest_clip(&after, i)) continue;
+		remaining++;
+		if (anim.name == victim) still_there = true;
+	}
 	after.close();
 	test::@check(!still_there, "the clip survived the delete in the file");
 	// Exactly the one clip left: the re-save keeps every other bound clip.
