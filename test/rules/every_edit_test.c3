@@ -52,6 +52,8 @@ const Edit[*] EDITS @local = {
 	{ "set_aim", `{"clip":"Base","joint":"head","target":"Look"}`, "set_aim_target", `{"clip":"Base","name":"Look","at":[0,1.5,1]}` },
 	{ "set_path", `{"clip":"Base","path":{"joint":"wrist_L","name":"Arc","points":[{"at":[0.3,0.6,0]},{"at":[0.3,0.8,0.2]}]}}`, "", "" },
 	{ "set_pins", `{"clip":"Base","pins":[{"joint":"ankle_L","from":0,"to":0.2}]}`, "", "" },
+	{ "set_pins", `{"clip":"Base","pins":[{"joint":"wrist_L","relative_to":"wrist_R","position":true,"rotation":true}]}`, "", "" },
+	{ "set_prop", `{"joint":"wrist_R","kind":"sword"}`, "", "" },
 	{ "pin_feet", `{"clip":"Base"}`, "", "" },
 	{ "trim_clip", `{"clip":"Base","keep":[0.1,0.5]}`, "", "" },
 	{ "retime_clip", `{"clip":"Base","duration":3.0}`, "", "" },

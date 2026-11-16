@@ -472,6 +472,7 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case ATTACH_SHELL: self.attach_shell(edit.shell, edit.id);
 		case SET_SECONDARY: self.assign_secondary(edit.id, edit.secondary_after);
 		case SET_COLLIDER: self.set_collider(edit.id, edit.collider_after);
+		case SET_PROP: self.set_prop(edit.prop_after);
 		case ADD_EXCLUSION: self.add_exclusion(edit.id, edit.other);
 		case DELETE_EXCLUSION: self.remove_exclusion(edit.id, edit.other);
 		case SET_SYM_X: self.set_sym_x(edit.sym_after);
@@ -549,6 +550,8 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 			self.assign_secondary(edit.id, edit.secondary_before);
 		case SET_COLLIDER:
 			self.set_collider(edit.id, edit.collider_before);
+		case SET_PROP:
+			self.set_prop(edit.prop_before);
 		case ADD_EXCLUSION:
 			self.remove_exclusion(edit.id, edit.other);
 		case DELETE_EXCLUSION:

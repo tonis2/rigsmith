@@ -66,6 +66,8 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 		{
 			rows[n++] = { .label = "Rename…",
 				.on_select = &scene_context_rename, .id = "viewport-context-rename" };
+			rows[n++] = { .label = "Attachments…",
+				.on_select = &scene_context_attachments, .id = "viewport-context-attachments" };
 		}
 		if (app.animation_pose_ready())
 		{
@@ -325,6 +327,14 @@ fn void scene_context_rename(Ui* ui)
 {
 	close_scene_context(ui);
 	begin_joint_rename(ui);
+}
+
+// The Attachment panel on the selected joint: what it holds and the two-hand grip.
+fn void scene_context_attachments(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	open_attachment_dialog(ui, app.selected);
 }
 
 fn void scene_context_select_skeleton(Ui* ui)

@@ -420,6 +420,21 @@ fn bool AppState.set_collider_recorded(&self, uint id, float radius)
 }
 
 <*
+ Puts a prop in a hand, changes it, or takes it away (length 0), leaving the
+ group open.
+
+ @return "False when nothing changed, in which case nothing was recorded"
+*>
+fn bool AppState.set_prop_recorded(&self, HeldProp prop)
+{
+	HeldProp before = self.doc.prop_of(prop.dot_id);
+	if (!self.doc.set_prop(prop)) return false;
+	HeldProp after = self.doc.prop_of(prop.dot_id);
+	self.undo_stack.record({ .kind = SET_PROP, .id = prop.dot_id, .prop_before = before, .prop_after = after });
+	return true;
+}
+
+<*
  Tells the collision check to leave two regions alone, or to test them again,
  leaving the group open.
 

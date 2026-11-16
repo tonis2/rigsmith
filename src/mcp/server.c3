@@ -18,6 +18,7 @@
  	rig.c3       edit_rig, as one undo step
  	body.c3      build_body
  	physics.c3   set_secondary_motion and bake_physics
+	props.c3     set_prop
  	weights.c3   show_weights, get_weights, paint_weights, pin_weights, fix_strays, fix_tears, get_shells
  	play.c3      play and stop, for the person at the screen
  	pack.c3      save_pack, the one tool that leaves a file behind
@@ -277,6 +278,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "Give a chain of bones secondary motion — a tail, an ear, a braid, anything whose motion is what the rest of the body did to it a moment ago — or retune or take back one. A chain is a root dot and a tip dot below it; name only the root and the run below it is followed to its end. Its behaviour is a preset (hair, tail, ear, soft) plus flexibility and damping from 0 to 1, a gravity multiplier and whether it collides with the character — its deformed skin, held off by a thickness measured from the chain's own skin; where it may swing is its joints' rotation limits. Physics is a property of the rig rather than of a clip, so a chain set here swings under everything that plays. Colliders are extra capsules along a bone, for a rig with no mesh or a KHR runtime. One call is one undo step and an entry that fails takes the whole call back. Then play to watch it and bake_physics to make it something a file can hold.",
 		.input_schema = SET_SECONDARY_MOTION_SCHEMA,
 		.handler = &tool_set_secondary_motion,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "set_prop",
+		.description = "Put a placeholder prop — a wooden sword, a wand or a staff — in a hand, change it, or take it away (kind none). The prop belongs to the character and rides that hand in every clip, sized to the rig: length is a share of its height, and offset and turn place the grip in the hand's rest frame, the prop's +Y running toward its tip. Renders (render_poses, render_studio) leave it out. Save and export write an empty <hand>.socket node under the hand joint, grip at its origin and +Y along the prop, for a game to hang its own weapon on. A two-hand grip is a set_pins pin with relative_to naming the prop hand. One undo step; get_skeleton lists the props. See the props topic of get_crig_docs.",
+		.input_schema = SET_PROP_SCHEMA,
+		.handler = &tool_set_prop,
 		.user_data = app,
 		.hidden = true,
 	});
@@ -1214,6 +1223,7 @@ fn String skeleton_json(AppState* app)
 	append_secondary_list(&out, app, &view);
 	append_collider_list(&out, app);
 	append_exclusion_list(&out, app);
+	append_prop_list(&out, app);
 	out.append_char('}');
 
 	return out.copy_str(mem);

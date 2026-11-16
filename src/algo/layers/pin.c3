@@ -68,7 +68,12 @@ struct AnimPin
 	// the world orientation it had before the pin, turned by `turn`.
 	bool follow;
 	Quaternionf turn;
+	// Owned. When set, `at` and `orient` are in this joint's posed frame, so the
+	// pin rides it: a support hand held on a prop another hand carries.
+	String relative_to;
 }
+
+fn bool AnimPin.relative(&self) => self.relative_to.len > 0;
 
 <*
  A fresh position pin on `joint` at `at`, over `from`..`to`, with no blend. The
@@ -90,6 +95,7 @@ fn AnimPin AnimPin.copy(&self, Allocator allocator, float scale = 1.0f, float sh
 {
 	AnimPin out = *self;
 	out.joint = self.joint.copy(allocator);
+	out.relative_to = self.relative_to.len > 0 ? self.relative_to.copy(allocator) : "";
 	out.from = math::max(0.0f, self.from * scale + shift);
 	out.to = math::max(0.0f, self.to * scale + shift);
 	out.blend = self.blend * scale;
@@ -129,6 +135,7 @@ fn bool pins_overlap(AnimPin* a, AnimPin* b) => a.from < b.to && b.from < a.to;
 fn void AnimPin.free(&self, Allocator allocator)
 {
 	if (self.joint.len > 0) alloc::free(allocator, self.joint.ptr);
+	if (self.relative_to.len > 0) alloc::free(allocator, self.relative_to.ptr);
 	*self = {};
 }
 
@@ -192,6 +199,7 @@ fn AnimPin[] pins_mirrored(Allocator allocator, AnimPin[] source)
 	foreach (&pin : out)
 	{
 		pin.joint = twin_or_same(allocator, pin.joint);
+		pin.relative_to = twin_or_same(allocator, pin.relative_to);
 		pin.at.x = -pin.at.x;
 		pin.travel.x = -pin.travel.x;
 		pin.orient = reflected_rotation(pin.orient);
@@ -683,6 +691,9 @@ fn void pin_hold_rotation(
  muted, outside its window, or whose limb is empty (a root, a joint under a fork)
  is skipped for position; its rotation hold still runs.
 
+ Pins held relative to another joint run after all the others, from where that
+ joint ended up.
+
  @param scale : `The rig's height; positions are fractions of it.`
 *>
 fn void pin_pose(
@@ -702,60 +713,121 @@ fn void pin_pose(
 	pin_lower_hips(allocator, skeleton, names, pins, time, duration, loop, pose, scale);
 	// In the rig's order, parents first, as the body solve takes them: two pins
 	// that disagree settle the same way whichever was set first.
-	sz[] joint_of = alloc::new_array(allocator, sz, (sz)pins.len);
+	sz[] joint_of = alloc::new_array(allocator, sz, (sz)pins.len * 2);
 	defer alloc::free(allocator, joint_of);
+	sz[] reference_of = joint_of[pins.len..];
 	foreach (usz i, &pin : pins)
 	{
-		joint_of[i] = -1;
-		foreach (usz j, name : names) if (j < skeleton.len() && name == pin.joint) { joint_of[i] = (sz)j; break; }
+		joint_of[i] = pin_joint_named(skeleton, names, pin.joint);
+		reference_of[i] = pin.relative() ? pin_joint_named(skeleton, names, pin.relative_to) : -1;
+	}
+	float tolerance = PIN_TOLERANCE * scale;
+	for (usz joint = 0; joint < skeleton.len(); joint++) foreach (usz i, &pin : pins)
+	{
+		if (joint_of[i] != (sz)joint || pin.relative() || !pin_plays(pin)) continue;
+		float weight = pin.weight_at(time, duration, loop);
+		if (!(weight > 0.0f)) continue;
+		pin_hold(allocator, skeleton, pose, pin, joint, weight, pin.held_at(time, duration, loop) * scale, pin.orient,
+			tolerance, clamp, ctx);
 	}
 	for (usz joint = 0; joint < skeleton.len(); joint++) foreach (usz i, &pin : pins)
 	{
-		if (joint_of[i] != (sz)joint || !pin_plays(pin)) continue;
+		if (joint_of[i] != (sz)joint || !pin.relative() || !pin_plays(pin)) continue;
+		if (reference_of[i] < 0 || !pin_reference_allowed(skeleton, joint, (usz)reference_of[i])) continue;
 		float weight = pin.weight_at(time, duration, loop);
 		if (!(weight > 0.0f)) continue;
+		usz r = (usz)reference_of[i];
+		Matrix4f[]? built = rig::joint_palette(allocator, skeleton, *pose);
+		if (catch built) continue;
+		Vec3 base = skeleton.joints[r].transform(built[r]);
+		alloc::free(allocator, built);
+		Quaternionf[]? spun = pose.world_rotations(allocator, skeleton);
+		if (catch spun) continue;
+		Quaternionf frame = spun[r];
+		alloc::free(allocator, spun);
+		pin_hold(allocator, skeleton, pose, pin, joint, weight, base + frame.rotate_vec3(pin.at * scale),
+			frame.mul(pin.orient), tolerance, clamp, ctx);
+	}
+}
 
-		usz[IK_RUN_MAX] run;
-		usz count = pin.position ? pin_run(skeleton, joint, run[..]) : 0;
-		Quaternionf[IK_RUN_MAX + 1] before;
-		for (usz k = 0; k < count; k++) before[k] = pose.rotations[run[k]];
-		before[count] = pose.rotations[joint];
-		// Where a following joint faces before its limb moves: what its turn turns.
-		Quaternionf facing = quaternion::IDENTITY;
-		bool follows = pin.follow && math::is_finite(pin.turn.v.x) && pin.turn.v.length_sq() > 1.0e-12f;
-		if (follows)
-		{
-			Quaternionf[]? spun = pose.world_rotations(allocator, skeleton);
-			if (try spun)
-			{
-				facing = spun[joint];
-				alloc::free(allocator, spun);
-			}
-			else
-			{
-				follows = false;
-			}
-		}
+// The joint `name` names among the first `skeleton.len()` of `names`, or -1.
+fn sz pin_joint_named(rig::Skeleton* skeleton, String[] names, String name) @local
+{
+	if (name.len == 0) return -1;
+	foreach (usz j, held : names) if (j < skeleton.len() && held == name) return (sz)j;
+	return -1;
+}
 
-		Vec3 held = pin.held_at(time, duration, loop);
-		if (count > 0 && pin_finite(held))
+<*
+ Whether `joint` may be pinned relative to `reference`: not itself, nor a joint
+ its own pin moves (its limb above, or anything hanging under it).
+*>
+fn bool pin_reference_allowed(rig::Skeleton* skeleton, usz joint, usz reference)
+{
+	if (joint >= skeleton.len() || reference >= skeleton.len() || joint == reference) return false;
+	if (joint_under(skeleton, joint, reference)) return false;
+	usz[IK_RUN_MAX] run;
+	usz count = pin_run(skeleton, joint, run[..]);
+	for (usz k = 0; k < count; k++) if (run[k] == reference) return false;
+	return true;
+}
+
+<*
+ One pin held at `weight`: the limb reaches `target` (model units), the joint
+ keeps `orient` when the pin holds its angle, and every joint touched eases back
+ toward where it was by the weight.
+*>
+fn void pin_hold(
+	Allocator allocator,
+	rig::Skeleton* skeleton,
+	rig::Pose* pose,
+	AnimPin* pin,
+	usz joint,
+	float weight,
+	Vec3 target,
+	Quaternionf orient,
+	float tolerance,
+	AimClamp clamp,
+	void* ctx) @local
+{
+	usz[IK_RUN_MAX] run;
+	usz count = pin.position ? pin_run(skeleton, joint, run[..]) : 0;
+	Quaternionf[IK_RUN_MAX + 1] before;
+	for (usz k = 0; k < count; k++) before[k] = pose.rotations[run[k]];
+	before[count] = pose.rotations[joint];
+	// Where a following joint faces before its limb moves: what its turn turns.
+	Quaternionf facing = quaternion::IDENTITY;
+	bool follows = pin.follow && math::is_finite(pin.turn.v.x) && pin.turn.v.length_sq() > 1.0e-12f;
+	if (follows)
+	{
+		Quaternionf[]? spun = pose.world_rotations(allocator, skeleton);
+		if (try spun)
 		{
-			(void)pin_reach(allocator, skeleton, pose, run[:count], joint, held * scale,
-				PIN_TOLERANCE * scale, clamp, ctx);
+			facing = spun[joint];
+			alloc::free(allocator, spun);
 		}
-		if (pin.rotation && math::is_finite(pin.orient.v.x) && pin.orient.v.length_sq() > 1.0e-12f)
+		else
 		{
-			pin_hold_rotation(allocator, skeleton, pose, joint, pin.orient.normalize(), clamp, ctx);
+			follows = false;
 		}
-		else if (follows)
-		{
-			pin_hold_rotation(allocator, skeleton, pose, joint, pin.turn.normalize().mul(facing).normalize(), clamp, ctx);
-		}
-		if (weight < 1.0f)
-		{
-			for (usz k = 0; k < count; k++) pose.rotations[run[k]] = slerp_short(before[k], pose.rotations[run[k]], weight);
-			pose.rotations[joint] = slerp_short(before[count], pose.rotations[joint], weight);
-		}
+	}
+
+	if (count > 0 && pin_finite(target))
+	{
+		(void)pin_reach(allocator, skeleton, pose, run[:count], joint, target, tolerance, clamp, ctx);
+	}
+	if (pin.rotation && math::is_finite(orient.v.x) && orient.v.length_sq() > 1.0e-12f)
+	{
+		pin_hold_rotation(allocator, skeleton, pose, joint, orient.normalize(), clamp, ctx);
+	}
+	else if (follows)
+	{
+		pin_hold_rotation(allocator, skeleton, pose, joint, pin.turn.normalize().mul(facing).normalize(), clamp, ctx);
+	}
+	if (weight < 1.0f)
+	{
+		for (usz k = 0; k < count; k++) pose.rotations[run[k]] = slerp_short(before[k], pose.rotations[run[k]], weight);
+		pose.rotations[joint] = slerp_short(before[count], pose.rotations[joint], weight);
 	}
 }
 
@@ -799,7 +871,7 @@ fn void pin_lower_hips(
 	usz root = skeleton.len();
 	foreach (&pin : pins)
 	{
-		if (!pin_plays(pin) || !pin.position) continue;
+		if (!pin_plays(pin) || !pin.position || pin.relative()) continue;
 		float weight = pin.weight_at(time, duration, loop);
 		if (!(weight > 0.0f)) continue;
 		sz found = -1;

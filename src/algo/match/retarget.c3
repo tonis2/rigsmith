@@ -836,7 +836,18 @@ fn AnimTemplate clip_in_words(Allocator allocator, AnimTemplate source, String[]
 
 	foreach (&foot : out.ground.feet) name_in_words(allocator, &foot.joint, from, to, &words);
 	foreach (&aim : out.aims) name_in_words(allocator, &aim.joint, from, to, &words);
-	foreach (&pin : out.pins) name_in_words(allocator, &pin.joint, from, to, &words);
+	foreach (&pin : out.pins)
+	{
+		name_in_words(allocator, &pin.joint, from, to, &words);
+		if (!pin.relative()) continue;
+		name_in_words(allocator, &pin.relative_to, from, to, &words);
+		// A pin whose reference the rig cannot name holds nothing: it goes too.
+		if (pin.relative_to.len == 0 && pin.joint.len > 0)
+		{
+			alloc::free(allocator, pin.joint.ptr);
+			pin.joint = "";
+		}
+	}
 	foreach (&path : out.paths) name_in_words(allocator, &path.joint, from, to, &words);
 	foreach (usz i, &layer : out.layers)
 	{
@@ -911,7 +922,7 @@ fn bool AnimTemplate.names_joint(&self, String joint)
 	foreach (frame : self.keyframes) foreach (dot : frame.dots) if (dot.joint_name == joint) return true;
 	foreach (foot : self.ground.feet) if (foot.joint == joint) return true;
 	foreach (aim : self.aims) if (aim.joint == joint) return true;
-	foreach (pin : self.pins) if (pin.joint == joint) return true;
+	foreach (pin : self.pins) if (pin.joint == joint || pin.relative_to == joint) return true;
 	foreach (path : self.paths) if (path.joint == joint) return true;
 	foreach (layer : self.layers)
 	{

@@ -235,6 +235,7 @@ fn void sync_scene(AppState* app)
 		}
 		floor_node = three::NO_NODE;
 		floor_built = false;
+		foreach (&draw : prop_draws) *draw = {};
 	}
 	if (stage == null) return;
 
@@ -252,6 +253,7 @@ fn void sync_scene(AppState* app)
 		// the rebuild is owed on almost none — and because the node it pushes at has
 		// to exist, which is the one thing `sync_mesh` decides.
 		sync_pose(s, c);
+		sync_props(app, c);
 	}
 	sync_floor(app);
 	// Last: a ghost is a copy of the model's own draws, so they have to exist.
@@ -300,6 +302,12 @@ fn void release_departed(AppState* app) @local
 		drop_slot_nodes(slot);
 		drop_surface(slot);
 		*slot = {};
+		released = true;
+	}
+	foreach (&draw : prop_draws)
+	{
+		if (draw.character == 0 || still_cast(app, draw.character)) continue;
+		drop_prop_draw(draw);
 		released = true;
 	}
 	if (released) sweep_assets();
@@ -367,6 +375,148 @@ fn void sync_pose(ModelSlot* s, Character* c) @local
 		// uploaded, which draws the vertices where they were built.
 		stage.clear_palette(s.nodes[i]);
 	}
+}
+
+<*
+ ## Held props
+
+ A prop is a node of its own under the stage root, never under the character's
+ draws, which a shading change rebuilds. It is placed every frame: the hand from
+ the character's palette, then the character's own placement, composed here.
+*>
+const usz MAX_PROPS_DRAWN = 16;
+
+struct PropDraw
+{
+	uint character; // 0 is a free slot
+	uint dot_id;
+	PropKind kind;
+	float built_length; // model units the asset was built at
+	bool failed;        // three refused it; tried again when the prop changes
+	three::NodeId node;
+	bool seen;
+}
+
+PropDraw[MAX_PROPS_DRAWN] prop_draws @local;
+// Set while a render draws: renders leave held props out (rules/posing.md).
+bool props_out_of_renders @local = false;
+
+// Leave held props out of the frames drawn until called again with false.
+fn void hide_props_for_render(bool hidden) => props_out_of_renders = hidden;
+
+fn void sync_props(AppState* app, Character* c) @local
+{
+	bool drawn = false;
+	foreach (&draw : prop_draws)
+	{
+		if (draw.character != c.id) continue;
+		draw.seen = false;
+		drawn = true;
+	}
+	if (c.doc.props.len() == 0 && !drawn) return;
+
+	bool shown = app.show_mesh && pane_on_screen && !c.hidden && !props_out_of_renders;
+	float shade = c == &app.focus ? 1.0f : PARKED_SHADE;
+	@pool()
+	{
+		uint[] ids;
+		rig::Skeleton? built = build_skeleton(&c.doc, tmem, &ids);
+		if (try skeleton = built)
+		{
+			float height = skeleton.height();
+			// A palette for another rig than this one is no pose of it: rest instead.
+			Matrix4f[] palette = c.pose_palette.len == skeleton.len() ? c.pose_palette : (Matrix4f[]){};
+			Quaternionf turn = c.doc.model_transform.orientation();
+			float scale = c.shown_scale();
+			foreach (prop : c.doc.props.array_view())
+			{
+				float length = prop.length * height;
+				if (!prop.held() || !(length > 0.0f)) continue;
+				sz joint = -1;
+				foreach (usz j, id : ids) if (id == prop.dot_id) { joint = (sz)j; break; }
+				if (joint < 0) continue;
+				PropDraw* draw = prop_draw_for(c.id, prop.dot_id);
+				if (!draw) continue;
+				draw.seen = true;
+				bool changed = draw.kind != prop.kind || math::abs(draw.built_length - length) > 1.0e-6f * math::max(1.0f, length);
+				if (changed || (!draw.node.is_set() && !draw.failed)) build_prop_draw(draw, prop.kind, length);
+				if (!draw.node.is_set()) continue;
+
+				PropFrame frame = prop_frame(&skeleton, palette, (usz)joint, prop);
+				stage.set_position(draw.node, c.doc.model_transform.location + turn.rotate_vec3(frame.at * scale));
+				stage.set_quaternion(draw.node, turn.mul(frame.turn).normalize());
+				stage.set_scale(draw.node, { scale, scale, scale });
+				stage.set_color(draw.node, { shade, shade, shade, 1.0f });
+				stage.set_visible(draw.node, shown);
+			}
+		}
+	};
+
+	bool dropped;
+	foreach (&draw : prop_draws)
+	{
+		if (draw.character != c.id || draw.seen) continue;
+		drop_prop_draw(draw);
+		dropped = true;
+	}
+	if (dropped) sweep_assets();
+}
+
+// The draw for this character's prop on this dot, claiming a free one the first time.
+fn PropDraw* prop_draw_for(uint character, uint dot_id) @local
+{
+	foreach (&draw : prop_draws)
+	{
+		if (draw.character == character && draw.dot_id == dot_id) return draw;
+	}
+	foreach (&draw : prop_draws)
+	{
+		if (draw.character != 0) continue;
+		*draw = { .character = character, .dot_id = dot_id };
+		return draw;
+	}
+	return null;
+}
+
+// The prop's mesh, uploaded as its own asset with its wood colours on the vertices.
+fn void build_prop_draw(PropDraw* draw, PropKind kind, float length) @local
+{
+	draw.kind = kind;
+	draw.built_length = length;
+	draw.failed = true;
+	PropShape shape = prop_shape(mem, kind, length);
+	defer shape.free(mem);
+
+	three::GeometryBuilder builder;
+	builder.init();
+	defer builder.free();
+	foreach (usz v, at : shape.mesh.positions)
+	{
+		builder.positions.push(at);
+		builder.normals.push(shape.mesh.normals[v]);
+		builder.colors.push(shape.colours[v]);
+	}
+	foreach (index : shape.mesh.indices) builder.indices.push(index);
+
+	// A serial in the key, as `add_draw` has, or three hands back the last mesh.
+	stage_serial++;
+	String key = string::tformat("crig:prop:%d", stage_serial);
+	three::AssetId? made = stage_pass().assets.upload_built(&stage_renderer().gpu, key, key, &builder);
+	if (catch made) return;
+	three::GpuMesh* mesh = stage_pass().assets.mesh(made, 0);
+	if (mesh) mesh.base_color = { 1.0f, 1.0f, 1.0f, 1.0f };
+	three::NodeId node = stage.add_mesh(made, 0, stage.root, "crig:prop");
+	if (!node.is_set()) return;
+	if (draw.node.is_set()) stage.remove(draw.node);
+	draw.node = node;
+	draw.failed = false;
+	sweep_assets();
+}
+
+fn void drop_prop_draw(PropDraw* draw) @local
+{
+	if (draw.node.is_set()) stage.remove(draw.node);
+	*draw = {};
 }
 
 <*

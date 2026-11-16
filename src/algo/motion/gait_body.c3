@@ -37,6 +37,29 @@ struct GaitArm
 }
 
 <*
+ The rig's arms by name: an upper arm ("shoulder", "upper_arm") on one side, its
+ elbow and wrist down the longest child each. At most `out.len`; no clavicle.
+*>
+fn usz rig_arms(rig::Skeleton* skeleton, String[] names, GaitArm[] out)
+{
+	usz count = 0;
+	foreach (usz j, name : names)
+	{
+		if (j >= skeleton.len() || count >= out.len) break;
+		bool upper = name_has(name, "shoulder") || name_has(name, "upper_arm") || name_has(name, "upperarm");
+		float side = side_sign(name);
+		if (!upper || side == 0.0f) continue;
+		GaitArm arm = { .side = side, .clavicle = -1, .shoulder = (sz)j, .elbow = -1, .wrist = -1 };
+		arm.elbow = longest_child(skeleton, j);
+		if (arm.elbow < 0) continue;
+		arm.wrist = longest_child(skeleton, (usz)arm.elbow);
+		if (arm.wrist < 0) continue;
+		out[count++] = arm;
+	}
+	return count;
+}
+
+<*
  What a biped carries above its legs, found on the rig, and how far each part
  moves. `active` is false for anything that is not an upright figure on two
  legs with a head — a quadruped's back is a different question.
@@ -144,18 +167,11 @@ fn GaitBody gait_body_of(
 	}
 	if (body.spine_count == 0) return body;
 
-	foreach (usz j, name : names)
+	GaitArm[2] found;
+	usz arms = rig_arms(skeleton, names, found[..]);
+	foreach (arm : found[:arms])
 	{
-		if (j >= count || body.arm_count >= 2) break;
-		bool upper = name_has(name, "shoulder") || name_has(name, "upper_arm") || name_has(name, "upperarm");
-		float side = side_sign(name);
-		if (!upper || side == 0.0f) continue;
-		GaitArm arm = { .side = side, .clavicle = -1, .shoulder = (sz)j, .elbow = -1, .wrist = -1 };
-		arm.elbow = longest_child(skeleton, j);
-		if (arm.elbow < 0) continue;
-		arm.wrist = longest_child(skeleton, (usz)arm.elbow);
-		if (arm.wrist < 0) continue;
-		sz parent = skeleton.parents[j];
+		sz parent = skeleton.parents[(usz)arm.shoulder];
 		bool on_spine = false;
 		for (usz s = 0; s < body.spine_count; s++) if (parent >= 0 && (usz)parent == body.spine[s]) on_spine = true;
 		if (parent >= 0 && !on_spine) arm.clavicle = parent;

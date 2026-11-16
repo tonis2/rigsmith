@@ -309,6 +309,7 @@ fn void? export_pack_glb(
  @param constraints : `Reusable anatomical limits in joint order. Exact parent/child rows become coincident KHR attachment frames.`
  @param physical_report : `Filled with generated/skipped target hull counts and their raw binary payload when given.`
  @param rest_first : `Write the rest pose as the first clip when there are clips, named in extras.restClip.`
+ @param sockets : `Held props, each written as an empty "<joint>.socket" node under its joint.`
  @return? ANIM_EXPORT_SHAPE_MISMATCH : `The skeleton is empty, or there are fewer names than joints.`
  @return? ANIM_EXPORT_UNNAMED_JOINT : `A joint has no name, so no clip could ever address it.`
  @return? gltf::WRITE_FAILED : `The file could not be opened, written or flushed.`
@@ -329,7 +330,8 @@ fn void? export_rigged_animated_glb(
 	ProjectTransform model_transform = {},
 	ExportMotion motion = {},
 	ExportMotionReport* motion_report = null,
-	bool rest_first = false)
+	bool rest_first = false,
+	PropSocket[] sockets = {})
 {
 	usz joints = skeleton.len();
 	if (joints == 0 || names.len < joints) return ANIM_EXPORT_SHAPE_MISMATCH~;
@@ -440,6 +442,19 @@ fn void? export_rigged_animated_glb(
 	if (physical_report) *physical_report = generated;
 	(void)write_rig_constraints(allocator, &builder, skeleton, names, constraints,
 		joint_nodes.array_view(), rest);
+
+	// Bone-aligned joint nodes, so the socket is stated in that frame, as the
+	// capsules are.
+	foreach (socket : sockets)
+	{
+		if (socket.joint >= joints) continue;
+		Quaternionf into_node = rest[socket.joint].conjugate();
+		String label = string::format(allocator, "%s.socket", names[socket.joint]);
+		uint node = builder.add_node(label, translation: into_node * socket.offset,
+			rotation: into_node.mul(socket.turn).normalize());
+		alloc::free(allocator, label.ptr);
+		builder.add_child(joint_nodes[(sz)socket.joint], node);
+	}
 
 	// --- the clips ----------------------------------------------------------
 

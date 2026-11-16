@@ -150,7 +150,7 @@ fn void add_prism(
 	Vec3 b,
 	float ra,
 	float rb,
-	usz sides) @local
+	usz sides) @private
 {
 	Vec3 along = b - a;
 	float length = along.length();
@@ -204,7 +204,7 @@ fn void add_cap(
 	Vec3 v,
 	float radius,
 	Vec3 facing,
-	usz sides) @local
+	usz sides) @private
 {
 	uint middle = (uint)positions.len();
 	positions.push(center);
@@ -237,7 +237,7 @@ fn void add_sphere(
 	BodyUintList* indices,
 	Vec3 center,
 	float radius,
-	usz sides) @local
+	usz sides) @private
 {
 	usz stacks = sides / 2 < 2 ? 2 : sides / 2;
 

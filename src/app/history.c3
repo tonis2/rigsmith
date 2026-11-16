@@ -402,6 +402,9 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	// require attaching a dummy animation. The plain rig writer stays the compact
 	// path for an ordinary unanimated model.
 	bool carries_physics = unnamed == 0 && (physics.present() || constraints.present());
+	// Held props' sockets need named joints and a writer with nodes to hang them on.
+	PropSocket[] sockets = unnamed == 0 ? prop_sockets(mem, &self.doc, &skeleton, view.dot_ids) : (PropSocket[]){};
+	defer if (sockets.len > 0) alloc::free(mem, sockets);
 	// The model itself, carried whole: the source copied to the destination and
 	// the rig written into the copy the way Save writes it, so UVs, materials and
 	// textures survive. Not for a model with secondary motion — only the
@@ -424,14 +427,14 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 	{
 		// Written above.
 	}
-	else if (animated || carries_physics)
+	else if (animated || carries_physics || sockets.len > 0)
 	{
 		if (catch fault error = export_rigged_animated_glb(
 			mem, path, self.geometry, &skeleton, names, skin,
 			animated ? clips : (AnimTemplate[]){}, name, SKIN_INFLUENCES,
 			carries_physics ? physics : (RigPhysics){},
 			carries_physics ? constraints : (ConstraintRig){},
-			&physical_bodies, motion: motion, motion_report: &shaped, rest_first: true))
+			&physical_bodies, motion: motion, motion_report: &shaped, rest_first: true, sockets: sockets))
 		{
 			self.@notice("could not write %s: %s", base_name(path), error);
 			return;

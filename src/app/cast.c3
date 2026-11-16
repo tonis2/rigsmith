@@ -210,6 +210,7 @@ fn void AppState.end_focus_gestures(&self)
 	self.anim_pending_armed = false;
 	self.anim_pending_action = 0;
 	self.renaming_dot = 0;
+	self.attachment_dot = 0;
 	// Questions about the character that is leaving.
 	self.wants_rig_prompt = false;
 	self.pending_rig_pack = -1;

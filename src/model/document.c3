@@ -27,6 +27,7 @@ alias EdgeList = List{Edge};
 alias AttachList = List{ShellAttachment};
 alias PinList = List{VertexPin};
 alias JiggleColliderList = List{JiggleCollider};
+alias HeldPropList = List{HeldProp};
 alias BoundList = List{BoundClip};
 alias JointRotationLimitList = List{JointRotationLimits};
 alias CollisionExclusionList = List{CollisionExclusion};
@@ -293,6 +294,27 @@ struct JiggleCollider
 	float radius;
 }
 
+// The placeholders a hand can hold. Rigsmith builds their meshes itself.
+enum PropKind : (String label)
+{
+	SWORD { "sword" },
+	WAND { "wand" },
+	STAFF { "staff" },
+}
+
+<*
+ A placeholder prop riding a hand, in the hand's frame: the grip sits at
+ `offset` and the prop's +Y (toward its tip) is `turn` applied to +Y.
+*>
+struct HeldProp
+{
+	uint dot_id;
+	PropKind kind;
+	float length;      // fraction of rig height; 0 or less is no prop
+	Vec3 offset;       // fraction of rig height
+	Quaternionf turn;
+}
+
 <*
  Two skin regions the collision service is told never to test against each
  other, by the dots whose joints dominate them.
@@ -387,6 +409,9 @@ struct RigDocument
 	 reason.
 	*>
 	CollisionExclusionList collision_exclusions;
+
+	// Props held in hands, one per dot. Stale dots wait for undo like the lists above.
+	HeldPropList props;
 
 	<*
 	 Whether a pose gesture may drive the skin through itself.
@@ -708,6 +733,7 @@ fn RigDocument new_document(float sym_x, Allocator allocator = mem)
 	doc.colliders.init(allocator);
 	doc.rotation_limits.init(allocator);
 	doc.collision_exclusions.init(allocator);
+	doc.props.init(allocator);
 	doc.animations.init(allocator);
 	return doc;
 }
@@ -726,6 +752,7 @@ fn void RigDocument.free(&self)
 	self.colliders.free();
 	self.rotation_limits.free();
 	self.collision_exclusions.free();
+	self.props.free();
 	self.free_animations();
 	self.animations.free();
 	free_joint_maps(mem, self.joint_maps);
@@ -1163,6 +1190,64 @@ fn float RigDocument.collider_of(&self, uint dot_id)
 }
 
 <*
+ Puts a prop in this dot's hand, changes it, or (length 0 or less) takes it away.
+
+ @return "True if this changed anything"
+*>
+fn bool RigDocument.set_prop(&self, HeldProp prop)
+{
+	if (prop.dot_id == 0 || !self.find(prop.dot_id)) return false;
+	bool gone = !(prop.length > 0.0f);
+	foreach (sz i, entry : self.props.array_view())
+	{
+		if (entry.dot_id != prop.dot_id) continue;
+		if (gone)
+		{
+			self.props.remove_at(i);
+			return true;
+		}
+		if (entry.same(prop)) return false;
+		self.props.set(i, prop);
+		return true;
+	}
+	if (gone) return false;
+	self.props.push(prop);
+	return true;
+}
+
+// The prop in this dot's hand, or one with length 0 where it holds none.
+fn HeldProp RigDocument.prop_of(&self, uint dot_id)
+{
+	foreach (entry : self.props.array_view())
+	{
+		if (entry.dot_id == dot_id) return entry;
+	}
+	return { .dot_id = dot_id, .turn = quaternion::IDENTITY };
+}
+
+fn bool HeldProp.held(self) => self.length > 0.0f;
+
+faultdef UNKNOWN_PROP;
+
+<*
+ The kind a label names: "sword", "wand" or "staff".
+
+ @return? UNKNOWN_PROP
+*>
+fn PropKind? prop_kind_named(String label)
+{
+	foreach (kind : PropKind::values) if (kind.label == label) return kind;
+	return UNKNOWN_PROP~;
+}
+
+fn bool HeldProp.same(self, HeldProp other)
+{
+	if (!self.held() && !other.held()) return self.dot_id == other.dot_id;
+	return self.dot_id == other.dot_id && self.kind == other.kind && self.length == other.length
+		&& self.offset == other.offset && self.turn.v == other.turn.v;
+}
+
+<*
  Removes a dot and every edge that touched it.
 
  Deleting the root hands the role to whatever dot is left rather than leaving
@@ -1315,6 +1400,7 @@ enum EditKind
 	ATTACH_SHELL,
 	SET_SECONDARY,
 	SET_COLLIDER,
+	SET_PROP,
 	SET_ROTATION_LIMITS,
 	ADD_EXCLUSION,
 	DELETE_EXCLUSION,
@@ -1450,6 +1536,10 @@ struct Edit
 	SecondaryChain secondary_after;
 	float collider_before;
 	float collider_after;
+
+	// SET_PROP either side; length 0 is no prop. `id` is the hand's dot.
+	HeldProp prop_before;
+	HeldProp prop_after;
 
 	// SCALE_MODEL: the factor applied going forward; undo applies its reciprocal.
 	// Its own field by the rule above: a factor is not a distance or a power.

@@ -600,6 +600,9 @@ fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitC
 		alloc::free(mem, palette);
 	}
 
+	// Held props stay out of renders (rules/posing.md), until the frame is read back.
+	hide_props_for_render(true);
+	defer hide_props_for_render(false);
 	sync_scene(app);
 	three::MeshPass* pass = stage_pass();
 	three::SceneView[] none = { };

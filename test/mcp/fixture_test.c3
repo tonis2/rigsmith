@@ -397,9 +397,9 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[76] tool_names = {
+String[77] tool_names = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
-	"pin_weights", "fix_strays", "fix_tears",
+	"pin_weights", "fix_strays", "fix_tears", "set_prop",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
 	"delete_clip", "apply_plan", "edit_rig", "set_secondary_motion", "build_body",
 	"undo", "redo", "play", "stop", "show_weights", "save_pack", "screenshot",

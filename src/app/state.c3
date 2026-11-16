@@ -690,6 +690,17 @@ struct AppState
 	uint renaming_dot;
 
 	<*
+	 The joint the Attachment panel edits, or 0 while it's closed. Pinned at the
+	 opening for `renaming_dot`'s reason: a dialog body is rebuilt with no payload.
+	*>
+	uint attachment_dot;
+	uint attachment_support; // the hand the panel offers to grip with
+	Vec3 attachment_angles;  // the Turn sliders, kept so a rebuild doesn't flip them to the twin reading
+	String[] attachment_hand_names; // the grip Select's options, owned; see free_attachment_hands
+	uint[] attachment_hand_ids;
+	char[96] attachment_title; // "Attachment · wrist_R", borrowed by the dialog
+
+	<*
 	 Set by File > Quit; main's frame loop reads it and stops. A flag rather
 	 than an exit because widgets do not own the loop, and everything below the
 	 loop is a defer that still has to run.
@@ -1196,6 +1207,8 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 	// A question asked about the model that just left. Whatever the answer would
 	// have been, it is not an answer about this one.
 	self.pending_rig_pack = -1;
+	// The Attachment panel's joint was that model's; the panel closes on seeing 0.
+	self.attachment_dot = 0;
 
 	// Belongs to the model that just left, and is about to be answered again for
 	// this one — by the session load, by the import, or by neither.
@@ -1560,6 +1573,7 @@ fn void AppState.free(&self)
 	self.free_library_rows();
 	self.free_plugin_rows();
 	self.free_physics_menus();
+	self.free_attachment_hands();
 	self.free_plan_rows();
 	*self = {};
 }

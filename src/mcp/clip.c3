@@ -924,6 +924,11 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 				out.append_string(`,"travel":`);
 				append_vec3(&out, pin.travel);
 			}
+			if (pin.relative())
+			{
+				out.append_string(`,"relative_to":`);
+				append_json_string(&out, pin.relative_to);
+			}
 			out.appendf(`,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s}`, (JsonQuat)pin.orient,
 				(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute ? "true" : "false")!!;
 		}

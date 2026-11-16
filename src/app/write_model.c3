@@ -194,6 +194,14 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 	gltf_edit::ReskinConstraint[] limits = self.model_constraints(mem, &view);
 	defer if (limits.len > 0) alloc::free(mem, limits);
 
+	// Held props as empty sockets: the joints here are pure translations, so the
+	// prop's offset and turn go in as they are.
+	PropSocket[] props = prop_sockets(mem, &self.doc, &view.skeleton, view.dot_ids);
+	defer if (props.len > 0) alloc::free(mem, props);
+	gltf_edit::ReskinSocket[] sockets = alloc::new_array(mem, gltf_edit::ReskinSocket, (sz)props.len);
+	defer if (sockets.len > 0) alloc::free(mem, sockets);
+	foreach (usz k, socket : props) sockets[k] = { .joint = socket.joint, .translation = socket.offset, .rotation = socket.turn };
+
 	if (catch fault error = gltf_edit::reskin_glb(mem, path, {
 		.joints = joints,
 		.parts = written,
@@ -204,6 +212,7 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 		.bind = bind,
 		.clips = clips,
 		.constraints = limits,
+		.sockets = sockets,
 		.plan = self.doc.plan,
 		.rest_clip = rest_clip,
 		// Only once the model has been resized here: otherwise the file's own

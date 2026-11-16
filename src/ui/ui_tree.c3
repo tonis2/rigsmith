@@ -1907,6 +1907,12 @@ fn void file_dialogs() @private
 		.style = DIALOG_STYLE,
 	}).with_id(CONTROLS_DIALOG_ID);
 
+	// ---- what a joint holds ----
+	// Not modal, like Ghosts, so the view orbits while a prop is placed. Before
+	// every modal and menu, so one opened meanwhile covers it.
+	@node((Dialog) { .title = "Attachment", .body = &build_attachment_body, .style = DIALOG_STYLE,
+		.on_close = &attachment_dialog_closed }).with_id(ATTACHMENT_DIALOG_ID);
+
 	// ---- what goes into an export ----
 	// Before the chooser, so a Browse opened from inside it floats over
 	// this one rather than under it: siblings paint in tree order, and

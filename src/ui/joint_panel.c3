@@ -338,6 +338,7 @@ struct JointPanel (Widget)
 	char[320] strays_text; // the Weights card's stray line, likewise
 	char[320] tears_text; // and its tear line
 	char[96] weights_title; // "Weights · joint", likewise
+	char[96] grip_note; // "Held on wrist_R", likewise
 }
 
 fn void JointPanel.update(&self, Element* elem, float dt) @dynamic
@@ -532,6 +533,7 @@ struct JointCard @private
 	String follow_note;
 	String follow_label;
 	bool saved_apart;
+	String grip_note; // "Held on wrist_R" for a hand gripping a prop, else empty
 }
 
 fn JointCard JointPanel.read_card(&self, AppState* app)
@@ -556,6 +558,13 @@ fn JointCard JointPanel.read_card(&self, AppState* app)
 				card.frame = joint_limit_frame(&view.skeleton, view.dot_ids, card.limits);
 				card.follow = joint_axes_automatic_child(&view, card.limits);
 				card.saved_apart = saved_frame_apart(&view.skeleton, view.dot_ids, card.limits);
+				uint gripped_on = app.gripped_on(dot.id);
+				if (gripped_on != 0)
+				{
+					Dot* holder = app.doc.find(gripped_on);
+					card.grip_note = string::bformat(self.grip_note[..], "Held on %s",
+						holder && holder.name.len > 0 ? holder.name : "the other hand");
+				}
 				if (card.follow != 0)
 				{
 					Dot* held = app.doc.find(card.limits.primary_child);
@@ -662,7 +671,15 @@ fn void JointPanel.build_joint_tab(&self, AppState* app, JointCard* card)
 						@node((Rectangle) { .size = { 0, 1 }, .style = { .color = PANEL_BORDER } });
 						@node((Label) { .text = "Pin · held in place while you pose another joint",
 							.size = 12.0f, .color = TEXT_DIM });
-						@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+						// A hand gripping a prop is held by that relative pin, which the padlocks don't read.
+						if (card.grip_note.len > 0)
+						{
+							@node((Label) { .text = card.grip_note, .size = 12.0f, .color = DOT_LOCKED });
+						}
+						else
+						{
+							@tree(widgets::tip_probe(&lock_tip)) { @node((LockToggles) { }).with_id(LOCK_TOGGLES_ID); };
+						}
 
 						// What this joint does when it is the one dragged. The trunk always
 						// keeps its world angle, so the cell is for limbs only.

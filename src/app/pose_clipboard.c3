@@ -454,10 +454,12 @@ fn void AppState.lay_clip_holds_over(&self, RigView* view, AnimTemplate clip, An
 }
 
 // The stages after limits, over a pose from a draft or a gesture: the floor, the
-// pins, then the aims.
-fn void AppState.finish_shown(&self, RigView* view, AnimTemplate clip, AnimRef ref, float time, rig::Pose* pose)
+// pins, then the aims. `skip_joint`'s own pin stands aside, as it does for a drag.
+fn void AppState.finish_shown(&self, RigView* view, AnimTemplate clip, AnimRef ref, float time, rig::Pose* pose,
+	sz skip_joint = -1)
 {
 	PoseStages stages = self.edit_stages(view, &clip, ref);
+	if (skip_joint >= 0 && (usz)skip_joint < stages.names.len) stages.pin_skipped = stages.names[(usz)skip_joint];
 	stages.ground(mem, clip, time, pose);
 	stages.pins(mem, clip, time, pose);
 	stages.aims(mem, clip, time, pose);

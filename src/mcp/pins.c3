@@ -37,7 +37,8 @@ const String SET_PINS_SCHEMA = `{"type":"object","properties":{
 		"rotation":{"type":"boolean","description":"Hold its world angle (Pin angle) hard, even if the body has to stop, so a foot stays flat. Default false."},
 		"from":{"type":"number","description":"With a clip open: seconds into the clip where the pin starts holding. Default: the pin's own, or 0 for a new pin."},
 		"to":{"type":"number","description":"With a clip open: seconds where it stops holding. Default: the pin's own, or the clip's end for a new pin."},
-		"blend":{"type":"number","description":"With a clip open: seconds the pin eases in and out at the window ends (0 is a hard edge). Default: the pin's own, or 0.1 for a new pin."}
+		"blend":{"type":"number","description":"With a clip open: seconds the pin eases in and out at the window ends (0 is a hard edge). Default: the pin's own, or 0.1 for a new pin."},
+		"relative_to":{"type":"string","description":"With a clip open: hold the joint in this other joint's posed frame instead of in the model, so it rides that joint — a support hand on a sword the other hand swings. Captured where the two stand now; not the joint itself or one its own limb moves. These pins run after the others. Default: the pin's own frame, the model for a new pin."}
 	},"required":["joint"]}},
 	"clear":{"type":"boolean","description":"Drop every pin first (the clip's pins when a clip is open). With no pins, this just clears."},
 	"balance":{"type":"boolean","description":"Whether the body leans to keep its centre of mass over the pinned feet (the Balance toggle). Left as it is when omitted."},
@@ -136,6 +137,11 @@ fn void append_pin_state(AppState* app, DString* out)
 				out.append_string(`,"travel":`);
 				append_vec3(out, pin.travel);
 			}
+			if (pin.relative())
+			{
+				out.append_string(`,"relative_to":`);
+				append_json_string(out, pin.relative_to);
+			}
 			out.append_char('}');
 		}
 		out.append_char(']');
@@ -165,6 +171,7 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 	// Checked before anything changes, so a call that names a joint the rig does
 	// not have leaves the set as it was.
 	sz count = list ? list.get_len() : 0;
+	bool relative_asked = false;
 	for (sz i = 0; i < count; i++)
 	{
 		Object* entry = list.get_at(i);
@@ -188,6 +195,16 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 			detail.appendf(`pins[%d]: no joint is called "%s". get_skeleton lists them.`, i, joint);
 			return PINS_REFUSED~;
 		}
+		Object* relative = member(entry, "relative_to");
+		if (relative != null)
+		{
+			if (!relative.is_string() || app.dot_named(relative.s) == null || relative.s == joint)
+			{
+				detail.appendf(`pins[%d]: "relative_to" must name another joint of the rig. get_skeleton lists them.`, i);
+				return PINS_REFUSED~;
+			}
+			relative_asked = true;
+		}
 	}
 	if (!clear && count == 0 && member(args, "balance") == null)
 	{
@@ -198,6 +215,11 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 	// Pins capture where the joint stands on screen, so the pose they are read
 	// against has to be the one about to be posed.
 	if (!put_on_show(app, args, detail, false)) return PINS_REFUSED~;
+	if (relative_asked && !app.clip_pins_drive())
+	{
+		detail.append_string(`a pin held relative to another joint is a clip's pin, and no clip is open. Give "clip".`);
+		return PINS_REFUSED~;
+	}
 
 	if (clear) app.clear_editor_pins();
 	for (sz i = 0; i < count; i++)
@@ -218,7 +240,13 @@ fn String? tool_set_pins(Object* args, void* user_data, DString* detail) @privat
 			float from = member(entry, "from") != null ? (float)entry.get_float("from")!! : -1.0f;
 			float to = member(entry, "to") != null ? (float)entry.get_float("to")!! : -1.0f;
 			float blend = member(entry, "blend") != null ? (float)entry.get_float("blend")!! : -1.0f;
-			(void)app.set_clip_pin(dot.id, want_position, want_rotation, from, to, blend);
+			Dot* reference = member(entry, "relative_to") != null ? app.dot_named(entry.get_string("relative_to")!!) : null;
+			if (!app.set_clip_pin(dot.id, want_position, want_rotation, from, to, blend, reference ? reference.id : 0) && reference)
+			{
+				detail.appendf(`pins[%d]: the pin would not hold on that joint: %s`, i, app.notice());
+				return PINS_REFUSED~;
+			}
+			if (reference) app.sync_clip_pins();
 		}
 		else
 		{

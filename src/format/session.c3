@@ -16,6 +16,7 @@
                       "flexibility": 0.4, "damping": 0.7, "gravity": 1,
                       "collide": true}, ...],
        "colliders": [{"id": 5, "radius": 0.12}, ...],
+       "props": [{"id": 9, "kind": "sword", "length": 0.45, "offset": [x, y, z], "turn": [x, y, z, w]}, ...],
        "collision_exclusions": [[a, b], ...],
        "allow_intersections": true, "collision_clearance": 0.005,
        "animations": [{"file": "anims/biped.glb", "clip": "Walk"}, ...] }
@@ -425,6 +426,17 @@ fn String session_text(
 	}
 	if (capsules > 0) text.append_char(']');
 
+	usz held = 0;
+	foreach (prop : doc.props.array_view())
+	{
+		if (!prop.held() || !doc.find(prop.dot_id)) continue;
+		text.append_string(held == 0 ? ",\n  \"props\": [" : ",");
+		text.appendf(`{"id":%d,"kind":"%s","length":%s,"offset":%s,"turn":%s}`, prop.dot_id, prop.kind.label,
+			(JsonFloat)prop.length, (JsonVec3)prop.offset, (JsonQuat)prop.turn)!!;
+		held++;
+	}
+	if (held > 0) text.append_char(']');
+
 	// Joint constraints live in the model, so they are written
 	// here only on request — for a model that could not take them. Sparse when
 	// they are: most joints on most imported rigs are free and need no object
@@ -628,6 +640,11 @@ fn String session_text(
 						pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
 						(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
 					if (pin.travel.length_sq() > 0.0f) text.appendf(`,"travel":%s`, (JsonVec3)pin.travel)!!;
+					if (pin.relative())
+					{
+						text.append_string(`,"relative_to":`);
+						append_json_string(&text, pin.relative_to);
+					}
 					text.append_char('}');
 				}
 				text.append_char(']');
@@ -1011,11 +1028,14 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 	return clip;
 }
 
-// One pin of a clip. Refused for no joint, a non-finite number or an inverted window.
+// One pin of a clip. Refused for no joint, a non-finite number, an inverted window
+// or a pin held relative to its own joint.
 fn AnimPin? session_pin(Allocator allocator, Object* entry) @private
 {
 	if (!entry.is_keyable()) return SESSION_SHAPE~;
 	String joint = entry.get_string("joint")!;
+	String relative_to = entry.get_string("relative_to") ?? "";
+	if (relative_to == joint) return SESSION_SHAPE~;
 	Vec3 at = session_vec3(entry.get("at")!)!;
 	Quaternionf orient = session_quat(entry.get("orient")!)!;
 	float from = (float)entry.get_float("from")!;
@@ -1032,6 +1052,7 @@ fn AnimPin? session_pin(Allocator allocator, Object* entry) @private
 	}
 	return {
 		.joint = joint.copy(allocator),
+		.relative_to = relative_to.len > 0 ? relative_to.copy(allocator) : "",
 		.travel = travel,
 		.position = entry.get_bool("position") ?? true,
 		.rotation = entry.get_bool("rotation") ?? false,
@@ -1427,6 +1448,28 @@ fn void? parse_document(Allocator allocator, RigDocument* doc, Object* parsed) @
 			if (!entry.is_keyable()) return SESSION_SHAPE~;
 			uint id = entry.get_uint("id")!;
 			doc.set_collider(id, (float)(entry.get_float("radius") ?? 0.0));
+		}
+	}
+
+	if (try Object* held = parsed.get("props"))
+	{
+		if (!is_list(held)) return SESSION_SHAPE~;
+		for (sz i = 0; i < held.get_len(); i++)
+		{
+			Object* entry = held.get_at(i);
+			if (!entry.is_keyable()) return SESSION_SHAPE~;
+			PropKind? kind = prop_kind_named(entry.get_string("kind") ?? "");
+			if (catch kind) return SESSION_SHAPE~;
+			HeldProp prop = {
+				.dot_id = entry.get_uint("id")!,
+				.kind = kind,
+				.length = (float)entry.get_float("length")!,
+				.offset = session_vec3(entry.get("offset")!)!,
+				.turn = session_quat(entry.get("turn")!)!,
+			};
+			if (!math::is_finite(prop.length) || prop.turn.v.length_sq() < 1.0e-12f) return SESSION_SHAPE~;
+			prop.turn = prop.turn.normalize();
+			doc.set_prop(prop);
 		}
 	}
 

@@ -243,6 +243,14 @@ struct ReskinConstraint
 	Quaternionf adjustment;
 }
 
+// A held prop's socket: an empty node named "<joint>.socket" under its joint.
+struct ReskinSocket
+{
+	usz joint;              // index into `Reskin.joints`
+	Vec3 translation;       // from the joint, whose node carries no rotation here
+	Quaternionf rotation;
+}
+
 <*
  Everything one reskin needs.
 *>
@@ -314,6 +322,10 @@ struct Reskin
 	 already carries the limits neither grows it nor renumbers it.
 	*>
 	ReskinConstraint[] constraints;
+
+	// Empty nodes a game hangs its props on. Reused by name like the attachment
+	// nodes, so a second save neither grows the file nor duplicates one.
+	ReskinSocket[] sockets;
 
 	// Kept per vertex. glTF's own limit for one attribute set is four, and
 	// nothing here writes a second set.
@@ -1217,6 +1229,9 @@ struct Rewrite @local
 	uint[] attach_child;
 	bool[] attached;
 
+	// Per socket: the node it is written on, reused by name or added.
+	uint[] socket_node;
+
 	usz added;
 }
 
@@ -1229,6 +1244,7 @@ fn void Rewrite.free(&self, Allocator allocator)
 	if (self.attach_parent.len > 0) alloc::free(allocator, self.attach_parent);
 	if (self.attach_child.len > 0) alloc::free(allocator, self.attach_child);
 	if (self.attached.len > 0) alloc::free(allocator, self.attached);
+	if (self.socket_node.len > 0) alloc::free(allocator, self.socket_node);
 	*self = {};
 }
 
@@ -1357,6 +1373,35 @@ fn Rewrite? plan_rewrite(Allocator allocator, String text, Reskin input, int roo
 			if (e == 0) { plan.attach_parent[c] = at; } else { plan.attach_child[c] = at; }
 		}
 	}
+
+	// The sockets, on the same terms as the attachments.
+	plan.socket_node = alloc::new_array(allocator, uint, (sz)input.sockets.len);
+	foreach (usz k, socket : input.sockets)
+	{
+		if (socket.joint >= input.joints.len) return RESKIN_SHAPE~;
+		String label = string::format(allocator, "%s.socket", input.joints[socket.joint].name);
+		defer alloc::free(allocator, label.ptr);
+		String wanted = quoted(allocator, label);
+		defer alloc::free(allocator, wanted.ptr);
+
+		uint at = (uint)next;
+		for (usz i = 0; i < existing; i++)
+		{
+			if (was_joint[i] || taken[i]) continue;
+			JsonStep[1] name_path = { { .key = "name" } };
+			if (read_gltf_member(plan.items[i], name_path[..]) != wanted) continue;
+			JsonStep[1] mesh_path = { { .key = "mesh" } };
+			JsonStep[1] camera_path = { { .key = "camera" } };
+			if (read_gltf_member(plan.items[i], mesh_path[..]).len > 0) continue;
+			if (read_gltf_member(plan.items[i], camera_path[..]).len > 0) continue;
+			at = (uint)i;
+			taken[i] = true;
+			plan.detach[i] = true;
+			break;
+		}
+		if (at == (uint)next) next++;
+		plan.socket_node[k] = at;
+	}
 	plan.added = next - existing;
 
 	// Every node the old skin called a joint, whether or not it is being reused.
@@ -1468,6 +1513,13 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 		if (constraint >= 0)
 		{
 			write_attachment_node(&out, input, plan, (usz)constraint, plan.attach_child[(usz)constraint] == (uint)i);
+			continue;
+		}
+
+		sz socket = socket_at_node(plan, (uint)i);
+		if (socket >= 0)
+		{
+			write_socket_node(&out, input, (usz)socket);
 			continue;
 		}
 
@@ -1805,6 +1857,12 @@ fn void write_joint_node(DString* out, Reskin input, Rewrite plan, usz joint) @l
 			out.appendf("%d", plan.attach_child[c])!!;
 		}
 	}
+	foreach (usz k, socket : input.sockets)
+	{
+		if (socket.joint != joint) continue;
+		out.append_string(children++ == 0 ? `,"children":[` : ",");
+		out.appendf("%d", plan.socket_node[k])!!;
+	}
 	if (children > 0) out.append_char(']');
 
 	out.append_char('}');
@@ -1840,6 +1898,22 @@ fn void write_attachment_node(DString* out, Reskin input, Rewrite plan, usz cons
 			RESKIN_PHYSICS_EXTENSION, plan.attach_parent[constraint], row)!!;
 	}
 	out.append_char('}');
+}
+
+// One socket node: empty, under its joint, with the grip at its origin.
+fn void write_socket_node(DString* out, Reskin input, usz socket) @local
+{
+	ReskinSocket held = input.sockets[socket];
+	out.append_string(`{"name":`);
+	escape_json_string(out, string::tformat("%s.socket", input.joints[held.joint].name));
+	out.appendf(`,"translation":%s,"rotation":%s}`, (JsonVec3)held.translation, (JsonQuat)held.rotation.normalize())!!;
+}
+
+// Which socket this node is, or -1.
+fn sz socket_at_node(Rewrite plan, uint node) @local
+{
+	foreach (usz k, held : plan.socket_node) if (held == node) return (sz)k;
+	return -1;
 }
 
 // Which constraint this node is an attachment of, or -1 for a node that is none.

@@ -82,7 +82,8 @@ fn void AppState.sync_clip_pins(&self)
 	usz count;
 	foreach (&pin : clip.pins)
 	{
-		if (!pin_covers(pin, self.edit_time, clip.duration, clip.loop)) continue;
+		// A pin held on another joint has no world point for a gesture to hold.
+		if (pin.relative() || !pin_covers(pin, self.edit_time, clip.duration, clip.loop)) continue;
 		sz joint = -1;
 		foreach (usz j, name : names) if (j < view.dot_ids.len && name == pin.joint) { joint = (sz)j; break; }
 		if (joint < 0) continue;
@@ -155,9 +156,14 @@ fn sz AppState.clip_pin_index(&self, AnimTemplate* clip, String name, float from
  screen; a half that stays on keeps what the pin has. A negative `from`, `to` or
  `blend` leaves that value as it is. The window is kept inside the clip.
 
+ With `relative_dot` the pin is held in that joint's posed frame (a hand on a prop
+ another hand carries), captured afresh when the reference changes. Zero keeps the
+ reference the pin has; a new pin is held in the model.
+
  @return `False when there is no clip, no such joint, or the clip would not land.`
 *>
-fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, float from = -1.0f, float to = -1.0f, float blend = -1.0f)
+fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, float from = -1.0f, float to = -1.0f,
+	float blend = -1.0f, uint relative_dot = 0)
 {
 	AnimTemplate* clip = self.clip(self.editing);
 	Dot* dot = self.doc.find(dot_id);
@@ -179,9 +185,24 @@ fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, 
 		return self.land_aim_clip(self.editing, clip_without_pin_at(mem, *clip, at)).valid();
 	}
 
+	String reference = at >= 0 ? clip.pins[(usz)at].relative_to : "";
+	if (relative_dot != 0)
+	{
+		reference = self.aim_name_of(&view, relative_dot);
+		sz j = view.joint_of(dot_id);
+		sz r = view.joint_of(relative_dot);
+		if (reference.len == 0 || j < 0 || r < 0 || !pin_reference_allowed(&view.skeleton, (usz)j, (usz)r))
+		{
+			self.@notice("a joint can't be held on itself, or on a joint its own limb moves");
+			return false;
+		}
+	}
+	// A pin moved onto another frame captures both halves afresh.
+	bool same_frame = at >= 0 && clip.pins[(usz)at].relative_to == reference;
+
 	// A look-at target owns the joint's orientation: the angle half is refused, the
 	// position half still allowed.
-	bool was_rotating = at >= 0 && clip.pins[(usz)at].rotation;
+	bool was_rotating = same_frame && clip.pins[(usz)at].rotation;
 	if (rotation && !was_rotating && self.aim_index(dot_id) >= 0)
 	{
 		self.@notice("a look-at target steers this joint's rotation - remove the target to pin its angle");
@@ -193,7 +214,13 @@ fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, 
 		? clip.pins[(usz)at].copy(mem)
 		: pin_defaults(mem, name, {}, 0.0f, clip.duration);
 	if (at < 0) pin.blend = CLIP_PIN_BLEND;
-	bool was_holding = at >= 0 && clip.pins[(usz)at].position;
+	bool was_holding = same_frame && clip.pins[(usz)at].position;
+	if (!same_frame)
+	{
+		if (pin.relative_to.len > 0) pin.relative_to.free(mem);
+		pin.relative_to = reference.len > 0 ? reference.copy(mem) : "";
+		if (pin.relative()) pin.travel = {};
+	}
 	pin.position = position;
 	pin.rotation = rotation;
 	if (from >= 0.0f) pin.from = math::min(from, clip.duration);
@@ -205,9 +232,24 @@ fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, 
 	}
 	if (blend >= 0.0f) pin.blend = blend;
 	pin.blend = math::min(pin.blend, clip.duration);
-	// After the window, which the travel is measured from.
-	if (position && !was_holding) pin.at = self.pin_origin(&pin, self.dot_position(*dot) / height);
-	if (rotation && !was_rotating) pin.orient = self.dot_world_rotation(dot_id);
+	if (pin.relative())
+	{
+		Vec3 held;
+		Quaternionf turned;
+		if (!self.relative_capture(&view, *clip, dot_id, pin.relative_to, &held, &turned))
+		{
+			pin.free(mem);
+			return false;
+		}
+		if (position && !was_holding) pin.at = held;
+		if (rotation && !was_rotating) pin.orient = turned;
+	}
+	else
+	{
+		// After the window, which the travel is measured from.
+		if (position && !was_holding) pin.at = self.pin_origin(&pin, self.dot_position(*dot) / height);
+		if (rotation && !was_rotating) pin.orient = self.dot_world_rotation(dot_id);
+	}
 
 	AnimTemplate built = clip_with_pin_at(mem, *clip, at, pin);
 	AnimRef landed = self.land_aim_clip(self.editing, built);
@@ -217,10 +259,54 @@ fn bool AppState.set_clip_pin(&self, uint dot_id, bool position, bool rotation, 
 }
 
 <*
+ Where `dot_id` stands in `reference`'s posed frame, as the screen shows them both:
+ the offset as a fraction of the rig's height, and the turn. One pose for both
+ joints with the joint's own pin aside, as a drag has it: the draft through the
+ later stages, or the clip at the playhead when nothing is being posed.
+*>
+fn bool AppState.relative_capture(&self, RigView* view, AnimTemplate clip, uint dot_id, String reference, Vec3* at, Quaternionf* orient)
+{
+	sz j = view.joint_of(dot_id);
+	String[] names = self.names_for(view, self.editing);
+	sz r = -1;
+	foreach (usz k, name : names) if (k < view.len() && name == reference) { r = (sz)k; break; }
+	float height = view.skeleton.height();
+	if (j < 0 || r < 0 || height <= 1.0e-6f) return false;
+
+	rig::Pose pose;
+	if (self.pose_edit_active)
+	{
+		pose = self.draft_pose(mem, view);
+		self.finish_shown(view, clip, self.editing, self.edit_time, &pose, j);
+	}
+	else
+	{
+		PoseStages stages = self.edit_stages(view, &clip, self.editing);
+		if ((usz)j < stages.names.len) stages.pin_skipped = stages.names[(usz)j];
+		pose = stages.pose(mem, clip, self.edit_time);
+	}
+	defer pose.free(mem);
+	Matrix4f[]? built = rig::joint_palette(mem, &view.skeleton, pose);
+	if (catch built) return false;
+	defer alloc::free(mem, built);
+	Quaternionf[]? spun = pose.world_rotations(mem, &view.skeleton);
+	if (catch spun) return false;
+	defer alloc::free(mem, spun);
+
+	Vec3 hand = view.skeleton.joints[(usz)j].transform(built[(usz)j]);
+	Vec3 base = view.skeleton.joints[(usz)r].transform(built[(usz)r]);
+	Quaternionf into = spun[(usz)r].invert();
+	*at = into.rotate_vec3(hand - base) / height;
+	*orient = into.mul(spun[(usz)j]).normalize();
+	return true;
+}
+
+<*
  Move the clip pin's held point and orientation to where its joint now stands,
  after a grab that carried the joint itself. One undo step of its own — the move's
  key (Auto-key) is a separate step, since the pose key and the pin live in two
- landings. A pin with neither half left changes nothing.
+ landings. A pin with neither half left changes nothing. A pin held on another
+ joint is captured in that joint's frame.
 *>
 fn void AppState.refresh_clip_pin_target(&self, uint dot_id)
 {
@@ -238,8 +324,23 @@ fn void AppState.refresh_clip_pin_target(&self, uint dot_id)
 	if (at < 0 || height <= 1.0e-6f) return;
 
 	AnimPin pin = clip.pins[(usz)at].copy(mem);
-	if (pin.position) pin.at = self.pin_origin(&pin, self.dot_position(*dot) / height);
-	if (pin.rotation) pin.orient = self.dot_world_rotation(dot_id);
+	if (pin.relative())
+	{
+		Vec3 held;
+		Quaternionf turned;
+		if (!self.relative_capture(&view, *clip, dot_id, pin.relative_to, &held, &turned))
+		{
+			pin.free(mem);
+			return;
+		}
+		if (pin.position) pin.at = held;
+		if (pin.rotation) pin.orient = turned;
+	}
+	else
+	{
+		if (pin.position) pin.at = self.pin_origin(&pin, self.dot_position(*dot) / height);
+		if (pin.rotation) pin.orient = self.dot_world_rotation(dot_id);
+	}
 	(void)self.land_aim_clip(self.editing, clip_with_pin_at(mem, *clip, at, pin));
 }
 
