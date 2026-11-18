@@ -1,0 +1,64 @@
+{
+	"asset": {
+		"version": "2.0",
+		"generator": "hand-written"
+	},
+	"extensionsUsed": [
+		"CUSTOM_cutscene"
+	],
+	"scene": 0,
+	"scenes": [
+		{
+			"name": "bad",
+			"nodes": [
+				0
+			]
+		}
+	],
+	"nodes": [
+		{
+			"name": "hero"
+		}
+	],
+	"extensions": {
+		"CUSTOM_cutscene": {
+			"version": 1,
+			"name": "bad",
+			"duration": 2.0,
+			"actors": [
+				{
+					"row": "hero",
+					"node": 0,
+					"strips": [
+						{
+							"type": "move",
+							"start": 0.0,
+							"end": 2.0,
+							"path": 3,
+							"ease": "linear",
+							"turn": true
+						}
+					]
+				}
+			],
+			"paths": [
+				{
+					"name": "Walk Path",
+					"length": 1.0,
+					"points": [
+						[
+							0,
+							0,
+							0
+						],
+						[
+							1,
+							0,
+							0
+						]
+					]
+				}
+			]
+		}
+	}
+}

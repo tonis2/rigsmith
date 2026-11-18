@@ -77,6 +77,39 @@ struct Character
 	// Left out of the viewport: not drawn and not picked.
 	bool hidden;
 
+	// The name a cutscene finds this character by; "" when it is no actor. Owned.
+	String actor_row;
+	// The level node it stands in for, whose own copy is hidden; "" for none. Owned.
+	String level_node;
+	// The size it is drawn at in the scene, matched to a level copy's height; 0 is its own.
+	float stage_scale;
+	// How far the level node it stands in for has its origin above its copy's feet, in metres.
+	float stage_lift;
+	// Where a cutscene preview stands it, drawn in place of its own placement.
+	bool staged;
+	ProjectTransform staged_place;
+	// The level node's rig at rest as the level last came in, names owned; its one-offs are written in its frames.
+	JointRest[] stage_rig;
+	// The level node it stands in for was not in the level when it last came in; it keeps its last place.
+	bool stage_missing;
+	// Read from the level file by its armature: no mesh or file of its own, and the level's copy is drawn posed by it.
+	bool level_read;
+	// For each joint of the level copy's skin, the rig joint it follows in `open_rig`'s order, -1 for none. Owned.
+	int[] level_joints;
+	// The level copy's box at rest, in this character's model space.
+	rig::Bounds stage_bounds;
+	// The one-off the preview shows, a copy of the cutscene's so an undo there cannot pull it away.
+	AnimTemplate cut_shown;
+	uint cut_shown_from;
+	// What the preview cross-fades out of while a strip fades in: a clip of its own, or a copy of a
+	// one-off, at its time; `cut_fade_weight` is the incoming clip's share.
+	bool cut_fading;
+	AnimRef cut_fade_ref;
+	AnimTemplate cut_fade_copy;
+	uint cut_fade_copy_from;
+	float cut_fade_time;
+	float cut_fade_weight;
+
 	Picker picker;
 
 	// Static topology shared by lazy rig-overlay rays and exact regional

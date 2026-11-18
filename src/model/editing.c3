@@ -297,6 +297,20 @@ fn void drop_redo_tail(UndoStack* stack) @local
 fn bool UndoStack.can_undo(&self) => self.cursor > 0;
 fn bool UndoStack.can_redo(&self) => self.cursor < self.edits.len();
 
+<* Forget what undo took back, so it cannot be redone. *>
+fn void UndoStack.forget_redo(&self) => drop_redo_tail(self);
+
+<* Whether an applied edit changes more than a clip or a binding. *>
+fn bool UndoStack.holds_document_edit(&self)
+{
+	for (sz i = 0; i < self.cursor; i++)
+	{
+		EditKind kind = self.edits[i].kind;
+		if (kind != REPLACE_CLIP && kind != REBIND_CLIP) return true;
+	}
+	return false;
+}
+
 <*
  Appends an edit that has already been applied to the document.
 
@@ -308,9 +322,10 @@ fn void UndoStack.record(&self, Edit edit)
 {
 	drop_redo_tail(self);
 	edit.chained = true;
+	edit.stamp = next_generation();
 	self.edits.push(edit);
 	self.cursor = self.edits.len();
-	self.revision = next_generation();
+	self.revision = edit.stamp;
 }
 
 <*
@@ -424,6 +439,63 @@ fn void UndoStack.commit(&self)
 {
 	if (self.edits.len() == 0) return;
 	self.edits.get_ref(self.edits.len() - 1).chained = false;
+}
+
+<*
+ Append copies of the edits `scratch` has applied, other than its clip and binding swaps, with their
+ own stamps and groups: what was done to the document while a history of its own was in use.
+
+ @param [&in] scratch
+ @return "How many edits were taken"
+*>
+fn usz UndoStack.take_document_edits(&self, UndoStack* scratch)
+{
+	usz taken;
+	for (sz i = 0; i < scratch.cursor; i++)
+	{
+		Edit edit = scratch.edits[i];
+		if (edit.kind == REPLACE_CLIP || edit.kind == REBIND_CLIP)
+		{
+			// A dropped edit that closed its group closes the one taken before it.
+			if (!edit.chained && taken > 0) self.edits.get_ref(self.edits.len() - 1).chained = false;
+			continue;
+		}
+		if (taken == 0) drop_redo_tail(self);
+		if (edit.kind.carries_names())
+		{
+			edit.name = edit.name.len > 0 ? edit.name.copy(mem) : "";
+			edit.prior_name = edit.prior_name.len > 0 ? edit.prior_name.copy(mem) : "";
+		}
+		switch (edit.kind)
+		{
+			case PIN_STROKE:
+				uint at = (uint)self.pins.len();
+				for (uint k = 0; k < edit.other; k++) self.pins.push(scratch.pins[(sz)(edit.id + k)]);
+				edit.id = at;
+			case SET_ROTATION_LIMITS:
+				uint at = (uint)self.rotation_limits.len();
+				self.rotation_limits.push(scratch.rotation_limits[(sz)edit.id]);
+				edit.id = at;
+			case SET_JOINT_MAPS:
+				uint at = (uint)self.joint_maps.len();
+				JointMapSwap swap = scratch.joint_maps[(sz)edit.id];
+				self.joint_maps.push({ copy_joint_maps(mem, swap.before), copy_joint_maps(mem, swap.after) });
+				edit.id = at;
+			case SET_POSES:
+				uint at = (uint)self.poses.len();
+				PoseSwap swap = scratch.poses[(sz)edit.id];
+				self.poses.push({ copy_saved_poses(mem, swap.before), copy_saved_poses(mem, swap.after) });
+				edit.id = at;
+			default:
+				break;
+		}
+		self.edits.push(edit);
+		self.cursor = self.edits.len();
+		self.revision = next_generation();
+		taken++;
+	}
+	if (taken > 0) self.commit();
+	return taken;
 }
 
 <*

@@ -71,8 +71,17 @@ fn void? route_character(AppState* app, Object* args, DString* detail)
 fn String? routed_tool(Object* args, void* user_data, DString* detail)
 {
 	ToolDef* inner = (ToolDef*)user_data;
-	route_character((AppState*)inner.user_data, args, detail)!;
-	return inner.handler(args, inner.user_data, detail);
+	AppState* app = (AppState*)inner.user_data;
+	route_character(app, args, detail)!;
+	String answer = inner.handler(args, inner.user_data, detail)!;
+	// A character read from the level is the level's: what the tool did to it is taken back, and refused.
+	if (app.refuse_level_edits())
+	{
+		answer.free(mem);
+		detail.append_string(app.notice());
+		return TOOL_REFUSED~;
+	}
+	return answer;
 }
 
 <*
@@ -179,11 +188,25 @@ fn void append_cast_json(DString* out, AppState* app)
 		json_escape_into(out, c.label());
 		out.append_string(`","model":"`);
 		json_escape_into(out, c.source_path);
-		out.appendf(`","joints":%d,"active":%s,"hidden":%s,"location":`, c.doc.dots.len(), i == app.active, c.hidden)!!;
+		out.appendf(`","read_from":"%s"`, character_source(c))!!;
+		if (c.level_node.len > 0)
+		{
+			out.append_string(`,"level_node":"`);
+			json_escape_into(out, c.level_node);
+			out.append_char('"');
+		}
+		out.appendf(`,"joints":%d,"active":%s,"hidden":%s,"location":`, c.doc.dots.len(), i == app.active, c.hidden)!!;
 		append_vec3(out, c.doc.model_transform.location);
 		out.append_char('}');
 	}
 	out.appendf(`],"scene_time":%s`, (JsonFloat)app.scene_time)!!;
+}
+
+<* Where a character's rig and clips are read from: "level" (the level file, by its armature), "file" (its own) or "memory". *>
+fn String character_source(Character* c)
+{
+	if (c.level_read) return "level";
+	return c.source_path.len > 0 ? "file" : "memory";
 }
 
 fn String cast_json(AppState* app) @local

@@ -569,6 +569,30 @@ fn void free_packs(Allocator allocator, AnimPack[] packs)
 // Reading the metadata strings.
 
 <*
+ A clip's `"travel"` member, as the pack's extras and the session write it.
+
+ @param [&inout] out
+*>
+fn void append_clip_travel(DString* out, AnimTravel travel)
+{
+	if (!travel.known()) return;
+	out.appendf(`,"travel":{"distance":%s,"speed":%s}`, (JsonFloat)travel.distance, (JsonFloat)travel.speed)!!;
+}
+
+<* The `"travel"` member of a clip's settings; nothing for one absent or malformed. *>
+fn AnimTravel read_clip_travel(Object* settings)
+{
+	Object* travel = member(settings, "travel");
+	if (travel == null || !travel.is_keyable()) return {};
+	double? distance = travel.get_float("distance");
+	double? speed = travel.get_float("speed");
+	if (catch distance, speed) return {};
+	AnimTravel out = { (float)distance, (float)speed };
+	if (!math::is_finite(out.distance) || !math::is_finite(out.speed) || !out.known()) return {};
+	return out;
+}
+
+<*
  Put the per-clip settings back on the clips they belong to.
 
  The counterpart to `clip_extras_text`. Everything here is optional and
@@ -608,6 +632,8 @@ fn void apply_clip_extras(Allocator allocator, AnimTemplate[] clips, String sour
 			if (blend == "smooth") clip.blend = SMOOTH;
 		}
 		if (try bool loop = settings.get_bool("loop")) clip.loop = loop;
+		AnimTravel said = read_clip_travel(settings);
+		if (said.known()) clip.travel = said;
 		// Not for a deferred clip's stub, which has no keys to schedule: expanding
 		// a few hundred schedules only to find nothing they fit cost most of a
 		// model's open. Its template gets the schedule when it is imported

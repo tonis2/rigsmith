@@ -14,3 +14,13 @@
 - **Rule:** Rigsmith runs under a watcher process. The watcher copies all output to the terminal and, time-stamped, to `<config dir>/logs/rigsmith.log`, then writes how the run ended. The last 5 runs are kept. Tool calls are noted in the log only. After a crash, the next start says so and names the log. `--mcp-stdio` and `RIGSMITH_NO_LOG=1` run without it.
 - **Why:** a crash during an MCP batch left nothing: the C3 runtime's backtrace went to a terminal, and a SIGKILL prints nothing at all. Only a second process can record those.
 - **Tests:** `test/run_log_test.c3`.
+
+## A scene's level is a backdrop
+- **Rule:** a scene file names its level as `level`, relative to the scene where the characters' paths are, absolute otherwise; no key means no level. Opening the scene opens the level again, and a level file that has gone is a notice, not a refused scene. Rigsmith never saves, edits or undoes the level, and the ground under a point is its colliders only.
+- **Why:** cutscenes are made in the level the game plays them in, and the level comes from another tool.
+- **Tests:** `test/level_test.c3`.
+
+## A scene's cutscenes and actors
+- **Rule:** the scene file holds the scene's cutscenes as `cutscenes` (each one the cutscene file's fields, with a move's `path` an index into its own paths, a move's typed `ground_speed`, and each path's `knots`; the points are sampled from the knots on reading, and dropped onto the level's ground again when the level is in), the picked one as `cutscene`, and on each character that is an actor its `row`, the `level_node` it stands in for, the `scale` it is drawn at and the `lift` of that node's origin over its feet. Absent keys read as defaults; the version does not change. An actor's home is where its character stands; a position in a cutscene is where its feet stand, and the export lifts a level node's walks by its `lift`. A cutscene's `one_offs` are `{row, clip}`, the clip in the session file's clip form, and a strip with `one_off` plays its actor's one-off by name; a one-off is never written into its character's `.glb` or sidecar, and the export writes it as an animation in the joint frames of the file the game plays it on. When the level comes in, each actor standing in for a level node reads that node's place, facing, scale, lift and rig again. An actor read from the level file itself has no `model`: its `level_node` finds it again, and when the level comes in its rig and clips are read again from the level by that armature; a node that is gone is a problem line. Nothing of it is ever written, beside the level or anywhere else.
+- **Why:** the scene is the project; the `.cutscene.glb` is only what the game plays.
+- **Tests:** `test/cutscene_app_test.c3`, `test/level_actor_test.c3`.

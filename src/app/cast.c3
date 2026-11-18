@@ -155,15 +155,21 @@ fn void AppState.free_cast(&self)
 
 <*
  What a character is called on screen: its file's name without the folder or
- the extension, or "Untitled" for a mesh built in memory. Borrowed from the path.
+ the extension, its armature's for one read from the level, or "Untitled" for a
+ mesh built in memory. Borrowed.
 *>
 fn String Character.label(&self)
 {
-	if (self.source_path.len == 0) return "Untitled";
+	if (self.source_path.len == 0) return self.level_read && self.level_node.len > 0 ? self.level_node : "Untitled";
 	return file_stem(self.source_path);
 }
 
-fn rig::Bounds Character.world_bounds(&self) => world_bounds(&self.doc, &self.geometry);
+fn rig::Bounds Character.world_bounds(&self)
+{
+	// One read from the level has no mesh: the level copy's box stands in.
+	if (self.level_read) return placed_box(self.stage_bounds, self.placement(), self.drawn_scale());
+	return placed_bounds(&self.geometry, self.placement(), self.drawn_scale());
+}
 
 <*
  Which loaded character came from this file, or -1. Compared as written, so the
@@ -242,6 +248,8 @@ fn bool AppState.focus_character(&self, usz i)
 {
 	if (i == self.active || i >= (usz)self.cast.len()) return false;
 	if (!self.focus_may_move()) return false;
+	// A one-off is edited on its own character: another taking the focus ends the edit.
+	(void)self.back_to_cutscene();
 	self.end_focus_gestures();
 	if (self.character_count() > 1) self.read_scene_clock();
 	self.swap_focus(i);
@@ -270,6 +278,7 @@ fn bool AppState.focus_character(&self, usz i)
 *>
 fn usz AppState.add_character(&self, rig::TriMesh geometry, String path)
 {
+	(void)self.back_to_cutscene();
 	self.end_focus_gestures();
 	if (self.character_count() > 1 || self.has_mesh()) self.read_scene_clock();
 	if (!self.cast.is_initialized()) self.cast.init(mem);
@@ -319,6 +328,7 @@ fn bool AppState.remove_character(&self, usz i)
 {
 	if (self.character_count() < 2 || i >= (usz)self.cast.len()) return false;
 	if (!self.focus_may_move()) return false;
+	(void)self.back_to_cutscene();
 	if (i == self.active) self.focus_character(i == 0 ? 1 : i - 1);
 
 	usz home = self.active;
@@ -370,7 +380,8 @@ fn AnimRef AppState.scene_clip(&self)
 *>
 fn bool AppState.follow_scene_clock(&self, float dt = 0.0f)
 {
-	if (self.pose_edit_active) return false;
+	// The cutscene preview poses every actor itself.
+	if (self.pose_edit_active || self.cut_preview) return false;
 	AnimRef ref = self.scene_clip();
 	if (!ref.valid()) return false;
 	AnimTemplate* clip = self.clip(ref);
@@ -440,7 +451,7 @@ fn void AppState.adopt_scene_clock(&self)
 *>
 fn bool AppState.sync_cast(&self, float dt)
 {
-	if (self.character_count() < 2) return false;
+	if (self.character_count() < 2 || self.cut_preview) return false;
 	self.read_scene_clock();
 
 	bool moved;

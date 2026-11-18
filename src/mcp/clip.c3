@@ -397,6 +397,8 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 		detail.append_string(`"gait" isn't the shape get_clip writes.`);
 		return CLIP_INVALID~;
 	}
+	bool travel_stated = member(args, "travel") != null;
+	clip.travel = read_clip_travel(args);
 	if (rig_open) sparse_to_parent_frame(&view, &clip, world_flags);
 	if (!apply_root_pivots(app, args, &clip, detail)) return CLIP_INVALID~;
 
@@ -448,6 +450,7 @@ fn AnimTemplate? parse_clip(AppState* app, Object* args, DString* detail, float 
 			clip.ground = ground_copy(mem, held.ground);
 		}
 		if (gait == null) clip.gait = held.gait.copy(mem);
+		if (!travel_stated) clip.travel = held.travel;
 		free_aims(mem, clip.aims);
 		clip.aims = aims_copy(mem, held.aims);
 		free_aim_targets(mem, clip.aim_targets);
@@ -951,6 +954,7 @@ fn String? clip_json(AppState* app, String name, DString* detail)
 		out.append_string(`,"gait":`);
 		append_gait_preset(&out, &clip.gait);
 	}
+	append_clip_travel(&out, clip.travel);
 	out.append_char('}');
 
 	return out.copy_str(mem);

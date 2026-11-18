@@ -497,8 +497,42 @@ fn RootMotionOutcome clip_root_moved(Allocator allocator, AnimTemplate source, r
 	}
 	AnimTemplate current = clip_with_keys(allocator, source, keys.to_array(allocator));
 	current.duration = source.duration;
+	// Made in place, the walk keeps the stride it took off.
+	if (policy.mode == IN_PLACE) current.travel = travel_taken(source.travel, travel.hips_shift, until, height);
 	*out = current;
 	return MOVED;
+}
+
+<*
+ The travel a clip made in place keeps: the hips' shift across the floor it took
+ off over `until` seconds, or what it kept before when that shift is nothing.
+*>
+fn AnimTravel travel_taken(AnimTravel before, Vec3 shift, float until, float height)
+{
+	float flat = math::sqrt(shift.x * shift.x + shift.z * shift.z);
+	float unit = height > 0.0f ? height : 1.0f;
+	if (until <= 0.0f || flat <= unit * 1.0e-4f) return before;
+	return { flat / unit, flat / unit / until };
+}
+
+<*
+ How far a clip still carries its hips across the floor, as Make in place would
+ take it off: zero for a clip that stays where it starts.
+
+ @param [&in] skeleton
+ @param names : "The rig's joints in the clip's words"
+*>
+fn AnimTravel clip_travel(rig::Skeleton* skeleton, String[] names, AnimTemplate clip)
+{
+	MotionRoots roots = motion_roots(skeleton, names);
+	float until = travel_until(clip);
+	if (roots.hips < 0 || until <= 0.0f) return {};
+	rig::Pose first = clip.pose(mem, skeleton, names, 0.0f, false);
+	defer first.free(mem);
+	rig::Pose last = clip.pose(mem, skeleton, names, until, false);
+	defer last.free(mem);
+	RootTravel travel = measure_root_travel(skeleton, roots, &first, &last, until, { .mode = IN_PLACE });
+	return travel_taken({}, travel.hips_shift, until, skeleton.height());
 }
 
 // The bone direction a clip recorded for a joint, or zero when it recorded none.

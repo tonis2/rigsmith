@@ -1549,4 +1549,6 @@ struct Edit
 	// placement is two dots the user thinks of as one action, so one Ctrl+Z has
 	// to remove both.
 	bool chained;
+	// When it was recorded, so undo can tell it from a cutscene step taken since.
+	uint stamp;
 }

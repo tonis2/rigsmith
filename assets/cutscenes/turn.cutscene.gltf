@@ -1,0 +1,91 @@
+{
+	"asset": {
+		"version": "2.0",
+		"generator": "hand-written"
+	},
+	"extensionsUsed": [
+		"CUSTOM_cutscene"
+	],
+	"scene": 0,
+	"scenes": [
+		{
+			"name": "turn",
+			"nodes": [
+				0,
+				1
+			]
+		}
+	],
+	"nodes": [
+		{
+			"name": "hero"
+		},
+		{
+			"name": "post"
+		}
+	],
+	"extensions": {
+		"CUSTOM_cutscene": {
+			"version": 2,
+			"name": "turn",
+			"duration": 3.0,
+			"fps": 24.0,
+			"actors": [
+				{
+					"row": "hero",
+					"node": 0,
+					"place": {
+						"position": [
+							3,
+							0,
+							2
+						],
+						"rotation": [
+							0,
+							0.7071068,
+							0,
+							0.7071068
+						]
+					},
+					"strips": [
+						{
+							"type": "turn",
+							"start": 1.0,
+							"end": 2.0,
+							"ease": "linear",
+							"point": [
+								3,
+								0,
+								7
+							]
+						},
+						{
+							"type": "turn",
+							"start": 2.0,
+							"end": 3.0,
+							"ease": "linear",
+							"actor": "post"
+						}
+					]
+				},
+				{
+					"row": "post",
+					"node": 1,
+					"place": {
+						"position": [
+							8,
+							0,
+							2
+						],
+						"rotation": [
+							0,
+							0,
+							0,
+							1
+						]
+					}
+				}
+			]
+		}
+	}
+}

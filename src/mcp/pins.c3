@@ -61,6 +61,7 @@ const String POSE_JOINT_SCHEMA = `{"type":"object","properties":{
 	"keep_angle":{"type":"boolean","description":"true keeps the dragged joint's angle to its parent (its bone local rotation), so a hand stays in line with its forearm; false keeps its world angle. Left out, the joint's Keep angle cell on the Joint card decides: it starts on for a limb's joint and off for a foot, which keeps its world angle so it stays flat; the Alt-drag is the other one of the two. The trunk keeps its world angle either way."},
 	"move":{"type":"array","items":{"type":"number"},"description":"[x,y,z] to move the joint by, in model units along the model's world axes: the drag of a joint by that much."},
 	"target":{"type":"array","items":{"type":"number"},"description":"[x,y,z] model-space point to drag the joint to. Use move or target, not both."},
+	"world_target":{"type":"array","items":{"type":"number"},"description":"[x,y,z] a point in the world (the level's, as ground_at gives) to drag the joint to, through where the character is drawn: its own place, or where a cutscene preview or a one-off edit stands it. Instead of target."},
 	"turn":{"type":"object","description":"Turn the joint in place. Applied after a move or target when both are given.","properties":{
 		"axis":{"description":"World axis: [x,y,z], or \"x\", \"y\", \"z\".","anyOf":[{"type":"array","items":{"type":"number"}},{"type":"string"}]},
 		"angle":{"type":"number","description":"Radians, anticlockwise about the axis seen from its tip."}
@@ -361,6 +362,7 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 	bool? keep_angle = args.get_bool("keep_angle");
 	Object* move = member(args, "move");
 	Object* target = member(args, "target");
+	Object* world = member(args, "world_target");
 	Object* turn = member(args, "turn");
 	Vec3 delta;
 	Vec3 goal;
@@ -380,6 +382,22 @@ fn String? tool_pose_joint(Object* args, void* user_data, DString* detail) @priv
 	{
 		detail.append_string(`"target" must be [x,y,z], a model-space point.`);
 		return PINS_REFUSED~;
+	}
+	if (world != null)
+	{
+		if (move != null || target != null)
+		{
+			detail.append_string(`give one of "move", "target" or "world_target".`);
+			return PINS_REFUSED~;
+		}
+		if (!as_vec3(world, &goal))
+		{
+			detail.append_string(`"world_target" must be [x,y,z], a point in the world.`);
+			return PINS_REFUSED~;
+		}
+		// Into the model through where it is drawn, as the 3D view's own picks are.
+		goal = app.placement().inverse_point(goal) / app.drawn_scale();
+		target = world;
 	}
 	if (turn != null)
 	{

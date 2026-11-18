@@ -737,6 +737,54 @@ struct AppState
 	// scene on screen was last opened from or saved to, for Save scene.
 	String pending_scene;
 	String scene_path;
+	// The level behind the scene, open or on its way; "" for none. Owned.
+	String level_path;
+	// Whether the 3D view draws the level's colliders.
+	bool show_colliders;
+	// The scene's cutscenes, sharing its characters and level; `cut_active` picks one when there are any. Owned.
+	List{Cutscene} cutscenes;
+	usz cut_active;
+	// Cutscene edits, on a history of their own; see app/cutscenes.c3.
+	CutHistory cut_history;
+	// The preview poses every actor at `cut_time`; `cut_kept` is what each character goes back to.
+	bool cut_preview;
+	bool cut_playing;
+	float cut_time;
+	List{CutKept} cut_kept;
+	float cut_kept_clock;
+	bool cut_kept_running;
+	// Bumped on every cutscene change, for the views that draw one.
+	uint cut_revision;
+	// How many Cutscene panes are on screen.
+	int cut_panes;
+	// A level character waiting for the character's own file to be picked. Owned.
+	String cut_pending_node;
+	// The strip picked on the Cutscene timeline, by its id; 0 for none.
+	uint cut_selected;
+	// The actor whose lane was pressed last, one-based, for what is added; 0 for the focused character's.
+	usz cut_lane_actor;
+	// A timeline drag in flight, and the cutscenes as they were when it began.
+	bool cut_gesture_open;
+	CutSnapshot cut_gesture;
+	// What the 3D view's next click on the ground is for; see app/cutscene_strips.c3.
+	CutGroundPick cut_pick;
+	uint cut_pick_strip;
+	usz cut_pick_actor;
+	// The walk path picked in the Cutscene tab, and its knot picked in the 3D view, one-based; 0 for none.
+	usz cut_path_pick;
+	usz cut_knot_pick;
+	// A knot drag in flight in the 3D view, kept on `cut_gesture`.
+	bool cut_knot_dragging;
+	// Each clip's ground as measured, and the colliders the walks pass through; see app/cutscene_walks.c3.
+	List{CutClipMeasure} cut_measures;
+	List{CutWalkBlock} cut_blocks;
+	uint cut_blocks_key;
+	// The timeline's view: its zoom (1 shows it all), its first second, and how far its lanes are scrolled.
+	float cut_zoom;
+	float cut_view_start;
+	float cut_view_top;
+	// A one-off clip being edited with the character's own tools; see app/cutscene_one_offs.c3.
+	OneOffEdit one_off;
 	// A model or scene chosen to open while other characters hold unsaved work,
 	// waiting on the question that asks whether to drop it.
 	String open_waiting;
@@ -1166,6 +1214,8 @@ fn void AppState.set_shading(&self, ShadingMode mode)
 *>
 fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool reframe = true)
 {
+	// The document a one-off is edited on is about to go.
+	if (self.one_off.open && self.one_off.character == self.id) (void)self.back_to_cutscene();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
 	self.stop_animation();
@@ -1191,6 +1241,8 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 
 	self.doc.free();
 	self.doc = new_document(geometry.bounds().center().x);
+	// A row and a level node name the character that was here, not this one.
+	self.drop_actor_link();
 
 	self.undo_stack.clear();
 
@@ -1383,6 +1435,13 @@ enum FilePurpose
 	SAVE_SCENE,
 	// Where the whole scene goes as one .glb.
 	EXPORT_SCENE,
+	// A level .glb to draw behind the scene.
+	OPEN_LEVEL,
+	// The active cutscene's .cutscene.glb, a character file to add as an actor,
+	// and the own file of the level character `cut_pending_node` names.
+	EXPORT_CUTSCENE,
+	ADD_ACTOR,
+	TAKE_LEVEL_ACTOR,
 	EXPORT_TARGET,
 
 	// Picking a folder rather than a file, which is the one question here whose
@@ -1536,6 +1595,8 @@ fn void AppState.free(&self)
 	foreach (&g : self.pipelines) g.free();
 	self.discard_transform_transaction();
 	self.transform_interaction = {};
+	// A one-off being edited gives its character back its own state while both are alive.
+	(void)self.back_to_cutscene();
 
 	// Every character, the one being edited last: each waiting one is brought in
 	// to be freed, so its authored pack lands in `packs` and goes with the rest.
@@ -1552,6 +1613,8 @@ fn void AppState.free(&self)
 	if (self.pending_add.len > 0) alloc::free(mem, self.pending_add.ptr);
 	if (self.pending_scene.len > 0) alloc::free(mem, self.pending_scene.ptr);
 	if (self.scene_path.len > 0) alloc::free(mem, self.scene_path.ptr);
+	self.close_level();
+	self.free_cutscenes();
 	if (self.open_waiting.len > 0) alloc::free(mem, self.open_waiting.ptr);
 	self.config.free();
 	self.free_annotations();
@@ -1593,6 +1656,7 @@ fn void AppState.free_character_state(&self)
 	self.drop_gesture_aim();
 	self.clear_animation_key_selection();
 	if (self.source_path.len > 0 && self.owns_path) alloc::free(mem, self.source_path.ptr);
+	self.drop_actor_link();
 	self.also_selected.free();
 	self.outliner_collapsed_joints.free();
 	self.anim_graph_hidden.free();

@@ -131,6 +131,15 @@ fn void AppState.refresh_anim_rows(&self)
 
 fn void AppState.free_anim_rows(&self) => widgets::free_tree_rows(&self.anim_rows);
 
+const String ANIM_BACK_ID = "anim-back-to-cutscene";
+
+fn void anim_back_to_cutscene_clicked(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.back_to_cutscene();
+	app.refresh_ui();
+}
+
 fn Element* build_animations_view(Ui* ui)
 {
 	// No scroll or padding out here: the panel fills the pane, and each of its two
@@ -220,6 +229,8 @@ struct AnimSnapshot
 	int ghost_future;
 	int ghost_step;
 	int fps;
+	// A one-off of a cutscene is what is being edited.
+	bool one_off;
 }
 
 fn usz anim_aim_key_total(AnimTemplate* clip) @private
@@ -292,6 +303,7 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.ghost_future = app.ghost_future_count(),
 		.ghost_step = app.ghost_step_frames(),
 		.fps = app.anim_fps,
+		.one_off = app.one_off_open(),
 	};
 }
 
@@ -605,6 +617,18 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 				{
 					@tree((AnimClipManager) { .gap = ANIM_GAP })
 					{
+						// Editing a cutscene's one-off: the way back.
+						if (app.one_off_open())
+						{
+							@tree((Row) { .gap = ANIM_GAP, .cross_align = CENTER })
+							{
+								@card_icon(BACK_GLYPH, "Back to cutscene — its edits become one step of the cutscene's history",
+									&anim_back_to_cutscene_clicked, COMMIT).with_id(ANIM_BACK_ID);
+								@node((Label) { .text = "One-off", .size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
+								@node((Label) { .text = app.one_off.name, .size = ANIM_TEXT_SIZE, .color = ACCENT });
+								@node((Label) { .text = app.one_off.row, .size = ANIM_TEXT_SIZE, .color = TEXT_DIM });
+							};
+						}
 						// The header: which clip, where a new one comes from, and what can
 						// be done to this one.
 						@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = ANIM_GAP, .cross_align = CENTER })

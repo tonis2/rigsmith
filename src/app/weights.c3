@@ -261,6 +261,7 @@ fn bool AppState.ticking(&self)
 	// the same still picture — occlusion rays and all — sixty times a second.
 	return self.brushing
 		|| (self.animating && !self.anim_paused)
+		|| self.cut_playing
 		|| self.notice_length > 0
 		|| (self.tinting() && self.weights_stale)
 		|| self.edge_pending

@@ -521,6 +521,8 @@ fn int run_loop(
 		// A chunk of a capture's training set, or its reference picture: drawn
 		// with the stage renderer, so between frames as the MCP renders are.
 		app.service_capture();
+		// The level reads and places a slice a frame, so the window stays alive.
+		bool level_working = service_level(&app);
 
 		// A compare on all but the handful of frames where the display's density
 		// actually changed under the window. `ui/ui_scale.c3` has the two cases
@@ -538,7 +540,7 @@ fn int run_loop(
 			return 1;
 		}
 		quiet = presented && !runtime.is_animating() && !runtime.is_simulating()
-			&& !poll.camera_moved && handled == 0 && ui_idle;
+			&& !poll.camera_moved && handled == 0 && ui_idle && !level_working;
 	}
 	return 0;
 }
@@ -590,7 +592,9 @@ fn void service_open(AppState* self) @local
 
 	// Open replaces the scene, not one character in it: a new one, with this
 	// model the only character and no scene file until it is saved as one.
+	self.reset_cutscenes();
 	self.drop_other_characters();
+	self.close_level();
 	self.load_mesh(loaded, path);
 	self.set_scene_path("");
 	// A model that loaded is a project whether or not the GPU takes it: the

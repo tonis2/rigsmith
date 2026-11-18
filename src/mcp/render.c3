@@ -44,7 +44,7 @@ faultdef RENDER_REFUSED, CAMERA_REFUSED;
 
 const String RENDER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"Clip to photograph, or \"Pack/Clip\". Omit to photograph whatever is on screen now, which is what the camera and crop arguments are still worth."},
-	"times":{"type":"array","items":{"type":"number"},"description":"Seconds from the clip's start, one tile each, in the order given. Omit for a single frame at t. A cycle reads best as four to nine instants spread over its duration."},
+	"times":{"type":"array","items":{"type":"number"},"description":"Seconds from the clip's start, one tile each, in the order given. Omit for a single frame at t. A cycle reads best as four to nine instants spread over its duration. With the cutscene preview on and no clip, seconds of the active cutscene."},
 	"t":{"type":"number","description":"A single instant, when times is not given. Default 0."},
 	"keys":{"description":"The clip's own keyframes instead of times: true for every key, or an array of key numbers, counted from 0 in time order, for some of them. Each tile is labelled with its key number and time. Layers, aims and pins adjust a clip without adding keys, so they are not counted. Give this or times, not both.","anyOf":[{"type":"boolean"},{"type":"array","items":{"type":"integer"}}]},
 	"view":{"type":"string","enum":["Front","Back","Left","Right","Top","Bottom"],"description":"Look down an axis. What makes two renders comparable — a limb swinging in depth is invisible from the front and obvious from the left. The camera is put back afterwards."},
@@ -141,6 +141,11 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 		return RENDER_REFUSED~;
 	}
 
+	// With the cutscene preview on and no clip, the times are the cutscene's.
+	Cutscene* cutscene = app.cutscene_previewing() ? app.cutscene() : null;
+	bool cut_mode = !ref.valid() && cutscene != null && (member(args, "times") != null || member(args, "t") != null);
+	if (cut_mode && !read_times(args, cutscene.duration, times[..], &frames, detail)) return RENDER_REFUSED~;
+
 	// Left at zero when the caller says nothing, and worked out from the first
 	// tile's shape once there is one — see `sheet_columns`. A count guessed from
 	// the frame count alone lays four wide tiles in a row and answers with a
@@ -227,6 +232,14 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 		restore_playback(app, was_animating, was_ref, was_time, was_looping);
 		app.refresh_ui();
 	}
+	float was_cut_time = app.cut_time;
+	bool was_cut_playing = app.cut_playing;
+	defer if (cut_mode)
+	{
+		app.show_cutscene_at(was_cut_time);
+		app.cut_playing = was_cut_playing;
+	}
+	if (cut_mode) app.cut_playing = false;
 
 	if (!apply_framing(app, args, detail)) return RENDER_REFUSED~;
 	if (!apply_camera(app, args, detail)) return RENDER_REFUSED~;
@@ -274,6 +287,11 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 			detail.appendf(`"%s" would not start: %s`, app.clip(ref).name, app.notice());
 			return RENDER_REFUSED~;
 		}
+		if (cut_mode)
+		{
+			app.show_cutscene_at(times[f]);
+			app.refresh_ui();
+		}
 
 		image::Image? grabbed = renderer ? clean_frame(app, detail) : one_frame(app, crop, detail);
 		if (catch grabbed) return RENDER_REFUSED~;
@@ -302,10 +320,11 @@ fn String? render_content(AppState* app, Object* args, DString* detail)
 		uint left = tile_width * (uint)(f % columns);
 		uint top = tile_height * (uint)(f / columns);
 		blit(&sheet, &scaled, left, top);
-		if (ref.valid()) label_tile(&sheet, left, top, tile_width, tile_height, by_key, keys[f], times[f]);
+		if (ref.valid() || cut_mode) label_tile(&sheet, left, top, tile_width, tile_height, by_key, keys[f], times[f]);
 	}
 
-	return sheet_content(app, &sheet, ref, times[:frames], by_key ? keys[:frames] : (usz[]){}, columns, crop, args, detail);
+	return sheet_content(app, &sheet, ref, times[:frames], by_key ? keys[:frames] : (usz[]){}, columns, crop, args, detail,
+		cut_mode ? cutscene.name : "");
 }
 
 <*
@@ -829,7 +848,8 @@ fn String? sheet_content(
 	usz columns,
 	Vec4 crop,
 	Object* args,
-	DString* detail) @local
+	DString* detail,
+	String cutscene = "") @local
 {
 	char[]? encoded = png::save_bytes(sheet, mem);
 	if (catch error = encoded)
@@ -889,6 +909,14 @@ fn String? sheet_content(
 		}
 		out.append_string(keys.len > 0 ? " seconds)" : " seconds");
 		out.append_string(", each labelled in its top-left corner");
+	}
+	else if (cutscene.len > 0)
+	{
+		out.appendf(`, %d tile(s) of the cutscene \"`, times.len);
+		json_escape_into(&out, cutscene);
+		out.appendf(`\" across %d column(s), left to right and top to bottom, at cutscene t =`, columns);
+		foreach (i, t : times) out.appendf(i > 0 ? `, %.4g` : ` %.4g`, t);
+		out.append_string(" seconds, each labelled in its top-left corner");
 	}
 	else
 	{

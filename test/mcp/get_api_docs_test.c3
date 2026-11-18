@@ -27,9 +27,10 @@ import std::math::quaternion;
 
 // Every section, in the order the index reports them. By hand, like `tool_names`:
 // a section added without a line here fails rather than passing unnoticed.
-String[21] doc_topics = {
+String[23] doc_topics = {
 	"quality", "clips", "authoring", "turning", "targets", "editing", "playback", "cycles",
 	"ground", "looking", "rigging", "scripting", "weights", "physics", "review", "gaits", "layers", "paths", "pins", "props", "repair",
+	"levels", "cutscenes",
 };
 
 <*

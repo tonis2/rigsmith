@@ -964,7 +964,7 @@ fn void write_joint_nodes(gltf::GltfBuilder* builder, rig::Skeleton* skeleton, S
 
 // Where a joint rests relative to its parent, which is what a node's
 // translation holds — and, for a rootless joint, where it rests outright.
-fn Vec3 rest_offset(rig::Skeleton* skeleton, usz joint) @local
+fn Vec3 rest_offset(rig::Skeleton* skeleton, usz joint)
 {
 	int parent = skeleton.parents[joint];
 	if (parent < 0 || (usz)parent >= skeleton.len()) return skeleton.joints[joint];
@@ -1029,6 +1029,7 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 		usz fields = 0;
 		out.appendf(`"duration":%s,"loop":%s`, (JsonFloat)template.duration, template.loop)!!;
 		fields = 2;
+		append_clip_travel(&out, template.travel);
 		if (template.blend == SMOOTH && !flattened)
 		{
 			out.append_string(`,"blend":"smooth"`);

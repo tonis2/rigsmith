@@ -11,15 +11,18 @@
 
  Model paths are written relative to the scene file when the model is in the
  scene's folder or below it, so a folder holding a scene and its characters can
- be moved as one; anywhere else, they are absolute.
+ be moved as one; anywhere else, they are absolute. The level is written the same
+ way, and a scene with none has no `level` key.
 
- 	{ "format": "rigsmith-scene", "version": 1, "active": 0, "time": 1.25,
+ 	{ "format": "rigsmith-scene", "version": 1, "active": 0, "time": 1.25, "level": "forest.glb",
  	  "characters": [ { "model": "knight.glb",
  	                    "location": [0,0,0], "rotation": [0,0,0,1],
  	                    "clip": { "file": "", "name": "Duel" } } ] }
 
  A clip is named the way a bound clip is: by its file, or `""` for one authored
- on the character, and its name in that file.
+ on the character, and its name in that file. An actor adds `row` (and `level_node`,
+ `scale`, `lift`); one read from the level has no `model`, only its `level_node`.
+ `cutscenes` lists the scene's cutscenes and `cutscene` the one picked.
 *>
 module crig;
 
@@ -46,6 +49,13 @@ struct SceneCharacter
 	String clip_name;
 	bool hidden;
 	bool holds_pose;
+	// The name a cutscene finds it by, "" when it is no actor; the level node it stands in for.
+	String row;
+	String level_node;
+	// The size it is drawn at, matched to a level copy's height; 1 is its own.
+	float scale;
+	// How far the level node's origin stands over the copy's feet, in metres.
+	float lift;
 }
 
 struct SceneFile
@@ -53,6 +63,10 @@ struct SceneFile
 	SceneCharacter[] characters;
 	usz active;
 	float time;
+	// The level drawn behind the characters, resolved like `model`; "" for none.
+	String level;
+	Cutscene[] cutscenes;
+	usz active_cutscene;
 }
 
 fn void SceneFile.free(&self, Allocator allocator)
@@ -62,8 +76,13 @@ fn void SceneFile.free(&self, Allocator allocator)
 		if (c.model.len > 0) alloc::free(allocator, c.model.ptr);
 		if (c.clip_file.len > 0) alloc::free(allocator, c.clip_file.ptr);
 		if (c.clip_name.len > 0) alloc::free(allocator, c.clip_name.ptr);
+		if (c.row.len > 0) alloc::free(allocator, c.row.ptr);
+		if (c.level_node.len > 0) alloc::free(allocator, c.level_node.ptr);
 	}
 	if (self.characters.len > 0) alloc::free(allocator, self.characters);
+	if (self.level.len > 0) alloc::free(allocator, self.level.ptr);
+	foreach (&cutscene : self.cutscenes) cutscene.free(allocator);
+	if (self.cutscenes.len > 0) alloc::free(allocator, self.cutscenes);
 	*self = {};
 }
 
@@ -122,16 +141,32 @@ fn String scene_file_text(Allocator allocator, SceneFile* scene, String scene_pa
 {
 	DString text = dstring::new(allocator);
 	defer text.free();
-	text.appendf("{\n  \"format\": \"%s\",\n  \"version\": %d,\n  \"active\": %d,\n  \"time\": %s,\n  \"characters\": [",
+	text.appendf("{\n  \"format\": \"%s\",\n  \"version\": %d,\n  \"active\": %d,\n  \"time\": %s,",
 		SCENE_FORMAT, SCENE_VERSION, scene.active, (JsonFloat)scene.time)!!;
-	foreach (usz i, c : scene.characters)
+	if (scene.level.len > 0)
 	{
-		text.append_string(i == 0 ? "\n    {\"model\":" : ",\n    {\"model\":");
+		text.append_string("\n  \"level\": ");
 		@pool()
 		{
-			append_json_string(&text, scene_model_reference(tmem, c.model, scene_path));
+			append_json_string(&text, scene_model_reference(tmem, scene.level, scene_path));
 		};
-		text.appendf(",\"location\":%s,\"rotation\":%s", (JsonVec3)c.transform.location,
+		text.append_string(",");
+	}
+	text.append_string("\n  \"characters\": [");
+	foreach (usz i, c : scene.characters)
+	{
+		text.append_string(i == 0 ? "\n    {" : ",\n    {");
+		// One read from the level has no file: its level node finds it again.
+		if (c.model.len > 0)
+		{
+			text.append_string("\"model\":");
+			@pool()
+			{
+				append_json_string(&text, scene_model_reference(tmem, c.model, scene_path));
+			};
+			text.append_string(",");
+		}
+		text.appendf("\"location\":%s,\"rotation\":%s", (JsonVec3)c.transform.location,
 			(JsonQuat)c.transform.orientation())!!;
 		if (c.clip_name.len > 0)
 		{
@@ -143,9 +178,32 @@ fn String scene_file_text(Allocator allocator, SceneFile* scene, String scene_pa
 		}
 		if (c.hidden) text.append_string(",\"hidden\":true");
 		if (c.holds_pose) text.append_string(",\"holds_pose\":true");
+		if (c.row.len > 0)
+		{
+			text.append_string(",\"row\":");
+			append_json_string(&text, c.row);
+		}
+		if (c.level_node.len > 0)
+		{
+			text.append_string(",\"level_node\":");
+			append_json_string(&text, c.level_node);
+		}
+		if (c.scale > 0.0f && c.scale != 1.0f) text.appendf(",\"scale\":%s", (JsonFloat)c.scale)!!;
+		if (c.lift != 0.0f) text.appendf(",\"lift\":%s", (JsonFloat)c.lift)!!;
 		text.append_string("}");
 	}
-	text.append_string("\n  ]\n}\n");
+	text.append_string("\n  ]");
+	if (scene.cutscenes.len > 0)
+	{
+		text.appendf(",\n  \"cutscene\": %d,\n  \"cutscenes\": [", scene.active_cutscene)!!;
+		foreach (usz i, &cutscene : scene.cutscenes)
+		{
+			text.append_string(i == 0 ? "\n    " : ",\n    ");
+			append_cutscene_json(&text, cutscene);
+		}
+		text.append_string("\n  ]");
+	}
+	text.append_string("\n}\n");
 	return text.copy_str(allocator);
 }
 
@@ -197,13 +255,20 @@ fn SceneFile? parse_scene_file(Allocator allocator, String text, String scene_pa
 			scene.free(allocator);
 			return SCENE_SHAPE~;
 		}
-		String? model = scene_string(entry, "model", tmem, required: true);
+		String? model = scene_string(entry, "model", tmem);
 		if (catch model)
 		{
 			scene.free(allocator);
 			return SCENE_SHAPE~;
 		}
-		c.model = path_is_absolute(model) ? model.copy(allocator) : string::format(allocator, "%s/%s", folder, model);
+		// No model is a character read from the level, found again by its level node.
+		String node = scene_string(entry, "level_node", tmem) ?? "";
+		if (model.len == 0 && node.len == 0)
+		{
+			scene.free(allocator);
+			return SCENE_SHAPE~;
+		}
+		if (model.len > 0) c.model = path_is_absolute(model) ? model.copy(allocator) : string::format(allocator, "%s/%s", folder, model);
 		c.transform.rotation = quaternion::IDENTITY;
 		if (try Object* at = entry.get("location"))
 		{
@@ -223,7 +288,43 @@ fn SceneFile? parse_scene_file(Allocator allocator, String text, String scene_pa
 		}
 		c.hidden = entry.get_bool("hidden") ?? false;
 		c.holds_pose = entry.get_bool("holds_pose") ?? false;
+		c.row = scene_string(entry, "row", allocator) ?? "";
+		c.level_node = scene_string(entry, "level_node", allocator) ?? "";
+		double scale = entry.get_float("scale") ?? 1.0;
+		c.scale = math::is_finite((float)scale) && scale > 0.0 ? (float)scale : 1.0f;
+		double lift = entry.get_float("lift") ?? 0.0;
+		c.lift = math::is_finite((float)lift) ? (float)lift : 0.0f;
 	}
+	Object* listed_cutscenes = member(parsed, "cutscenes");
+	if (listed_cutscenes != null)
+	{
+		if (!listed_cutscenes.is_array())
+		{
+			scene.free(allocator);
+			return SCENE_SHAPE~;
+		}
+		usz count = (usz)listed_cutscenes.get_len();
+		if (count > 0) scene.cutscenes = alloc::new_array(allocator, Cutscene, (sz)count);
+		for (usz i = 0; i < count; i++)
+		{
+			Cutscene? read = cutscene_from_json(allocator, listed_cutscenes.get_at((sz)i));
+			if (catch read)
+			{
+				scene.free(allocator);
+				return SCENE_SHAPE~;
+			}
+			scene.cutscenes[i] = read;
+		}
+		long picked = parsed.get_long("cutscene") ?? 0;
+		scene.active_cutscene = picked >= 0 && (usz)picked < count ? (usz)picked : 0;
+	}
+	String? level = scene_string(parsed, "level", tmem);
+	if (catch level)
+	{
+		scene.free(allocator);
+		return SCENE_SHAPE~;
+	}
+	if (level.len > 0) scene.level = path_is_absolute(level) ? level.copy(allocator) : string::format(allocator, "%s/%s", folder, level);
 	long active = parsed.get_long("active") ?? 0;
 	scene.active = active >= 0 && (usz)active < scene.characters.len ? (usz)active : 0;
 	double time = parsed.get_float("time") ?? 0.0;

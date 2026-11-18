@@ -7,22 +7,27 @@ import std::math::quaternion;
 
 fn Matrix4f Character.model_view_projection(&self, OrbitCamera* camera, float aspect)
 {
-	Matrix4f placed = camera.view_projection(aspect).mul(self.doc.model_transform.matrix());
-	if (self.preview_scale <= 0.0f) return placed;
-	float s = self.preview_scale;
+	Matrix4f placed = camera.view_projection(aspect).mul(self.placement().matrix());
+	float s = self.drawn_scale();
+	if (s == 1.0f) return placed;
 	return placed.mul(matrix::IDENTITY4{float}.scale({ s, s, s }));
 }
 
 fn Vec3 Character.model_eye(&self, OrbitCamera* camera)
 {
-	Vec3 eye = self.doc.model_transform.inverse_point(camera.eye());
-	return self.preview_scale > 0.0f ? eye / self.preview_scale : eye;
+	return self.placement().inverse_point(camera.eye()) / self.drawn_scale();
 }
 
 <*
  The size the model is drawn at: its own, or what a live Scale drag has it at.
 *>
 fn float Character.shown_scale(&self) => self.preview_scale > 0.0f ? self.preview_scale : 1.0f;
+
+<* The size it is drawn at in the scene: `shown_scale` times the size matched to a level copy. *>
+fn float Character.drawn_scale(&self) => self.shown_scale() * (self.stage_scale > 0.0f ? self.stage_scale : 1.0f);
+
+<* Where it is drawn: where a cutscene preview stands it, else its own placement. *>
+fn ProjectTransform Character.placement(&self) => self.staged ? self.staged_place : self.doc.model_transform;
 
 fn Vec3 Character.model_direction(&self, Vec3 world_direction) => model_direction(&self.doc, world_direction);
 
@@ -110,6 +115,13 @@ fn bool AppState.begin_transform_target(
 	Vec3* explicit_pivot = null)
 {
 	if (self.transform_transaction.active || !target.supported()) return false;
+	// The preview stands characters where the cutscene has them, not where they are; a one-off being
+	// edited still poses its joints there.
+	if (self.staged && !(self.one_off_here() && target.kind == JOINT_TARGETS))
+	{
+		self.@notice("leave the cutscene preview to move or pose a character");
+		return false;
+	}
 	// A scale is the whole model's, and refused where `scale_model_by` would
 	// refuse it, so the release never lands on a no.
 	if (operation == SCALE_TRANSFORM && (target.kind != MODEL_TARGET || self.pose_edit_active)) return false;

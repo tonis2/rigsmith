@@ -145,6 +145,10 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case OPEN_SCENE: return { "Open scene", "Open" };
 		case SAVE_SCENE: return { "Save scene as", "Save" };
 		case EXPORT_SCENE: return { "Export the scene to", "Export" };
+		case OPEN_LEVEL: return { "Open level", "Open" };
+		case EXPORT_CUTSCENE: return { "Export the cutscene to", "Export" };
+		case ADD_ACTOR: return { "Add an actor from its file", "Add" };
+		case TAKE_LEVEL_ACTOR: return { "The level character's own file", "Use" };
 		default: return { "Open model", "Open" };
 	}
 }
@@ -425,6 +429,19 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			(void)app.save_scene(path);
 		case EXPORT_SCENE:
 			(void)app.export_scene(path.ends_with(".glb") ? path : string::tformat("%s.glb", path));
+		case OPEN_LEVEL:
+			// Framed when there is nobody to look at yet.
+			(void)app.open_level(path, frame: !app.has_mesh());
+		case EXPORT_CUTSCENE:
+			bool named = path.ends_with(".glb") || path.ends_with(".gltf");
+			(void)app.export_cutscene(named ? path : string::tformat("%s.cutscene.glb", path));
+		case ADD_ACTOR:
+			(void)app.add_actor_from_file(path, ground: level_shown());
+		case TAKE_LEVEL_ACTOR:
+			String node = app.cut_pending_node;
+			app.cut_pending_node = "";
+			defer if (node.len > 0) alloc::free(mem, node.ptr);
+			if (node.len > 0) (void)app.take_level_actor(node, path);
 		case EXPORT_TARGET:
 			// The chooser was opened from the export panel's Browse, and the
 			// panel is still up behind it: this answers where, and the panel's

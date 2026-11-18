@@ -305,6 +305,17 @@ fn void AppState.stepped_history(&self, bool had_draft)
 *>
 fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips = {}, ExportMotion motion = {})
 {
+	// The file an export writes becomes the character's own, which a one-off never enters.
+	if (self.one_off_here())
+	{
+		self.@notice("go back to the cutscene first: an export writes the character's own clips");
+		return;
+	}
+	if (self.level_read)
+	{
+		self.@notice("%s is read from the level and has no mesh of its own to export", self.label());
+		return;
+	}
 	if (!self.has_mesh())
 	{
 		self.@notice("no model loaded — there is nothing to rig");
@@ -620,6 +631,11 @@ fn usz joints_holding_no_skin(float[] skin, usz vertices, usz joints)
 *>
 fn void AppState.export_clips_only(&self, String destination, AnimTemplate[] clips, ExportMotion motion = {})
 {
+	if (self.one_off_here())
+	{
+		self.@notice("go back to the cutscene first: an export writes the character's own clips");
+		return;
+	}
 	if (clips.len == 0)
 	{
 		self.@notice("nothing to write — tick some animations, or turn Export rig back on");
@@ -741,6 +757,17 @@ fn void AppState.export_clips_only(&self, String destination, AnimTemplate[] cli
 *>
 fn void AppState.save_session(&self)
 {
+	if (self.level_read)
+	{
+		self.@notice("%s is read from the level and is never saved: Rigsmith does not write the level", self.label());
+		return;
+	}
+	// A one-off being edited is the cutscene's: the save writes the character's own state.
+	self.@as_own_character() { self.save_own_session(); };
+}
+
+fn void AppState.save_own_session(&self)
+{
 	if (self.source_path.len == 0)
 	{
 		self.@notice("no mesh path to save beside");
@@ -859,6 +886,11 @@ fn void AppState.save_session(&self)
  beside — an empty rig, or a copy that could not be made. See `save_session`.
 *>
 fn void AppState.save_beside_mesh(&self)
+{
+	self.@as_own_character() { self.save_own_beside_mesh(); };
+}
+
+fn void AppState.save_own_beside_mesh(&self)
 {
 	// Beside a mesh the old size, a resized rig's document would reopen wrong.
 	if (self.mesh_resized)

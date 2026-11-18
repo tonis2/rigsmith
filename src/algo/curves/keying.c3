@@ -227,6 +227,7 @@ fn AnimTemplate clip_with_frames(Allocator allocator, AnimTemplate source, AnimK
 		.pins = pins_copy(allocator, source.pins),
 		.paths = anim_paths_copy(allocator, source.paths),
 		.gait = source.gait.copy(allocator),
+		.travel = source.travel,
 		.owned = true,
 	};
 }
@@ -550,6 +551,8 @@ fn AnimTemplate clip_retimed(Allocator allocator, AnimTemplate source, float dur
 	}
 	AnimTemplate out = clip_copy(allocator, source);
 	out.duration = duration;
+	// The same stride over a longer cycle is a slower walk.
+	out.travel.speed = source.travel.speed / scale;
 	// Layers keep their place in the cycle: their times scale with the keys.
 	free_layers(allocator, out.layers);
 	out.layers = layers_copy(allocator, source.layers, scale);

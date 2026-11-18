@@ -75,6 +75,11 @@ import gltf;
 *>
 three::Scene* stage @local = null;
 
+// The scene crig draws into, for the other engine files; null before the first sync.
+fn three::Scene* stage_scene() @inline => stage;
+// Whether a 3D view was on screen at the last sync.
+fn bool stage_pane_shown() @inline => pane_on_screen;
+
 <*
  The model's nodes: one in Solid and Wireframe, one per material in Textured —
  three draws one texture per mesh, so a model painted with three materials is
@@ -236,6 +241,8 @@ fn void sync_scene(AppState* app)
 		floor_node = three::NO_NODE;
 		floor_built = false;
 		foreach (&draw : prop_draws) *draw = {};
+		level_lost_stage();
+		cut_paths_lost_stage();
 	}
 	if (stage == null) return;
 
@@ -256,6 +263,8 @@ fn void sync_scene(AppState* app)
 		sync_props(app, c);
 	}
 	sync_floor(app);
+	sync_level(app);
+	sync_cutscene_paths(app);
 	// Last: a ghost is a copy of the model's own draws, so they have to exist.
 	sync_ghosts(app);
 }
@@ -426,8 +435,9 @@ fn void sync_props(AppState* app, Character* c) @local
 			float height = skeleton.height();
 			// A palette for another rig than this one is no pose of it: rest instead.
 			Matrix4f[] palette = c.pose_palette.len == skeleton.len() ? c.pose_palette : (Matrix4f[]){};
-			Quaternionf turn = c.doc.model_transform.orientation();
-			float scale = c.shown_scale();
+			ProjectTransform place = c.placement();
+			Quaternionf turn = place.orientation();
+			float scale = c.drawn_scale();
 			foreach (prop : c.doc.props.array_view())
 			{
 				float length = prop.length * height;
@@ -443,7 +453,7 @@ fn void sync_props(AppState* app, Character* c) @local
 				if (!draw.node.is_set()) continue;
 
 				PropFrame frame = prop_frame(&skeleton, palette, (usz)joint, prop);
-				stage.set_position(draw.node, c.doc.model_transform.location + turn.rotate_vec3(frame.at * scale));
+				stage.set_position(draw.node, place.location + turn.rotate_vec3(frame.at * scale));
 				stage.set_quaternion(draw.node, turn.mul(frame.turn).normalize());
 				stage.set_scale(draw.node, { scale, scale, scale });
 				stage.set_color(draw.node, { shade, shade, shade, 1.0f });
@@ -640,7 +650,7 @@ fn void sync_ghosts(AppState* app) @local
 	// The ghosts are the character being edited's, drawn over its own assets.
 	ModelSlot* s = focus_slot(app);
 	bool usable = s && s.built && s.drawn_skinned && s.count > 0 && s.count <= MAX_GHOST_DRAWS
-		&& s.drawn_shading != ShadingMode.WIREFRAME;
+		&& s.drawn_shading != ShadingMode.WIREFRAME && !app.staged;
 	GhostPose[] ghosts = usable ? app.ghost_poses() : (GhostPose[]){};
 	if (ghosts.len == 0)
 	{
@@ -1164,7 +1174,7 @@ fn void drop_surface(ModelSlot* s) @local
  the ordering matters on each of them — after the new asset is in, so the sweep
  sees the old one unreferenced and the new one held.
 *>
-fn void sweep_assets() @local
+fn void sweep_assets()
 {
 	stage_pass().assets.unload_unused(&stage_renderer().gpu);
 }
@@ -1185,10 +1195,10 @@ fn void sweep_assets() @local
 *>
 fn void place_model(AppState* app, ModelSlot* s, Character* c) @local
 {
-	bool moved = !s.transform_placed || !s.drawn_transform.same(c.doc.model_transform)
-		|| s.drawn_scale != c.shown_scale();
-	s.drawn_transform = c.doc.model_transform;
-	s.drawn_scale = c.shown_scale();
+	ProjectTransform place = c.placement();
+	bool moved = !s.transform_placed || !s.drawn_transform.same(place) || s.drawn_scale != c.drawn_scale();
+	s.drawn_transform = place;
+	s.drawn_scale = c.drawn_scale();
 	s.transform_placed = true;
 	bool focus = c == &app.focus;
 	s.drawn_focus = focus;
@@ -1301,8 +1311,10 @@ fn void sync_views(AppState* app) @local
 					primary_eye = camera.eye();
 					primary_near = camera.near_plane;
 				}
+				three::Camera seen = scene_camera(camera);
+				seen.far_plane = level_far_plane(camera.eye(), seen.far_plane);
 				views[at++] = {
-					.camera = scene_camera(camera),
+					.camera = seen,
 					.rect = {
 						elem.absolute.x / ui.size.x,
 						elem.absolute.y / ui.size.y,
@@ -1366,7 +1378,8 @@ fn void sync_floor(AppState* app) @local
 {
 	bool drawn;
 	foreach (&slot : slots) drawn = drawn || (slot.character != 0 && slot.built);
-	bool wanted = !app.config.hide_floor && drawn;
+	// A level is its own ground.
+	bool wanted = !app.config.hide_floor && drawn && !level_in_view();
 	if (wanted)
 	{
 		ulong key = floor_key_of(app);

@@ -539,134 +539,7 @@ fn String session_text(
 		foreach (usz c, clip : clips)
 		{
 			if (c > 0) text.append_char(',');
-			text.append_string(`{"name":`);
-			append_json_string(&text, clip.name);
-			text.appendf(`,"duration":%s,"loop":%s,"blend":"%s"`,
-				(JsonFloat)clip.duration, clip.loop, clip.blend == SMOOTH ? "smooth" : "linear")!!;
-			if (clip.ground.solves() || clip.ground.floor_set)
-			{
-				text.append_string(`,"ground":{`);
-				if (clip.ground.floor_set) text.appendf(`"floor":%s,`, (JsonFloat)clip.ground.floor)!!;
-				text.append_string(`"feet":[`);
-				foreach (usz f, foot : clip.ground.feet)
-				{
-					if (f > 0) text.append_char(',');
-					text.append_string(`{"joint":`); append_json_string(&text, foot.joint);
-					text.appendf(`,"down":%s,"up":%s`, (JsonFloat)foot.down, (JsonFloat)foot.up)!!;
-					text.append_string(foot.off_floor ? `,"off_floor":true}` : "}");
-				}
-				text.append_string("]}");
-			}
-			text.append_string(`,"keys":[`);
-			foreach (usz k, key : clip.keyframes)
-			{
-				if (k > 0) text.append_char(',');
-				text.appendf(`{"time":%s,"dots":[`, (JsonFloat)key.time)!!;
-				append_key_dots(&text, key.dots);
-				text.append_string("]}");
-			}
-			text.append_string("]");
-			if (clip.layers.len > 0)
-			{
-				text.append_string(`,"layers":[`);
-				uint[] rows = alloc::new_array(tmem, uint, (sz)clip.layers.len);
-				layers_settled_tracks(clip.layers, clip.duration, rows);
-				foreach (usz l, &layer : clip.layers)
-				{
-					if (l > 0) text.append_char(',');
-					text.append_char('{');
-					AnimLayer stated = *layer;
-					stated.track = rows[l];
-					append_layer_fields(&text, &stated);
-					if (!layer.procedural())
-					{
-						text.append_string(`,"keys":[`);
-						foreach (usz k, key : layer.keyframes)
-						{
-							if (k > 0) text.append_char(',');
-							text.appendf(`{"time":%s,"dots":[`, (JsonFloat)key.time)!!;
-							append_key_dots(&text, key.dots);
-							text.append_string("]}");
-						}
-						text.append_char(']');
-					}
-					text.append_char('}');
-				}
-				text.append_char(']');
-			}
-			if (clip.aim_targets.len > 0)
-			{
-				text.append_string(`,"aim_targets":[`);
-				foreach (usz t, &target : clip.aim_targets)
-				{
-					if (t > 0) text.append_char(',');
-					text.append_string(`{"name":`); append_json_string(&text, target.name);
-					text.appendf(`,"mute":%s,"keys":[`, target.mute)!!;
-					foreach (usz k, key : target.keys)
-					{
-						if (k > 0) text.append_char(',');
-						text.appendf(`{"time":%s,"at":%s`, (JsonFloat)key.time, (JsonVec3)key.at)!!;
-						if (key.interpolation != INHERIT) text.appendf(`,"interp":"%s"`, key.interpolation.serialized())!!;
-						text.append_char('}');
-					}
-					text.append_string("]}");
-				}
-				text.append_char(']');
-			}
-			if (clip.aims.len > 0)
-			{
-				text.append_string(`,"aims":[`);
-				foreach (usz a, &aim : clip.aims)
-				{
-					if (a > 0) text.append_char(',');
-					text.append_string(`{"joint":`); append_json_string(&text, aim.joint);
-					text.append_string(`,"target":`); append_json_string(&text, aim.target);
-					text.appendf(`,"forward":%s,"spread":%d,"weights":[%s,%s,%s,%s],"influence":%s,"mute":%s}`,
-						(JsonVec3)aim.forward, aim.spread,
-						(JsonFloat)aim.weights[0], (JsonFloat)aim.weights[1],
-						(JsonFloat)aim.weights[2], (JsonFloat)aim.weights[3],
-						(JsonFloat)aim.influence, aim.mute)!!;
-				}
-				text.append_char(']');
-			}
-			if (clip.pins.len > 0)
-			{
-				text.append_string(`,"pins":[`);
-				foreach (usz n, &pin : clip.pins)
-				{
-					if (n > 0) text.append_char(',');
-					text.append_string(`{"joint":`); append_json_string(&text, pin.joint);
-					text.appendf(`,"position":%s,"rotation":%s,"at":%s,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s`,
-						pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
-						(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
-					if (pin.travel.length_sq() > 0.0f) text.appendf(`,"travel":%s`, (JsonVec3)pin.travel)!!;
-					if (pin.relative())
-					{
-						text.append_string(`,"relative_to":`);
-						append_json_string(&text, pin.relative_to);
-					}
-					text.append_char('}');
-				}
-				text.append_char(']');
-			}
-			if (clip.gait.set)
-			{
-				text.append_string(`,"gait":`);
-				append_gait_preset(&text, &clip.gait);
-			}
-			if (clip.paths.len > 0)
-			{
-				text.append_string(`,"paths":[`);
-				foreach (usz p, &path : clip.paths)
-				{
-					if (p > 0) text.append_char(',');
-					text.append_char('{');
-					append_path_fields(&text, path);
-					text.append_char('}');
-				}
-				text.append_char(']');
-			}
-			text.append_char('}');
+			append_session_clip(&text, clip);
 		}
 		text.append_char(']');
 	}
@@ -688,6 +561,140 @@ fn String session_text(
 
 	text.append_string("\n}\n");
 	return text.copy_str(allocator);
+}
+
+<* One clip as a session writes it among its authored clips, and as a scene keeps a one-off. *>
+fn void append_session_clip(DString* text, AnimTemplate clip)
+{
+	text.append_string(`{"name":`);
+	append_json_string(text, clip.name);
+	text.appendf(`,"duration":%s,"loop":%s,"blend":"%s"`,
+		(JsonFloat)clip.duration, clip.loop, clip.blend == SMOOTH ? "smooth" : "linear")!!;
+	if (clip.ground.solves() || clip.ground.floor_set)
+	{
+		text.append_string(`,"ground":{`);
+		if (clip.ground.floor_set) text.appendf(`"floor":%s,`, (JsonFloat)clip.ground.floor)!!;
+		text.append_string(`"feet":[`);
+		foreach (usz f, foot : clip.ground.feet)
+		{
+			if (f > 0) text.append_char(',');
+			text.append_string(`{"joint":`); append_json_string(text, foot.joint);
+			text.appendf(`,"down":%s,"up":%s`, (JsonFloat)foot.down, (JsonFloat)foot.up)!!;
+			text.append_string(foot.off_floor ? `,"off_floor":true}` : "}");
+		}
+		text.append_string("]}");
+	}
+	append_clip_travel(text, clip.travel);
+	text.append_string(`,"keys":[`);
+	foreach (usz k, key : clip.keyframes)
+	{
+		if (k > 0) text.append_char(',');
+		text.appendf(`{"time":%s,"dots":[`, (JsonFloat)key.time)!!;
+		append_key_dots(text, key.dots);
+		text.append_string("]}");
+	}
+	text.append_string("]");
+	if (clip.layers.len > 0)
+	{
+		text.append_string(`,"layers":[`);
+		uint[] rows = alloc::new_array(tmem, uint, (sz)clip.layers.len);
+		layers_settled_tracks(clip.layers, clip.duration, rows);
+		foreach (usz l, &layer : clip.layers)
+		{
+			if (l > 0) text.append_char(',');
+			text.append_char('{');
+			AnimLayer stated = *layer;
+			stated.track = rows[l];
+			append_layer_fields(text, &stated);
+			if (!layer.procedural())
+			{
+				text.append_string(`,"keys":[`);
+				foreach (usz k, key : layer.keyframes)
+				{
+					if (k > 0) text.append_char(',');
+					text.appendf(`{"time":%s,"dots":[`, (JsonFloat)key.time)!!;
+					append_key_dots(text, key.dots);
+					text.append_string("]}");
+				}
+				text.append_char(']');
+			}
+			text.append_char('}');
+		}
+		text.append_char(']');
+	}
+	if (clip.aim_targets.len > 0)
+	{
+		text.append_string(`,"aim_targets":[`);
+		foreach (usz t, &target : clip.aim_targets)
+		{
+			if (t > 0) text.append_char(',');
+			text.append_string(`{"name":`); append_json_string(text, target.name);
+			text.appendf(`,"mute":%s,"keys":[`, target.mute)!!;
+			foreach (usz k, key : target.keys)
+			{
+				if (k > 0) text.append_char(',');
+				text.appendf(`{"time":%s,"at":%s`, (JsonFloat)key.time, (JsonVec3)key.at)!!;
+				if (key.interpolation != INHERIT) text.appendf(`,"interp":"%s"`, key.interpolation.serialized())!!;
+				text.append_char('}');
+			}
+			text.append_string("]}");
+		}
+		text.append_char(']');
+	}
+	if (clip.aims.len > 0)
+	{
+		text.append_string(`,"aims":[`);
+		foreach (usz a, &aim : clip.aims)
+		{
+			if (a > 0) text.append_char(',');
+			text.append_string(`{"joint":`); append_json_string(text, aim.joint);
+			text.append_string(`,"target":`); append_json_string(text, aim.target);
+			text.appendf(`,"forward":%s,"spread":%d,"weights":[%s,%s,%s,%s],"influence":%s,"mute":%s}`,
+				(JsonVec3)aim.forward, aim.spread,
+				(JsonFloat)aim.weights[0], (JsonFloat)aim.weights[1],
+				(JsonFloat)aim.weights[2], (JsonFloat)aim.weights[3],
+				(JsonFloat)aim.influence, aim.mute)!!;
+		}
+		text.append_char(']');
+	}
+	if (clip.pins.len > 0)
+	{
+		text.append_string(`,"pins":[`);
+		foreach (usz n, &pin : clip.pins)
+		{
+			if (n > 0) text.append_char(',');
+			text.append_string(`{"joint":`); append_json_string(text, pin.joint);
+			text.appendf(`,"position":%s,"rotation":%s,"at":%s,"orient":%s,"from":%s,"to":%s,"blend":%s,"mute":%s`,
+				pin.position, pin.rotation, (JsonVec3)pin.at, (JsonQuat)pin.orient,
+				(JsonFloat)pin.from, (JsonFloat)pin.to, (JsonFloat)pin.blend, pin.mute)!!;
+			if (pin.travel.length_sq() > 0.0f) text.appendf(`,"travel":%s`, (JsonVec3)pin.travel)!!;
+			if (pin.relative())
+			{
+				text.append_string(`,"relative_to":`);
+				append_json_string(text, pin.relative_to);
+			}
+			text.append_char('}');
+		}
+		text.append_char(']');
+	}
+	if (clip.gait.set)
+	{
+		text.append_string(`,"gait":`);
+		append_gait_preset(text, &clip.gait);
+	}
+	if (clip.paths.len > 0)
+	{
+		text.append_string(`,"paths":[`);
+		foreach (usz p, &path : clip.paths)
+		{
+			if (p > 0) text.append_char(',');
+			text.append_char('{');
+			append_path_fields(text, path);
+			text.append_char('}');
+		}
+		text.append_char(']');
+	}
+	text.append_char('}');
 }
 
 // One key's entries as JSON objects, comma separated; shared by clips and poses.
@@ -865,6 +872,7 @@ fn AnimTemplate? parse_session_clip(Allocator allocator, Object* entry) @private
 	clip.duration = clip_duration;
 	clip.loop = loop;
 	clip.blend = blend == "smooth" ? SMOOTH : LINEAR;
+	clip.travel = read_clip_travel(entry);
 	clip.keyframes = alloc::new_array(allocator, AnimKeyframe, keys.get_len());
 	if (try Object* ground = entry.get("ground"))
 	{

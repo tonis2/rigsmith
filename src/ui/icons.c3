@@ -37,6 +37,7 @@ const String ICON_FALLOFF = $embed("../../assets/icons/strip/falloff.svg");
 const String ICON_FALLOFF_INNER = $embed("../../assets/icons/strip/falloff_inner.svg");
 const String ICON_FALLOFF_OUTER = $embed("../../assets/icons/strip/falloff_outer.svg");
 const String ICON_UNUSED = $embed("../../assets/icons/strip/unused.svg");
+const String ICON_COLLIDERS = $embed("../../assets/icons/strip/colliders.svg");
 const String ICON_DISC = $embed("../../assets/icons/strip/disc.svg");
 const String ICON_ERASER = $embed("../../assets/icons/strip/eraser.svg");
 const String ICON_UNDO = $embed("../../assets/icons/strip/undo.svg");

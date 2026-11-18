@@ -1,0 +1,50 @@
+{
+	"asset": {
+		"version": "2.0",
+		"generator": "hand-written"
+	},
+	"extensionsUsed": [
+		"CUSTOM_cutscene"
+	],
+	"scene": 0,
+	"scenes": [
+		{
+			"name": "bad",
+			"nodes": [
+				0
+			]
+		}
+	],
+	"nodes": [
+		{
+			"name": "hero"
+		}
+	],
+	"extensions": {
+		"CUSTOM_cutscene": {
+			"version": 1,
+			"name": "bad",
+			"duration": 1.0,
+			"actors": [
+				{
+					"row": "hero",
+					"node": 0,
+					"place": {
+						"position": [
+							0,
+							0,
+							0
+						],
+						"rotation": [
+							0,
+							0,
+							0,
+							1
+						]
+					},
+					"strips": []
+				}
+			]
+		}
+	}
+}

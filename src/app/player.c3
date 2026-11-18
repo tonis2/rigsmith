@@ -439,6 +439,8 @@ fn void AppState.refresh_animation(&self, float dt = 0.0f)
 
 	rig::Pose pose = self.sampled_pose(mem, &view);
 	defer pose.free(mem);
+	// A cutscene preview fading between two strips mixes the one it leaves in.
+	self.mix_cut_fade(&view, &pose);
 
 	// Kept for the joint panel before the dynamic bones move it: the panel shows
 	// the clip's own value for a joint, which is this pose, not the jiggled one —

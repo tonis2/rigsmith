@@ -603,6 +603,9 @@ fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitC
 	// Held props stay out of renders (rules/posing.md), until the frame is read back.
 	hide_props_for_render(true);
 	defer hide_props_for_render(false);
+	// And the level, so a training picture holds the body alone.
+	hide_level_for_render(true);
+	defer hide_level_for_render(false);
 	sync_scene(app);
 	three::MeshPass* pass = stage_pass();
 	three::SceneView[] none = { };

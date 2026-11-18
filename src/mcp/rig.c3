@@ -1130,6 +1130,38 @@ fn String? step_history(AppState* app, Object* args, bool forward, DString* deta
 		}
 	}
 
+	bool cutscene = false;
+	if (args != null && args.is_keyable() && member(args, "history") != null)
+	{
+		String? which = args.get_string("history");
+		if (catch which)
+		{
+			detail.append_string(`"history" is "rig" or "cutscene"`);
+			return RIG_REFUSED~;
+		}
+		switch (which)
+		{
+			case "rig": cutscene = false;
+			case "cutscene": cutscene = true;
+			default:
+				detail.appendf(`"history" is "%s"; it is "rig", the character's, or "cutscene", the scene's cutscenes`, which);
+				return RIG_REFUSED~;
+		}
+	}
+	if (cutscene)
+	{
+		usz stepped = 0;
+		for (usz i = 0; i < steps; i++)
+		{
+			if (!(forward ? app.redo_cutscene() : app.undo_cutscene())) break;
+			stepped++;
+		}
+		app.refresh_ui();
+		String cast = cutscenes_json(app);
+		defer cast.free(mem);
+		return string::format(mem, `{"stepped":%d,%s`, stepped, cast[1..]);
+	}
+
 	usz moved = 0;
 	for (usz i = 0; i < steps; i++)
 	{

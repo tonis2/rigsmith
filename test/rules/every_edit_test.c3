@@ -87,6 +87,12 @@ const String[2][*] EXCUSED @local = {
 	{ "close_loop", "needs a clip with an open seam; mcp_test covers it" },
 	{ "add_character", "changes the scene, not a document" }, { "remove_character", "changes the scene, not a document" },
 	{ "open_scene", "changes the scene, not a document" }, { "save_scene", "writes a file" }, { "export_scene", "writes a file" },
+	{ "open_level", "changes the scene, not a document" }, { "close_level", "changes the scene, not a document" },
+	{ "get_level", "reads" }, { "ground_at", "reads" },
+	{ "get_cutscenes", "reads" }, { "get_cutscene", "reads" }, { "select_cutscene", "changes the view" },
+	{ "set_cutscene_time", "changes the view" }, { "add_actor", "changes the scene, not a document" },
+	{ "set_cutscene", "edits the scene's cutscenes, on their own history; cutscene_app_test covers it" },
+	{ "export_cutscene", "writes a file" },
 	{ "undo", "is what this checks" }, { "redo", "is what this checks" },
 };
 

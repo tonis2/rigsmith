@@ -136,6 +136,7 @@ struct Viewport (Widget)
 	bool maybe_pick_model;
 	usz maybe_drag_aim; // 1 + the handle index of the target ring pressed; a drag past CLICK_SLOP moves the target
 	PathPress maybe_path; // a motion path's point or slice pressed; a drag past CLICK_SLOP moves it
+	CutKnotPress cut_knot_press; // a cutscene path's knot pressed; a drag past CLICK_SLOP moves it
 	uint maybe_drag_dot; // selected on press; becomes a pose (or, on Joints, a rest) drag past CLICK_SLOP
 	Vec2 press_at;
 
@@ -336,6 +337,8 @@ const String PROMPT_NO_RIG @private = "no skeleton · Rig > Apply body plan";
 *>
 fn String prompt_text(AppState* app) @private
 {
+	// Read from the level: the level draws it.
+	if (app.level_read) return "";
 	if (!app.has_mesh()) return PROMPT_NO_MESH;
 	if (app.doc.dots.len() == 0) return PROMPT_NO_RIG;
 	return "";
@@ -468,6 +471,7 @@ fn void Viewport.paint(&self, Element* elem, Painter* painter) @dynamic
 	// points are this pane's pixels and mean nothing in the one next door.
 	if (self.lasso_now) self.paint_lasso(painter, app);
 	self.paint_annotations(painter, app, elem.size);
+	self.paint_cut_knots(elem, painter, app);
 
 	// The global watch schedules paints for the active camera; the value itself is
 	// pane-local so split views may be aimed independently.
@@ -1329,6 +1333,7 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 *>
 fn String placement_refused(AppState* app) @private
 {
+	if (app.level_read) return "this character is read from the level: its rig is the level's";
 	if (!app.has_mesh()) return "empty scene — File > Import .glb brings a character in";
 	if (!app.show_rig) return "the rig is hidden — View > Skeleton brings it back";
 	if (app.animating) return "stop the clip to place joints: the body on screen is posed";
@@ -1357,6 +1362,33 @@ fn bool Viewport.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 	}
 }
 
+// The click a turn's point or a path's next knot waits for: the ground under the pointer, or a right click to give it up.
+fn void Viewport.press_cut_pick(&self, Element* elem, AppState* app, MouseEvent event)
+{
+	if (event.button == RIGHT)
+	{
+		app.cancel_cut_pick();
+	}
+	else
+	{
+		OrbitCamera* camera = self.view_camera(elem);
+		GroundHit hit;
+		if (try Vec3 direction = camera.ray_direction(event.pos, elem.size))
+		{
+			hit = cut_ground_along({ .origin = camera.eye(), .direction = direction.normalize() });
+		}
+		if (!hit.hit)
+		{
+			app.@notice("no ground there · click the level's ground, or Esc");
+			return;
+		}
+		(void)app.finish_cut_pick(hit.point);
+	}
+	refresh_cutscene_view(elem.ui);
+	app.refresh_ui();
+	elem.request_paint();
+}
+
 // The mouse went down in the view.
 fn bool Viewport.on_press(&self, Element* elem, MouseEvent event, AppState* app, Input* input)
 {
@@ -1381,6 +1413,21 @@ fn bool Viewport.on_press(&self, Element* elem, MouseEvent event, AppState* app,
 			elem.request_paint();
 			return true;
 		}
+	}
+
+	// A turn waiting for its point takes the next click on the ground, and a right click gives it up.
+	if (app.cut_pick != NONE && (event.button == LEFT || event.button == RIGHT))
+	{
+		self.press_cut_pick(elem, app, event);
+		return true;
+	}
+
+	// The picked walk path's knots and line are over everything else in the view.
+	if (event.button == LEFT && self.press_cut_knots(elem, app, event.pos)) return true;
+	if (app.cut_knot_pick > 0)
+	{
+		app.cut_knot_pick = 0;
+		elem.request_paint();
 	}
 
 	switch (event.button)
@@ -1807,6 +1854,7 @@ fn bool Viewport.on_pointer_move(&self, Element* elem, MouseEvent event, AppStat
 		}
 	}
 
+	if (self.move_cut_knots(elem, app, event.pos)) return true;
 	if (self.move_paths(elem, app, event.pos)) return true;
 
 	if (self.maybe_drag_aim != 0)
@@ -1920,6 +1968,7 @@ fn bool Viewport.on_release(&self, Element* elem, MouseEvent event, AppState* ap
 	switch (event.button)
 	{
 		case LEFT:
+			if (self.release_cut_knots(elem, app)) return true;
 			if (app.transform_interaction.active && app.transform_interaction.held)
 			{
 				(void)app.finish_transform_interaction(true);

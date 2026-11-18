@@ -158,6 +158,10 @@ struct AnimImportOptions
 	 finds them, and the rest keep the file's spelling and their weights.
 	*>
 	bool keep_unmatched;
+
+	// Read the joints in node `armature`'s own space, unturned: a character standing in a level.
+	bool armature_space;
+	uint armature;
 }
 
 <*
@@ -309,7 +313,7 @@ fn AnimTemplate? import_animation(
 	}
 	// Once for the rest and every sample alike, so every pose is read through the
 	// same turn.
-	NodeWorld origin = source_origin(stream);
+	NodeWorld origin = read_origin(stream, rest_local, options);
 	world_transforms(stream, rest_local, rest_world, origin);
 
 	// --- joints -------------------------------------------------------------
@@ -576,6 +580,8 @@ fn AnimTemplate? import_animation(
 		.loop = true,
 		.owned = true,
 	};
+	// Taken off the treadmill, the walk keeps the stride it had.
+	if (tally.travel_removed) imported.travel = travel_taken({}, ground_travel, sampled[(sz)samples - 1] - start, height);
 	imported.compile_tracks(allocator);
 	return imported;
 }
@@ -687,7 +693,7 @@ fn rig::Skeleton? read_rest_skeleton(
 	{
 		local[i] = node_rest(stream.gltf.nodes.get_ref((sz)i), &scaled);
 	}
-	world_transforms(stream, local, world, source_origin(stream));
+	world_transforms(stream, local, world, read_origin(stream, local, options));
 
 	AnimImportReport tally = {};
 	mark_joints(stream, anim, { .skin = skin }, wanted, &tally.unnamed_joints);
@@ -803,7 +809,7 @@ fn void free_paths(Allocator allocator, String[] paths)
 // rotation and scale, never as both. The parser fills in defaults for whichever
 // form is absent, so a matrix that is not the identity is the only signal left
 // that the file chose that one.
-fn NodeTransform node_rest(gltf::Node* node, bool* scaled) @local
+fn NodeTransform node_rest(gltf::Node* node, bool* scaled)
 {
 	if (!is_identity_matrix(node.matrix)) return decompose(node.matrix, scaled);
 
@@ -865,7 +871,7 @@ fn NodeTransform decompose(Matrix4f m, bool* scaled) @local
 // Every node's transform in world terms, walked down from each root. Nodes
 // outside any scene are walked too: a skeleton left out of the default scene is
 // still the skeleton the channels are aimed at.
-fn void world_transforms(gltf::GltfStream* stream, NodeTransform[] local, NodeWorld[] out, NodeWorld origin) @local
+fn void world_transforms(gltf::GltfStream* stream, NodeTransform[] local, NodeWorld[] out, NodeWorld origin)
 {
 	usz nodes = (usz)stream.gltf.nodes.len();
 	for (usz i = 0; i < nodes; i++)
@@ -875,6 +881,32 @@ fn void world_transforms(gltf::GltfStream* stream, NodeTransform[] local, NodeWo
 }
 
 const NodeWorld NODE_ORIGIN @local = { .rotation = quaternion::IDENTITY, .position = { 0, 0, 0 }, .scale = { 1, 1, 1 } };
+
+<* The placement that undoes this one, for a uniform scale. *>
+fn NodeWorld NodeWorld.inverse(self)
+{
+	Quaternionf back = self.rotation.invert().normalize();
+	float s = math::abs(self.scale.y) > 1e-9f ? 1.0f / self.scale.y : 1.0f;
+	return { .rotation = back, .position = -back.rotate_vec3(self.position) * s, .scale = { s, s, s } };
+}
+
+<* Every node's place in the file's own world, unturned. The caller frees the array. *>
+fn NodeWorld[] file_world(Allocator allocator, gltf::GltfStream* stream, NodeTransform[] local)
+{
+	NodeWorld[] world = alloc::new_array(allocator, NodeWorld, (sz)stream.gltf.nodes.len());
+	world_transforms(stream, local, world, NODE_ORIGIN);
+	return world;
+}
+
+// Where a read stands the file: in its armature's own space when asked, else turned to face +Z.
+fn NodeWorld read_origin(gltf::GltfStream* stream, NodeTransform[] local, AnimImportOptions options) @local
+{
+	if (!options.armature_space) return source_origin(stream);
+	if ((usz)options.armature >= (usz)stream.gltf.nodes.len()) return NODE_ORIGIN;
+	NodeWorld[] world = file_world(mem, stream, local);
+	defer free(world);
+	return world[options.armature].inverse();
+}
 
 <*
  Where a file's figure is stood before anything is read out of it: turned half

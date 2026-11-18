@@ -523,6 +523,19 @@ struct AnimTrack
 }
 
 <*
+ How far a clip's hips carried the figure across the floor before it was made in
+ place, and how fast, in rig heights and rig heights a second as its keys are.
+ Zero for a clip that never travelled; an in-place walk keeps its stride by it.
+*>
+struct AnimTravel
+{
+	float distance;
+	float speed;
+}
+
+fn bool AnimTravel.known(self) => self.distance > 0.0f && self.speed > 0.0f;
+
+<*
  A named, reusable animation.
 
  `owned` separates a template an importer allocated from one written out as a
@@ -558,6 +571,8 @@ struct AnimTemplate
 	// The gait the clip was written from, when it was; see algo/motion/gait.c3. Kept so
 	// the viewport can write it again with a longer stride or another gait.
 	AnimGaitPreset gait;
+	// How far the hips carried the figure before it was made in place; see AnimTravel.
+	AnimTravel travel;
 	AnimTrack[] tracks; // compiled sparse lookup, owned with an owned template
 	bool tracks_compiled;
 	bool owned; // heap-allocated; false for a template written out as a constant

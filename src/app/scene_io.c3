@@ -31,35 +31,57 @@ fn bool AppState.save_scene(&self, String path)
 
 	for (usz i = 0; i < self.character_count(); i++)
 	{
-		if (self.character(i).source_path.len == 0)
+		// One read from the level is found again by its level node, and never saved.
+		if (self.character(i).source_path.len == 0 && !self.character(i).level_read)
 		{
 			self.@notice("a character built in memory has no file — export it first");
 			return false;
 		}
 	}
 
+	// A one-off's latest edit is in the cutscene saved here, and never in its character's files.
+	self.sync_one_off_now();
+	bool editing_one_off = self.one_off.open;
+	// Each character's own clip and time are saved, not the preview's.
+	bool previewing = self.cut_preview && !editing_one_off;
+	if (!editing_one_off) self.leave_cutscene_preview();
+	defer if (previewing) (void)self.set_cutscene_preview(true);
 	self.read_scene_clock();
 	SceneFile scene = { .active = self.active, .time = self.scene_time };
+	if (self.level_path.len > 0) scene.level = self.level_path.copy(mem);
 	scene.characters = alloc::new_array(mem, SceneCharacter, (sz)self.character_count());
 	defer scene.free(mem);
+	if (self.cutscenes.len() > 0)
+	{
+		scene.cutscenes = alloc::new_array(mem, Cutscene, self.cutscenes.len());
+		foreach (usz i, &cutscene : self.cutscenes) scene.cutscenes[i] = cutscene.copy(mem);
+		scene.active_cutscene = self.cut_active;
+	}
 
 	for (usz i = 0; i < self.character_count(); i++)
 	{
 		self.@as_character(i)
 		{
-			if (self.unsaved()) self.save_session();
-			SceneCharacter* c = &scene.characters[i];
-			c.model = self.source_path.copy(mem);
-			c.transform = self.doc.model_transform;
-			c.hidden = self.hidden;
-			c.holds_pose = self.holds_pose;
-			String file;
-			String name;
-			if (self.binding_of(self.scene_clip(), &file, &name))
+			self.@as_own_character()
 			{
-				c.clip_file = file.len > 0 ? file.copy(mem) : "";
-				c.clip_name = name.copy(mem);
-			}
+				if (self.unsaved() && !self.level_read) self.save_session();
+				SceneCharacter* c = &scene.characters[i];
+				c.model = self.source_path.len > 0 ? self.source_path.copy(mem) : "";
+				c.transform = self.doc.model_transform;
+				c.hidden = self.hidden;
+				c.holds_pose = self.holds_pose;
+				c.row = self.actor_row.len > 0 ? self.actor_row.copy(mem) : "";
+				c.level_node = self.level_node.len > 0 ? self.level_node.copy(mem) : "";
+				c.scale = self.stage_scale;
+				c.lift = self.stage_lift;
+				String file;
+				String name;
+				if (self.binding_of(self.scene_clip(), &file, &name))
+				{
+					c.clip_file = file.len > 0 ? file.copy(mem) : "";
+					c.clip_name = name.copy(mem);
+				}
+			};
 		};
 	}
 
@@ -92,7 +114,9 @@ fn void AppState.set_scene_path(&self, String path)
 fn bool AppState.new_scene(&self)
 {
 	if (!self.focus_may_move()) return false;
+	self.reset_cutscenes();
 	self.drop_other_characters();
+	self.close_level();
 	self.load_mesh({}, "");
 	self.hidden = false;
 	self.holds_pose = false;
@@ -149,6 +173,8 @@ fn bool AppState.open_scene(&self, String path)
 	defer alloc::free(mem, meshes);
 	foreach (usz i, c : scene.characters)
 	{
+		// Read from the level: its rig comes when the level does.
+		if (c.model.len == 0) continue;
 		rig::TriMesh? mesh = file::is_file(c.model) ? rig::load_gltf(mem, c.model) : io::FILE_NOT_FOUND~;
 		if (catch mesh)
 		{
@@ -159,6 +185,7 @@ fn bool AppState.open_scene(&self, String path)
 		meshes[i] = mesh;
 	}
 
+	self.reset_cutscenes();
 	self.drop_other_characters();
 	foreach (usz i, c : scene.characters)
 	{
@@ -175,6 +202,11 @@ fn bool AppState.open_scene(&self, String path)
 		self.doc.model_transform = c.transform;
 		self.hidden = c.hidden;
 		self.holds_pose = c.holds_pose;
+		self.set_actor_row(c.row);
+		self.set_level_node(c.level_node);
+		self.level_read = c.model.len == 0;
+		self.stage_scale = c.scale != 1.0f ? c.scale : 0.0f;
+		self.stage_lift = c.lift;
 		if (c.clip_name.len > 0)
 		{
 			self.editing = self.resolve_clip_identity(c.clip_file, c.clip_name);
@@ -183,6 +215,9 @@ fn bool AppState.open_scene(&self, String path)
 		}
 	}
 
+	// The cutscenes are taken over whole; the scene's copy is left empty.
+	self.adopt_cutscenes(scene.cutscenes, scene.active_cutscene);
+	scene.cutscenes = {};
 	self.scene_time = scene.time;
 	self.scene_running = false;
 	// Every character to the scene's instant, the focus last so it is the one
@@ -204,6 +239,37 @@ fn bool AppState.open_scene(&self, String path)
 	self.remember_project(path);
 	self.focus_generation = next_generation();
 	self.reindex_current_model();
+	// A level that is gone is a notice: the characters are the scene.
+	bool level_missing = false;
+	if (scene.level.len == 0)
+	{
+		self.close_level();
+	}
+	else if (!self.open_level(scene.level))
+	{
+		level_missing = true;
+		self.close_level();
+	}
+	// A level already in does not come in again: its actors are read from it now.
+	if (level_shown()) self.level_came_in();
+	// Read from a level that is gone: kept as they are, named in the problems list.
+	if (!self.has_level())
+	{
+		for (usz i = 0; i < self.character_count(); i++)
+		{
+			if (self.character(i).level_read) self.character(i).stage_missing = true;
+		}
+	}
+	if (level_missing)
+	{
+		self.@notice("opened the scene · %d characters · its level %s is missing", scene.characters.len, base_name(scene.level));
+		return true;
+	}
+	if (self.cutscenes.len() > 0)
+	{
+		self.@notice("opened the scene · %d characters, %d cutscenes", scene.characters.len, self.cutscenes.len());
+		return true;
+	}
 	self.@notice("opened the scene · %d characters", scene.characters.len);
 	return true;
 }
@@ -218,7 +284,7 @@ fn void AppState.frame_cast(&self)
 	for (usz i = 0; i < self.character_count(); i++)
 	{
 		Character* c = self.character(i);
-		if (!c.has_mesh() || c.hidden) continue;
+		if ((!c.has_mesh() && !c.level_read) || c.hidden) continue;
 		rig::Bounds b = c.world_bounds();
 		all = found ? (rig::Bounds){ math::min(all.min, b.min), math::max(all.max, b.max) } : b;
 		found = true;
@@ -243,6 +309,8 @@ fn void AppState.frame_cast(&self)
 fn bool AppState.export_scene(&self, String path, float fps = 30.0f)
 {
 	if (path.len == 0) return false;
+	// Each character's own clip is what it plays here, never a one-off being edited.
+	(void)self.back_to_cutscene();
 	usz count = self.character_count();
 	SceneExportCharacter[] cast = alloc::new_array(mem, SceneExportCharacter, (sz)count);
 	RigView[] views = alloc::new_array(mem, RigView, (sz)count);

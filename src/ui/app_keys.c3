@@ -35,7 +35,10 @@ const KeyStage[*] KEY_STAGES @private = {
 	&view_stage,
 	&ctrl_stage,
 	&path_stage,
+	&cut_pick_stage,
+	&cut_knot_stage,
 	&path_delete_stage,
+	&cut_delete_stage,
 	&drag_stage,
 	&clip_stage,
 	&move_verb_stage,
@@ -117,6 +120,44 @@ fn KeyAnswer path_stage(KeyPress* press) @private
 	return REFRESH;
 }
 
+// A turn waiting for its point on the ground: Esc gives it up. A path being drawn: Esc or Enter ends it.
+fn KeyAnswer cut_pick_stage(KeyPress* press) @private
+{
+	AppState* app = press.app;
+	bool drawing = app.cut_pick == PATH_KNOT;
+	bool ends = press.key == Key.ESCAPE || (drawing && (press.key == Key.RETURN || press.key == Key.KP_RETURN));
+	if (app.cut_pick == NONE || !ends) return PASS;
+	app.cancel_cut_pick();
+	if (drawing)
+	{
+		WalkPath* path = app.cut_picked_path();
+		if (path) app.@notice("%s: %d knots, %.1f m", path.name, path.knots.len, path.length);
+	}
+	else
+	{
+		app.@notice("no point picked");
+	}
+	refresh_cutscene_view(press.ui);
+	return REFRESH;
+}
+
+// The picked path's knot in the 3D view: Esc puts a dragged one back, Delete takes the picked one out.
+fn KeyAnswer cut_knot_stage(KeyPress* press) @private
+{
+	AppState* app = press.app;
+	if (app.cut_knot_dragging && press.key == Key.ESCAPE)
+	{
+		app.cancel_cut_knot_drag();
+		refresh_cutscene_view(press.ui);
+		return REFRESH;
+	}
+	if (press.key != Key.DELETE && press.key != Key.BACKSPACE) return PASS;
+	if (app.cut_knot_dragging || !cut_knots_shown(app) || app.cut_knot_pick == 0) return PASS;
+	(void)app.delete_cut_knot(app.cut_path_pick - 1, app.cut_knot_pick - 1);
+	refresh_cutscene_view(press.ui);
+	return REFRESH;
+}
+
 // A picked point or slice of a path is what Delete takes.
 fn KeyAnswer path_delete_stage(KeyPress* press) @private
 {
@@ -125,6 +166,14 @@ fn KeyAnswer path_delete_stage(KeyPress* press) @private
 	if (!app.paths_shown() || (app.path_point_selected < 0 && app.path_slice_selected < 0)) return PASS;
 	(void)app.delete_path_selection();
 	return REFRESH;
+}
+
+// Right after a choice in the Cutscene tab's add menus, Delete takes the strip it added, not a joint.
+fn KeyAnswer cut_delete_stage(KeyPress* press) @private
+{
+	if (press.key != Key.DELETE && press.key != Key.BACKSPACE) return PASS;
+	if (!cut_menus_focused(press.ui) || !delete_picked_cut_strip(press.ui)) return PASS;
+	return TAKEN;
 }
 
 // A joint in hand owns the axis letters and Esc, and no other key.

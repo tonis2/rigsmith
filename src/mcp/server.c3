@@ -19,6 +19,8 @@
  	body.c3      build_body
  	physics.c3   set_secondary_motion and bake_physics
 	props.c3     set_prop
+	level.c3     open_level, close_level, get_level and ground_at
+	cutscenes.c3 get_cutscenes, get_cutscene, set_cutscene, select_cutscene, set_cutscene_time, add_actor, export_cutscene
  	weights.c3   show_weights, get_weights, paint_weights, pin_weights, fix_strays, fix_tears, get_shells
  	play.c3      play and stop, for the person at the screen
  	pack.c3      save_pack, the one tool that leaves a file behind
@@ -299,8 +301,8 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "undo",
-		.description = "Step the rig's history back — the same history the viewport writes, so a step may take back an edit made here or one the user made by hand, whichever came last.",
-		.input_schema = `{"type":"object","properties":{"steps":{"type":"number","description":"How many edits to take back. Default 1; stops early when the history runs out.","default":1}}}`,
+		.description = "Step the rig's history back — the same history the viewport writes, so a step may take back an edit made here or one the user made by hand, whichever came last. history \"cutscene\" steps the scene's cutscene history instead.",
+		.input_schema = `{"type":"object","properties":{"steps":{"type":"number","description":"How many edits to take back. Default 1; stops early when the history runs out.","default":1},"history":{"type":"string","enum":["rig","cutscene"],"description":"Which history: the character's rig (default) or the scene's cutscenes."}}}`,
 		.handler = &tool_undo,
 		.user_data = app,
 	});
@@ -314,8 +316,8 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "redo",
-		.description = "Step the rig's history forward again. Anything recorded after an undo discards what was undone, which is what makes this worth calling promptly or not at all.",
-		.input_schema = `{"type":"object","properties":{"steps":{"type":"number","description":"How many edits to put back. Default 1; stops early when there is nothing left to redo.","default":1}}}`,
+		.description = "Step the rig's history forward again. Anything recorded after an undo discards what was undone, which is what makes this worth calling promptly or not at all. history \"cutscene\" steps the scene's cutscene history instead.",
+		.input_schema = `{"type":"object","properties":{"steps":{"type":"number","description":"How many edits to put back. Default 1; stops early when there is nothing left to redo.","default":1},"history":{"type":"string","enum":["rig","cutscene"],"description":"Which history: the character's rig (default) or the scene's cutscenes."}}}`,
 		.handler = &tool_redo,
 		.user_data = app,
 	});
@@ -772,6 +774,8 @@ fn ToolTable new_tool_table(AppState* app)
 		.user_data = app,
 		.hidden = true,
 	});
+	add_level_tools(&server, app);
+	add_cutscene_tools(&server, app);
 	// Last: the cast, and the tools that are about more than one character.
 	add_cast_tools(&server, app);
 	return server;

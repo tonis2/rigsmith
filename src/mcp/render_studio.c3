@@ -346,8 +346,10 @@ fn String? AppState.render_studio_picture(&self, StudioAsk* given, DString* deta
 	pass.lighting = lit;
 	app.pose_edit_active = true;
 	app.config.hide_floor = true;
+	hide_level_for_render(true);
 	defer
 	{
+		hide_level_for_render(false);
 		pass.note_lighting_change(was_lighting);
 		pass.lighting = was_lighting;
 		app.pose_edit_active = was_editing;
