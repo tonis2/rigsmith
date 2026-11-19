@@ -346,11 +346,11 @@ fn bool AppState.is_bound_entry(&self, AssetEntry* entry)
 fn bool AppState.toggle_bound_row(&self, usz row)
 {
 	AssetEntry* entry = self.visible_asset(row);
-	// A model's + brings it into the scene, or makes it the one being edited when
-	// it is in already.
+	// A model's + imports it as File › Import .glb does: a character (focused when
+	// it is in already), a level, or a refused cutscene file.
 	if (entry && entry.kind == AssetKind.MODEL)
 	{
-		self.request_add_character(entry.file);
+		(void)self.import_glb(entry.file);
 		return true;
 	}
 	if (!entry || entry.kind != AssetKind.ANIMATION) return false;

@@ -851,6 +851,37 @@ fn GlbParts? split_glb(Allocator allocator, String path)
 }
 
 <*
+ A .glb's JSON chunk, read without loading the buffer after it; a .gltf is read whole.
+ Told apart by the magic, and the chunk's pad is trimmed, as in `split_glb`.
+
+ @return "The caller owns it"
+ @return? GLB_TRUNCATED, GLB_NO_JSON_CHUNK, io::FILE_NOT_FOUND
+*>
+fn char[]? glb_json_chunk(Allocator allocator, String path)
+{
+	File f = file::open(path, "rb")!;
+	defer (void)f.close();
+	long size = f.size()!;
+	char[20] head;
+	char[] got = io::read_buffer_to_end(&f, head[..])!;
+	if (got.len < 12 || read_u32(got, 0) != GLB_MAGIC) return file::load(allocator, path);
+
+	if (got.len < 20) return GLB_TRUNCATED~;
+	if (read_u32(got, 16) != GLB_CHUNK_JSON) return GLB_NO_JSON_CHUNK~;
+	usz length = (usz)read_u32(got, 12);
+	if (length == 0) return GLB_NO_JSON_CHUNK~;
+	if (20 + length > (usz)size) return GLB_TRUNCATED~;
+
+	char[] json = alloc::new_array(allocator, char, (sz)length);
+	defer catch alloc::free(allocator, json);
+	if (io::read_buffer_to_end(&f, json)!.len != length) return GLB_TRUNCATED~;
+	// Spaces by the spec; some exporters pad with zeros.
+	while (length > 0 && (json[length - 1] == ' ' || json[length - 1] == 0)) length--;
+	if (length == 0) return GLB_NO_JSON_CHUNK~;
+	return json[:length];
+}
+
+<*
  Write `text` to `path` through a temporary file beside it, so the old file
  survives a full disk or a crash. See rules/files.md.
 

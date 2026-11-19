@@ -36,7 +36,7 @@ enum Shortcut : char (Key key, bool ctrl, bool shift, ShortcutMode mode, OnClick
 	NEW_SCENE { Key.N, true, false, COMMAND, &menu_new_scene, false, "Ctrl+N", "a new, empty scene" },
 	OPEN_SCENE { Key.O, true, false, COMMAND, &menu_open_scene, false, "Ctrl+O", "open a scene" },
 	IMPORT_GLB { Key.I, true, false, COMMAND, &menu_import, false, "Ctrl+I", "import a .glb into the scene as a character" },
-	EXPORT_GLB { Key.E, true, false, COMMAND, &menu_export, false, "Ctrl+E", "export as .glb — the clips you tick, or the whole scene" },
+	EXPORT_GLB { Key.E, true, false, COMMAND, &menu_export, false, "Ctrl+E", "export as .glb — a character, all characters or a cutscene" },
 	UNDO { Key.Z, true, false, COMMAND, &menu_undo, false, "Ctrl+Z", "undo" },
 	REDO { Key.Y, true, false, COMMAND, &menu_redo, false, "Ctrl+Y", "redo" },
 	REDO_SHIFTED { Key.Z, true, true, ALIAS, &menu_redo, false, "Ctrl+Shift+Z", "redo" },

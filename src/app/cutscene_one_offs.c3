@@ -546,7 +546,7 @@ fn bool AppState.back_to_cutscene(&self)
 				self.undo_stack = {};
 				self.swap_one_off_state();
 				usz taken = self.undo_stack.take_document_edits(&scratch);
-				if (taken > 0) self.@notice("%d edits to the rig made while editing the one-off are kept on its own history", taken);
+				if (taken > 0) self.@notice("%d edit%s to the rig made while editing the one-off %s kept on its own history", taken, taken == 1 ? "" : "s", taken == 1 ? "is" : "are");
 				scratch.free();
 				// Clips made beside the one-off are kept as the character's own, one step each.
 				foreach (usz i, clip : made)

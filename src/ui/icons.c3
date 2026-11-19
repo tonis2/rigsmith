@@ -14,6 +14,7 @@ const String ICON_SCENE = $embed("../../assets/icons/tree/scene.svg");
 const String ICON_MODEL = $embed("../../assets/icons/tree/model.svg");
 const String ICON_MESH = $embed("../../assets/icons/tree/mesh.svg");
 const String ICON_SKELETON = $embed("../../assets/icons/tree/skeleton.svg");
+const String ICON_LEVEL = $embed("../../assets/icons/tree/level.svg");
 const String ICON_EYE = $embed("../../assets/icons/tree/eye.svg");
 const String ICON_EYE_SHUT = $embed("../../assets/icons/tree/eye_shut.svg");
 const String ICON_KEYED = $embed("../../assets/icons/tree/keyed.svg");

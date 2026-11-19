@@ -125,11 +125,11 @@ fn void new_scene_confirmed(Ui* ui) @private
 	app.refresh_ui();
 }
 
-fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
+fn FileDialogWords file_dialog_words(AppState* app) @private
 {
-	switch (purpose)
+	switch (app.file_purpose)
 	{
-		case EXPORT_TARGET: return { "Export to", "Select" }; // picks the path; the panel exports
+		case EXPORT_TARGET: return { export_target_title(app.export_what), "Select" }; // picks the path; the panel exports
 		case ASSET_LIBRARY: return { "Add asset library", "Add" };
 		case MOTION_FILE: return { "Choose a model file", "Select" };
 		case CAPTURE_VIDEO: return { "Choose the video", "Select" };
@@ -144,9 +144,6 @@ fn FileDialogWords file_dialog_words(FilePurpose purpose) @private
 		case ADD_CHARACTER: return { "Import .glb into the scene", "Import" };
 		case OPEN_SCENE: return { "Open scene", "Open" };
 		case SAVE_SCENE: return { "Save scene as", "Save" };
-		case EXPORT_SCENE: return { "Export the scene to", "Export" };
-		case OPEN_LEVEL: return { "Open level", "Open" };
-		case EXPORT_CUTSCENE: return { "Export the cutscene to", "Export" };
 		case ADD_ACTOR: return { "Add an actor from its file", "Add" };
 		case TAKE_LEVEL_ACTOR: return { "The level character's own file", "Use" };
 		default: return { "Open model", "Open" };
@@ -224,7 +221,7 @@ fn Element* build_file_dialog_body(Ui* ui)
 			@node(
 				(Row) { .gap = FILE_DIALOG_GAP, .main_align = END },
 				panel_button("Cancel", &file_dialog_cancelled),
-				accent_button(file_dialog_words(app.file_purpose).confirm, &file_dialog_confirmed)
+				accent_button(file_dialog_words(app).confirm, &file_dialog_confirmed)
 			);
 		};
 	};
@@ -285,7 +282,7 @@ fn void open_file_dialog(Ui* ui, FilePurpose purpose)
 	if (try Element* dialog = ui.find_id(FILE_DIALOG_ID))
 	{
 		Dialog* widget = dialog.widget_as(Dialog);
-		widget.title = file_dialog_words(purpose).title;
+		widget.title = file_dialog_words(app).title;
 		widget.set_open(dialog, true);
 	}
 }
@@ -417,7 +414,7 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			}
 			app.request_open(path);
 		case ADD_CHARACTER:
-			app.request_add_character(path);
+			(void)app.import_glb(path);
 		case OPEN_SCENE:
 			if (app.any_character_unsaved())
 			{
@@ -427,14 +424,6 @@ fn void file_dialog_confirmed(Ui* ui) @private
 			app.request_open_scene(path);
 		case SAVE_SCENE:
 			(void)app.save_scene(path);
-		case EXPORT_SCENE:
-			(void)app.export_scene(path.ends_with(".glb") ? path : string::tformat("%s.glb", path));
-		case OPEN_LEVEL:
-			// Framed when there is nobody to look at yet.
-			(void)app.open_level(path, frame: !app.has_mesh());
-		case EXPORT_CUTSCENE:
-			bool named = path.ends_with(".glb") || path.ends_with(".gltf");
-			(void)app.export_cutscene(named ? path : string::tformat("%s.cutscene.glb", path));
 		case ADD_ACTOR:
 			(void)app.add_actor_from_file(path, ground: level_shown());
 		case TAKE_LEVEL_ACTOR:

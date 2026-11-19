@@ -1,5 +1,5 @@
 <*
- The picked walk path's knots in the 3D view, while a Cutscene pane is up: squares
+ The picked walk path's knots in the 3D view, while the dock shows the cutscene: squares
  on the ground. Drag one along the ground; click the path's line to put a knot
  there; Delete takes the picked knot; Esc puts a dragged one back. The line
  itself is engine/cutscene_paths.c3's.
@@ -21,7 +21,7 @@ struct CutKnotPress
 	Vec2 at;
 }
 
-fn bool cut_knots_shown(AppState* app) => app.cut_panes > 0 && app.cut_picked_path() != null;
+fn bool cut_knots_shown(AppState* app) => app.cutscene_in_dock() && app.cut_picked_path() != null;
 
 fn Matrix4f Viewport.world_view_projection(&self, Element* elem) => self.view_camera(elem).view_projection(elem.size.x / elem.size.y);
 
@@ -91,7 +91,7 @@ fn bool Viewport.press_cut_knots(&self, Element* elem, AppState* app, Vec2 pixel
 	{
 		app.cut_knot_pick = knot;
 		self.cut_knot_press = { .pending = true, .knot = knot - 1, .at = pixel };
-		refresh_cutscene_view(elem.ui);
+		refresh_animations_view(elem.ui);
 		app.refresh_ui();
 		elem.request_paint();
 		return true;
@@ -99,7 +99,7 @@ fn bool Viewport.press_cut_knots(&self, Element* elem, AppState* app, Vec2 pixel
 	Vec3 at;
 	if (!self.cut_line_at(elem, app, pixel, &at)) return false;
 	if (app.insert_cut_knot(app.cut_path_pick - 1, at)) app.@notice("a knot put in · drag it along the ground · Delete takes it out");
-	refresh_cutscene_view(elem.ui);
+	refresh_animations_view(elem.ui);
 	app.refresh_ui();
 	elem.request_paint();
 	return true;
@@ -134,7 +134,7 @@ fn bool Viewport.release_cut_knots(&self, Element* elem, AppState* app)
 	}
 	if (!app.cut_knot_dragging) return false;
 	(void)app.end_cut_knot_drag();
-	refresh_cutscene_view(elem.ui);
+	refresh_animations_view(elem.ui);
 	app.refresh_ui();
 	elem.request_paint();
 	return true;

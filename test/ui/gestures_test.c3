@@ -625,6 +625,16 @@ fn void an_empty_app_opens_and_says_so() @test
 	fixture.click(VIEWPORT_CENTER);
 	test::@check(fixture.doc().dots.len() == before, "a click places no dot when there is nothing to place it in");
 	test::@check(fixture.notice_text().len > 0, "and says why rather than going quiet");
+
+	// A level alone is not an empty scene: the line goes.
+	(void)path::mkdir("build/test-prompt-level", true);
+	String forest = "build/test-prompt-level/forest.gltf";
+	file::save(forest, `{"asset":{"version":"2.0"},"nodes":[{"name":"ground"}]}`)!!;
+	test::@check(fixture.app.open_level(forest), "the level did not open: %s", fixture.app.notice());
+	fixture.idle_frame();
+	prompt = fixture.ui.find_id("prompt")!!;
+	test::@check(prompt.size.x == 0.0f && prompt.size.y == 0.0f, "a level with no character still says the scene is empty");
+	fixture.app.close_level();
 }
 
 <*

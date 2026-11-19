@@ -95,6 +95,7 @@ enum SceneSelection : int
 	MESH,
 	SKELETON,
 	JOINT,
+	LEVEL,
 }
 
 // The lasso's polygon while it is being drawn. Growable rather than a fixed
@@ -755,8 +756,6 @@ struct AppState
 	bool cut_kept_running;
 	// Bumped on every cutscene change, for the views that draw one.
 	uint cut_revision;
-	// How many Cutscene panes are on screen.
-	int cut_panes;
 	// A level character waiting for the character's own file to be picked. Owned.
 	String cut_pending_node;
 	// The strip picked on the Cutscene timeline, by its id; 0 for none.
@@ -770,7 +769,7 @@ struct AppState
 	CutGroundPick cut_pick;
 	uint cut_pick_strip;
 	usz cut_pick_actor;
-	// The walk path picked in the Cutscene tab, and its knot picked in the 3D view, one-based; 0 for none.
+	// The walk path picked in the Pieces bin, and its knot picked in the 3D view, one-based; 0 for none.
 	usz cut_path_pick;
 	usz cut_knot_pick;
 	// A knot drag in flight in the 3D view, kept on `cut_gesture`.
@@ -831,6 +830,8 @@ struct AppState
 	 the character.
 	*>
 	bool export_with_rig;
+	// The Export panel's choice, kept like `export_with_rig` across a Browse.
+	ExportWhat export_what;
 
 	<*
 	 What the file dialog is currently being used for.
@@ -1418,6 +1419,14 @@ fn void AppState.swap_mesh(&self, rig::TriMesh geometry)
 	self.plan_targets_stale = true;
 }
 
+<* What the Export panel writes: the character in focus, every character in one .glb, or the active cutscene. *>
+enum ExportWhat : char
+{
+	CHARACTER,
+	ALL_CHARACTERS,
+	CUTSCENE,
+}
+
 <*
  Which question the file browser is being opened to answer.
 
@@ -1428,20 +1437,16 @@ fn void AppState.swap_mesh(&self, rig::TriMesh geometry)
 enum FilePurpose
 {
 	OPEN_MESH,
-	// A model to load beside the open one, as another character.
+	// A .glb to import: another character, or the level (`import_glb`).
 	ADD_CHARACTER,
 	// A scene file to open, and where to save the one on screen.
 	OPEN_SCENE,
 	SAVE_SCENE,
-	// Where the whole scene goes as one .glb.
-	EXPORT_SCENE,
-	// A level .glb to draw behind the scene.
-	OPEN_LEVEL,
-	// The active cutscene's .cutscene.glb, a character file to add as an actor,
-	// and the own file of the level character `cut_pending_node` names.
-	EXPORT_CUTSCENE,
+	// A character file to add as an actor, and the own file of the level
+	// character `cut_pending_node` names.
 	ADD_ACTOR,
 	TAKE_LEVEL_ACTOR,
+	// Where the Export panel writes, whichever `export_what` it is on.
 	EXPORT_TARGET,
 
 	// Picking a folder rather than a file, which is the one question here whose

@@ -17,9 +17,9 @@ enum CutProblemKind : char
 	SELF_TARGET,  // a turn toward the actor itself
 	NO_LENGTH,    // a strip that ends where it starts, or before
 	OVERLAP,      // two strips on one lane at once; the format allows one
-	CLIP_TRAVELS, // a move's clip carries the figure itself, which the path would add to
+	CLIP_TRAVELS, // a move's clip or a walk's carries the figure itself, which the path would add to
 	NOT_FRONT,    // the actor's character does not face +Z, the way a walk faces along its path
-	NO_GROUND_SPEED, // a move's clip says nothing of how fast it walks, so it is timed at 1 m/s
+	NO_GROUND_SPEED, // a move's clip says nothing of how fast it walks (timed at 1 m/s), or a walk's (its speed is not fit)
 	ONE_OFF_GONE,    // a strip plays a one-off this cutscene does not have
 	ONE_OFF_UNUSED,  // a one-off no strip of its actor plays
 	ONE_OFF_EMPTY,   // a one-off a strip plays that keys nothing
@@ -87,7 +87,7 @@ fn CutClipGround CutCast.ground_of(&self, String name)
 	return {};
 }
 
-<* The ground speed a move walks at, in m/s: the one typed on it, else its clip's, else 0 for not known. *>
+<* The ground speed a move's clip or a walk's walks at, in m/s: the one typed on the strip, else its clip's, else 0 for not known. *>
 fn float CutCast.move_ground_speed(&self, CutStrip* s)
 {
 	if (s.ground_speed > 0.0f) return s.ground_speed;
@@ -143,6 +143,12 @@ fn CutProblem[] cutscene_problems(Allocator allocator, Cutscene* cutscene, CutCa
 			{
 				if (who.ground_of(s.clip).travels) found.push({ CLIP_TRAVELS, a, (int)k });
 				if (!(who.move_ground_speed(s) > 0.0f)) found.push({ NO_GROUND_SPEED, a, (int)k });
+			}
+			// A walk: a play over a move, whose speed follows the move's pace.
+			if (has_clip && who.measured && s.kind == PLAY && cut_paired_move(actor.strips, k, cutscene.paths) >= 0)
+			{
+				if (who.ground_of(s.clip).travels) found.push({ CLIP_TRAVELS, a, (int)k });
+				if (!(who.move_ground_speed(s) >= CUT_PAIR_GROUND_MIN)) found.push({ NO_GROUND_SPEED, a, (int)k });
 			}
 			if (s.end > cutscene.duration + CUT_LATE_SLACK) found.push({ ENDS_LATE, a, (int)k });
 			if (s.kind == MOVE && (s.path < 0 || s.path >= cutscene.paths.len || cutscene.paths[s.path].points.len < 2))
@@ -261,11 +267,16 @@ fn String cut_problem_text(Allocator allocator, Cutscene* cutscene, CutProblem p
 			return string::format(allocator, "%s: the %s at %.2f s overlaps the %s at %.2f s on the %s lane",
 				actor.row, word, s.start, cut_strip_word(o.kind), o.start, lane);
 		case CLIP_TRAVELS:
-			return string::format(allocator, "%s: the move at %.2f s plays '%s', which still travels: its root motion adds to the path; make it in place",
-				actor.row, s.start, s.clip);
+			return string::format(allocator, "%s: the %s at %.2f s plays '%s', which still travels: its root motion adds to the path; make it in place",
+				actor.row, s.kind == PLAY ? "walk" : "move", s.start, s.clip);
 		case NOT_FRONT:
 			return string::format(allocator, "%s: its character does not face +Z, so it walks its paths turned aside", actor.row);
 		case NO_GROUND_SPEED:
+			if (s.kind == PLAY)
+			{
+				return string::format(allocator, "%s: the walk at %.2f s plays '%s', whose ground speed is not known: it plays at its own speed; type one in its card",
+					actor.row, s.start, s.clip);
+			}
 			return string::format(allocator, "%s: the move at %.2f s plays '%s', whose ground speed is not known: timed at %.0f m/s; type one in its card",
 				actor.row, s.start, s.clip, CUT_DEFAULT_GROUND_SPEED);
 		case STAND_IN_GONE:

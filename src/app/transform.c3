@@ -55,6 +55,7 @@ fn TransformTarget AppState.transform_target(&self)
 			};
 		case NONE:
 		case SCENE:
+		case LEVEL:
 			return {};
 	}
 }

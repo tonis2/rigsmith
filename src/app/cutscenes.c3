@@ -1161,6 +1161,6 @@ fn bool AppState.export_cutscene(&self, String path, DString* why = null)
 		if (why) why.append_string(reason.str_view());
 		return false;
 	}
-	self.@notice("exported %s · %d actors, %.2f s", base_name(path), copy.actors.len, copy.duration);
+	self.@notice("exported %s · %d actor%s, %.2f s", base_name(path), copy.actors.len, copy.actors.len == 1 ? "" : "s", copy.duration);
 	return true;
 }

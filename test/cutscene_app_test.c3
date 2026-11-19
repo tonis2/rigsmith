@@ -465,6 +465,41 @@ fn void the_cutscene_tools_round_trip() @test
 	test::@check(gone.get("cutscenes")!!.get_len() == 0, "gone.get('cutscenes')!!.get_len() is %s", gone.get("cutscenes")!!.get_len());
 }
 
+// set_cutscene keeps a walk's ground_speed and speed_held, and refits no speed it was given.
+fn void set_cutscene_takes_a_walks_speeds_as_given() @test
+{
+	Fixture* f = mem::new(Fixture);
+	defer free(f);
+	if (!open_hero(f)) return;
+	defer f.close();
+	crig::AppState* app = &f.app;
+
+	Object* listed = call(f, "add_actor", `{"row":"hero"}`);
+	if (!listed) return;
+	defer listed.free();
+	String shape = `{"new":true,"cutscene":{"name":"Walk","duration":6,"fps":30,"actors":[{"row":"hero","strips":[
+		{"type":"move","start":0,"end":4,"path":0,"ease":"linear"},
+		{"type":"play","start":0,"end":2,"clip":"Walk","speed":3,"ground_speed":1.4},
+		{"type":"play","start":2,"end":4,"clip":"Walk","speed":0.5,"ground_speed":1.4,"speed_held":true}]}],
+		"paths":[{"name":"road","knots":[[0,0,0],[0,0,4]]}]}}`;
+	Object* set = call(f, "set_cutscene", shape);
+	if (!set) return;
+	defer set.free();
+	CutStrip[] strips = app.cutscene().actors[0].strips;
+	test::@check(strips.len == 3, "strips.len is %s", strips.len);
+	test::@check(near(strips[1].speed, 3.0f) && near(strips[2].speed, 0.5f), "the speeds were refitted: %s, %s", strips[1].speed, strips[2].speed);
+
+	Object* got = call(f, "get_cutscene", `{}`);
+	if (!got) return;
+	defer got.free();
+	Object* plays = got.get("cutscene")!!.get("actors")!!.get_at(0).get("strips")!!;
+	Object* free_walk = plays.get_at(1);
+	Object* held_walk = plays.get_at(2);
+	test::@check(near((float)free_walk.get_float("ground_speed")!!, 1.4f), "the walk's ground_speed is not reported");
+	test::@check(!(free_walk.get_bool("speed_held") ?? false), "an unheld walk reports speed_held");
+	test::@check(held_walk.get_bool("speed_held") ?? false, "the held walk's speed_held is not reported");
+}
+
 // ---------------------------------------------------------------------------
 // Strips edited
 
@@ -681,62 +716,334 @@ fn void walk_here_takes_the_ground_speed_and_a_resize_keeps_the_feet_on_the_grou
 	float length = app.cut_picked_path().length;
 	test::@check(near(length, 6.0f, 1e-3f), "a straight path of 6 m is %f", length);
 
-	// Walk here: a clip named like a walk, along the path, its length the path's over the walk's ground speed.
+	// Walk here: a clip-less move along the path, its length the path's over the walk's ground speed, and a walk over it.
 	app.show_cutscene_at(1.0f);
 	sz k = app.walk_cut_path(0, 0);
-	test::@check(k >= 0, "Walk here added nothing");
+	test::@check(k >= 0 && (usz)k + 1 < app.cutscene().actors[0].strips.len, "Walk here added no move and walk");
+	if (k < 0 || (usz)k + 1 >= app.cutscene().actors[0].strips.len) return;
 	CutStrip* s = &app.cutscene().actors[0].strips[k];
-	test::@check(s.kind == MOVE && s.clip.contains("Walk") && s.path == 0 && s.turn && s.loop, "the move is %s on path %d", s.clip, s.path);
-	CutClipGround walk = app.cut_clip_ground(app.active, s.clip);
-	test::@check(walk.speed > 0.1f && !walk.travels, "the hero's %s has a ground speed, not %f", s.clip, walk.speed);
+	CutStrip* w = &app.cutscene().actors[0].strips[k + 1];
+	test::@check(s.kind == MOVE && s.clip.len == 0 && s.path == 0 && s.turn && s.ease == LINEAR, "the move plays %s on path %d", s.clip, s.path);
+	test::@check(w.kind == PLAY && w.clip.contains("Walk") && w.loop && w.start == s.start && w.end == s.end, "the walk is %s", w.clip);
+	test::@check(app.cut_selected_strip() == w, "the walk is not picked");
+	CutClipGround walk = app.cut_clip_ground(app.active, w.clip);
+	test::@check(walk.speed > 0.1f && !walk.travels, "the hero's %s has a ground speed, not %f", w.clip, walk.speed);
 	CutClipGround rest = app.cut_clip_ground(app.active, "Rest");
 	test::@check(rest.speed < walk.speed * 0.25f, "its Rest stands still, not %f m/s", rest.speed);
 	test::@check(near(s.start, 1.0f) && near(s.end - s.start, length / walk.speed, 1e-3f), "it lasts %f s, not %f", s.end - s.start, length / walk.speed);
-	test::@check(near(s.speed, 1.0f, 1e-4f), "at its own pace it plays at %f", s.speed);
+	test::@check(near(w.speed, 1.0f, 1e-4f), "at its own pace it plays at %f", w.speed);
 	String[] problems = app.cutscene_problem_texts(mem);
 	defer crig::free_names(mem, problems);
 	test::@check(problems.len == 0, "a walk with its ground speed has %d problems: %s", problems.len, problems.len > 0 ? problems[0] : "");
 
-	// A drag on the end makes it twice as long: the clip plays at half speed.
+	// A drag on the move's end makes it twice as long: the walk plays at half speed.
 	float start = s.start;
 	float twice = start + (s.end - start) * 2.0f;
 	test::@check(app.begin_cut_gesture(), "begin the resize");
 	test::@check(app.drag_cut_strip(0, (usz)k, start, twice, false), "resize");
 	test::@check(app.end_cut_gesture(0, (usz)k), "land it");
-	s = &app.cutscene().actors[0].strips[k];
-	test::@check(near(s.speed, 0.5f, 1e-3f), "twice as long plays at %f, not 0.5", s.speed);
+	w = &app.cutscene().actors[0].strips[k + 1];
+	test::@check(near(w.speed, 0.5f, 1e-3f), "twice as long plays at %f, not 0.5", w.speed);
 
-	// A ground speed typed on the move: its clip's speed follows.
-	CutStrip typed = s.copy(mem);
+	// A ground speed typed on the walk: its speed follows.
+	CutStrip typed = w.copy(mem);
 	typed.ground_speed = walk.speed * 0.5f;
-	test::@check(app.set_cut_strip(0, (usz)k, typed), "type a ground speed");
-	s = &app.cutscene().actors[0].strips[k];
-	test::@check(near(s.speed, 1.0f, 1e-3f), "half the ground speed over twice the time plays at %f, not 1", s.speed);
+	test::@check(app.set_cut_strip(0, (usz)k + 1, typed), "type a ground speed");
+	w = &app.cutscene().actors[0].strips[k + 1];
+	test::@check(near(w.speed, 1.0f, 1e-3f), "half the ground speed over twice the time plays at %f, not 1", w.speed);
 
-	// A speed typed on its own is kept.
-	CutStrip faster = s.copy(mem);
+	// A speed typed on its own is kept: typing it holds it, as the card does.
+	CutStrip faster = w.copy(mem);
 	faster.speed = 1.7f;
-	test::@check(app.set_cut_strip(0, (usz)k, faster), "type a speed");
-	test::@check(near(app.cutscene().actors[0].strips[k].speed, 1.7f), "the typed speed was overwritten");
+	faster.speed_held = true;
+	test::@check(app.set_cut_strip(0, (usz)k + 1, faster), "type a speed");
+	test::@check(near(app.cutscene().actors[0].strips[k + 1].speed, 1.7f), "the typed speed was overwritten");
 
-	// Another path: the speed follows its length.
+	// Fit on again, then another path: the speed follows its length.
+	CutStrip fit = app.cutscene().actors[0].strips[k + 1].copy(mem);
+	fit.speed_held = false;
+	test::@check(app.set_cut_strip(0, (usz)k + 1, fit), "fit again");
 	(void)app.add_cut_path("Long");
 	test::@check(app.add_cut_knot(1, { 2, 0, 0 }) && app.add_cut_knot(1, { 2, 0, 12 }), "a 12 m path");
 	CutStrip moved = app.cutscene().actors[0].strips[k].copy(mem);
 	moved.path = 1;
 	test::@check(app.set_cut_strip(0, (usz)k, moved), "change the path");
-	test::@check(near(app.cutscene().actors[0].strips[k].speed, 2.0f, 2e-3f), "twice the path plays at %f, not 2", app.cutscene().actors[0].strips[k].speed);
+	test::@check(near(app.cutscene().actors[0].strips[k + 1].speed, 2.0f, 2e-3f), "twice the path plays at %f, not 2", app.cutscene().actors[0].strips[k + 1].speed);
 
-	// A walk clip with no ground speed is timed at 1 m/s and named.
+	// A walk whose clip has no ground speed plays at its own speed and is named.
 	CutStrip resting = crig::cut_strip(MOVE, 20.0f, 21.0f);
-	resting.clip = "Rest".copy(mem);
 	resting.path = 0;
 	(void)app.add_cut_strip(0, resting);
+	CutStrip idle = crig::cut_strip(PLAY, 20.0f, 21.0f);
+	idle.clip = "Rest".copy(mem);
+	(void)app.add_cut_strip(0, idle);
 	String[] named = app.cutscene_problem_texts(mem);
 	defer crig::free_names(mem, named);
 	bool said;
 	foreach (text : named) said = said || (text.contains("Rest") && text.contains("ground speed"));
-	test::@check(said, "a move whose clip has no ground speed is not named");
+	test::@check(said, "a walk whose clip has no ground speed is not named");
+}
+
+fn void a_walk_laid_over_a_move_follows_its_pace_until_its_speed_is_typed() @test
+{
+	Fixture* f = mem::new(Fixture);
+	defer free(f);
+	if (!open_hero(f)) return;
+	defer f.close();
+	crig::AppState* app = &f.app;
+	test::@check(app.make_actor(app.active, "hero"), "hero");
+	(void)app.add_cutscene();
+	test::@check(app.set_cutscene_timing(0, 60.0f, 30.0f), "a long cutscene");
+	(void)app.add_cut_path("Road");
+	test::@check(app.add_cut_knot(0, { 0, 0, 0 }) && app.add_cut_knot(0, { 0, 0, 6 }), "knots");
+	float length = app.cut_picked_path().length;
+	float ground = app.cut_clip_ground(app.active, "Walk").speed;
+	test::@check(ground > crig::CUT_PAIR_GROUND_MIN, "the walk has a ground speed, not %f", ground);
+	if (!(ground > crig::CUT_PAIR_GROUND_MIN)) return;
+
+	// A move: no clip, linear, facing along the path, as long as the walk takes to cover it. One step, picked.
+	app.show_cutscene_at(1.0f);
+	usz steps = cut_steps(app);
+	sz k = app.add_cut_move(0, 0);
+	test::@check(k >= 0, "no move");
+	if (k < 0) return;
+	test::eq(cut_steps(app), steps + 1);
+	CutStrip* m = &app.cutscene().actors[0].strips[k];
+	test::@check(m.kind == MOVE && m.clip.len == 0 && m.path == 0 && m.ease == LINEAR && m.turn, "the move plays '%s'", m.clip);
+	test::@check(near(m.start, 1.0f) && near(m.end - m.start, length / ground, 1e-3f), "it lasts %f s, not %f", m.end - m.start, length / ground);
+	test::@check(app.cut_selected_strip() == m, "the move is not picked");
+
+	// A play laid while it runs spans to its end, loops, and plays at its pace: 1x.
+	app.show_cutscene_at(2.0f);
+	sz p = app.add_cut_play(0, "Walk");
+	test::@check(p >= 0, "no walk");
+	if (p < 0) return;
+	m = &app.cutscene().actors[0].strips[k];
+	CutStrip* w = &app.cutscene().actors[0].strips[p];
+	test::@check(near(w.start, 2.0f) && w.end == m.end && w.loop, "the walk runs %f to %f, not to %f", w.start, w.end, m.end);
+	test::@check(crig::cut_paired_move(app.cutscene().actors[0].strips, (usz)p, app.cutscene().paths) == k, "the walk is not paired");
+	test::@check(near(w.speed, 1.0f, 1e-3f), "at the walk's own pace it plays at %f", w.speed);
+
+	// The move twice as long: half the speed.
+	CutStrip longer = m.copy(mem);
+	longer.end = m.start + (m.end - m.start) * 2.0f;
+	test::@check(app.set_cut_strip(0, (usz)k, longer), "make it longer");
+	test::@check(near(app.cutscene().actors[0].strips[p].speed, 0.5f, 1e-3f), "twice as long plays at %f", app.cutscene().actors[0].strips[p].speed);
+
+	// A knot moved: the path is twice as long, so the walk is back to 1x; one undo takes both back.
+	test::@check(app.begin_cut_knot_drag(0, 1) && app.drag_cut_knot({ 0, 0, 12 }) && app.end_cut_knot_drag(), "the knot drag");
+	test::@check(near(app.cutscene().actors[0].strips[p].speed, 1.0f, 2e-3f), "the path doubled plays at %f", app.cutscene().actors[0].strips[p].speed);
+	test::@check(app.undo_cutscene(), "undo the drag");
+	test::@check(near(app.cutscene().actors[0].strips[p].speed, 0.5f, 1e-3f), "undo left the speed at %f", app.cutscene().actors[0].strips[p].speed);
+
+	// A speed held is kept when the move changes again.
+	CutStrip held = app.cutscene().actors[0].strips[p].copy(mem);
+	held.speed = 1.3f;
+	held.speed_held = true;
+	test::@check(app.set_cut_strip(0, (usz)p, held), "hold a speed");
+	m = &app.cutscene().actors[0].strips[k];
+	CutStrip shorter = m.copy(mem);
+	shorter.end = m.start + length / ground;
+	test::@check(app.set_cut_strip(0, (usz)k, shorter), "make it shorter");
+	test::@check(near(app.cutscene().actors[0].strips[p].speed, 1.3f), "the held speed became %f", app.cutscene().actors[0].strips[p].speed);
+
+	// Fit on: it follows the move again, at 1x.
+	steps = cut_steps(app);
+	CutStrip fit = app.cutscene().actors[0].strips[p].copy(mem);
+	fit.speed_held = false;
+	test::@check(app.set_cut_strip(0, (usz)p, fit), "fit");
+	test::@check(near(app.cutscene().actors[0].strips[p].speed, 1.0f, 1e-3f), "fit plays at %f", app.cutscene().actors[0].strips[p].speed);
+	test::eq(cut_steps(app), steps + 1);
+
+	// With no move running, a play is one pass of its clip.
+	app.show_cutscene_at(40.0f);
+	sz alone = app.add_cut_play(0, "Rest");
+	test::@check(alone >= 0, "no rest");
+	if (alone < 0) return;
+	CutStrip* r = &app.cutscene().actors[0].strips[alone];
+	test::@check(near(r.start, 40.0f) && r.end - r.start < 20.0f && crig::cut_paired_move(app.cutscene().actors[0].strips, (usz)alone, app.cutscene().paths) < 0,
+		"the rest runs %f to %f", r.start, r.end);
+}
+
+// Strip `id` of the active cutscene, or null.
+fn CutStrip* strip_by_id(crig::AppState* app, uint id) @local
+{
+	usz actor;
+	usz k;
+	if (!app.cutscene().find_strip(id, &actor, &k)) return null;
+	return &app.cutscene().actors[actor].strips[k];
+}
+
+// Where strip `id` is in its actor's strips; settling moves them about.
+fn usz index_of(crig::AppState* app, uint id) @local
+{
+	usz actor;
+	usz k;
+	test::@check(app.cutscene().find_strip(id, &actor, &k), "no strip %d", id);
+	return k;
+}
+
+fn bool spans(CutStrip* play, CutStrip* move) @local => play && move && play.start == move.start && play.end == move.end;
+
+fn void a_walk_spanning_its_move_takes_the_moves_new_times() @test
+{
+	Fixture* f = mem::new(Fixture);
+	defer free(f);
+	if (!open_hero(f)) return;
+	defer f.close();
+	crig::AppState* app = &f.app;
+	test::@check(app.make_actor(app.active, "hero"), "hero");
+	(void)app.add_cutscene();
+	test::@check(app.set_cutscene_timing(0, 60.0f, 30.0f), "a long cutscene");
+	(void)app.add_cut_path("Road");
+	test::@check(app.add_cut_knot(0, { 0, 0, 0 }) && app.add_cut_knot(0, { 0, 0, 6 }), "knots");
+	float length = app.cut_picked_path().length;
+	app.show_cutscene_at(1.0f);
+	sz k = app.walk_cut_path(0, 0);
+	test::@check(k >= 0 && (usz)k + 1 < app.cutscene().actors[0].strips.len, "Walk here added no move and walk");
+	if (k < 0 || (usz)k + 1 >= app.cutscene().actors[0].strips.len) return;
+	uint move_id = app.cutscene().actors[0].strips[k].id;
+	uint walk_id = app.cutscene().actors[0].strips[k + 1].id;
+	CutStrip* m = strip_by_id(app, move_id);
+	CutStrip* w = strip_by_id(app, walk_id);
+	float ground = app.cut_ground_speed(0, w);
+	test::@check(ground > crig::CUT_PAIR_GROUND_MIN && spans(w, m), "the walk does not span its move");
+	if (!(ground > crig::CUT_PAIR_GROUND_MIN)) return;
+	float was_start = m.start;
+	float was_end = m.end;
+
+	// The card's End: the move twice as long, and the walk ends with it at half speed, in one step.
+	usz steps = cut_steps(app);
+	CutStrip longer = m.copy(mem);
+	longer.end = m.start + (m.end - m.start) * 2.0f;
+	test::@check(app.set_cut_strip(0, index_of(app, move_id), longer), "make it longer");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(spans(w, m), "the walk runs %f to %f, the move %f to %f", w.start, w.end, m.start, m.end);
+	test::@check(near(w.speed, 0.5f, 1e-3f), "twice as long plays at %f, not 0.5", w.speed);
+	test::eq(cut_steps(app), steps + 1);
+	test::@check(app.undo_cutscene(), "undo");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(m.end == was_end && spans(w, m) && near(w.speed, 1.0f, 1e-3f), "one undo left the walk at %f to %f at %fx", w.start, w.end, w.speed);
+	test::@check(app.redo_cutscene(), "redo");
+
+	// The card's Start, a front trim: the walk starts with it, from its clip's start, and plays faster.
+	m = strip_by_id(app, move_id);
+	CutStrip later = m.copy(mem);
+	later.trim_front(m.start + 1.0f);
+	test::@check(app.set_cut_strip(0, index_of(app, move_id), later), "trim the front");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(spans(w, m) && near(m.start, was_start + 1.0f), "the trimmed walk runs %f to %f, the move %f to %f", w.start, w.end, m.start, m.end);
+	test::@check(w.offset == 0.0f, "the walk's clip starts %f s in", w.offset);
+	test::@check(near(w.speed, (length / (m.end - m.start)) / ground, 1e-3f), "trimmed it plays at %f", w.speed);
+
+	// A drag of the whole move carries the walk, live and landed; Esc puts both back.
+	float start = m.start;
+	float end = m.end;
+	steps = cut_steps(app);
+	test::@check(app.begin_cut_gesture(), "begin a drag");
+	test::@check(app.drag_cut_strip(0, index_of(app, move_id), start + 3.0f, end + 3.0f, false), "drag");
+	test::@check(spans(strip_by_id(app, walk_id), strip_by_id(app, move_id)), "the walk does not follow the drag live");
+	test::@check(app.end_cut_gesture(0, index_of(app, move_id)), "land it");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(spans(w, m) && near(m.start, start + 3.0f), "the moved walk runs %f to %f", w.start, w.end);
+	test::eq(cut_steps(app), steps + 1);
+	test::@check(app.begin_cut_gesture(), "begin another");
+	test::@check(app.drag_cut_strip(0, index_of(app, move_id), start + 5.0f, end + 5.0f, false), "drag");
+	app.cancel_cut_gesture();
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(near(m.start, start + 3.0f) && spans(w, m), "Esc left the walk at %f", w.start);
+	test::eq(cut_steps(app), steps + 1);
+
+	// The end dragged into a play after it: the walk comes along and the play gives way.
+	app.show_cutscene_at(m.end);
+	sz rested = app.add_cut_play(0, "Rest");
+	test::@check(rested >= 0, "no rest");
+	if (rested < 0) return;
+	uint rest_id = app.cutscene().actors[0].strips[rested].id;
+	m = strip_by_id(app, move_id);
+	float rest_end = strip_by_id(app, rest_id).end;
+	float into = math::min(m.end + 0.5f, rest_end - 0.1f);
+	test::@check(app.begin_cut_gesture() && app.drag_cut_strip(0, index_of(app, move_id), m.start, into, false) && app.end_cut_gesture(0, index_of(app, move_id)), "the drag");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	CutStrip* rest = strip_by_id(app, rest_id);
+	test::@check(spans(w, m) && near(m.end, into), "the walk ends at %f, the move at %f", w.end, m.end);
+	test::@check(rest && near(rest.start, into) && near(rest.end, rest_end), "the rest runs %f to %f", rest ? rest.start : 0.0f, rest ? rest.end : 0.0f);
+
+	// A turn laid inside the move cuts it back, and the walk with it.
+	app.show_cutscene_at(m.start + 1.0f);
+	sz turned = app.add_cut_turn(0, "", { 1, 0, 1 });
+	test::@check(turned >= 0, "no turn");
+	m = strip_by_id(app, move_id);
+	w = strip_by_id(app, walk_id);
+	test::@check(near(m.end, app.cut_time) && spans(w, m), "the cut move ends at %f, its walk at %f", m.end, w.end);
+
+	// A walk over only part of its move keeps its times; its speed still follows the move.
+	app.show_cutscene_at(30.0f);
+	sz second = app.add_cut_move(0, 0);
+	test::@check(second >= 0, "no second move");
+	if (second < 0) return;
+	uint second_id = app.cutscene().actors[0].strips[second].id;
+	app.show_cutscene_at(31.0f);
+	sz part = app.add_cut_play(0, "Walk");
+	test::@check(part >= 0, "no partial walk");
+	if (part < 0) return;
+	uint part_id = app.cutscene().actors[0].strips[part].id;
+	CutStrip* m2 = strip_by_id(app, second_id);
+	CutStrip* p = strip_by_id(app, part_id);
+	float part_start = p.start;
+	float part_end = p.end;
+	test::@check(near(part_start, 31.0f) && part_end == m2.end, "the partial walk runs %f to %f", part_start, part_end);
+	CutStrip stretched = m2.copy(mem);
+	stretched.end = m2.end + 2.0f;
+	test::@check(app.set_cut_strip(0, index_of(app, second_id), stretched), "stretch the second move");
+	m2 = strip_by_id(app, second_id);
+	p = strip_by_id(app, part_id);
+	test::@check(p.start == part_start && p.end == part_end, "the partial walk moved to %f-%f", p.start, p.end);
+	test::@check(near(p.speed, (length / (m2.end - m2.start)) / ground, 1e-3f), "the partial walk plays at %f", p.speed);
+}
+
+fn void a_scene_keeps_a_walks_ground_speed_and_held_speed_and_the_export_leaves_them_out() @test
+{
+	SceneFile scene = { .time = 0.0f };
+	defer scene.free(mem);
+	scene.characters = alloc::new_array(mem, SceneCharacter, 1);
+	scene.characters[0] = { .model = "/nowhere/hero.glb".copy(mem), .transform = { .rotation = quaternion::IDENTITY },
+		.row = "hero".copy(mem), .scale = 1.0f };
+	scene.cutscenes = alloc::new_array(mem, Cutscene, 1);
+	Cutscene* c = &scene.cutscenes[0];
+	*c = { .name = "Walks".copy(mem), .duration = 8.0f, .fps = 30.0f };
+	c.paths = alloc::new_array(mem, WalkPath, 1);
+	c.paths[0] = walk_path("road", { { 0, 0, 0 }, { 0, 0, 4 } });
+	CutStrip go = crig::cut_strip(MOVE, 0, 4);
+	go.path = 0;
+	CutStrip walking = strip(PLAY, 0, 4, "Walk", true);
+	walking.ground_speed = 1.4f;
+	walking.speed_held = true;
+	walking.speed = 0.8f;
+	c.actors = alloc::new_array(mem, CutActor, 1);
+	c.actors[0] = cut_actor("hero", { go, walking, strip(PLAY, 4, 6, "Rest") });
+
+	String text = crig::scene_file_text(mem, &scene, "/nowhere/walks.rigsmith-scene.json");
+	defer text.free(mem);
+	SceneFile back = crig::parse_scene_file(mem, text, "/nowhere/walks.rigsmith-scene.json")!!;
+	defer back.free(mem);
+	test::@check(back.cutscenes.len == 1 && back.cutscenes[0].actors.len == 1 && back.cutscenes[0].actors[0].strips.len == 3, "the cutscene did not read back");
+	if (back.cutscenes.len != 1 || back.cutscenes[0].actors.len != 1 || back.cutscenes[0].actors[0].strips.len != 3) return;
+	CutStrip[] got = back.cutscenes[0].actors[0].strips;
+	test::@check(got[1].kind == PLAY && near(got[1].ground_speed, 1.4f) && got[1].speed_held && near(got[1].speed, 0.8f), "the walk's ground speed and held speed");
+	test::@check(got[2].ground_speed == 0.0f && !got[2].speed_held, "a plain play has neither");
+	test::@check(got[0].same_as(&c.actors[0].strips[0]) && got[1].same_as(&c.actors[0].strips[1]), "the strips changed on the way");
+
+	// The game's file has neither key.
+	String written = crig::cutscene_gltf_text(mem, c)!!;
+	defer written.free(mem);
+	test::@check(!written.contains("ground_speed") && !written.contains("speed_held"), "the export wrote a scene-only key");
 }
 
 fn void an_actor_standing_in_for_a_level_node_walks_lifted_paths() @test

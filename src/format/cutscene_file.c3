@@ -459,7 +459,7 @@ fn void cut_write_actor(DString* out, CutActor* actor, usz node, int[] slot) @lo
 	out.append_string("]}");
 }
 
-// `scene` adds what only the scene file keeps: a move's typed ground speed, and which strips play one-offs.
+// `scene` adds what only the scene file keeps: a typed ground speed, a play's held speed, and which strips play one-offs.
 fn void cut_write_strip(DString* out, CutStrip* s, int path, bool scene = false) @local
 {
 	switch (s.kind)
@@ -484,6 +484,12 @@ fn void cut_write_strip(DString* out, CutStrip* s, int path, bool scene = false)
 			cut_write_clip(out, s, scene);
 		case PLAY:
 			cut_write_clip(out, s, scene);
+			if (scene && s.ground_speed > 0.0f)
+			{
+				out.append_string(`,"ground_speed":`);
+				cut_write_number(out, s.ground_speed);
+			}
+			if (scene && s.speed_held) out.append_string(`,"speed_held":true`);
 		case TURN:
 			out.appendf(`,"ease":"%s"`, cut_ease_name(s.ease))!!;
 			if (s.target_row.len > 0)
@@ -1158,6 +1164,10 @@ fn CutStrip? cut_read_strip(Allocator allocator, Object* raw, String where, CutR
 	if (kind == PLAY)
 	{
 		if (s.end < s.start) return cut_refuse(CUTSCENE_MALFORMED, why, "%s: end is before start", where)~;
+		if (!reading.lenient) return s;
+		float typed = (float)cut_read_number(raw, "ground_speed", 0.0, where, why)!;
+		s.ground_speed = typed > 0.0f ? typed : 0.0f;
+		s.speed_held = cut_read_bool(raw, "speed_held", false, where, why)!;
 		return s;
 	}
 	if (!(s.end > s.start)) return cut_refuse(CUTSCENE_MALFORMED, why, "%s: a move needs an end after its start", where)~;

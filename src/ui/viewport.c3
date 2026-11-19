@@ -339,7 +339,8 @@ fn String prompt_text(AppState* app) @private
 {
 	// Read from the level: the level draws it.
 	if (app.level_read) return "";
-	if (!app.has_mesh()) return PROMPT_NO_MESH;
+	// A level alone is not empty: the hint bar names the next step.
+	if (!app.has_mesh()) return app.has_level() ? "" : PROMPT_NO_MESH;
 	if (app.doc.dots.len() == 0) return PROMPT_NO_RIG;
 	return "";
 }
@@ -1334,7 +1335,7 @@ fn void Viewport.paint_move_guides(&self, Element* elem, Painter* painter, Matri
 fn String placement_refused(AppState* app) @private
 {
 	if (app.level_read) return "this character is read from the level: its rig is the level's";
-	if (!app.has_mesh()) return "empty scene — File > Import .glb brings a character in";
+	if (!app.has_mesh()) return app.has_level() ? "no character — File > Import .glb brings one in" : "empty scene — File > Import .glb brings a character in";
 	if (!app.show_rig) return "the rig is hidden — View > Skeleton brings it back";
 	if (app.animating) return "stop the clip to place joints: the body on screen is posed";
 	if (app.pose_edit_active) return "save or discard the animation pose before editing the rig";
@@ -1384,7 +1385,7 @@ fn void Viewport.press_cut_pick(&self, Element* elem, AppState* app, MouseEvent 
 		}
 		(void)app.finish_cut_pick(hit.point);
 	}
-	refresh_cutscene_view(elem.ui);
+	refresh_animations_view(elem.ui);
 	app.refresh_ui();
 	elem.request_paint();
 }

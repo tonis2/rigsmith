@@ -66,7 +66,7 @@ fn void menu_open_scene(Ui* ui)
 }
 
 // A model into the scene as another character, with its own rig, clips and
-// history. Into an empty scene it is simply the first.
+// history, or a level behind it; see `AppState.import_glb`.
 fn void menu_import(Ui* ui)
 {
 	open_file_dialog(ui, FilePurpose.ADD_CHARACTER);
@@ -103,19 +103,14 @@ fn void menu_save_as(Ui* ui)
 	open_file_dialog(ui, FilePurpose.SAVE_SCENE);
 }
 
-// One character: the export panel, which picks the clips and keeps UVs and
-// materials. More than one: all of them in one file, with one shared animation.
+// The Export panel, on a character, all characters or a cutscene.
 fn void menu_export(Ui* ui)
 {
-	AppState* app = ui.inherit(AppState)!!;
-	if (!app.has_mesh()) return;
-	if (app.character_count() > 1)
-	{
-		open_file_dialog(ui, FilePurpose.EXPORT_SCENE);
-		return;
-	}
+	if (!ui.inherit(AppState)!!.can_export()) return;
 	open_export_dialog(ui);
 }
+
+fn MenuItemFlags query_can_export(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.can_export() };
 
 fn MenuItemFlags query_scene_has_characters(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.scene_has_characters() };
 
@@ -907,21 +902,6 @@ fn void menu_show_floor(Ui* ui)
 
 fn MenuItemFlags query_show_floor(Ui* ui) => { .checked = !ui.inherit(AppState)!!.config.hide_floor };
 
-fn void menu_open_level(Ui* ui) => open_file_dialog(ui, FilePurpose.OPEN_LEVEL);
-
-fn void menu_close_level(Ui* ui)
-{
-	AppState* app = ui.inherit(AppState)!!;
-	app.close_level();
-	app.refresh_ui();
-}
-
-fn MenuItemFlags query_has_level(Ui* ui) => { .disabled = !ui.inherit(AppState)!!.has_level() };
-
-fn void menu_export_cutscene(Ui* ui) => open_file_dialog(ui, FilePurpose.EXPORT_CUTSCENE);
-
-fn MenuItemFlags query_has_cutscene(Ui* ui) => { .disabled = ui.inherit(AppState)!!.cutscene() == null };
-
 fn void menu_frame_level(Ui* ui) => ui.inherit(AppState)!!.frame_level();
 
 fn MenuItemFlags query_frame_level(Ui* ui) => { .disabled = !level_shown() };
@@ -1332,19 +1312,16 @@ fn MenuItemFlags query_joint_names(Ui* ui)
 // `menu_toggle_controls`.
 const String CONTROLS_DIALOG_ID = "controls-dialog";
 
-MenuItem[15] file_items = {
+MenuItem[12] file_items = {
 	{ .label = "New scene", .shortcut = Shortcut.NEW_SCENE.label, .on_select = &menu_new_scene },
 	{ .label = "Open scene…", .shortcut = Shortcut.OPEN_SCENE.label, .on_select = &menu_open_scene },
 	{ .separator = true },
+	// A level as well as a character: `import_glb` decides which.
 	{ .label = "Import .glb…", .shortcut = Shortcut.IMPORT_GLB.label, .on_select = &menu_import },
-	// A backdrop, not a character: drawn behind the scene and never edited.
-	{ .label = "Open level…", .on_select = &menu_open_level },
-	{ .label = "Close level", .on_select = &menu_close_level, .state = &query_has_level },
 	{ .separator = true },
 	{ .label = "Save", .shortcut = Shortcut.SAVE.label, .on_select = &menu_save, .state = &query_scene_has_characters },
 	{ .label = "Save as…", .shortcut = Shortcut.SAVE_AS.label, .on_select = &menu_save_as, .state = &query_scene_has_characters },
-	{ .label = "Export .glb…", .shortcut = Shortcut.EXPORT_GLB.label, .on_select = &menu_export, .state = &query_any_mesh },
-	{ .label = "Export cutscene…", .on_select = &menu_export_cutscene, .state = &query_has_cutscene },
+	{ .label = "Export .glb…", .shortcut = Shortcut.EXPORT_GLB.label, .on_select = &menu_export, .state = &query_can_export },
 	{ .separator = true },
 	// Above Quit rather than in a menu of its own: one panel of settings does not
 	// earn a top-level title, and the asset libraries it holds are the same kind
@@ -1480,7 +1457,7 @@ Menu[5] menus;
 
 AreaLayout area_layout;
 
-AreaView[7] area_views = {
+AreaView[6] area_views = {
 	{ .name = "3D View", .build = &build_3d_view },
 	{ .name = "Assets", .build = &build_assets_view },
 	// Last, because it is the pane a user goes to and comes back from: the rig
@@ -1506,61 +1483,14 @@ AreaView[7] area_views = {
 	// the middle, and why whatever comes back goes here too.
 	// Text to motion and video capture, as one node graph.
 	{ .name = "Nodes", .build = &build_nodes_view },
-	// The cutscenes of the scene: their actors, timeline and preview.
-	{ .name = "Cutscene", .build = &build_cutscene_view },
+	// A Cutscene tab sat here; a cutscene is shown in the Animations dock now (animation_cutscene.c3).
 };
-
-// The pane a one-off edit turned from the Cutscene tab to Animations, to turn back.
-AreaNode* one_off_pane;
-bool one_off_panes_open;
-
-<*
- Editing a one-off shows the character's own tools: the pane showing the Cutscene tab turns to
- Animations while it lasts, and back after, unless an Animations pane is already up.
-*>
-fn void sync_one_off_panes(Ui* ui, AppState* app)
-{
-	bool open = app.one_off_open();
-	if (open == one_off_panes_open) return;
-	one_off_panes_open = open;
-	AreaNode* target;
-	if (open)
-	{
-		one_off_pane = null;
-		if (find_leaf_showing(area_layout.root, ANIMATION_VIEW)) return;
-		target = find_leaf_showing(area_layout.root, CUTSCENE_VIEW);
-		if (!target) return;
-		target.active = ANIMATION_VIEW;
-		one_off_pane = target;
-	}
-	else
-	{
-		target = one_off_pane;
-		one_off_pane = null;
-		// Only a pane still in the layout and still on Animations is turned back.
-		if (!target || !leaf_in(area_layout.root, target) || target.active != ANIMATION_VIEW) return;
-		target.active = CUTSCENE_VIEW;
-	}
-	ui.@each(AreaPane; pane)
-	{
-		if (pane.widget_as(AreaPane).node == target) pane.request_build();
-	};
-}
-
-fn bool leaf_in(AreaNode* node, AreaNode* leaf) @private
-{
-	if (!node) return false;
-	if (node == leaf) return true;
-	if (node.is_leaf()) return false;
-	return leaf_in(node.first, leaf) || leaf_in(node.second, leaf);
-}
 
 // Registry positions stay stable when new pane types are appended.
 const usz LIBRARY_VIEW = 1;
 const usz ANIMATION_VIEW = 3;
 const usz SCENE_VIEW = 4;
 const usz NODES_VIEW = 5;
-const usz CUTSCENE_VIEW = 6;
 
 // Enough space for the timeline, pose controls and status at the startup size.
 // Split ratios remain user-adjustable and scale with subsequent window resizing.
@@ -1900,7 +1830,6 @@ fn void AppRoot.update(&self, Element* elem, float dt) @dynamic
 	if (app.tick_cutscene(dt)) cast_moved = true;
 	// Or, while a one-off is edited, to the cutscene time its playhead stands for.
 	if (app.tick_one_off()) cast_moved = true;
-	sync_one_off_panes(elem.ui, app);
 
 	// One step of the overlay's occlusion refresh cycle per frame, so a running
 	// clip re-tests a rotating slice of the dots and bones rather than all of them
@@ -2115,6 +2044,9 @@ fn void animation_dialogs() @private
 {
 	@node((Dialog) { .title = "Create animation", .body = &build_anim_new_body,
 		.style = DIALOG_STYLE, .modal = true }).with_id("anim-new-dialog");
+	@node((Dialog) { .body = &build_anim_new_menu,
+		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_NEW_MENU_ID);
 	@node((Dialog) { .body = &build_anim_clip_menu,
 		.style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
 		.popup_insets = { 0, 5, 0, 5 } }).with_id(ANIM_CLIP_MENU_ID);

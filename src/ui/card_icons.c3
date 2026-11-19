@@ -65,27 +65,20 @@ enum CardGlyph : (String svg)
 	PICTURE_GLYPH { $embed("../../assets/icons/card/picture.svg") },
 	VIDEO_PROMPT_GLYPH { $embed("../../assets/icons/card/video_prompt.svg") },
 	IMAGE_PROMPT_GLYPH { $embed("../../assets/icons/card/image_prompt.svg") },
-	// The Cutscene tab's.
-	ADD_GLYPH { $embed("../../assets/icons/card/add.svg") },
+	// The cutscene's, in the Animations dock.
 	DELETE_GLYPH { $embed("../../assets/icons/card/delete.svg") },
 	EXPORT_GLYPH { $embed("../../assets/icons/card/export.svg") },
-	ACTOR_GLYPH { $embed("../../assets/icons/card/actor.svg") },
-	REMOVE_ACTOR_GLYPH { $embed("../../assets/icons/card/remove_actor.svg") },
-	GROUND_GLYPH { $embed("../../assets/icons/card/ground.svg") },
-	OWN_FILE_GLYPH { $embed("../../assets/icons/card/own_file.svg") },
-	PREVIEW_GLYPH { $embed("../../assets/icons/card/preview.svg") },
-	PAUSE_GLYPH { $embed("../../assets/icons/card/pause.svg") },
-	ADD_PLAY_GLYPH { $embed("../../assets/icons/card/add_play.svg") },
-	ADD_TURN_GLYPH { $embed("../../assets/icons/card/add_turn.svg") },
 	LOOP_GLYPH { $embed("../../assets/icons/card/loop.svg") },
 	FACE_PATH_GLYPH { $embed("../../assets/icons/card/face_path.svg") },
+	FIT_GLYPH { $embed("../../assets/icons/card/fit.svg") },
 	PICK_POINT_GLYPH { $embed("../../assets/icons/card/pick_point.svg") },
-	ADD_PATH_GLYPH { $embed("../../assets/icons/card/add_path.svg") },
-	WALK_HERE_GLYPH { $embed("../../assets/icons/card/walk_here.svg") },
-	NEW_ONE_OFF_GLYPH { $embed("../../assets/icons/card/new_one_off.svg") },
 	EDIT_ONE_OFF_GLYPH { $embed("../../assets/icons/card/edit_one_off.svg") },
 	DELETE_ONE_OFF_GLYPH { $embed("../../assets/icons/card/delete_one_off.svg") },
 	BACK_GLYPH { $embed("../../assets/icons/card/back.svg") },
+	// The cutscene Pieces bin's actions.
+	ADD_PATH_GLYPH { $embed("../../assets/icons/card/add_path.svg") },
+	ADD_TURN_GLYPH { $embed("../../assets/icons/card/add_turn.svg") },
+	NEW_ONE_OFF_GLYPH { $embed("../../assets/icons/card/new_one_off.svg") },
 }
 
 <*

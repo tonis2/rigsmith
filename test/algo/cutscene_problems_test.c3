@@ -233,3 +233,36 @@ fn void a_walk_clip_that_travels_has_no_speed_or_faces_aside_is_named() @test
 	defer if (none.len > 0) free(none);
 	test::eq(none.len, 0);
 }
+
+fn void a_walk_over_a_move_with_no_ground_speed_or_that_travels_is_named() @test
+{
+	Cutscene c = { .name = "Walks".copy(mem), .duration = 12.0f, .fps = 30.0f };
+	defer c.free(mem);
+	c.paths = alloc::new_array(mem, WalkPath, 1);
+	c.paths[0] = { .name = "road".copy(mem), .points = alloc::clone_slice(mem, (Vec3[]){ { 0, 0, 0 }, { 0, 0, 4 } }) };
+	CutStrip typed = play(6, 8, "idle", true);
+	typed.ground_speed = 1.5f;
+	c.actors = alloc::new_array(mem, CutActor, 1);
+	// Walks over moves, then a still clip played after the last move ends.
+	c.actors[0] = actor("hero", { move(0, 0, 2), play(0, 2, "walk", true), move(0, 2, 4), play(2, 4, "idle", true),
+		move(0, 4, 6), play(4, 6, "stride", true), move(0, 6, 8), typed, play(8, 9, "idle") });
+	String[] clips = { "walk", "stride", "idle" };
+	CutClipGround[] grounds = { { .speed = 1.2f }, { .speed = 1.0f, .travels = true }, {} };
+	CutCast[] cast = { { .found = true, .clips = clips, .measured = true, .grounds = grounds, .facing_known = true, .faces_front = true } };
+	CutProblem[] problems = crig::cutscene_problems(mem, &c, cast);
+	defer if (problems.len > 0) free(problems);
+
+	test::@check(!has(problems, CLIP_TRAVELS, 0, 1) && !has(problems, NO_GROUND_SPEED, 0, 1), "an in-place walk with its speed is fine");
+	test::@check(has(problems, NO_GROUND_SPEED, 0, 3), "a walk whose clip has no ground speed");
+	test::@check(has(problems, CLIP_TRAVELS, 0, 5) && !has(problems, NO_GROUND_SPEED, 0, 5), "a walk whose clip still travels");
+	test::@check(!has(problems, NO_GROUND_SPEED, 0, 7), "unless the walk has one typed");
+	test::@check(!has(problems, NO_GROUND_SPEED, 0, 8), "a play over no move needs no ground speed");
+	test::eq(problems.len, 2);
+
+	String speed = crig::cut_problem_text(mem, &c, { NO_GROUND_SPEED, 0, 3 });
+	defer speed.free(mem);
+	test::@check(speed.contains("walk at 2.00 s") && speed.contains("'idle'") && speed.contains("its own speed"), "'%s'", speed);
+	String travels = crig::cut_problem_text(mem, &c, { CLIP_TRAVELS, 0, 5 });
+	defer travels.free(mem);
+	test::@check(travels.contains("walk at 4.00 s") && travels.contains("travels"), "'%s'", travels);
+}

@@ -118,7 +118,8 @@ fn bool AppState.cut_strip_exists(&self, usz actor, usz strip)
 
 <*
  Put `edited` in place of strip `strip` of `actor` in the active cutscene, keeping
- its id; the lanes settle around it. One undo step, none when nothing changes.
+ its id; the lanes settle around it, and a walk tied to a move whose times changed
+ takes them (cut_carry_ties). One undo step, none when nothing changes.
 
  @param edited : "Owned from here"
  @return "False for no such strip"
@@ -142,11 +143,16 @@ fn bool AppState.set_cut_strip(&self, usz actor, usz strip, CutStrip edited)
 	self.cut_checkpoint();
 	bool[] played = self.cutscene().played_one_offs();
 	CutActor* who = &self.cutscene().actors[actor];
+	CutTie[] ties = cut_ties(mem, who.strips, self.cutscene().paths);
+	defer free(ties);
 	edited.id = who.strips[strip].id;
 	who.strips[strip].free(mem);
 	who.strips[strip] = edited;
 	(void)cut_settle_strips(mem, &who.strips, strip);
+	// A walk that spanned its move follows the move's new times.
+	(void)cut_carry_ties(mem, &who.strips, ties);
 	self.cutscene().drop_unplayed(played);
+	self.fit_paired_speeds(actor);
 	self.cutscenes_changed();
 	return true;
 }
@@ -181,15 +187,23 @@ fn sz AppState.put_cut_strip(&self, usz actor, CutStrip strip)
 	Cutscene* c = self.cutscene();
 	bool[] played = c.played_one_offs();
 	CutActor* who = &c.actors[actor];
+	// A move the new strip cuts back takes its walk with it.
+	CutTie[] ties = cut_ties(mem, who.strips, c.paths);
+	defer free(ties);
 	usz count = who.strips.len;
 	CutStrip[] grown = alloc::new_array(mem, CutStrip, (sz)count + 1);
 	foreach (usz k, s : who.strips) grown[k] = s;
-	strip.id = 0;
+	// An id of its own now, so it is found again after the lanes settle.
+	strip.id = next_generation();
+	uint id = strip.id;
 	grown[count] = strip;
 	if (count > 0) alloc::free(mem, who.strips);
 	who.strips = grown;
 	usz at = cut_settle_strips(mem, &who.strips, count);
+	(void)cut_carry_ties(mem, &who.strips, ties);
+	foreach (usz k, &s : who.strips) if (s.id == id) at = k;
 	c.drop_unplayed(played);
+	self.fit_paired_speeds(actor);
 	self.cutscenes_changed();
 	self.cut_selected = who.strips[at].id;
 	self.cut_lane_actor = actor + 1;
@@ -217,13 +231,16 @@ fn bool AppState.delete_cut_strip(&self, usz actor, usz strip)
 	}
 	// A one-off goes with the last strip that plays it, in this same step.
 	self.cutscene().drop_unplayed(played);
+	// A walk over a move that went may walk with another one now.
+	self.fit_paired_speeds(actor);
 	self.cutscenes_changed();
 	return true;
 }
 
 <*
- A play strip of `clip` for `actor`, at the playhead and as long as one pass of
- the clip, looping when the clip loops. One undo step.
+ A play strip of `clip` for `actor` at the playhead, as long as one pass of the
+ clip and looping when the clip loops. Over a move the actor walks then, it runs
+ to that move's end and loops: a walk, whose speed follows the move. One undo step.
 
  @return "Its index, or -1 when the actor's character has no such clip"
 *>
@@ -251,8 +268,14 @@ fn sz AppState.add_cut_play(&self, usz actor, String clip)
 	if (!found) return -1;
 	float frame = c.fps > 0.0f ? 1.0f / c.fps : 0.01f;
 	CutStrip s = cut_strip(PLAY, self.cut_time, self.cut_time + math::max(length, frame));
-	s.clip = clip.copy(mem);
 	s.loop = loop;
+	sz move = cut_move_at(c.actors[actor].strips, self.cut_time, c.paths);
+	if (move >= 0)
+	{
+		s.end = c.actors[actor].strips[move].end;
+		s.loop = true;
+	}
+	s.clip = clip.copy(mem);
 	return self.add_cut_strip(actor, s);
 }
 
@@ -293,7 +316,8 @@ fn CutStrip* AppState.cut_gesture_strip(&self, usz actor, usz strip)
 
 <*
  During a drag, strip `strip` of `actor` runs from `start` to `end`; with `front`
- its clip stays where it was in time as its start moves. The preview follows.
+ its clip stays where it was in time as its start moves. A move takes the walks
+ tied to it along. The preview follows.
 
  @return "False outside a drag or for no such strip"
 *>
@@ -316,14 +340,104 @@ fn bool AppState.drag_cut_strip(&self, usz actor, usz strip, float start, float 
 		s.start = start;
 	}
 	s.end = end;
-	if (s.kind == MOVE) self.fit_walk_speed(actor, s);
+	if (s.kind == MOVE)
+	{
+		self.fit_walk_speed(actor, s);
+		self.drag_tied_plays(actor, strip);
+	}
+	self.fit_paired_speeds(actor);
 	if (s.start != old_start || s.end != old_end) self.cutscenes_changed();
 	return true;
 }
 
+<* Whether strip `other` of `actor` is a play tied to move `strip` as the drag began (cut_play_tied), so it moves with the drag. *>
+fn bool AppState.cut_drag_carries(&self, usz actor, usz strip, usz other)
+{
+	CutStrip* held = self.cut_gesture_strip(actor, strip);
+	if (!held || held.kind != MOVE || other == strip) return false;
+	Cutscene* was = &self.cut_gesture.cutscenes[self.cut_gesture.active];
+	CutStrip[] before = was.actors[actor].strips;
+	return other < before.len && cut_play_tied(before, other, strip, was.paths);
+}
+
+// During a drag of move `strip`, each play tied to it as the drag began spans it again, its offset as it was.
+fn void AppState.drag_tied_plays(&self, usz actor, usz strip)
+{
+	Cutscene* was = &self.cut_gesture.cutscenes[self.cut_gesture.active];
+	CutStrip[] before = was.actors[actor].strips;
+	CutStrip[] now = self.cutscene().actors[actor].strips;
+	// A drag settles nothing until it lands, so the strips are where they were.
+	if (before.len != now.len) return;
+	for (usz k = 0; k < now.len; k++)
+	{
+		if (!self.cut_drag_carries(actor, strip, k)) continue;
+		now[k].start = now[strip].start;
+		now[k].end = now[strip].end;
+		now[k].offset = before[k].offset;
+	}
+}
+
 <*
- Land the drag of strip `strip` of `actor`: the lanes settle around it, and the
- drag is one undo step when it changed anything.
+ During a drag, play `strip` of `actor` ends at `end` and plays its clip faster or
+ slower to fill the same passes: its speed scaled by its old length over the new,
+ and held from then on. Never shorter than a frame. The preview follows.
+
+ @return "False outside a drag or for no such play"
+*>
+fn bool AppState.drag_cut_speed(&self, usz actor, usz strip, float end)
+{
+	CutStrip* was = self.cut_gesture_strip(actor, strip);
+	if (!was || was.kind != PLAY || !self.cut_strip_exists(actor, strip)) return false;
+	Cutscene* c = self.cutscene();
+	float frame = c.fps > 0.0f ? 1.0f / c.fps : 0.01f;
+	end = math::max(end, was.start + frame);
+	CutStrip* s = &c.actors[actor].strips[strip];
+	float old_end = s.end;
+	s.start = was.start;
+	s.offset = was.offset;
+	s.end = end;
+	s.speed = was.speed * (was.end - was.start) / (end - was.start);
+	// A walk stretched by hand keeps the pace it was given.
+	s.speed_held = was.speed_held || end != was.end;
+	if (s.end != old_end) self.cutscenes_changed();
+	return true;
+}
+
+<*
+ During a drag, play `strip` of `actor` fades in over `fade` seconds, from none to
+ its whole length. The preview follows.
+
+ @return "False outside a drag or for no such play"
+*>
+fn bool AppState.drag_cut_fade(&self, usz actor, usz strip, float fade)
+{
+	CutStrip* was = self.cut_gesture_strip(actor, strip);
+	if (!was || was.kind != PLAY || !self.cut_strip_exists(actor, strip)) return false;
+	CutStrip* s = &self.cutscene().actors[actor].strips[strip];
+	fade = math::clamp(fade, 0.0f, s.end - s.start);
+	if (s.fade == fade) return true;
+	s.fade = fade;
+	self.cutscenes_changed();
+	return true;
+}
+
+// Whether actor `actor`'s strips differ from what they were when the drag began; a walk refit counts.
+fn bool AppState.cut_gesture_changed(&self, usz actor)
+{
+	if (!self.cut_gesture_open || self.cut_gesture.active >= self.cut_gesture.cutscenes.len) return false;
+	Cutscene* was = &self.cut_gesture.cutscenes[self.cut_gesture.active];
+	Cutscene* now = self.cutscene();
+	if (!now || actor >= was.actors.len || actor >= now.actors.len) return false;
+	CutStrip[] before = was.actors[actor].strips;
+	CutStrip[] after = now.actors[actor].strips;
+	if (before.len != after.len) return true;
+	foreach (usz k, &s : after) if (!s.same_as(&before[k])) return true;
+	return false;
+}
+
+<*
+ Land the drag of strip `strip` of `actor`: the lanes settle around it and its tied
+ walks, the walks refit, and the drag is one undo step when it changed anything.
 
  @return "Whether it was kept as a step"
 *>
@@ -331,7 +445,7 @@ fn bool AppState.end_cut_gesture(&self, usz actor, usz strip)
 {
 	if (!self.cut_gesture_open) return false;
 	CutStrip* was = self.cut_gesture_strip(actor, strip);
-	bool changed = was && self.cut_strip_exists(actor, strip) && !self.cutscene().actors[actor].strips[strip].same_as(was);
+	bool changed = was && self.cut_strip_exists(actor, strip) && self.cut_gesture_changed(actor);
 	CutSnapshot before = self.cut_gesture;
 	self.cut_gesture = {};
 	self.cut_gesture_open = false;
@@ -340,11 +454,18 @@ fn bool AppState.end_cut_gesture(&self, usz actor, usz strip)
 		before.free();
 		return false;
 	}
+	// The walks tied as the drag began, before the snapshot goes to the history.
+	Cutscene* began = &before.cutscenes[before.active];
+	CutTie[] ties = actor < began.actors.len ? cut_ties(mem, began.actors[actor].strips, began.paths) : {};
+	defer free(ties);
 	self.cut_record(before);
 	bool[] played = self.cutscene().played_one_offs();
 	CutActor* who = &self.cutscene().actors[actor];
 	(void)cut_settle_strips(mem, &who.strips, strip);
+	// The tied walks moved with the drag; the lanes settle around them too, and around those of a move it cut back.
+	(void)cut_carry_ties(mem, &who.strips, ties);
 	self.cutscene().drop_unplayed(played);
+	self.fit_paired_speeds(actor);
 	self.cutscenes_changed();
 	return true;
 }

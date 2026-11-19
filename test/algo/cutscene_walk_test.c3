@@ -134,6 +134,85 @@ fn void a_walk_plays_at_the_rate_that_keeps_its_feet_on_the_ground() @test
 	test::@check(late == 1 && early == 0, "the spans are %d and %d", late, early);
 }
 
+fn CutStrip walk_strip(CutStripKind kind, float start, float end, int path = -1, String clip = "") @local
+{
+	CutStrip s = crig::cut_strip(kind, start, end);
+	s.path = path;
+	if (clip.len > 0) s.clip = clip.copy(mem);
+	return s;
+}
+
+fn void a_play_pairs_with_the_latest_move_running_when_it_starts() @test
+{
+	WalkPath[2] paths = {
+		{ .points = alloc::clone_slice(mem, (Vec3[]){ { 0, 0, 0 }, { 0, 0, 4 } }) },
+		{ .points = alloc::clone_slice(mem, (Vec3[]){ { 1, 0, 0 } }) },
+	};
+	defer foreach (&p : paths) p.free(mem);
+	CutStrip[] strips = {
+		walk_strip(MOVE, 0, 4, 0),             // 0: the road
+		walk_strip(PLAY, 0, 4, clip: "walk"),  // 1: over it from its start
+		walk_strip(MOVE, 2, 6, 0),             // 2: begun later, so it wins from 2 s
+		walk_strip(PLAY, 3, 5, clip: "walk"),  // 3: while both run
+		walk_strip(PLAY, 6, 7, clip: "walk"),  // 4: just as the later move ends
+		walk_strip(MOVE, 8, 10, 1),            // 5: a path of one point
+		walk_strip(PLAY, 8, 9, clip: "walk"),  // 6: over it
+		walk_strip(MOVE, 11, 13, 0),           // 7
+		walk_strip(PLAY, 11, 13, clip: "wave"), // 8: a one-off over a move
+		walk_strip(PLAY, 12, 13),              // 9: no clip
+		walk_strip(MOVE, 14, 16, -1),          // 10: no path at all
+		walk_strip(PLAY, 15, 16, clip: "walk"), // 11
+	};
+	strips[8].one_off = true;
+	defer foreach (&s : strips) s.free(mem);
+
+	test::eq(crig::cut_paired_move(strips, 1, paths[..]), 0);
+	test::eq(crig::cut_paired_move(strips, 3, paths[..]), 2);
+	test::@check(crig::cut_paired_move(strips, 4, paths[..]) == -1, "a play starting as the move ends pairs");
+	test::@check(crig::cut_paired_move(strips, 6, paths[..]) == -1, "a move with no path of two points pairs");
+	test::@check(crig::cut_paired_move(strips, 8, paths[..]) == -1, "a one-off pairs");
+	test::@check(crig::cut_paired_move(strips, 9, paths[..]) == -1, "a play of no clip pairs");
+	test::@check(crig::cut_paired_move(strips, 11, paths[..]) == -1, "a move with no path pairs");
+	test::@check(crig::cut_paired_move(strips, 0, paths[..]) == -1, "a move pairs with itself");
+	test::eq(crig::cut_move_at(strips, 2.5f, paths[..]), 2);
+	test::eq(crig::cut_move_at(strips, 1.0f, paths[..]), 0);
+	test::eq(crig::cut_move_at(strips, 7.0f, paths[..]), -1);
+}
+
+fn void a_play_spanning_its_move_is_tied_and_takes_its_new_times() @test
+{
+	WalkPath[1] paths = { { .points = alloc::clone_slice(mem, (Vec3[]){ { 0, 0, 0 }, { 0, 0, 4 } }) } };
+	defer paths[0].free(mem);
+	CutStrip[] strips = alloc::new_array(mem, CutStrip, 5);
+	strips[0] = walk_strip(MOVE, 0, 4, 0);            // the road
+	strips[1] = walk_strip(PLAY, 0, 4, clip: "walk"); // spans it: tied
+	strips[2] = walk_strip(PLAY, 4, 6, clip: "rest"); // after it
+	strips[3] = walk_strip(MOVE, 8, 12, 0);
+	strips[4] = walk_strip(PLAY, 9, 12, clip: "walk"); // over only part of it
+	foreach (usz k, &s : strips) s.id = (uint)k + 1;
+	defer
+	{
+		foreach (&s : strips) s.free(mem);
+		free(strips);
+	}
+	test::@check(crig::cut_play_tied(strips, 1, 0, paths[..]), "a play spanning its move is not tied");
+	test::@check(!crig::cut_play_tied(strips, 4, 3, paths[..]), "a play over part of its move is tied");
+	CutTie[] ties = crig::cut_ties(mem, strips, paths[..]);
+	defer free(ties);
+	test::@check(ties.len == 1 && ties[0].move == 1 && ties[0].play == 2, "%d ties", ties.len);
+
+	// Nothing moved: nothing is carried.
+	test::@check(!crig::cut_carry_ties(mem, &strips, ties), "an unmoved move carried its walk");
+
+	// The road a second longer: the walk takes its times, and the rest after it gives way.
+	strips[0].end = 5.0f;
+	strips[3].end = 13.0f;
+	test::@check(crig::cut_carry_ties(mem, &strips, ties), "nothing carried");
+	test::@check(strips[1].start == 0.0f && strips[1].end == 5.0f, "the walk runs %f to %f", strips[1].start, strips[1].end);
+	test::@check(near(strips[2].start, 5.0f) && near(strips[2].end, 6.0f), "the rest runs %f to %f", strips[2].start, strips[2].end);
+	test::@check(strips[4].start == 9.0f && strips[4].end == 12.0f, "the partial walk moved to %f to %f", strips[4].start, strips[4].end);
+}
+
 // Hips over two legs and a head, five joints tall 1.7.
 fn rig::Skeleton walker() @local
 {

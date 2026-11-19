@@ -140,6 +140,51 @@ fn void open_anim_popup(Ui* ui, String id) @private
 
 fn void anim_tools_menu_clicked(Ui* ui) => open_anim_popup(ui, ANIM_TOOLS_MENU_ID);
 
+const String ANIM_NEW_MENU_ID = "anim-new-menu";
+const String ANIM_NEW_ANIMATION_ID = "anim-new-animation";
+const String ANIM_NEW_CUTSCENE_ID = "anim-new-cutscene";
+
+// + New: an animation of the character, or a cutscene of the scene.
+fn void anim_new_menu_clicked(Ui* ui) => open_anim_popup(ui, ANIM_NEW_MENU_ID);
+
+fn void anim_new_animation_chosen(Ui* ui)
+{
+	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
+	anim_new_clip_clicked(ui);
+}
+
+// A new cutscene holding every actor, shown in the dock.
+fn void anim_new_cutscene_chosen(Ui* ui)
+{
+	set_dialog_open(ui, ANIM_NEW_MENU_ID, false);
+	AppState* app = ui.inherit(AppState)!!;
+	usz made = app.add_cutscene();
+	(void)app.show_cutscene(made);
+	app.@notice("added %s · Ctrl+Z takes it back", app.cutscenes.get_ref((sz)made).name);
+	refresh_animations_view(ui);
+	app.refresh_ui();
+}
+
+fn Element* build_anim_new_menu(Ui* ui)
+{
+	MenuStyle style = VIEW_MENU_STYLE.resolved();
+	float width = widgets::PANEL_MIN_W;
+	foreach (label : (String[]) { "Animation…", "Cutscene" })
+	{
+		width = math::max(width, widgets::CHECK_GUTTER + ui.text.measure(style.font, label, style.text_size).x + 2 * style.pad_x);
+	}
+	return @subtree(ui)
+	{
+		@tree((Column) { })
+		{
+			@node((PopupMenuItem) { .item = { .label = "Animation…", .on_select = &anim_new_animation_chosen },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_ANIMATION_ID);
+			@node((PopupMenuItem) { .item = { .label = "Cutscene", .on_select = &anim_new_cutscene_chosen },
+				.style = VIEW_MENU_STYLE, .width = width }).with_id(ANIM_NEW_CUTSCENE_ID);
+		};
+	};
+}
+
 // The Clip tools menu: what is done to the clip as a whole, apart from its keys.
 // Taking out travel, turn and jitter is the pane's Optimize button instead.
 fn void anim_tools_check(Ui* ui)
@@ -724,6 +769,8 @@ fn void anim_create_confirmed(Ui* ui)
 	// A new hand-authored clip plays once — it holds its last pose so keying a fall
 	// (or any one-shot) carries straight on instead of springing back to the first
 	// pose. The Loop toggle beside Auto-key opts the clip into a cycle afterwards.
+	// A cutscene on show gives the dock back first, so the clip lands on the character's own state.
+	if (app.cutscene_in_dock()) app.leave_cutscene_preview();
 	AnimRef made = app.new_clip(name, duration, from_rest: true, loop: false);
 	if (!made.valid()) return;
 	anim_create_cancelled(ui);

@@ -26,6 +26,22 @@ struct CutKept
 <* Whether the preview is posing the actors now. *>
 fn bool AppState.cutscene_previewing(&self) => self.cut_preview && self.cutscene() != null;
 
+<* Whether the Animations dock shows the cutscene: its preview is the dock's mode, a one-off edit shows a clip. *>
+fn bool AppState.cutscene_in_dock(&self) => self.cutscene_previewing() && !self.one_off_open();
+
+<*
+ Show cutscene `i` in the dock: a one-off edit ends first, then it is picked and previewed.
+
+ @return "False for no such cutscene, or a preview that could not start"
+*>
+fn bool AppState.show_cutscene(&self, usz i)
+{
+	if (i >= (usz)self.cutscenes.len()) return false;
+	(void)self.back_to_cutscene();
+	(void)self.select_cutscene(i);
+	return self.set_cutscene_preview(true);
+}
+
 <*
  Turn the preview on or off. On, each character's own clip and time are kept and the
  actors take the cutscene's poses; off, each goes back exactly as it was.

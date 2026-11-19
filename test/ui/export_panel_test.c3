@@ -383,3 +383,239 @@ fn void the_gear_opens_one_assets_settings() @test
 	fixture.app.settings_asset = -1;
 	fixture.ui.flush();
 }
+
+// ---------------------------------------------------------------------------
+// One Export panel: Character, All characters or Cutscene
+
+const String EXPORT_PANEL_FOLDER @local = "build/export-panel";
+const String EXPORT_PANEL_BOX @local = "build/export-panel/box.glb";
+const String EXPORT_PANEL_HERO @local = "build/export-panel/hero.glb";
+
+// A copy of the shipped humanoid under build, as a second character's own file.
+fn bool export_panel_hero() @local
+{
+	(void)io::path::mkdir((io::path::Path)EXPORT_PANEL_FOLDER, true);
+	char[]? bytes = io::file::load(mem, "assets/animations/humanoid.glb");
+	if (catch bytes) return false;
+	defer free(bytes);
+	if (catch io::file::save(EXPORT_PANEL_HERO, bytes)) return false;
+	return true;
+}
+
+fn crig::ExportWhat export_panel_what(Fixture* f) @local => f.app.export_what;
+
+fn sz export_panel_lit(Fixture* f) @local => f.ui.find_id(crig::EXPORT_WHAT_ID)!!.widget_as(Segmented).selected;
+
+fn String export_panel_line(Fixture* f) @local
+{
+	if (try Element* line = f.ui.find_id(crig::EXPORT_LINE_ID)) return line.widget_as(Label).text;
+	return "";
+}
+
+// The middle of segment `index` of the What strip.
+fn Vec2 export_panel_segment(Fixture* f, usz index) @local
+{
+	Element* strip = f.ui.find_id(crig::EXPORT_WHAT_ID)!!;
+	Segmented* seg = strip.widget_as(Segmented);
+	SegmentedStyle s = seg.style.resolved();
+	float left = 0;
+	for (usz i = 0; i < index; i++) left += s.segment_width(f.ui, seg.options[i]);
+	return strip.absolute + (Vec2){ left + s.segment_width(f.ui, seg.options[index]) * 0.5f, strip.size.y * 0.5f };
+}
+
+fn void export_panel_open(Fixture* f) @local
+{
+	crig::open_export_dialog(f.ui);
+	f.ui.flush();
+	f.feed(f.ui.input.mouse);
+}
+
+fn void export_panel_type(Fixture* f, String path) @local
+{
+	crig::set_export_path(f.ui, path);
+	f.ui.flush();
+}
+
+fn bool export_panel_is_glb(String path) @local
+{
+	char[]? content = io::file::load(mem, path);
+	if (catch content) return false;
+	defer free(content);
+	return content.len > 12 && ((String)content[:4]) == "glTF";
+}
+
+fn void export_opens_on_the_character_with_one_character() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	f.reset();
+	(void)io::path::mkdir((io::path::Path)EXPORT_PANEL_FOLDER, true);
+	f.app.point_at(EXPORT_PANEL_BOX);
+	test::@check(f.app.apply_plan_named("biped"), "could not fit the test rig");
+	String written = "build/export-panel/box_rigged.glb";
+	(void)io::file::delete(written);
+	defer (void)io::file::delete(written);
+	defer (void)io::file::delete("build/export-panel/box_rigged.rigsmith.json");
+
+	export_panel_open(&f);
+	test::@check(export_panel_what(&f) == CHARACTER, "one character opened on %s", export_panel_what(&f));
+	test::@check(export_panel_lit(&f) == 0, "the strip lights segment %d", export_panel_lit(&f));
+	test::@check(has_id(&f, crig::EXPORT_SUMMARY_ID) && !has_id(&f, crig::EXPORT_LINE_ID), "the Character body is not shown");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), written);
+
+	test::@check(f.confirm_export(), "no Export button");
+	test::@check(export_panel_is_glb(written), "the character was not written as %s", written);
+}
+
+fn void export_opens_on_all_characters_with_two() @test
+{
+	if (!export_panel_hero())
+	{
+		test::@check(false, "SKIPPED — the humanoid copy could not be made");
+		return;
+	}
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	f.reset();
+	f.app.point_at(EXPORT_PANEL_BOX);
+	rig::TriMesh? mesh = rig::load_gltf(mem, EXPORT_PANEL_HERO);
+	if (catch mesh)
+	{
+		test::@check(false, "SKIPPED — the humanoid copy could not be read");
+		return;
+	}
+	(void)f.app.add_character(mesh, EXPORT_PANEL_HERO);
+	test::@check(f.app.character_count() == 2, "%d characters", f.app.character_count());
+	String written = "build/export-panel/duo.glb";
+	(void)io::file::delete(written);
+	defer (void)io::file::delete(written);
+
+	export_panel_open(&f);
+	test::@check(export_panel_what(&f) == ALL_CHARACTERS, "two characters opened on %s", export_panel_what(&f));
+	test::@check(export_panel_lit(&f) == 1, "the strip lights segment %d", export_panel_lit(&f));
+	test::eq(export_panel_line(&f), "2 characters · 1 rigged");
+	test::@check(!has_id(&f, crig::EXPORT_SUMMARY_ID), "the Character summary is shown for all characters");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/scene.glb");
+
+	// No extension typed: the scene's .glb is added.
+	export_panel_type(&f, "build/export-panel/duo");
+	test::@check(f.confirm_export(), "no Export button");
+	test::@check(export_panel_is_glb(written), "all characters were not written as %s", written);
+	test::@check(f.notice_text().starts_with("wrote duo.glb"), "the notice reads '%s'", f.notice_text());
+}
+
+fn void export_opens_on_the_cutscene_while_previewed() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	f.reset();
+	(void)io::path::mkdir((io::path::Path)EXPORT_PANEL_FOLDER, true);
+	f.app.point_at(EXPORT_PANEL_BOX);
+	test::@check(f.app.make_actor(f.app.active, "hero"), "the cube is no actor");
+	(void)f.app.add_cutscene("Opening");
+	(void)f.app.add_cutscene("Ending");
+	test::@check(f.app.select_cutscene(1), "no second cutscene");
+	test::@check(f.app.set_cutscene_preview(true), "no preview");
+	String picked = "build/export-panel/picked.cutscene.glb";
+	(void)io::file::delete(picked);
+	defer (void)io::file::delete(picked);
+
+	export_panel_open(&f);
+	test::@check(export_panel_what(&f) == CUTSCENE, "the preview opened on %s", export_panel_what(&f));
+	test::@check(export_panel_lit(&f) == 2, "the strip lights segment %d", export_panel_lit(&f));
+	test::@check(export_panel_line(&f).starts_with("Ending · 1 actor · "), "the line reads '%s'", export_panel_line(&f));
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/Ending.cutscene.glb");
+
+	// Two cutscenes: the picker picks the one written, and the path follows it.
+	Vec2? chooser = f.center_of(crig::EXPORT_CUTSCENE_ID);
+	if (catch chooser)
+	{
+		test::@check(false, "no cutscene picker with two cutscenes");
+		return;
+	}
+	f.click(chooser);
+	f.ui.flush();
+	Vec2 first;
+	bool found;
+	f.ui.@each(SelectOption; option)
+	{
+		if (option.widget_as(SelectOption).index == 0)
+		{
+			first = option.absolute + option.size * 0.5f;
+			found = true;
+		}
+	};
+	test::@check(found, "the picker lists no first cutscene");
+	if (!found) return;
+	f.click(first);
+	f.feed(f.ui.input.mouse);
+	test::@check(f.app.cut_active == 0, "the pick did not select Opening");
+	test::@check(export_panel_line(&f).starts_with("Opening · "), "the line reads '%s'", export_panel_line(&f));
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/Opening.cutscene.glb");
+
+	// Browse names what it writes, and its answer fills the field.
+	f.click(f.center_of(crig::EXPORT_BROWSE_ID)!!);
+	f.ui.flush();
+	Element* dialog = f.ui.find_id(crig::FILE_DIALOG_ID)!!;
+	test::@check(dialog.widget_as(Dialog).open, "Browse did not open the chooser");
+	test::eq(dialog.widget_as(Dialog).title, "Export the cutscene to");
+	Element* path_field = f.ui.find_id(crig::FILE_PATH_ID)!!;
+	path_field.widget_as(TextField).set_text(path_field, "build/export-panel/picked");
+	path_field.request_focus();
+	f.feed_key(Key.RETURN);
+	test::@check(!dialog.widget_as(Dialog).open, "Select did not close the chooser");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/picked");
+
+	test::@check(f.confirm_export(), "no Export button");
+	test::@check(io::file::is_file(picked), "the cutscene was not written as %s: %s", picked, f.notice_text());
+	Cutscene? back = crig::read_cutscene_file(mem, picked);
+	if (catch back)
+	{
+		test::@check(false, "%s does not read back as a cutscene", picked);
+		return;
+	}
+	defer back.free(mem);
+	test::eq(back.name, "Opening");
+}
+
+fn void an_export_choice_that_does_not_apply_snaps_back() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	f.reset();
+	f.app.point_at(EXPORT_PANEL_BOX);
+
+	export_panel_open(&f);
+	test::@check(export_panel_what(&f) == CHARACTER, "one character opened on %s", export_panel_what(&f));
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/box_rigged.glb");
+
+	// No cutscene, and no character with a rig.
+	f.click(export_panel_segment(&f, 2));
+	f.feed(f.ui.input.mouse);
+	test::@check(export_panel_what(&f) == CHARACTER && export_panel_lit(&f) == 0, "Cutscene with none did not snap back");
+	test::eq(f.notice_text(), "the scene has no cutscene to export");
+	f.click(export_panel_segment(&f, 1));
+	f.feed(f.ui.input.mouse);
+	test::@check(export_panel_what(&f) == CHARACTER && export_panel_lit(&f) == 0, "All characters with no rig did not snap back");
+	test::eq(f.notice_text(), "no character has a rig to export");
+	test::@check(has_id(&f, crig::EXPORT_SUMMARY_ID), "the Character body went");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/box_rigged.glb");
+
+	// A rig makes All characters apply; each switch writes its own path.
+	test::@check(f.app.apply_plan_named("biped"), "could not fit the test rig");
+	f.click(export_panel_segment(&f, 1));
+	f.feed(f.ui.input.mouse);
+	test::@check(export_panel_what(&f) == ALL_CHARACTERS && export_panel_lit(&f) == 1, "All characters did not switch");
+	test::eq(export_panel_line(&f), "1 character · 1 rigged");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/scene.glb");
+	f.click(export_panel_segment(&f, 0));
+	f.feed(f.ui.input.mouse);
+	test::@check(export_panel_what(&f) == CHARACTER && has_id(&f, crig::EXPORT_SUMMARY_ID), "Character did not switch back");
+	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/box_rigged.glb");
+
+	crig::set_dialog_open(f.ui, crig::EXPORT_DIALOG_ID, false);
+}

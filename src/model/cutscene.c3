@@ -10,7 +10,7 @@ const float CUT_DEFAULT_FPS = 30.0f;
 
 enum CutStripKind : char
 {
-	MOVE, // walks a path, maybe playing a clip
+	MOVE, // walks a path, maybe playing a clip of its own
 	TURN, // turns on the spot to face a point or another actor
 	PLAY, // plays a clip where the actor stands
 }
@@ -43,8 +43,10 @@ struct CutStrip
 	int path;
 	CutEase ease;    // a move's or a turn's
 	bool turn;       // a move faces along its path
-	// A move's ground speed in m/s as the owner typed it, for the scene file only; 0 takes the clip's.
+	// The typed ground speed in m/s of the clip it plays (a paired play's, or a move's own clip's); scene file only, 0 takes the clip's.
 	float ground_speed;
+	// A play's speed as typed: pairing with a move leaves it alone. Scene file only.
+	bool speed_held;
 	// What a turn faces: the actor whose row is `target_row`, else `target`.
 	Vec3 target;
 	String target_row;
@@ -90,7 +92,7 @@ fn bool CutStrip.same_as(&self, CutStrip* other)
 	return self.kind == other.kind && self.start == other.start && self.end == other.end && self.clip == other.clip
 		&& self.loop == other.loop && self.speed == other.speed && self.fade == other.fade && self.offset == other.offset
 		&& self.one_off == other.one_off && self.animation == other.animation && self.path == other.path && self.ease == other.ease && self.turn == other.turn
-		&& self.ground_speed == other.ground_speed && self.target.x == other.target.x && self.target.y == other.target.y && self.target.z == other.target.z
+		&& self.ground_speed == other.ground_speed && self.speed_held == other.speed_held && self.target.x == other.target.x && self.target.y == other.target.y && self.target.z == other.target.z
 		&& self.target_row == other.target_row;
 }
 

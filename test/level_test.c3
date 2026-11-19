@@ -10,6 +10,7 @@ import crig;
 import three;
 import collision;
 import crig_tests::library;
+import crig_tests::mcp;
 import rig;
 import std::core::test;
 import std::io;
@@ -251,4 +252,99 @@ fn void a_missing_level_still_opens_the_scene() @test
 	test::@check(app.notice().contains("forest.glb is missing"), "and says the level is missing: %s", app.notice());
 	test::@check(!app.has_level(), "with no level");
 	test::eq((int)app.character_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Import .glb: a level, a character or refused
+// ---------------------------------------------------------------------------
+
+const String IMPORT_FOLDER = "build/test-level-import";
+
+// A level by the import rule, a collider on a node outside any rig; the caller owns the path.
+fn String write_collider_level(String name) @local
+{
+	(void)path::mkdir(IMPORT_FOLDER, true);
+	String target = string::format(mem, "%s/%s", IMPORT_FOLDER, name);
+	file::save(target, `{"asset":{"version":"2.0"},"nodes":[{"name":"ground",
+		"extensions":{"KHR_physics_rigid_bodies":{"collider":{"geometry":{"shape":0}}}}}]}`)!!;
+	return target;
+}
+
+<* A level opens behind the scene, replacing the one open, and the notice says so. *>
+fn void importing_a_level_opens_it() @test
+{
+	String forest = write_collider_level("forest.gltf");
+	String cave = write_collider_level("cave.gltf");
+	defer { forest.free(mem); cave.free(mem); }
+	crig::AppState app = crig::new_app({}, "");
+	defer app.free();
+
+	test::@check(app.import_glb(forest), "the level is refused: %s", app.notice());
+	test::@check(app.has_level() && app.level_path == forest, "it is the scene's level: %s", app.level_path);
+	test::@check(app.pending_add.len == 0, "and not a character: %s", app.pending_add);
+	test::@check(app.notice().contains("forest.gltf") && !app.notice().contains("replaces"), "the notice: %s", app.notice());
+
+	test::@check(app.import_glb(cave) && app.level_path == cave, "a second level is refused: %s", app.notice());
+	test::@check(app.notice().contains("cave.gltf") && app.notice().contains("replaces forest.gltf"),
+		"and says what it replaced: %s", app.notice());
+}
+
+<* A model with one rig is added as a character, as Import always did. *>
+fn void importing_a_character_adds_it() @test
+{
+	String person = string::format(mem, "%s/humanoid.glb", library::ready());
+	defer person.free(mem);
+	crig::AppState app = crig::new_app({}, "");
+	defer app.free();
+	test::@check(app.import_glb(person), "the character is refused: %s", app.notice());
+	test::@check(app.pending_add == person && !app.has_level(), "it waits to be added: %s", app.pending_add);
+}
+
+<* A cutscene file is refused: nothing is added and no level opens. *>
+fn void importing_a_cutscene_is_refused() @test
+{
+	crig::AppState app = crig::new_app({}, "");
+	defer app.free();
+	test::@check(!app.import_glb("assets/cutscenes/intro.cutscene.glb"), "the cutscene file was taken");
+	test::@check(app.notice().contains("intro.cutscene.glb is a cutscene file"), "the notice: %s", app.notice());
+	test::@check(app.pending_add.len == 0 && !app.has_level(), "and nothing came in");
+}
+
+<* A file that is not glTF goes the character's way, whose load says it would not open. *>
+fn void importing_an_unreadable_file_says_why() @test
+{
+	crig::AppState app = crig::new_app({}, "");
+	defer app.free();
+	test::@check(app.import_glb("assets/cutscenes/intro.cutscene.bin"), "the file was refused before its load");
+	test::@check(!app.has_level(), "it is not a level");
+	app.service_pending_add();
+	test::@check(app.notice().contains("could not open intro.cutscene"), "the notice: %s", app.notice());
+}
+
+<* MCP add_character refuses a level and a cutscene file; open_level still opens the level. *>
+fn void add_character_refuses_a_level() @test
+{
+	(void)path::mkdir(IMPORT_FOLDER, true);
+	String level = IMPORT_FOLDER +++ "/two_rigs.gltf";
+	file::save(level, `{"asset":{"version":"2.0"},"nodes":[
+		{"name":"hero_rig","children":[1,2]},{"name":"hips"},{"name":"hero_body","mesh":0,"skin":0},
+		{"name":"guide_rig","children":[4,5]},{"name":"root"},{"name":"guide_body","mesh":0,"skin":1}],
+		"skins":[{"joints":[1]},{"joints":[4]}],"meshes":[{"primitives":[]}]}`)!!;
+	Fixture* f = mem::new(Fixture);
+	defer free(f);
+	f.app = crig::new_app({}, "");
+	f.tools = crig::new_tool_table(&f.app);
+	f.server = crig::serve_table(&f.tools, &f.app);
+	defer f.close();
+
+	String asked = string::tformat(`{"path":"%s"}`, level);
+	test::@check(f.refuses_tool("add_character", asked, "two_rigs.gltf is a level",
+		"(0 colliders outside a rig, 2 rigged armatures)", "open_level opens it"), "add_character took the level");
+	test::@check(f.refuses_tool("add_character", `{"path":"assets/cutscenes/intro.cutscene.glb"}`, "is a cutscene file"),
+		"add_character took the cutscene file");
+	test::@check(f.app.pending_add.len == 0 && f.app.character_count() == 1 && !f.app.has_level(), "nothing came in");
+
+	String? opened = f.call_tool_text("open_level", asked);
+	if (try opened) opened.free(mem);
+	test::@check(@ok(opened) && f.app.has_level(), "open_level does not open it");
 }

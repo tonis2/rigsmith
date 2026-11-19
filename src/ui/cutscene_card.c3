@@ -1,8 +1,10 @@
 <*
- The Cutscene tab's strip card and add menus. The card shows the picked strip's
- times and what it plays, walks or faces; each change is one undo step. Add play
- and Add turn lay a strip at the playhead for the actor adds go to
- (AppState.cut_target_actor), from a menu of its clips or of the other actors.
+ The cutscene's strip card and its choice lists. The card shows the picked strip's
+ times and what it plays, walks or faces; each change is one undo step. A move
+ shows its clip only when it carries one of its own; a play over a move is a walk,
+ with the ground speed its speed follows while Fit is on. The Turn piece lays a
+ turn at the playhead for the actor pieces go to (AppState.cut_target_actor),
+ from a list of the other actors; "+ Add actor" lists what can become an actor.
 *>
 module crig;
 
@@ -11,10 +13,6 @@ import cui::widgets;
 import std::collections::list;
 import std::math;
 
-const String CUT_ADD_PLAY_ID = "cut-add-play";
-const String CUT_ADD_TURN_ID = "cut-add-turn";
-const String CUT_PLAY_MENU_ID = "cut-play-menu";
-const String CUT_PLAY_LIST_ID = "cut-play-list";
 const String CUT_TURN_MENU_ID = "cut-turn-menu";
 const String CUT_TURN_LIST_ID = "cut-turn-list";
 const String CUT_CARD_ID = "cut-strip-card";
@@ -29,6 +27,7 @@ const String CUT_CARD_EASE_ID = "cut-strip-ease";
 const String CUT_CARD_FACE_ID = "cut-strip-face";
 const String CUT_CARD_PATH_ID = "cut-strip-path";
 const String CUT_CARD_GROUND_ID = "cut-strip-ground";
+const String CUT_CARD_FIT_ID = "cut-strip-fit";
 const String CUT_CARD_TARGET_ID = "cut-strip-target";
 const String CUT_CARD_PICK_ID = "cut-strip-pick";
 const String CUT_CARD_DELETE_ID = "cut-strip-delete";
@@ -39,8 +38,13 @@ const String CUT_CARD_DROP_ID = "cut-one-off-delete";
 const String CUT_ONE_OFF_MARK = " · one-off";
 
 const float CUT_NUMBER_W = 52.0;
+// Between a field and the label or unit kept beside it.
+const float CUT_PAIR_GAP = 3.0;
 const float CUT_CHOOSER_W = 110.0;
 const float CUT_MENU_W = 200.0;
+// The widest a choice list grows to read its rows whole, and what its popup puts around it.
+const float CUT_MENU_MOST_W = 420.0;
+const float CUT_LIST_INSETS = 12.0;
 const usz CUT_MENU_ROWS = 12;
 const String CUT_NO_CHOICE = "(none)";
 const String CUT_POINT_CHOICE = "point";
@@ -48,7 +52,7 @@ const String CUT_POINT_CHOICE = "point";
 // Select borrows its options after the build returns.
 String[4] cut_ease_options = { "linear", "ease in", "ease out", "ease in-out" };
 
-<* What the card's choosers offer, owned by the panel for as long as they show. *>
+<* What the card's choosers offer, owned by CutSide for as long as they show. *>
 struct CutCardChoices
 {
 	String[] clips;   // a move's start with CUT_NO_CHOICE; the actor's one-offs come last, marked
@@ -208,29 +212,52 @@ macro void @cut_chooser(String tip, String[] options, usz selected, OnIndex on_c
 	};
 }
 
+// The ground speed field, for the clip of a walk or of a move that carries its own.
+fn void cut_ground_field(AppState* app, usz actor, CutStrip* s, CutCardFields* fields) @local
+{
+	String tip = s.kind == PLAY
+		? "Ground speed — m/s the clip's feet cover the ground at, which the walk's speed follows while Fit is on; typed, it holds for this strip; empty takes the clip's"
+		: "Ground speed — m/s the clip's feet cover the ground at, which the speed follows; typed, it holds for this move; empty takes the clip's";
+	@tree((Row) { .gap = CUT_PAIR_GAP, .cross_align = CENTER })
+	{
+		fields.ground = @cut_number(tip, &cut_card_ground_submitted, CUT_CARD_GROUND_ID);
+		@cut_unit("m/s");
+	};
+	fields.ground_speed = app.cut_ground_speed(actor, s);
+}
+
 <*
- The picked strip's card, inside the panel's build: its times, then what it plays,
+ The picked strip's card, inside CutSide's build: its times, then what it plays,
  walks or faces. The number fields are left for `fill_cut_card` to fill.
 
- @param [in] s : "Strip of actor `actor` in the active cutscene"
+ @param [in] cutscene
  @param [&out] fields
+ @require actor < cutscene.actors.len && strip < cutscene.actors[actor].strips.len : "No such strip"
 *>
-fn void build_cut_card(CutCardChoices* choices, AppState* app, Cutscene* cutscene, usz actor, CutStrip* s, CutCardFields* fields)
+fn void build_cut_card(CutCardChoices* choices, AppState* app, Cutscene* cutscene, usz actor, usz strip, CutCardFields* fields)
 {
+	CutStrip* s = &cutscene.actors[actor].strips[strip];
 	usz clip_row;
 	usz path_row;
 	usz target_row;
 	choices.fill(app, cutscene, actor, s, &clip_row, &path_row, &target_row);
+	// A move the UI lays plays nothing; one that carries a clip of its own still shows it, to change or take off.
+	bool plays = s.kind == PLAY || (s.kind == MOVE && s.clip.len > 0);
+	bool paired = cut_paired_move(cutscene.actors[actor].strips, strip, cutscene.paths) >= 0;
 	Element* card = @tree((Wrap) { .gap_x = CUT_GAP, .gap_y = 4.0f, .cross_align = CENTER })
 	{
 		@node((Label) { .text = cut_kind_word(s.kind), .size = ANIM_TEXT_SIZE, .color = TEXT });
-		fields.start = @cut_number("Start — seconds; Return sets it", &cut_card_start_submitted, CUT_CARD_START_ID);
-		@cut_unit("–");
-		fields.end = @cut_number("End — seconds; Return sets it", &cut_card_end_submitted, CUT_CARD_END_ID);
-		@cut_unit("s");
-		if (s.kind != TURN)
+		// Each field keeps its label or unit beside it, so a narrow column wraps them together.
+		@tree((Row) { .gap = CUT_PAIR_GAP, .cross_align = CENTER })
 		{
-			@cut_chooser(s.kind == MOVE ? "Clip — what the walk plays, or none; a one-off is this cutscene's own" : "Clip — what the strip plays; a one-off is this cutscene's own",
+			fields.start = @cut_number("Start — seconds; Return sets it", &cut_card_start_submitted, CUT_CARD_START_ID);
+			@cut_unit("–");
+			fields.end = @cut_number("End — seconds; Return sets it", &cut_card_end_submitted, CUT_CARD_END_ID);
+			@cut_unit("s");
+		};
+		if (plays)
+		{
+			@cut_chooser(s.kind == MOVE ? "Clip — the move's own clip, or none to take it off; a walk is a play strip over the move" : "Clip — what the strip plays; a one-off is this cutscene's own",
 				choices.clips, clip_row, &cut_card_clip_chosen, CUT_CARD_CLIP_ID);
 			if (s.one_off)
 			{
@@ -247,12 +274,28 @@ fn void build_cut_card(CutCardChoices* choices, AppState* app, Cutscene* cutscen
 			}
 			@card_icon(LOOP_GLYPH, "Loop — repeat the clip; off holds its last frame", &cut_card_loop_clicked,
 				s.loop ? LIT : PLAIN).with_id(CUT_CARD_LOOP_ID);
-			fields.speed = @cut_number("Speed — the clip's playback rate", &cut_card_speed_submitted, CUT_CARD_SPEED_ID);
-			@cut_unit("×");
-			fields.fade = @cut_number("Fade — seconds to blend in from what played before", &cut_card_fade_submitted, CUT_CARD_FADE_ID);
-			@cut_unit("fade");
-			fields.offset = @cut_number("Offset — the clip time, in seconds, the strip starts at", &cut_card_offset_submitted, CUT_CARD_OFFSET_ID);
-			@cut_unit("offset");
+			@tree((Row) { .gap = CUT_PAIR_GAP, .cross_align = CENTER })
+			{
+				fields.speed = @cut_number(s.kind == PLAY ? "Speed — the clip's playback rate; typed, it holds and Fit turns off" : "Speed — the clip's playback rate",
+					&cut_card_speed_submitted, CUT_CARD_SPEED_ID);
+				@cut_unit("×");
+			};
+			if (s.kind == PLAY && !s.one_off)
+			{
+				@card_icon(FIT_GLYPH, "Fit — over a move, the walk plays at the pace that keeps its feet on the path; typing a speed turns it off",
+					&cut_card_fit_clicked, s.speed_held ? PLAIN : LIT).with_id(CUT_CARD_FIT_ID);
+			}
+			if (paired) cut_ground_field(app, actor, s, fields);
+			@tree((Row) { .gap = CUT_PAIR_GAP, .cross_align = CENTER })
+			{
+				@cut_unit("fade");
+				fields.fade = @cut_number("Fade — seconds to blend in from what played before", &cut_card_fade_submitted, CUT_CARD_FADE_ID);
+			};
+			@tree((Row) { .gap = CUT_PAIR_GAP, .cross_align = CENTER })
+			{
+				@cut_unit("offset");
+				fields.offset = @cut_number("Offset — the clip time, in seconds, the strip starts at", &cut_card_offset_submitted, CUT_CARD_OFFSET_ID);
+			};
 		}
 		if (s.kind != PLAY)
 		{
@@ -264,10 +307,7 @@ fn void build_cut_card(CutCardChoices* choices, AppState* app, Cutscene* cutscen
 			@card_icon(FACE_PATH_GLYPH, "Face along the path — off keeps the facing the actor had", &cut_card_face_clicked,
 				s.turn ? LIT : PLAIN).with_id(CUT_CARD_FACE_ID);
 			@cut_chooser("Path — the walk path this move follows", choices.paths, path_row, &cut_card_path_chosen, CUT_CARD_PATH_ID);
-			fields.ground = @cut_number("Ground speed — m/s the clip's feet cover the ground at, which the speed follows; typed, it holds for this move; empty takes the clip's",
-				&cut_card_ground_submitted, CUT_CARD_GROUND_ID);
-			fields.ground_speed = app.cut_ground_speed(actor, s);
-			@cut_unit("m/s");
+			if (s.clip.len > 0) cut_ground_field(app, actor, s, fields);
 		}
 		if (s.kind == TURN)
 		{
@@ -328,7 +368,7 @@ fn void cut_edit_land(Ui* ui, AppState* app, CutEdit* edit, String why = "") @lo
 	}
 	edit.strip = {};
 	// The fields show what the strip holds, also after a refusal.
-	refresh_cutscene_view(ui);
+	refresh_animations_view(ui);
 	app.refresh_ui();
 }
 
@@ -378,7 +418,10 @@ fn void cut_card_number(Ui* ui, String text, CutNumber field) @local
 		{
 			case START: edit.strip.trim_front(value!!);
 			case END: edit.strip.end = value!!;
-			case SPEED: edit.strip.speed = value!!;
+			case SPEED:
+				edit.strip.speed = value!!;
+				// A walk's speed typed holds; Fit lets pairing set it again.
+				if (edit.strip.kind == PLAY) edit.strip.speed_held = true;
 			case FADE: edit.strip.fade = value!!;
 			case OFFSET: edit.strip.offset = value!!;
 		}
@@ -392,7 +435,7 @@ fn void cut_card_speed_submitted(Ui* ui, String text) => cut_card_number(ui, tex
 fn void cut_card_fade_submitted(Ui* ui, String text) => cut_card_number(ui, text, FADE);
 fn void cut_card_offset_submitted(Ui* ui, String text) => cut_card_number(ui, text, OFFSET);
 
-// The ground speed typed on a move: its speed follows; empty goes back to the clip's.
+// The ground speed typed on a walk or a move's own clip: its speed follows; empty goes back to the clip's.
 fn void cut_card_ground_submitted(Ui* ui, String text)
 {
 	AppState* app = ui.inherit(AppState)!!;
@@ -421,12 +464,12 @@ fn void cut_card_ground_submitted(Ui* ui, String text)
 	cut_edit_land(ui, app, &edit, why);
 }
 
-// The panel's choosers, for an index from one of them.
+// CutSide's choosers, for an index from one of them.
 fn CutCardChoices* cut_card_choices(Ui* ui) @local
 {
-	Element*? found = ui.find_id(CUT_PANEL_ID);
+	Element*? found = ui.find_id(CUT_SIDE_ID);
 	if (catch found) return null;
-	return &found.widget_as(CutscenePanel).card;
+	return &found.widget_as(CutSide).card;
 }
 
 fn void cut_card_clip_chosen(Ui* ui, usz index)
@@ -438,8 +481,11 @@ fn void cut_card_clip_chosen(Ui* ui, usz index)
 	String one_off = choices.one_off_at(index);
 	String clip = one_off.len > 0 ? one_off : choices.clips[index];
 	if (edit.strip.clip.len > 0) alloc::free(mem, edit.strip.clip.ptr);
-	edit.strip.clip = edit.strip.kind == MOVE && index == 0 ? "" : clip.copy(mem);
+	bool none = edit.strip.kind == MOVE && index == 0;
+	edit.strip.clip = none ? "" : clip.copy(mem);
 	edit.strip.one_off = one_off.len > 0;
+	// A move's clip taken off takes its typed ground speed with it.
+	if (none) edit.strip.ground_speed = 0.0f;
 	cut_edit_land(ui, app, &edit);
 }
 
@@ -454,7 +500,7 @@ fn void cut_card_one_off_named(Ui* ui, String text)
 	String name = s.clip.tcopy();
 	if (text.trim().len == 0) app.@notice("a one-off needs a name");
 	if (text.trim().len > 0) (void)app.rename_cut_one_off(actor, name, text);
-	refresh_cutscene_view(ui);
+	refresh_animations_view(ui);
 	app.refresh_ui();
 }
 
@@ -502,6 +548,21 @@ fn void cut_card_loop_clicked(Ui* ui)
 	CutEdit edit;
 	if (!cut_edit_begin(app, &edit)) return;
 	edit.strip.loop = !edit.strip.loop;
+	cut_edit_land(ui, app, &edit);
+}
+
+// Fit on: the walk's speed follows its move again; off holds the speed it has.
+fn void cut_card_fit_clicked(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	CutEdit edit;
+	if (!cut_edit_begin(app, &edit)) return;
+	if (edit.strip.kind != PLAY)
+	{
+		edit.strip.free(mem);
+		return;
+	}
+	edit.strip.speed_held = !edit.strip.speed_held;
 	cut_edit_land(ui, app, &edit);
 }
 
@@ -561,7 +622,7 @@ fn void cut_card_pick_clicked(Ui* ui)
 	{
 		(void)app.begin_cut_pick(TURN_TARGET);
 	}
-	refresh_cutscene_view(ui);
+	refresh_animations_view(ui);
 	app.refresh_ui();
 }
 
@@ -580,23 +641,23 @@ fn bool delete_picked_cut_strip(Ui* ui)
 
 fn void cut_card_delete_clicked(Ui* ui) => (void)delete_picked_cut_strip(ui);
 
-<* Whether the keyboard is with the add menus, after a choice there. *>
+<* Whether the keyboard is with the turn list, after a choice there. *>
 fn bool cut_menus_focused(Ui* ui)
 {
 	for (Element* e = ui.focused; e != null; e = e.parent)
 	{
-		if (e.has_id(CUT_PLAY_MENU_ID) || e.has_id(CUT_TURN_MENU_ID)) return true;
+		if (e.has_id(CUT_TURN_MENU_ID)) return true;
 	}
 	return false;
 }
 
 // ---------------------------------------------------------------------------
-// The add menus
+// The choice lists
 
 enum CutMenu : char
 {
-	PLAY_MENU, // the clips of the actor adds go to
-	TURN_MENU, // the other actors, then a point on the ground
+	TURN_MENU,  // the other actors, then a point on the ground
+	ACTOR_MENU, // what can become an actor of this cutscene (cutscene_menus.c3)
 }
 
 <* A popup's rows: built from the app on every open, so each lists what is there now. *>
@@ -604,50 +665,51 @@ struct CutChoiceList (Widget)
 {
 	CutMenu menu;
 	TreeRow[] rows;
+	CutActorPickRow[] picks; // an ACTOR_MENU's, one per row
 }
 
-fn void CutChoiceList.unmount(&self, Element* elem) @dynamic => widgets::free_tree_rows(&self.rows);
+fn void CutChoiceList.release(&self)
+{
+	widgets::free_tree_rows(&self.rows);
+	if (self.picks.len > 0) alloc::free(mem, self.picks);
+	self.picks = {};
+}
+
+fn void CutChoiceList.unmount(&self, Element* elem) @dynamic => self.release();
 
 fn Element* CutChoiceList.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
-	widgets::free_tree_rows(&self.rows);
+	self.release();
 	Cutscene* cutscene = app.cutscene();
 	sz actor = app.cut_target_actor();
 	List{TreeRow} rows;
 	rows.init(mem);
 	defer rows.free();
-	if (cutscene && actor >= 0)
+	if (self.menu == ACTOR_MENU)
+	{
+		self.actor_rows(app, &rows);
+	}
+	else if (cutscene && actor >= 0)
 	{
 		@pool()
 		{
-			if (self.menu == PLAY_MENU)
+			foreach (other : cut_other_actors(tmem, cutscene, (usz)actor))
 			{
-				CutCast[] cast = app.cut_cast(cutscene, tmem);
-				foreach (clip : cast[actor].clips) rows.push(((TreeRow) { .label = clip }).owned());
-				foreach (&one : cutscene.one_offs)
-				{
-					if (one.row == cutscene.actors[actor].row) rows.push(((TreeRow) { .label = one.clip.name, .trailing = "one-off" }).owned());
-				}
-			}
-			else
-			{
-				foreach (other : cut_other_actors(tmem, cutscene, (usz)actor))
-				{
-					rows.push(((TreeRow) { .label = cutscene.actors[other].row, .trailing = "actor" }).owned());
-				}
-				rows.push(((TreeRow) { .label = "A point on the ground", .trailing = "click it" }).owned());
+				rows.push(((TreeRow) { .label = cutscene.actors[other].row, .trailing = "actor" }).owned());
 			}
 		};
+		rows.push(((TreeRow) { .label = "A point on the ground", .trailing = "click it" }).owned());
 	}
 	if (rows.len() > 0) self.rows = rows.to_array(mem);
-	String empty = self.menu == PLAY_MENU ? "This actor's character has no clips" : "No cutscene";
+	String empty = "No cutscene";
 	float h = (float)math::min(math::max((usz)self.rows.len, (usz)1), CUT_MENU_ROWS) * TREE_STYLE.resolved().row_height;
-	String list_id = self.menu == PLAY_MENU ? CUT_PLAY_LIST_ID : CUT_TURN_LIST_ID;
-	OnIndex chosen = self.menu == PLAY_MENU ? &cut_play_chosen : &cut_turn_chosen;
+	float w = cut_list_width(elem, self.rows);
+	String list_id = self.menu == ACTOR_MENU ? CUT_ACTOR_LIST_ID : CUT_TURN_LIST_ID;
+	OnIndex chosen = self.menu == ACTOR_MENU ? &cut_actor_list_chosen : &cut_turn_chosen;
 	return @subtree(elem.ui)
 	{
-		@tree((Scroll) { .size = { CUT_MENU_W, h } })
+		@tree((Scroll) { .size = { w, h } })
 		{
 			if (self.rows.len == 0)
 			{
@@ -661,19 +723,42 @@ fn Element* CutChoiceList.build(&self, Element* elem) @dynamic
 	};
 }
 
-fn Element* build_cut_play_menu(Ui* ui) => ui.@node((CutChoiceList) { .menu = PLAY_MENU });
-fn Element* build_cut_turn_menu(Ui* ui) => ui.@node((CutChoiceList) { .menu = TURN_MENU });
+<*
+ How wide a choice list is: its widest row, label and trailing words both whole,
+ from CUT_MENU_W up to CUT_MENU_MOST_W and never wider than the screen leaves.
 
-// The two popups, among the window's dialogs.
-fn void cutscene_dialogs()
+ @param [&in] elem : "The list's element, for its text and its screen"
+*>
+fn float cut_list_width(Element* elem, TreeRow[] rows)
 {
-	@node((Dialog) { .body = &build_cut_play_menu, .style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-		.popup_insets = { 0, 5, 0, 5 } }).with_id(CUT_PLAY_MENU_ID);
-	@node((Dialog) { .body = &build_cut_turn_menu, .style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
-		.popup_insets = { 0, 5, 0, 5 } }).with_id(CUT_TURN_MENU_ID);
+	TreeStyle style = TREE_STYLE.resolved();
+	float widest;
+	foreach (row : rows)
+	{
+		float label = elem.ui.text.measure(0, row.label, style.text_size).x;
+		float note = row.trailing.len > 0 ? elem.ui.text.measure(0, row.trailing, style.text_size).x + 8.0f : 0.0f;
+		// Two pixels over, so rounding never cuts a row that fits.
+		widest = math::max(widest, 2.0f * style.padding + label + note + 2.0f);
+	}
+	// The scroll indicator takes the right edge of a list too long to show whole.
+	if (rows.len > CUT_MENU_ROWS) widest += widgets::THUMB_WIDTH + 2.0f * widgets::THUMB_MARGIN;
+	float room = elem.media().size.x - 2.0f * widgets::DIALOG_MARGIN - CUT_LIST_INSETS;
+	return math::max(math::min(math::clamp(math::ceil(widest), CUT_MENU_W, CUT_MENU_MOST_W), room), 0.0f);
 }
 
-fn void cut_open_menu(Ui* ui, String id) @local
+fn Element* build_cut_turn_menu(Ui* ui) => ui.@node((CutChoiceList) { .menu = TURN_MENU });
+fn Element* build_cut_actor_list(Ui* ui) => ui.@node((CutChoiceList) { .menu = ACTOR_MENU });
+
+// The cutscene's popups and dialogs, among the window's dialogs.
+fn void cutscene_dialogs()
+{
+	@node((Dialog) { .body = &build_cut_turn_menu, .style = DIALOG_STYLE, .modal = true, .close_outside = true, .popup = true,
+		.popup_insets = { 0, 5, 0, 5 } }).with_id(CUT_TURN_MENU_ID);
+	cutscene_menu_dialogs();
+}
+
+<* Open choice list `id` at the pointer, for the actor pieces go to. *>
+fn void cut_open_menu(Ui* ui, String id)
 {
 	AppState* app = ui.inherit(AppState)!!;
 	if (!app.cutscene())
@@ -683,49 +768,10 @@ fn void cut_open_menu(Ui* ui, String id) @local
 	}
 	if (app.cut_target_actor() < 0)
 	{
-		app.@notice("click an actor's lane first: that actor gets the strip");
+		app.@notice("click an actor first: that actor gets the strip");
 		return;
 	}
-	Element*? found = ui.find_id(id);
-	if (catch found) return;
-	Dialog* menu = found.widget_as(Dialog);
-	menu.at = ui.input.mouse;
-	menu.placed = true;
-	menu.set_open(found, true);
-}
-
-fn void cut_add_play_clicked(Ui* ui) => cut_open_menu(ui, CUT_PLAY_MENU_ID);
-fn void cut_add_turn_clicked(Ui* ui) => cut_open_menu(ui, CUT_TURN_MENU_ID);
-
-fn void cut_play_chosen(Ui* ui, usz index)
-{
-	set_dialog_open(ui, CUT_PLAY_MENU_ID, false);
-	AppState* app = ui.inherit(AppState)!!;
-	Cutscene* cutscene = app.cutscene();
-	sz actor = app.cut_target_actor();
-	if (!cutscene || actor < 0) return;
-	@pool()
-	{
-		CutCast[] cast = app.cut_cast(cutscene, tmem);
-		if (index < cast[actor].clips.len)
-		{
-			String clip = cast[actor].clips[index].tcopy();
-			if (app.add_cut_play((usz)actor, clip) < 0) app.@notice("%s has no clip %s", app.cutscene().actors[actor].row, clip);
-		}
-		else
-		{
-			// Past the character's clips: the actor's one-offs, in their order.
-			usz k = cast[actor].clips.len;
-			foreach (&one : cutscene.one_offs)
-			{
-				if (one.row != cutscene.actors[actor].row) continue;
-				if (k++ != index) continue;
-				(void)app.add_cut_one_off_play((usz)actor, one.clip.name.tcopy());
-				break;
-			}
-		}
-	};
-	app.refresh_ui();
+	cut_open_popup(ui, id, ui.input.mouse);
 }
 
 fn void cut_turn_chosen(Ui* ui, usz index)
@@ -748,6 +794,6 @@ fn void cut_turn_chosen(Ui* ui, usz index)
 			(void)app.begin_cut_pick(NEW_TURN, (usz)actor);
 		}
 	};
-	refresh_cutscene_view(ui);
+	refresh_animations_view(ui);
 	app.refresh_ui();
 }

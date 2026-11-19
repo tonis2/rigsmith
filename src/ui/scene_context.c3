@@ -4,7 +4,8 @@
 
  Its rows follow the selection rather than where the press landed, so a joint
  offers Move, Rotate, selection growers, Mirror and Delete; the Skeleton row
- offers moving the whole rig at once; the Model row the whole model. Move and
+ offers moving the whole rig at once; the Model row the whole model; the Level
+ row framing it, its colliders and removing it. Move and
  Rotate switch to the matching tool with its gizmo on the selection — the same
  thing G and R reach — and "Move by…" takes exact offsets for a nudge a drag
  cannot place.
@@ -130,6 +131,15 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 				rows[n++] = { .label = "Select all joints", .shortcut = Shortcut.SELECT_ALL.label,
 					.on_select = &scene_context_select_joints, .id = "viewport-context-select-joints" };
 			}
+		case LEVEL:
+			if (!app.has_level()) break;
+			rows[n++] = { .label = "Frame level",
+				.on_select = &scene_context_frame_level, .id = "viewport-context-frame-level" };
+			rows[n++] = { .label = app.show_colliders ? "Hide colliders" : "Show colliders",
+				.on_select = &scene_context_colliders, .id = "viewport-context-colliders" };
+			rows[n++] = { .label = "Remove level", .separator_before = true,
+				.on_select = &scene_context_remove_level, .id = "viewport-context-remove-level" };
+			return rows[:n];
 	}
 	if (app.animation_pose_ready() && app.scene_selection != SKELETON && app.scene_selection != MODEL)
 	{
@@ -651,4 +661,32 @@ fn void remove_focused_character(Ui* ui) @private
 
 fn void keep_focused_character(Ui* ui) @private
 {
+}
+
+// Frame the level now, or as soon as it is in.
+fn void scene_context_frame_level(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	if (level_shown()) app.frame_level();
+	if (level_busy()) frame_level_when_in();
+	app.refresh_ui();
+}
+
+fn void scene_context_colliders(Ui* ui)
+{
+	close_scene_context(ui);
+	menu_show_colliders(ui);
+}
+
+fn void scene_context_remove_level(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.has_level()) return;
+	String name = base_name(app.level_path).copy(mem);
+	defer name.free(mem);
+	app.close_level();
+	app.@notice("Removed the level %s", name);
+	app.refresh_ui();
 }

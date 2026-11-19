@@ -8,7 +8,8 @@
  slim status bar. The default sheet summarizes whole poses; joint tracks are
  opt-in. Posing tools (rest pose, mirror, copy/paste, balance, pins, the pose
  library) are in the N-panel's Pose tab (pose_panel.c3). In the Joints stage the
- key row and the Layers column are greyed out.
+ key row and the Layers column are greyed out. A cutscene picked in the chooser
+ takes the dock over (animation_cutscene.c3).
 *>
 module crig;
 
@@ -231,6 +232,8 @@ struct AnimSnapshot
 	int fps;
 	// A one-off of a cutscene is what is being edited.
 	bool one_off;
+	// The cutscenes the chooser lists after the clips.
+	uint cut_names;
 }
 
 fn usz anim_aim_key_total(AnimTemplate* clip) @private
@@ -238,6 +241,18 @@ fn usz anim_aim_key_total(AnimTemplate* clip) @private
 	usz total;
 	if (clip) foreach (&target : clip.aim_targets) total += target.keys.len;
 	return total;
+}
+
+// The cutscenes' names folded into one number, so one added, renamed or taken away is a change.
+fn uint anim_cut_names_hash(AppState* app) @private
+{
+	uint hash = 2166136261u;
+	foreach (&c : app.cutscenes)
+	{
+		foreach (ch : c.name) hash = (hash ^ ch) * 16777619u;
+		hash *= 16777619u;
+	}
+	return hash;
 }
 
 // The pins' windows folded into one number, so a pin whose window moved is a change.
@@ -304,6 +319,7 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.ghost_step = app.ghost_step_frames(),
 		.fps = app.anim_fps,
 		.one_off = app.one_off_open(),
+		.cut_names = anim_cut_names_hash(app),
 	};
 }
 
@@ -521,6 +537,9 @@ struct AnimPanel (Widget)
 {
 	bool restore_timeline_focus;
 	AnimSnapshot shown;
+	// Whether the last build showed the cutscene, and that build's shape (animation_cutscene.c3).
+	bool cut_mode;
+	CutPanelShape cut_shown;
 }
 
 // Fills the dock it is in; the two sides scroll on their own.
@@ -539,8 +558,15 @@ fn void AnimPanel.update(&self, Element* elem, float dt) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	anim_arm_pending(elem.ui);
+	if (app.cutscene_in_dock())
+	{
+		self.update_cut_dock(elem, app);
+		return;
+	}
 	AnimSnapshot now = anim_snapshot(app);
-	if (!fields_differ(now, self.shown)) return;
+	if (!self.cut_mode && !fields_differ(now, self.shown)) return;
+	// A press on the cutscene sheet or its bin holds its widget until the release.
+	if (self.cut_mode && cut_timeline_busy(elem.ui)) return;
 	// A clip picked by any route becomes the clip menu's row, unless the row
 	// picked is one whose source is missing, which stays picked so it can be
 	// removed.
@@ -591,6 +617,8 @@ fn void AnimPanel.update(&self, Element* elem, float dt) @dynamic
 fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
+	self.cut_mode = app.cutscene_in_dock();
+	if (self.cut_mode) return self.build_cut_dock(elem, app);
 	app.refresh_anim_rows();
 	if (app.default_editing())
 	{
@@ -634,7 +662,10 @@ fn Element* AnimPanel.build(&self, Element* elem) @dynamic
 						@tree((Wrap) { .gap_x = ANIM_GAP, .gap_y = ANIM_GAP, .cross_align = CENTER })
 						{
 							@node((AnimChooser) { });
-							@node(panel_button("+ New", &anim_new_clip_clicked)).with_id(ANIM_NEW_ID);
+							@tree(widgets::tip("New — an animation of this character, or a cutscene of the scene"))
+							{
+								@node(panel_button("+ New", &anim_new_menu_clicked)).with_id(ANIM_NEW_ID);
+							};
 							@tree(widgets::tip("More — rename, duplicate or mirror this animation, or start a walk cycle"))
 							{
 								@node(panel_button("⋯", &anim_clip_menu_clicked)).with_id(ANIM_MORE_ID);
@@ -858,13 +889,19 @@ fn void AnimChooser.release(&self)
 
 fn void AnimChooser.unmount(&self, Element* elem) @dynamic => self.release();
 
+// Before the cutscenes in the chooser, which name each "Cutscene · <name>".
+const String ANIM_CHOOSER_CUT_PREFIX = "Cutscene · ";
+
 fn Element* AnimChooser.build(&self, Element* elem) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	self.release();
-	self.labels = alloc::new_array(mem, String, math::max(app.doc.animations.len(), (sz)1));
+	usz clips = (usz)app.doc.animations.len();
+	// A one-off being edited is listed alone: Back to cutscene is the way out.
+	usz cuts = app.one_off_open() ? 0 : (usz)app.cutscenes.len();
+	self.labels = alloc::new_array(mem, String, (sz)math::max(clips + cuts, (usz)1));
 	usz selected = 0;
-	if (app.doc.animations.len() == 0) self.labels[0] = "No animation".copy(mem);
+	if (clips + cuts == 0) self.labels[0] = "No animation".copy(mem);
 	foreach (sz i, bound : app.doc.animations.array_view())
 	{
 		AnimRef ref = app.resolve_bound(i);
@@ -873,9 +910,13 @@ fn Element* AnimChooser.build(&self, Element* elem) @dynamic
 		self.labels[i] = ref.valid() ? bound.clip.copy(mem) : string::format(mem, "%s (missing)", bound.clip);
 		if (ref.same(app.editing)) selected = (usz)i;
 	}
-	if (app.anim_selected < self.labels.len && app.doc.animations.len() > 0
-		&& !app.resolve_bound((sz)app.anim_selected).valid()) selected = app.anim_selected;
-	// A rig can carry dozens of bound clips (UAL2 and friends), more than fit a
+	if (app.anim_selected < clips && !app.resolve_bound((sz)app.anim_selected).valid()) selected = app.anim_selected;
+	for (usz i = 0; i < cuts; i++)
+	{
+		self.labels[clips + i] = string::format(mem, "%s%s", ANIM_CHOOSER_CUT_PREFIX, app.cutscenes.get_ref((sz)i).name);
+	}
+	if (app.cutscene_in_dock()) selected = clips + app.cut_active;
+	// A rig can carry dozens of bound clips (a large animation library), more than fit a
 	// plain dropdown — past a handful the list gets a search field so the right
 	// one is a few keystrokes away rather than a long scroll.
 	bool searchable = self.labels.len > ANIM_CHOOSER_SEARCH_MIN;
@@ -883,8 +924,25 @@ fn Element* AnimChooser.build(&self, Element* elem) @dynamic
 	{
 		@node((Select) { .options = self.labels, .selected = selected,
 			.width = 190, .style = VIEW_MENU_STYLE, .searchable = searchable,
-			.on_change = &anim_choose_clip }).with_id("anim-chooser");
+			.on_change = &anim_chooser_chosen }).with_id("anim-chooser");
 	};
+}
+
+<* A chooser row: a clip gives the dock back to the character and edits it; a cutscene is shown in the dock. *>
+fn void anim_chooser_chosen(Ui* ui, usz row)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	usz clips = (usz)app.doc.animations.len();
+	if (row < clips)
+	{
+		if (app.cutscene_in_dock()) app.leave_cutscene_preview();
+		anim_choose_clip(ui, row);
+		return;
+	}
+	// Rebuilt either way, so a refused preview does not leave its row showing.
+	if (!app.one_off_open()) (void)app.show_cutscene(row - clips);
+	refresh_animations_view(ui);
+	app.refresh_ui();
 }
 
 fn Vec2 AnimChooser.layout(&self, Element* elem, Constraints constraints) @dynamic
@@ -1419,7 +1477,7 @@ fn bool animation_keying_key(Ui* ui, Key key, bool shift)
 {
 	if (key != Key.K) return false;
 	AppState* app = ui.inherit(AppState)!!;
-	if (!app.editing.valid() || app.stage != POSE_STAGE) return false;
+	if (!app.editing.valid() || app.stage != POSE_STAGE || app.cutscene_in_dock()) return false;
 	if (shift)
 	{
 		app.auto_key = !app.auto_key;
@@ -1520,6 +1578,7 @@ fn void anim_play_pause_clicked(Ui* ui) @private
 fn bool animation_transport_key(Ui* ui, Key key)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	if (app.cutscene_in_dock()) return cut_transport_key(ui, key);
 	if (!app.editing.valid()) return false;
 	switch (key)
 	{
@@ -1600,6 +1659,7 @@ fn bool TransportRepeat.advance(&self, Ui* ui, float dt)
 {
 	if (self.key == Key.EMPTY) return false;
 	AppState* app = ui.inherit(AppState)!!;
+	if (app.cutscene_in_dock()) return self.advance_cut(ui, app, dt);
 	AnimTemplate* clip = app.clip(app.editing);
 	if (!ui.input.key_down(self.key) || !clip || app.pose_edit_pending)
 	{

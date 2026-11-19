@@ -20,7 +20,7 @@ fn void add_cutscene_tools(ToolTable* table, AppState* app)
 	});
 	table.add_tool({
 		.name = "get_cutscene",
-		.description = "One cutscene whole, the active one unless index says: the CUSTOM_cutscene extension's shape (name, duration, fps, actors with row and strips, paths with name, length and points) plus each path's knots, each actor's character (its index in get_scene, -1 for none) and level_node, and one_offs: [{row, clip}], the clips made for this cutscene alone, each clip in the session file's form (name, duration, loop, blend, keys [{time, dots [{joint, axis, angle, move, bone, channels}]}], pins). A strip with one_off true plays its actor's one-off named clip. A move's path is its index into these paths. problems lists what would be refused or look wrong. set_cutscene takes the same shape back.",
+		.description = "One cutscene whole, the active one unless index says: the CUSTOM_cutscene extension's shape (name, duration, fps, actors with row and strips, paths with name, length and points) plus each path's knots, each actor's character (its index in get_scene, -1 for none) and level_node, and one_offs: [{row, clip}], the clips made for this cutscene alone, each clip in the session file's form (name, duration, loop, blend, keys [{time, dots [{joint, axis, angle, move, bone, channels}]}], pins). A strip with one_off true plays its actor's one-off named clip. A move's path is its index into these paths. A play carries ground_speed (m/s) when one was typed and speed_held true when its speed is held. problems lists what would be refused or look wrong. set_cutscene takes the same shape back.",
 		.input_schema = `{"type":"object","properties":{"index":{"type":"integer"}}}`,
 		.handler = &tool_get_cutscene,
 		.user_data = app,
@@ -28,7 +28,7 @@ fn void add_cutscene_tools(ToolTable* table, AppState* app)
 	});
 	table.add_tool({
 		.name = "set_cutscene",
-		.description = "Write a cutscene as one undo step of the cutscene history (undo with history \"cutscene\"). cutscene is get_cutscene's shape: it replaces the one at index (default the active one), or with new true is added; a path's points are sampled from its knots when it has any and dropped onto the open level's ground, and its length is that dropped line's; a move's ground_speed (m/s, scene only) is the one its clip's speed follows when resized; character and level_node are read-only. Without cutscene, new true adds an empty one (name optional) holding every actor, and delete true deletes the one at index. The cutscene written becomes the active one. Answers get_cutscene's report, or get_cutscenes' after a delete.",
+		.description = "Write a cutscene as one undo step of the cutscene history (undo with history \"cutscene\"). cutscene is get_cutscene's shape: it replaces the one at index (default the active one), or with new true is added; a path's points are sampled from its knots when it has any and dropped onto the open level's ground, and its length is that dropped line's; a move or play takes ground_speed (m/s, scene only), and a play speed_held (scene only: Rigsmith does not refit a held walk to its move's pace); every speed is taken as given, none refitted; character and level_node are read-only. Without cutscene, new true adds an empty one (name optional) holding every actor, and delete true deletes the one at index. The cutscene written becomes the active one. Answers get_cutscene's report, or get_cutscenes' after a delete.",
 		.input_schema = `{"type":"object","properties":{"index":{"type":"integer"},"cutscene":{"type":"object"},"new":{"type":"boolean"},"name":{"type":"string"},"delete":{"type":"boolean"}}}`,
 		.handler = &tool_set_cutscene,
 		.user_data = app,
@@ -36,7 +36,7 @@ fn void add_cutscene_tools(ToolTable* table, AppState* app)
 	});
 	table.add_tool({
 		.name = "select_cutscene",
-		.description = "Make a cutscene the active one, by index or name: the one the Cutscene tab edits, the preview poses and export_cutscene writes. Not an undo step. Answers get_cutscenes' report.",
+		.description = "Make a cutscene the active one, by index or name: the one the Animations dock shows, the preview poses and export_cutscene writes. Not an undo step. Answers get_cutscenes' report.",
 		.input_schema = `{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"}}}`,
 		.handler = &tool_select_cutscene,
 		.user_data = app,

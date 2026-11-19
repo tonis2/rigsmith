@@ -137,7 +137,7 @@ fn KeyAnswer cut_pick_stage(KeyPress* press) @private
 	{
 		app.@notice("no point picked");
 	}
-	refresh_cutscene_view(press.ui);
+	refresh_animations_view(press.ui);
 	return REFRESH;
 }
 
@@ -148,13 +148,13 @@ fn KeyAnswer cut_knot_stage(KeyPress* press) @private
 	if (app.cut_knot_dragging && press.key == Key.ESCAPE)
 	{
 		app.cancel_cut_knot_drag();
-		refresh_cutscene_view(press.ui);
+		refresh_animations_view(press.ui);
 		return REFRESH;
 	}
 	if (press.key != Key.DELETE && press.key != Key.BACKSPACE) return PASS;
 	if (app.cut_knot_dragging || !cut_knots_shown(app) || app.cut_knot_pick == 0) return PASS;
 	(void)app.delete_cut_knot(app.cut_path_pick - 1, app.cut_knot_pick - 1);
-	refresh_cutscene_view(press.ui);
+	refresh_animations_view(press.ui);
 	return REFRESH;
 }
 
@@ -168,7 +168,7 @@ fn KeyAnswer path_delete_stage(KeyPress* press) @private
 	return REFRESH;
 }
 
-// Right after a choice in the Cutscene tab's add menus, Delete takes the strip it added, not a joint.
+// Right after a choice in the turn menu, Delete takes the strip it added, not a joint.
 fn KeyAnswer cut_delete_stage(KeyPress* press) @private
 {
 	if (press.key != Key.DELETE && press.key != Key.BACKSPACE) return PASS;

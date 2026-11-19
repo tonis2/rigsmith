@@ -86,7 +86,9 @@ fn bool AppState.read_level_actor(&self, String node, String row = "")
 	self.adopt_level_rig(&rig);
 	(void)self.make_actor(self.active, wanted);
 	self.cutscenes_changed();
-	self.@notice("%s is read from the level · %d joints, %d clips", wanted, self.doc.dots.len(), self.doc.animations.len());
+	sz joints = self.doc.dots.len();
+	sz clips = self.doc.animations.len();
+	self.@notice("%s is read from the level · %d joint%s, %d clip%s", wanted, joints, joints == 1 ? "" : "s", clips, clips == 1 ? "" : "s");
 	self.refresh_ui();
 	return true;
 }

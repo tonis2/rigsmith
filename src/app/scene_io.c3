@@ -93,7 +93,7 @@ fn bool AppState.save_scene(&self, String path)
 	self.set_scene_path(target);
 	// On the recent list, so the chooser that opens scenes offers it next time.
 	self.remember_project(target);
-	self.@notice("saved the scene · %d characters", scene.characters.len);
+	self.@notice("saved the scene · %d character%s", scene.characters.len, scene.characters.len == 1 ? "" : "s");
 	return true;
 }
 
@@ -262,15 +262,16 @@ fn bool AppState.open_scene(&self, String path)
 	}
 	if (level_missing)
 	{
-		self.@notice("opened the scene · %d characters · its level %s is missing", scene.characters.len, base_name(scene.level));
+		self.@notice("opened the scene · %d character%s · its level %s is missing", scene.characters.len, scene.characters.len == 1 ? "" : "s", base_name(scene.level));
 		return true;
 	}
 	if (self.cutscenes.len() > 0)
 	{
-		self.@notice("opened the scene · %d characters, %d cutscenes", scene.characters.len, self.cutscenes.len());
+		self.@notice("opened the scene · %d character%s, %d cutscene%s", scene.characters.len, scene.characters.len == 1 ? "" : "s",
+			self.cutscenes.len(), self.cutscenes.len() == 1 ? "" : "s");
 		return true;
 	}
-	self.@notice("opened the scene · %d characters", scene.characters.len);
+	self.@notice("opened the scene · %d character%s", scene.characters.len, scene.characters.len == 1 ? "" : "s");
 	return true;
 }
 
@@ -375,7 +376,7 @@ fn bool AppState.export_scene(&self, String path, float fps = 30.0f)
 		self.@notice("could not write %s: %s", base_name(path), error);
 		return false;
 	}
-	self.@notice("wrote %s · %d characters, %.2fs", base_name(path), written, duration);
+	self.@notice("wrote %s · %d character%s, %.2fs", base_name(path), written, written == 1 ? "" : "s", duration);
 	return true;
 }
 

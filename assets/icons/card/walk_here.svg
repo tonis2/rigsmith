@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -15 30 30" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-  <ellipse cx="-5" cy="4.5" rx="1.6" ry="2.6" stroke-width="1.5"/>
-  <ellipse cx="-0.5" cy="-0.5" rx="1.6" ry="2.6" stroke-width="1.5"/>
-  <path d="M 2 7 C 6 6 8 2 7.5 -5" stroke-width="1.5"/>
-  <polyline points="5,-3 7.5,-6 10,-3" stroke-width="1.5"/>
-</svg>

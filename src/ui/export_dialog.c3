@@ -1,29 +1,11 @@
 <*
- Choosing what goes into an exported .glb: the rig, which clips, and where it is
- written.
+ The Export panel: what goes in the file (the character, all characters or a
+ cutscene), a line saying what that is, and where it is written.
 
- 	File > Export .glb…  (Ctrl+E), with one character in the scene
+ 	File > Export .glb…  (Ctrl+E)
 
- **There is no picker here any more, and that is the point.** This panel used to
- hold a second grid of every animation in every library, with its own search and
- its own ticks — so the set of clips a character had came into existence inside
- the export dialog and died with the next `load_mesh`. "Which animations does my
- character have" was a question with no answer except during an export.
-
- The answer is now the character's own: clips are bound in the Assets pane, live
- in the document, survive a restart, and are listed in the Animations view. This
- panel *reports* that set and writes it. What is left to decide here is genuinely
- about the export and nothing else — whether the model goes with the clips, and
- where the file lands.
-
- **The answers live on the AppState, not in this subtree.** `Dialog.body` is
- rebuilt on every opening and released on every close, so anything that has to
- survive closing the panel to fetch a destination belongs on `export_with_rig` —
- the same rule the workspace's views follow.
-
- A bound clip whose file has gone missing is counted and named in the summary
- rather than silently skipped: the writer takes what it can find, and the line
- above the button is where the user finds out that it found eleven of twelve.
+ The answers live on the AppState (`export_what`, `export_with_rig`), since the
+ body is released whenever the panel closes, Browse included.
 *>
 module crig;
 
@@ -37,12 +19,17 @@ import std::core::string;
 const float EXPORT_DIALOG_W = 560.0;
 const float EXPORT_GAP = 10.0;
 
-// The path field, sized so Browse fits beside it on one row rather than being
-// pushed onto its own.
+// The path field, sized so Browse fits beside it on one row.
 const float EXPORT_FIELD_W = 440.0;
+const float EXPORT_PICK_W = 260.0;
 
 const String EXPORT_DIALOG_ID = "export-dialog";
+const String EXPORT_WHAT_ID = "export-what";
+const String EXPORT_CHOICE_ID = "export-choice";
+const String EXPORT_CUTSCENE_ID = "export-cutscene";
+const String EXPORT_LINE_ID = "export-line";
 const String EXPORT_PATH_ID = "export-path";
+const String EXPORT_BROWSE_ID = "export-browse";
 const String EXPORT_SUMMARY_ID = "export-summary";
 const String EXPORT_CONFIRM_ID = "export-confirm";
 
@@ -51,6 +38,9 @@ const float EXPORT_TEXT_SIZE = 13.0;
 // A template rig is a complete export; animations are optional.
 const String EXPORT_NONE_BOUND =
 	"No animations on this character — export the rig alone (animations are optional)";
+
+// In ExportWhat's order.
+String[3] export_what_options = { "Character", "All characters", "Cutscene" };
 
 <*
  Build the export panel as a detached subtree — the shape `Dialog.body` takes.
@@ -63,19 +53,14 @@ fn Element* build_export_dialog_body(Ui* ui)
 	{
 		@tree((Column) { .size = { EXPORT_DIALOG_W, 0 }, .gap = EXPORT_GAP })
 		{
-			// What is going in, as a sentence rather than as a grid to work
-			// through. The set was chosen elsewhere and this is the receipt.
-			@node((ExportSummary) { }).with_id(EXPORT_SUMMARY_ID);
+			@tree(widgets::tip("What goes in the file: the character in focus, every character, or a cutscene for the game"))
+			{
+				@node((Segmented) { .options = export_what_options[..], .selected = (sz)app.export_what.ordinal,
+					.on_change = &export_what_chosen, .style = SEGMENTED_STYLE }).with_id(EXPORT_WHAT_ID);
+			};
 
-			@node((Checkbox) {
-				.label = "Export rig — the model with its skeleton. Off writes the clips alone.",
-				.checked = app.export_with_rig,
-				.on_change = &export_rig_toggled,
-				.style = CHECKBOX_STYLE,
-			});
+			@node((ExportChoice) { }).with_id(EXPORT_CHOICE_ID);
 
-			// Root motion and key reduction are chosen in the Animations panel, where
-			// the viewport shows them; this panel only writes what they say.
 			@node((Label) { .text = "Write to", .size = EXPORT_TEXT_SIZE, .color = TEXT_DIM });
 
 			@tree((Row) { .gap = EXPORT_GAP })
@@ -86,12 +71,10 @@ fn Element* build_export_dialog_body(Ui* ui)
 					.width = EXPORT_FIELD_W,
 				}).with_id(EXPORT_PATH_ID);
 
-				@node(panel_button("Browse", &export_browse));
+				@node(panel_button("Browse", &export_browse)).with_id(EXPORT_BROWSE_ID);
 			};
 
-			// A tree rather than the one-line form, so the confirming button can
-			// carry an id: it is the only control here that writes a file, and a
-			// check driving the panel has to be able to find it.
+			// A tree rather than the one-line form, so the confirming button can carry an id.
 			@tree((Row) { .gap = EXPORT_GAP, .main_align = END })
 			{
 				@node(panel_button("Cancel", &export_cancelled));
@@ -100,38 +83,139 @@ fn Element* build_export_dialog_body(Ui* ui)
 		};
 	};
 
-	// Through the subtree, not the Ui: `Dialog.build` has not attached any of
-	// this yet, so the tree-wide lookup cannot see it.
-	//
-	// The derived path is what everyone who does not care where it goes gets;
-	// Browse and typing are for everyone else.
-	//
-	// With no source path there is nothing to derive from, and the field is left
-	// on its placeholder rather than on an empty string that looks like an
-	// answer. Not `?:` with a literal either: freeing one is freeing static data.
-	if (app.source_path.len > 0)
+	// Through the subtree: `Dialog.build` has not attached it yet. With nothing to
+	// name the file from, the field keeps its placeholder.
+	String suggested = export_default_path(app, app.export_what);
+	if (suggested.len > 0)
 	{
 		if (try Element* field = body.find_id(EXPORT_PATH_ID))
 		{
-			String derived = rigged_path(mem, app.source_path);
-			defer derived.free(mem);
-			field.widget_as(TextField).set_text(field, derived);
+			field.widget_as(TextField).set_text(field, suggested);
 		}
 	}
 
 	return body;
 }
 
+// What decides the choice's body; compared each frame.
+struct ExportShape
+{
+	ExportWhat what;
+	usz cutscenes;
+	usz active;
+	uint revision;
+}
+
+fn ExportShape export_shape(AppState* app) @private
+{
+	return { .what = app.export_what, .cutscenes = (usz)app.cutscenes.len(), .active = app.cut_active, .revision = app.cut_revision };
+}
+
+<* The part of the panel under the choice, rebuilt when the choice or the cutscene changes. *>
+struct ExportChoice (Widget)
+{
+	ExportShape shown;
+	String[] names; // the cutscene picker's options, owned
+	char[192] line; // the summary, held for its label to borrow
+}
+
+fn void ExportChoice.release(&self)
+{
+	free_names(mem, self.names);
+	self.names = {};
+}
+
+fn void ExportChoice.unmount(&self, Element* elem) @dynamic => self.release();
+
+fn void ExportChoice.update(&self, Element* elem, float dt) @dynamic
+{
+	ExportShape now = export_shape(elem.inherit(AppState)!!);
+	if (!fields_differ(now, self.shown)) return;
+	elem.request_build();
+}
+
+fn Vec2 ExportChoice.layout(&self, Element* elem, Constraints constraints) @dynamic
+{
+	if (elem.children.len() == 0) return constraints.constrain({ 0, 0 });
+	float width = math::min(EXPORT_DIALOG_W, constraints.max.x);
+	Vec2 inner = elem.layout_child(0, cui::loose({ width, constraints.max.y }));
+	elem.place_child(0, { 0, 0 });
+	return constraints.constrain({ width, inner.y });
+}
+
+fn Element* ExportChoice.build(&self, Element* elem) @dynamic
+{
+	AppState* app = elem.inherit(AppState)!!;
+	self.shown = export_shape(app);
+	self.release();
+	String line;
+	bool warn;
+	switch (app.export_what)
+	{
+		case CHARACTER:
+			break;
+		case ALL_CHARACTERS:
+			usz models;
+			usz rigged;
+			app.export_cast_counts(&models, &rigged);
+			line = string::bformat(self.line[..], "%d character%s · %d rigged", models, models == 1 ? "" : "s", rigged);
+			// Amber when one is left out: the scene export skips a character with no rig.
+			warn = rigged < models;
+		case CUTSCENE:
+			if (Cutscene* cutscene = app.cutscene())
+			{
+				String[] problems = app.cutscene_problem_texts(mem);
+				defer free_names(mem, problems);
+				usz actors = cutscene.actors.len;
+				String noted = problems.len == 0 ? "" : string::tformat(" · %d problem%s", problems.len, problems.len == 1 ? "" : "s");
+				line = string::bformat(self.line[..], "%s · %d actor%s · %.1f s%s", cutscene.name, actors,
+					actors == 1 ? "" : "s", cutscene.duration, noted);
+				warn = problems.len > 0;
+			}
+			if (app.cutscenes.len() > 1)
+			{
+				self.names = alloc::new_array(mem, String, app.cutscenes.len());
+				foreach (usz i, &c : app.cutscenes) self.names[i] = c.name.copy(mem);
+			}
+	}
+
+	return @subtree(elem.ui)
+	{
+		@tree((Column) { .gap = EXPORT_GAP })
+		{
+			if (app.export_what == CHARACTER)
+			{
+				// What is going in, as a sentence: the clips were chosen in the Assets pane.
+				@node((ExportSummary) { }).with_id(EXPORT_SUMMARY_ID);
+				@node((Checkbox) {
+					.label = "Export rig — the model with its skeleton. Off writes the clips alone.",
+					.checked = app.export_with_rig,
+					.on_change = &export_rig_toggled,
+					.style = CHECKBOX_STYLE,
+				});
+			}
+			else
+			{
+				if (self.names.len > 0)
+				{
+					@tree(widgets::tip("Which cutscene to write"))
+					{
+						@node((Select) { .options = self.names, .selected = app.cut_active, .width = EXPORT_PICK_W,
+							.style = VIEW_MENU_STYLE, .on_change = &export_cutscene_chosen }).with_id(EXPORT_CUTSCENE_ID);
+					};
+				}
+				@node((Label) { .text = line, .size = EXPORT_TEXT_SIZE, .color = warn ? ACCENT : TEXT_DIM }).with_id(EXPORT_LINE_ID);
+			}
+		};
+	};
+}
+
 <*
  The one line that replaced the picker: what this export is about to write.
 
  A widget rather than a `Label` because the sentence is formatted from the
- document and has to be owned by something — a `Label` borrows its text for the
- life of the element, and a temporary would be released before the panel painted.
-
- Resolving every binding is what `bound_counts` does, and it is the reason this
- is built on open rather than measured on every paint: it can read files off
- disk. The panel is modal, so nothing can change the answer while it is up.
+ document and has to be owned by something. Built on open rather than measured
+ on every paint, since `bound_counts` can read files off disk.
 *>
 struct ExportSummary (Widget)
 {
@@ -148,9 +232,7 @@ fn Vec2 ExportSummary.layout(&self, Element* elem, Constraints constraints) @dyn
 	usz found;
 	app.bound_counts(&total, &found);
 
-	// Every branch writes into the scratch, including the literal one: paint reads
-	// the buffer back, so a branch that only pointed at static text would paint
-	// whatever the last format left there.
+	// Every branch writes into the scratch, since paint reads the buffer back.
 	String line;
 	if (total == 0)
 	{
@@ -163,8 +245,7 @@ fn Vec2 ExportSummary.layout(&self, Element* elem, Constraints constraints) @dyn
 	}
 	else
 	{
-		// The gap said out loud. A silent skip here would write a model missing
-		// clips the user believes are on it, and the export reports success.
+		// Said out loud: a silent skip would write a model missing clips the user believes are on it.
 		line = string::bformat(self.scratch[..],
 			"%d of %d animations found — %d missing from your libraries",
 			found, total, total - found);
@@ -185,33 +266,30 @@ fn void ExportSummary.paint(&self, Element* elem, Painter* painter) @dynamic
 
 	painter.text({ 0, 0 }, (String)self.scratch[:self.len], {
 		.size = EXPORT_TEXT_SIZE,
-		// Amber when something is missing: the count is the news, and a dim line
-		// saying eleven of twelve reads the same as one saying twelve.
+		// Amber when something is missing: the count is the news.
 		.color = total > 0 && found < total ? ACCENT : TEXT_DIM,
 	});
 }
 
-<*
- Open the export panel.
-
- Nothing to prepare any more: the set being exported is the document's, and the
- summary resolves it during layout. There used to be a row list rebuilt here,
- borrowed from the asset index and the packs.
-*>
+<* Open the export panel on the choice that fits the scene: see `default_export_what`. *>
 fn void open_export_dialog(Ui* ui)
 {
+	open_export_for(ui, ui.inherit(AppState)!!.default_export_what());
+}
+
+<* Open the export panel on `what`, or on the default when `what` does not apply. *>
+fn void open_export_for(Ui* ui, ExportWhat what)
+{
 	AppState* app = ui.inherit(AppState)!!;
-	// Do not carry a previous animation-only export into a template document:
-	// without bindings the rig is the only meaningful thing to write.
+	// Without bindings the rig is the only meaningful thing to write.
 	if (app.doc.animations.len() == 0) app.export_with_rig = true;
+	app.export_what = app.export_refusal(what).len == 0 ? what : app.default_export_what();
 	set_dialog_open(ui, EXPORT_DIALOG_ID, true);
 }
 
 <*
- Put a chosen destination into the panel's field.
-
- What the file browser calls back into when it was opened from **Browse** — the
- export panel stays up behind the chooser, so the field is still in the tree.
+ Put a chosen destination into the panel's field: Browse's answer, and the
+ suggestion on every switch.
 *>
 fn void set_export_path(Ui* ui, String path)
 {
@@ -219,6 +297,37 @@ fn void set_export_path(Ui* ui, String path)
 	{
 		field.widget_as(TextField).set_text(field, path);
 	}
+}
+
+// A choice that does not apply says why and lights the one in force again.
+fn void export_what_chosen(Ui* ui, usz index) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (index >= export_what_options.len) return;
+	ExportWhat what = ExportWhat::from_ordinal(index);
+	String refused = app.export_refusal(what);
+	if (refused.len > 0)
+	{
+		app.@notice("%s", refused);
+		if (try Element* strip = ui.find_id(EXPORT_WHAT_ID))
+		{
+			strip.widget_as(Segmented).selected = (sz)app.export_what.ordinal;
+			strip.request_paint();
+		}
+		app.refresh_ui();
+		return;
+	}
+	app.export_what = what;
+	set_export_path(ui, export_default_path(app, what));
+	app.refresh_ui();
+}
+
+fn void export_cutscene_chosen(Ui* ui, usz index) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
+	(void)app.select_cutscene(index);
+	set_export_path(ui, export_default_path(app, CUTSCENE));
+	app.refresh_ui();
 }
 
 fn void export_rig_toggled(Ui* ui, bool checked) @private
@@ -231,40 +340,62 @@ fn void export_browse(Ui* ui) @private
 	open_file_dialog(ui, FilePurpose.EXPORT_TARGET);
 }
 
+// The chooser's title for Browse, naming what is written.
+fn String export_target_title(ExportWhat what)
+{
+	switch (what)
+	{
+		case CHARACTER: return "Export the character to";
+		case ALL_CHARACTERS: return "Export all characters to";
+		case CUTSCENE: return "Export the cutscene to";
+	}
+}
+
 fn void export_cancelled(Ui* ui) @private
 {
 	set_dialog_open(ui, EXPORT_DIALOG_ID, false);
 }
 
 <*
- Write the file: the rig if it is ticked, and whichever clips are.
-
- The destination is copied before the panel closes — the field is inside the
- subtree that closing releases, and the string is a view into its buffer.
+ Write the file `export_what` names. The destination is copied before the panel
+ closes, since the field is inside the subtree that closing releases.
 *>
 fn void export_confirmed(Ui* ui) @private
 {
 	AppState* app = ui.inherit(AppState)!!;
+	ExportWhat what = app.export_what;
 
 	String typed = field_text(ui, EXPORT_PATH_ID);
+	// The character's export derives a path from its file; the others need one.
+	if (what != CHARACTER && typed.len == 0)
+	{
+		app.@notice("type where to write it, or Browse");
+		app.refresh_ui();
+		return;
+	}
 
-	String destination = typed.copy(mem);
+	String destination = export_file_name(what, typed).copy(mem);
 	defer destination.free(mem);
-
-	AnimTemplate[] clips = app.bound_templates(mem);
-	defer if (clips.len > 0) alloc::free(mem, clips);
-
-	bool with_rig = app.export_with_rig;
 
 	set_dialog_open(ui, EXPORT_DIALOG_ID, false);
 
-	if (with_rig)
+	switch (what)
 	{
-		app.export_rig(destination, clips);
-	}
-	else
-	{
-		app.export_clips_only(destination, clips);
+		case CHARACTER:
+			AnimTemplate[] clips = app.bound_templates(mem);
+			defer if (clips.len > 0) alloc::free(mem, clips);
+			if (app.export_with_rig)
+			{
+				app.export_rig(destination, clips);
+			}
+			else
+			{
+				app.export_clips_only(destination, clips);
+			}
+		case ALL_CHARACTERS:
+			(void)app.export_scene(destination);
+		case CUTSCENE:
+			(void)app.export_cutscene(destination);
 	}
 	app.refresh_ui();
 }

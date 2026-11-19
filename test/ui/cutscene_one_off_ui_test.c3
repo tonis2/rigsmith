@@ -1,7 +1,7 @@
 <*
- A one-off made and edited with the mouse: New one-off on the What lane, a
+ A one-off made and edited with the mouse: the bin's + One-off on the Clip lane, a
  double-click or Enter on its strip to edit it with the Animations tools, its
- name on the card, and Back to cutscene.
+ name on the card, and Back to cutscene, all in the Animations dock.
 *>
 module crig_tests::ui;
 import crig;
@@ -10,9 +10,11 @@ import cui::widgets;
 import std::core::test;
 import std::math;
 
+// The Animations dock in a pane under the model, showing the first cutscene, one frame later.
 fn void one_off_tab(Fixture* f) @local
 {
-	crig::show_pane_view(f.ui, crig::CUTSCENE_VIEW, SplitAxis.VERTICAL, 0.5f);
+	crig::show_pane_view(f.ui, crig::ANIMATION_VIEW, SplitAxis.VERTICAL, 0.5f);
+	(void)f.app.show_cutscene(0);
 	f.ui.flush();
 	f.feed(f.ui.input.mouse);
 }
@@ -57,8 +59,8 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 	usz steps = (usz)f.app.cut_history.undo.len();
 
 	// New one-off: a 2 s strip of an empty clip of the cutscene at the playhead, picked, one step.
-	test::@check(has_id(&f, crig::CUT_NEW_ONE_OFF_ID), "no New one-off icon beside Add play");
-	f.click(one_off_centre(&f, crig::CUT_NEW_ONE_OFF_ID));
+	test::@check(cut_bin_has(&f, "+ One-off"), "no + One-off piece in the bin");
+	f.click(cut_bin_row(&f, "+ One-off"));
 	f.feed(f.ui.input.mouse);
 	CutStrip* s = first_strip(&f);
 	if (!s)
@@ -88,8 +90,8 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 	test::@check(f.app.one_off_open(), "the double-click did not open the one-off");
 	test::@check(f.app.doc.animations.len() == 1 && f.app.doc.animations[0].clip == "bow", "the timeline does not edit the one-off");
 	test::@check(has_id(&f, crig::ANIM_BACK_ID), "no Back to cutscene in the Animations tab");
-	// The pane that showed the Cutscene tab shows the Animations tools, unless another already did.
-	test::@check(has_id(&f, crig::CUT_BACK_ID) || !has_id(&f, crig::CUT_TIMELINE_ID), "the Cutscene tab is up without its way back");
+	// The dock shows the one-off as a clip, not the cutscene.
+	test::@check(!has_id(&f, crig::CUT_TIMELINE_ID), "the dock still shows the cutscene while its one-off is edited");
 
 	// Back: the edit is over and the cutscene is where it was.
 	if (!has_id(&f, crig::ANIM_BACK_ID)) return;
@@ -110,7 +112,7 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 
 	// Deleted from the card, with every strip that plays it; Ctrl+Z brings both back.
 	f.feed(f.ui.input.mouse);
-	test::@check(has_id(&f, crig::CUT_TIMELINE_ID), "the Cutscene tab did not come back");
+	test::@check(has_id(&f, crig::CUT_TIMELINE_ID), "the dock did not show the cutscene again");
 	f.click(one_off_lane(&f, 2.6f));
 	f.feed(f.ui.input.mouse);
 	test::@check(has_id(&f, crig::CUT_CARD_DROP_ID), "no card for the picked one-off");

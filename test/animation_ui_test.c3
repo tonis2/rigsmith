@@ -141,6 +141,8 @@ fn void a_new_animation_holds_its_last_pose_by_default() @test
 
 	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
+	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
+	f.ui.flush();
 	f.click(f.center_of("anim-create")!!);
 	f.ui.flush();
 	test::@check(f.app.clip(f.app.editing) && !f.app.clip(f.app.editing).loop,
@@ -160,6 +162,8 @@ fn void the_loop_toggle_makes_the_current_clip_cycle() @test
 	f.ui.flush();
 
 	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
+	f.ui.flush();
+	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
 	f.ui.flush();
 	f.click(f.center_of("anim-create")!!);
 	f.ui.flush();
@@ -191,6 +195,8 @@ fn void animation_workspace_new_starts_at_rest_and_old_clip_still_plays() @test
 	crig::build_ui(f.ui, &f.app);
 	f.ui.flush();
 	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
+	f.ui.flush();
+	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
 	f.ui.flush();
 	Element* name = f.ui.find_id("anim-new-name")!!;
 	name.widget_as(TextField).set_text(name, "New");
@@ -261,6 +267,8 @@ fn void animation_workspace_creates_a_named_clip_and_wraps() @test
 	test::@check(f.app.auto_key, "automatic pose keying should be the default");
 	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
 	f.ui.flush();
+	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
+	f.ui.flush();
 	Element* name = f.ui.find_id("anim-new-name")!!;
 	name.widget_as(TextField).set_text(name, "Wave");
 	Element* duration = f.ui.find_id("anim-new-duration")!!;
@@ -306,6 +314,8 @@ fn void a_new_animation_auto_keys_without_toggling_the_checkbox() @test
 	// be the working state; clicking the checkbox once or twice must not be the
 	// operation that arms automatic keying.
 	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
+	f.ui.flush();
+	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
 	f.ui.flush();
 	f.ui.find_id("anim-new-name")!!.widget_as(TextField).set_text(
 		f.ui.find_id("anim-new-name")!!, "Untoggled auto key");

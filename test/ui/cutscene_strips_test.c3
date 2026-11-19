@@ -10,9 +10,11 @@ import std::core::test;
 import std::math;
 import std::math::quaternion;
 
+// The Animations dock in a pane under the model, showing the first cutscene, one frame later.
 fn void strips_tab(Fixture* f) @local
 {
-	crig::show_pane_view(f.ui, crig::CUTSCENE_VIEW, SplitAxis.VERTICAL, 0.5f);
+	crig::show_pane_view(f.ui, crig::ANIMATION_VIEW, SplitAxis.VERTICAL, 0.5f);
+	(void)f.app.show_cutscene(0);
 	f.ui.flush();
 	f.feed(f.ui.input.mouse);
 }
@@ -92,13 +94,12 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	two.actors = actors;
 	f.app.replace_cutscene(0, two);
 	strips_tab(&f);
-	test::@check(has_id(&f, crig::CUT_ADD_PLAY_ID) && has_id(&f, crig::CUT_ADD_TURN_ID), "no add icons");
+	test::@check(cut_bin_has(&f, wave) && cut_bin_has(&f, "Turn"), "no %s and Turn pieces", wave);
 	usz steps = cut_undo_steps(&f);
 
-	// Add play: the icon opens the actor's clips; a row lays one at the playhead, one pass long.
-	f.click(strips_centre(&f, crig::CUT_ADD_PLAY_ID));
+	// The clip's piece: a click lays it at the playhead, one pass long.
+	f.click(cut_bin_row(&f, wave));
 	f.feed(f.ui.input.mouse);
-	test::@check(click_menu_row(&f, crig::CUT_PLAY_LIST_ID, wave), "no %s in the play menu", wave);
 	CutStrip* s = hero_strip(&f, 0);
 	if (!s)
 	{
@@ -180,9 +181,9 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	test::@check(near_time(hero_strip(&f, 0).start, before), "Esc left the strip at %f", hero_strip(&f, 0).start);
 	test::eq(cut_undo_steps(&f), steps + 5);
 
-	// Add turn: the menu of the other actors; the turn faces the one picked.
+	// The Turn piece: the menu of the other actors; the turn faces the one picked.
 	f.app.show_cutscene_at(1.0f);
-	f.click(strips_centre(&f, crig::CUT_ADD_TURN_ID));
+	f.click(cut_bin_row(&f, "Turn"));
 	f.feed(f.ui.input.mouse);
 	test::@check(click_menu_row(&f, crig::CUT_TURN_LIST_ID, "guide"), "no guide in the turn menu");
 	CutStrip* turned = f.app.cut_selected_strip();

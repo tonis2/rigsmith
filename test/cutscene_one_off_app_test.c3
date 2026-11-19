@@ -186,6 +186,7 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	String target = FOLDER.tconcat("/acting.cutscene.glb");
 	(void)file::delete(target);
 	test::@check(app.export_cutscene(target), "not exported");
+	test::@check(app.notice().contains("· 1 actor,"), "the notice reads '%s'", app.notice());
 	CutAnimation[] read;
 	Cutscene back = crig::read_cutscene_file(mem, target, null, &read)!!;
 	defer back.free(mem);

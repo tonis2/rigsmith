@@ -1,8 +1,8 @@
 <*
  A cutscene's walks: its paths edited (added, renamed, deleted, drawn knot by knot,
  a knot dragged, put in or taken out), each sampled and dropped onto the level's
- ground; Walk here; and the rate a move's clip plays at so its feet keep to the
- ground. Each edit is one step of the cutscene history.
+ ground; a move and Walk here; and the rate a walk's clip plays at so its feet
+ keep to the ground. Each edit is one step of the cutscene history.
 *>
 module crig;
 
@@ -221,6 +221,7 @@ fn bool AppState.delete_cut_path(&self, usz i)
 			}
 		}
 	}
+	for (usz a = 0; a < c.actors.len; a++) self.fit_paired_speeds(a);
 	if (self.cut_path_pick == i + 1)
 	{
 		self.cut_path_pick = 0;
@@ -237,7 +238,7 @@ fn bool AppState.delete_cut_path(&self, usz i)
 // ---------------------------------------------------------------------------
 // Knots, each one undo step
 
-// Path `path` after its knots changed: dropped again, and every move on it timed to it.
+// Path `path` after its knots changed: dropped again, and every move on it and every walk timed to it.
 fn void AppState.cut_path_moved(&self, usz path)
 {
 	Cutscene* c = self.cutscene();
@@ -249,6 +250,7 @@ fn void AppState.cut_path_moved(&self, usz path)
 		{
 			if (s.kind == MOVE && s.path == (int)path) self.fit_walk_speed(a, s);
 		}
+		self.fit_paired_speeds(a);
 	}
 	self.cutscenes_changed();
 }
@@ -484,15 +486,22 @@ fn bool AppState.cut_may_measure(&self)
 	return !self.one_off.open && self.drag.dot == 0 && !self.transform_transaction.active && !self.stroke_open;
 }
 
-<* The ground speed move `s` of actor `actor` walks at, in m/s: the one typed on it, else its clip's; 0 when not known. *>
+<* The ground speed strip `s` of actor `actor` walks its clip at, in m/s: the one typed on it, else its clip's; 0 when not known. *>
 fn float AppState.cut_ground_speed(&self, usz actor, CutStrip* s)
 {
 	if (s.ground_speed > 0.0f) return s.ground_speed;
+	if (s.one_off) return 0.0f;
+	return self.cut_actor_clip_speed(actor, s.clip);
+}
+
+<* How fast actor `actor`'s clip `clip` walks as its character is drawn, in m/s; 0 when not known. *>
+fn float AppState.cut_actor_clip_speed(&self, usz actor, String clip)
+{
 	Cutscene* c = self.cutscene();
-	if (!c || actor >= c.actors.len || s.clip.len == 0) return 0.0f;
+	if (!c || actor >= c.actors.len || clip.len == 0) return 0.0f;
 	sz holder = self.actor_character(c.actors[actor].row);
 	if (holder < 0) return 0.0f;
-	return self.cut_clip_ground((usz)holder, s.clip).speed;
+	return self.cut_clip_ground((usz)holder, clip).speed;
 }
 
 <*
@@ -510,31 +519,105 @@ fn void AppState.fit_walk_speed(&self, usz actor, CutStrip* s)
 }
 
 <*
- Walk here: a move along path `path` for `actor` at the playhead, turning along it,
- playing the actor's clip named like a walk if it has one, and lasting the path's
- length over that clip's ground speed (1 m/s when that is not known). One undo step.
+ Every walk of actor `actor`: each play that pairs with a move (cut_paired_move),
+ whose speed is not held and whose clip's ground speed is CUT_PAIR_GROUND_MIN or
+ more, plays at (path length ÷ move length) ÷ that ground speed. Not an edit of its own.
+*>
+fn void AppState.fit_paired_speeds(&self, usz actor)
+{
+	Cutscene* c = self.cutscene();
+	if (!c || actor >= c.actors.len) return;
+	CutStrip[] strips = c.actors[actor].strips;
+	foreach (usz k, &p : strips)
+	{
+		if (p.kind != PLAY || p.speed_held) continue;
+		sz paired = cut_paired_move(strips, k, c.paths);
+		if (paired < 0) continue;
+		float ground = self.cut_ground_speed(actor, p);
+		if (!(ground >= CUT_PAIR_GROUND_MIN)) continue;
+		CutStrip* m = &strips[paired];
+		p.speed = cut_walk_rate(c.paths[m.path].length, m.end - m.start, ground);
+	}
+}
+
+// The actor's clip named most like a walk, or "" for none.
+fn String AppState.cut_walk_clip_of(&self, Allocator allocator, usz actor)
+{
+	Cutscene* c = self.cutscene();
+	String found = "";
+	@pool()
+	{
+		CutCast[] cast = self.cut_cast(c, tmem);
+		sz walk = cut_walk_clip(cast[actor].clips);
+		if (walk >= 0) found = cast[actor].clips[walk].copy(allocator);
+	};
+	return found;
+}
+
+// A clip-less move along `path` from the playhead, lasting its length at `walk`'s ground speed (1 m/s when not known).
+fn CutStrip AppState.cut_walk_move(&self, usz actor, usz path, String walk)
+{
+	Cutscene* c = self.cutscene();
+	CutStrip s = cut_strip(MOVE, self.cut_time, self.cut_time);
+	s.path = (int)path;
+	s.ease = LINEAR;
+	s.turn = true;
+	float ground = self.cut_actor_clip_speed(actor, walk);
+	if (!(ground >= CUT_PAIR_GROUND_MIN)) ground = 0.0f;
+	float frame = c.fps > 0.0f ? 1.0f / c.fps : 0.01f;
+	s.end = s.start + math::max(cut_walk_seconds(c.paths[path].length, ground), frame);
+	return s;
+}
+
+<*
+ A move along path `path` for `actor` at the playhead, playing no clip: linear,
+ facing along the path, and lasting its length over the ground speed of the
+ actor's clip named like a walk (1 m/s when that is not known). A walk laid over
+ it follows its pace. One undo step; the move is picked.
 
  @return "Its index, or -1 for no such actor or a path with nothing to walk"
+*>
+fn sz AppState.add_cut_move(&self, usz actor, usz path)
+{
+	(void)self.back_to_cutscene();
+	Cutscene* c = self.cutscene();
+	if (!c || actor >= c.actors.len || path >= c.paths.len || c.paths[path].points.len < 2) return -1;
+	String walk = self.cut_walk_clip_of(mem, actor);
+	defer if (walk.len > 0) walk.free(mem);
+	return self.add_cut_strip(actor, self.cut_walk_move(actor, path, walk));
+}
+
+<*
+ Walk here: a clip-less move along path `path` for `actor` at the playhead
+ (add_cut_move), and over the same span a looping play of the actor's clip named
+ like a walk, if it has one, which pairs with the move and so keeps its feet on
+ the path. The move goes first in the actor's strips, as the export orders them.
+ One undo step; the walk is picked, its card holding what its feet follow.
+
+ @return "The move's index, the walk right after it; -1 for no such actor or a path with nothing to walk"
 *>
 fn sz AppState.walk_cut_path(&self, usz actor, usz path)
 {
 	(void)self.back_to_cutscene();
 	Cutscene* c = self.cutscene();
 	if (!c || actor >= c.actors.len || path >= c.paths.len || c.paths[path].points.len < 2) return -1;
-	CutStrip s = cut_strip(MOVE, self.cut_time, self.cut_time);
-	s.path = (int)path;
-	s.ease = LINEAR;
-	@pool()
+	String walk = self.cut_walk_clip_of(mem, actor);
+	CutStrip move = self.cut_walk_move(actor, path, walk);
+	CutStrip play;
+	if (walk.len > 0)
 	{
-		CutCast[] cast = self.cut_cast(c, tmem);
-		sz walk = cut_walk_clip(cast[actor].clips);
-		if (walk >= 0) s.clip = cast[actor].clips[walk].copy(mem);
-	};
-	float ground = self.cut_ground_speed(actor, &s);
-	float frame = c.fps > 0.0f ? 1.0f / c.fps : 0.01f;
-	s.end = s.start + math::max(cut_walk_seconds(c.paths[path].length, ground), frame);
-	s.speed = cut_walk_rate(c.paths[path].length, s.end - s.start, ground);
-	return self.add_cut_strip(actor, s);
+		play = cut_strip(PLAY, move.start, move.end);
+		play.clip = walk;
+		play.loop = true;
+	}
+	self.cut_checkpoint();
+	sz at = self.put_cut_strip(actor, move);
+	uint move_id = self.cutscene().actors[actor].strips[at].id;
+	if (play.clip.len > 0) (void)self.put_cut_strip(actor, play);
+	usz found_actor;
+	usz found;
+	if (!self.cutscene().find_strip(move_id, &found_actor, &found)) return -1;
+	return (sz)found;
 }
 
 // ---------------------------------------------------------------------------

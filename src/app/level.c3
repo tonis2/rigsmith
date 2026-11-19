@@ -40,6 +40,7 @@ fn void AppState.close_level(&self)
 	drop_level();
 	self.forget_level_path();
 	self.show_colliders = false;
+	self.unpick_level();
 }
 
 // Whether the scene has a level, open or on its way.
@@ -50,6 +51,17 @@ fn void AppState.level_failed(&self)
 {
 	self.forget_level_path();
 	self.show_colliders = false;
+	self.unpick_level();
+}
+
+// The level row's pick goes with the level, on every character that holds it.
+fn void AppState.unpick_level(&self)
+{
+	for (usz i = 0; i < self.character_count(); i++)
+	{
+		Character* c = self.character(i);
+		if (c.scene_selection == LEVEL) c.scene_selection = NONE;
+	}
 }
 
 fn void AppState.forget_level_path(&self)

@@ -707,6 +707,79 @@ fn void scene_outliner_right_click_menu_moves_the_skeleton() @test
 		"Select whole skeleton must pick the Skeleton object");
 }
 
+const String LEVEL_ROW_FOLDER = "build/test-level-row";
+
+// The row whose id is `id`, clicked in the open context menu.
+fn void click_context_row(Fixture* fixture, String id)
+{
+	Element*? row = fixture.ui.find_id(id);
+	if (catch row)
+	{
+		test::@check(false, "the menu has no %s", id);
+		return;
+	}
+	fixture.click(row.absolute + row.size * 0.5f);
+}
+
+<*
+ The level is the Scene pane's first row, named for its file and with no eye.
+ Its right-click menu frames it, toggles its colliders and removes it; removing
+ takes the level and the row away.
+*>
+fn void the_level_is_the_scene_panes_first_row() @test
+{
+	Fixture harness;
+	if (catch fault error = harness.open())
+	{
+		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
+		return;
+	}
+	defer harness.close();
+	Fixture* fixture = &harness;
+	fixture.reset();
+
+	(void)path::mkdir(LEVEL_ROW_FOLDER, true);
+	String forest = LEVEL_ROW_FOLDER +++ "/forest.gltf";
+	file::save(forest, `{"asset":{"version":"2.0"},"nodes":[{"name":"ground"}]}`)!!;
+	test::@check(fixture.app.open_level(forest), "the level did not open: %s", fixture.app.notice());
+
+	Element* strip = fixture.ui.find(AreaTabStrip)!!;
+	fixture.click(tab_center(fixture, strip, TAB_SCENE));
+	Element* tree = fixture.ui.find_id(crig::SCENE_OUTLINER_ID)!!.children[0];
+	TreeRow[] rows = tree.widget_as(Tree).rows;
+	test::@check(rows.len >= 2, "expected the level and the Scene rows, got %d", rows.len);
+	if (rows.len < 2) return;
+	test::@check(rows[0].label == "forest.gltf" && rows[0].icon == crig::OUTLINER_ICON_LEVEL && rows[0].depth == 0,
+		"the first row is not the level: %s", rows[0].label);
+	test::@check(!rows[0].toggles[0].shown, "the level row carries an eye");
+	test::@check(rows[1].label == "Scene", "the Scene row does not follow the level: %s", rows[1].label);
+
+	Element* ctx = fixture.ui.find_id(crig::VIEWPORT_CONTEXT_ID)!!;
+	fixture.right_click(category_center(tree, 0));
+	test::@check(ctx.widget_as(Dialog).open, "a right-click on the level row did not open the menu");
+	test::@check(fixture.app.scene_selection == crig::SceneSelection.LEVEL, "the right-click did not pick the level");
+	foreach (id : (String[]) { "viewport-context-frame-level", "viewport-context-colliders", "viewport-context-remove-level" })
+	{
+		test::@check(@ok(fixture.ui.find_id(id)), "the level menu has no %s", id);
+	}
+
+	click_context_row(fixture, "viewport-context-colliders");
+	test::@check(fixture.app.show_colliders, "Show colliders did not turn them on");
+	tree = fixture.ui.find_id(crig::SCENE_OUTLINER_ID)!!.children[0];
+	fixture.right_click(category_center(tree, 0));
+	Element*? toggle = fixture.ui.find_id("viewport-context-colliders");
+	test::@check(@ok(toggle) && toggle!!.widget_as(PopupMenuItem).item.label == "Hide colliders",
+		"the colliders row does not offer to hide them");
+
+	click_context_row(fixture, "viewport-context-remove-level");
+	test::@check(!fixture.app.has_level() && !fixture.app.show_colliders, "Remove level kept the level");
+	test::@check(!ctx.widget_as(Dialog).open, "Remove level did not close the menu");
+	test::@check(fixture.app.scene_selection == crig::SceneSelection.NONE, "the level stayed picked");
+	fixture.ui.flush();
+	rows = fixture.ui.find_id(crig::SCENE_OUTLINER_ID)!!.children[0].widget_as(Tree).rows;
+	test::@check(rows.len > 0 && rows[0].label == "Scene", "the level row stayed");
+}
+
 <*
  Switching tabs rebuilds the pane, which recycles every element in it — so the
  strip is re-found for the switch back, and `fixture.viewport` is re-resolved

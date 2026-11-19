@@ -132,7 +132,7 @@ fn void add_cast_tools(ToolTable* table, AppState* app)
 	});
 	table.add_tool({
 		.name = "add_character",
-		.description = "Load a model beside the ones already open, as another character with its own rig, clips, poses and undo — the rig comes from its sidecar or its file, as on open. It becomes the one being edited. A file already loaded is focused instead. Answers the cast.",
+		.description = "Load a model beside the ones already open, as another character with its own rig, clips, poses and undo — the rig comes from its sidecar or its file, as on open. It becomes the one being edited. A file already loaded is focused instead. A level file (a collider outside a rig, or two or more rigged armatures) is refused for open_level, and a cutscene file is refused. Answers the cast.",
 		.input_schema = `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`,
 		.handler = &tool_add_character,
 		.user_data = app,
@@ -235,6 +235,20 @@ fn String? tool_add_character(Object* args, void* user_data, DString* detail) @p
 	if (!file::is_file(path))
 	{
 		detail.appendf("there is no file at %s", path)!!;
+		return TOOL_REFUSED~;
+	}
+	// Classified as File › Import .glb does; a file that will not read is left to the load to explain.
+	GlbCensus census;
+	GlbKind kind = glb_kind(path, &census) ?? GlbKind.CHARACTER;
+	if (kind == LEVEL)
+	{
+		detail.appendf("%s is a level (%d collider%s outside a rig, %d rigged armature%s): open_level opens it",
+			path, census.loose_colliders, census.loose_colliders == 1 ? "" : "s", census.armatures, census.armatures == 1 ? "" : "s")!!;
+		return TOOL_REFUSED~;
+	}
+	if (kind == CUTSCENE)
+	{
+		detail.appendf("%s is a cutscene file: Rigsmith writes these and doesn't open them", path)!!;
 		return TOOL_REFUSED~;
 	}
 	usz before = app.character_count();

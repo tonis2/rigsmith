@@ -1,4 +1,4 @@
-<* The active cutscene's walk paths as lines in the 3D view, while a Cutscene pane or the preview is up. Read-only. *>
+<* The active cutscene's walk paths as lines in the 3D view, while its preview is up. Read-only. *>
 module crig;
 
 import three;
@@ -35,6 +35,17 @@ fn void drop_cut_path_node() @local
 }
 
 <*
+ Whether the lines are drawn: the preview is on and the cutscene has paths.
+
+ @param [&in] app
+*>
+fn bool cut_path_lines_shown(AppState* app)
+{
+	Cutscene* cutscene = app.cutscene();
+	return cutscene != null && cutscene.paths.len > 0 && app.cut_preview;
+}
+
+<*
  The lines, rebuilt when the cutscene changes. Called from `sync_scene`.
 
  @param [&inout] app
@@ -42,8 +53,7 @@ fn void drop_cut_path_node() @local
 fn void sync_cutscene_paths(AppState* app)
 {
 	Cutscene* cutscene = app.cutscene();
-	bool wanted = cutscene != null && cutscene.paths.len > 0 && (app.cut_preview || app.cut_panes > 0);
-	if (!wanted)
+	if (!cut_path_lines_shown(app))
 	{
 		if (cut_path_draw.node.is_set())
 		{

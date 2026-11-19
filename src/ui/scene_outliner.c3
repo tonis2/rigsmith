@@ -2,10 +2,10 @@
  The spatial contents of crig's current document.
 
  The source importer still flattens geometry into one `TriMesh`, so this is the
- honest logical hierarchy: a model per loaded character, and under the one being
- edited its mesh, its skeleton and its joints. The others are a row each — a
- click makes one the focus, and then it unfolds. Animations belong to their
- existing views and are deliberately absent here.
+ honest logical hierarchy: the level first when there is one, a model per loaded
+ character, and under the one being edited its mesh, its skeleton and its joints.
+ The others are a row each — a click makes one the focus, and then it unfolds.
+ Animations belong to their existing views and are deliberately absent here.
 *>
 module crig;
 
@@ -27,11 +27,13 @@ const ushort OUTLINER_ICON_SKELETON = 4;
 const ushort OUTLINER_ICON_JOINT = 5;
 const ushort OUTLINER_ICON_ROOT = 6;
 const ushort OUTLINER_ICON_EYE = 7;
+const ushort OUTLINER_ICON_LEVEL = 8;
 
 // Blender's object orange and mesh-data green, so the rows read as the same kinds.
 const Color OUTLINER_MODEL_INK = { 0.93, 0.56, 0.22, 1.0 };
 const Color OUTLINER_MESH_INK = { 0.35, 0.80, 0.62, 1.0 };
 const Color OUTLINER_BONE_INK = { 0.78, 0.80, 0.86, 1.0 };
+const Color OUTLINER_LEVEL_INK = { 0.45, 0.68, 0.92, 1.0 };
 
 enum SceneItemKind : int
 {
@@ -40,6 +42,7 @@ enum SceneItemKind : int
 	MESH_ITEM,
 	SKELETON_ITEM,
 	JOINT_ITEM,
+	LEVEL_ITEM,
 }
 
 struct SceneOutlinerItem
@@ -75,10 +78,12 @@ fn SceneOutlinerItem[] scene_outliner_items(AppState* app) @private
 {
 	usz dots = (usz)app.doc.dots.len();
 	usz cast = app.character_count();
-	SceneOutlinerItem[] items = alloc::new_array(mem, SceneOutlinerItem, (sz)(dots + 4 + cast));
+	SceneOutlinerItem[] items = alloc::new_array(mem, SceneOutlinerItem, (sz)(dots + 5 + cast));
 	usz count = 0;
 	bool has_model = app.has_mesh() || dots > 0 || cast > 1;
 
+	// The level is the scene's, not a character's: first, with or without any.
+	if (app.has_level()) items[count++] = { .kind = LEVEL_ITEM, .character = app.active, .depth = 0 };
 	items[count++] = {
 		.kind = SCENE_ITEM,
 		.character = app.active,
@@ -194,6 +199,7 @@ fn SceneSelection scene_selection_of(SceneItemKind kind) @private
 		case MESH_ITEM: return MESH;
 		case SKELETON_ITEM: return SKELETON;
 		case JOINT_ITEM: return JOINT;
+		case LEVEL_ITEM: return LEVEL;
 	}
 }
 
@@ -214,6 +220,7 @@ fn ushort scene_item_icon(AppState* app, SceneOutlinerItem item) @private
 		case MESH_ITEM: return OUTLINER_ICON_MESH;
 		case SKELETON_ITEM: return OUTLINER_ICON_SKELETON;
 		case JOINT_ITEM: return item.dot_id == app.doc.root_id ? OUTLINER_ICON_ROOT : OUTLINER_ICON_JOINT;
+		case LEVEL_ITEM: return OUTLINER_ICON_LEVEL;
 	}
 }
 
@@ -250,6 +257,7 @@ fn void paint_outliner_icon(Painter* painter, Vec2 at, float size, ushort icon, 
 		case OUTLINER_ICON_MODEL: paint_tree_icon(painter, at, size, ICON_MODEL, OUTLINER_MODEL_INK);
 		case OUTLINER_ICON_MESH: paint_tree_icon(painter, at, size, ICON_MESH, OUTLINER_MESH_INK);
 		case OUTLINER_ICON_SKELETON: paint_tree_icon(painter, at, size, ICON_SKELETON, OUTLINER_BONE_INK);
+		case OUTLINER_ICON_LEVEL: paint_tree_icon(painter, at, size, ICON_LEVEL, OUTLINER_LEVEL_INK);
 		case OUTLINER_ICON_JOINT:
 		case OUTLINER_ICON_ROOT:
 			painter.circle(at, size * 0.25f, {
@@ -362,7 +370,8 @@ fn void scene_outliner_toggled(Ui* ui, usz row) @private
 		case MODEL_ITEM: app.outliner_model_collapsed = !app.outliner_model_collapsed;
 		case SKELETON_ITEM: app.outliner_skeleton_collapsed = !app.outliner_skeleton_collapsed;
 		case JOINT_ITEM: app.toggle_outliner_joint(item.dot_id);
-		case MESH_ITEM: return;
+		case MESH_ITEM:
+		case LEVEL_ITEM: return;
 	}
 
 	ui.@each(SceneOutliner; outliner) { outliner.request_build(); };
@@ -392,6 +401,13 @@ struct SceneOutlinerSnapshot
 	bool scene_collapsed;
 	bool model_collapsed;
 	bool skeleton_collapsed;
+	// The level row: its file, how far it has come in, and what it holds.
+	char* level_ptr;
+	usz level_len;
+	LevelPhase level_phase;
+	int level_percent;
+	usz level_colliders;
+	bool show_colliders;
 }
 
 fn ulong scene_selection_sum(AppState* app) @private
@@ -408,6 +424,7 @@ fn SceneOutlinerSnapshot scene_outliner_snapshot(AppState* app) @private
 	{
 		if (app.character(i).hidden) hidden |= 1ul << i;
 	}
+	LevelReport report = level_report();
 	return {
 		.focus_generation = app.focus_generation,
 		.hidden_mask = hidden,
@@ -428,7 +445,24 @@ fn SceneOutlinerSnapshot scene_outliner_snapshot(AppState* app) @private
 		.scene_collapsed = app.outliner_scene_collapsed,
 		.model_collapsed = app.outliner_model_collapsed,
 		.skeleton_collapsed = app.outliner_skeleton_collapsed,
+		.level_ptr = app.level_path.ptr,
+		.level_len = app.level_path.len,
+		.level_phase = report.phase,
+		.level_percent = level_percent(report),
+		.level_colliders = report.colliders,
+		.show_colliders = app.show_colliders,
 	};
+}
+
+fn int level_percent(LevelReport report) @private => (int)(report.progress * 100.0f);
+
+// "NN%" while the level comes in, then how many colliders it has.
+fn String level_row_trailing() @private
+{
+	LevelReport report = level_report();
+	if (level_busy()) return string::tformat("%d%%", level_percent(report));
+	if (!level_shown()) return "";
+	return string::tformat(report.colliders == 1 ? "%d collider" : "%d colliders", report.colliders);
 }
 
 struct SceneOutliner (Widget)
@@ -488,6 +522,9 @@ fn Element* SceneOutliner.build(&self, Element* elem) @dynamic
 			case JOINT_ITEM:
 				Dot* dot = app.doc.find(item.dot_id);
 				label = dot && dot.name.len > 0 ? dot.name : string::tformat("Joint %d", item.dot_id);
+			case LEVEL_ITEM:
+				label = base_name(app.level_path);
+				trailing = level_row_trailing();
 		}
 
 		self.rows[i] = ((TreeRow) {

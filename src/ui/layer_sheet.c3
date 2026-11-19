@@ -24,6 +24,8 @@
  one onto a track at the time it should start, or click it to lay it at the
  playhead on a new track. cui has no drag and drop, so the bin holds the drag
  (`AppState.piece_drag`) and, on release, asks the UI what is under the pointer.
+ Mounted with `for_cut` beside a cutscene's sheet, it lists that cutscene's
+ pieces instead (cutscene_pieces.c3).
 
  Every gesture lands once, on release, through app/strips.c3: one undo step.
 *>
@@ -52,6 +54,9 @@ const Vec4 LAYER_R4 = { 4.0, 4.0, 4.0, 4.0 };
 const Vec4 LAYER_R2 = { 2.0, 2.0, 2.0, 2.0 };
 const float PIECE_BIN_W = 150.0;
 const float PIECE_ROW_H = 20.0;
+// An action's icon cell in the bin's top row, beside its title, and the glyph drawn in it.
+const float PIECE_CELL_W = 24.0;
+const float PIECE_ICON_SIZE = 22.0;
 const float LAYER_SHEET_LANE_H = 26.0;
 const float LAYER_SHEET_GUTTER = 112.0;
 // How near an edge, in pixels, a press trims rather than moves.
@@ -75,8 +80,10 @@ struct PieceDrag
 {
 	bool active;
 	Piece piece;
+	bool for_cut;
+	CutPiece cut;
 	String label; // owned
-	String link;  // owned; the piece's `link` borrows it
+	String link;  // owned; the piece's `link`, or the cut piece's `clip`, borrows it
 	Vec2 at;
 }
 
@@ -120,23 +127,38 @@ fn Vec2 AnimLayerDeck.layout(&self, Element* elem, Constraints constraints) @dyn
 
 struct PieceEntry
 {
-	String label;   // owned
-	String link;    // owned, SHARED
-	Piece piece;    // its link borrows `link`
-	bool header;    // a section title, not a piece
-	bool disabled;  // would make the clip play itself
+	String label;    // owned
+	String link;     // owned: a SHARED piece's link, a cut piece's clip
+	String trailing; // owned; dim at the row's end
+	Piece piece;     // its link borrows `link`
+	bool for_cut;
+	CutPiece cut;    // its clip borrows `link`
+	bool header;     // a section title or a note, not a piece
+	bool disabled;   // would make the clip play itself
+	String icon;     // borrowed SVG: an action, drawn as a cell of the top row rather than a row
+	String tip;      // borrowed: the cell's tooltip
+	usz slot;        // its row under the title, or its place among the cells
 }
 
 struct PieceBin (Widget)
 {
+	// Set where it is mounted: beside a cutscene's sheet it lists the cutscene's pieces.
+	bool for_cut;
 	PieceEntry[] entries;
+	// What the rows were built from: the undo revision, or the cutscenes' for a cutscene's bin.
 	uint built_revision;
 	AnimRef built_for;
+	sz built_target;
+	uint built_links;
 	bool built;
 	float scroll;
-	int lit;      // hovered row, one-based
-	int pressed;  // row pressed, one-based
+	int lit;      // hovered entry, one-based
+	int pressed;  // entry pressed, one-based
 	Vec2 press_at;
+	// How many entries are rows under the title, and how many cells beside it.
+	usz rows;
+	usz cells;
+	bool painted_drawing; // whether + Path was last drawn lit
 }
 
 fn void PieceBin.release(&self)
@@ -145,9 +167,12 @@ fn void PieceBin.release(&self)
 	{
 		if (entry.label.len > 0) entry.label.free(mem);
 		if (entry.link.len > 0) entry.link.free(mem);
+		if (entry.trailing.len > 0) entry.trailing.free(mem);
 	}
 	if (self.entries.len > 0) alloc::free(mem, self.entries);
 	self.entries = {};
+	self.rows = 0;
+	self.cells = 0;
 }
 
 fn void PieceBin.unmount(&self, Element* elem) @dynamic
@@ -159,6 +184,11 @@ fn void PieceBin.unmount(&self, Element* elem) @dynamic
 
 fn void PieceBin.refresh(&self, AppState* app)
 {
+	if (self.for_cut)
+	{
+		self.refresh_cut(app);
+		return;
+	}
 	self.release();
 	PieceEntryList rows;
 	rows.init(mem);
@@ -204,6 +234,7 @@ fn void PieceBin.refresh(&self, AppState* app)
 	}
 	self.entries = rows.to_array(mem);
 	foreach (&entry : self.entries) if (entry.piece.kind == SHARED && !entry.header) entry.piece.link = entry.link;
+	self.place();
 	self.built_revision = app.undo_stack.revision;
 	self.built_for = app.editing;
 	self.built = true;
@@ -213,12 +244,15 @@ alias PieceEntryList = List{PieceEntry};
 
 fn bool PieceBin.stale(&self, AppState* app)
 {
+	if (self.for_cut) return self.cut_stale(app);
 	return !self.built || self.built_revision != app.undo_stack.revision || !self.built_for.same(app.editing);
 }
 
 fn void PieceBin.update(&self, Element* elem, float dt) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
+	// + Path's cell is lit while a path is drawn, which edits nothing until a knot lands.
+	if (self.for_cut && (app.cut_pick == PATH_KNOT) != self.painted_drawing) elem.request_paint();
 	if (!self.stale(app)) return;
 	self.refresh(app);
 	elem.request_paint();
@@ -229,12 +263,65 @@ fn Vec2 PieceBin.layout(&self, Element* elem, Constraints constraints) @dynamic
 	return constraints.constrain({ constraints.max.x, constraints.max.y >= cui::UNBOUNDED ? ANIM_SHEET_H : constraints.max.y });
 }
 
+<* Number the entries: each action a cell of the top row, the rest rows under it. *>
+fn void PieceBin.place(&self)
+{
+	self.rows = 0;
+	self.cells = 0;
+	foreach (&entry : self.entries) entry.slot = entry.icon.len > 0 ? self.cells++ : self.rows++;
+}
+
+// How far the rows scroll at most: what they need under the title, less the room there.
+fn float PieceBin.most_scroll(&self, Element* elem) => math::max(0.0f, PIECE_ROW_H * (float)(self.rows + 1) - elem.size.y);
+
+<* Whether the rows need more room than the bin has, so it scrolls and shows its indicator. *>
+fn bool PieceBin.overflows(&self, Element* elem) => self.most_scroll(elem) > 0.0f;
+
+<* Where entry `i` is drawn, element-local: a cell right of the title, or a row under it; false when it is out of view. *>
+fn bool PieceBin.entry_box(&self, Element* elem, usz i, Vec2* at, Vec2* size)
+{
+	PieceEntry* entry = &self.entries[i];
+	if (entry.icon.len > 0)
+	{
+		float x = elem.size.x - TIMELINE_STYLE.pad_x * 0.5f - PIECE_CELL_W * (float)(self.cells - entry.slot);
+		*at = { x, 0 };
+		*size = { PIECE_CELL_W, PIECE_ROW_H };
+		return x >= 0.0f;
+	}
+	float y = PIECE_ROW_H * (float)(entry.slot + 1) - self.scroll;
+	*at = { 0, y };
+	*size = { elem.size.x, PIECE_ROW_H };
+	// Whole rows only: the bin scrolls rather than spilling past its edge.
+	return y >= PIECE_ROW_H - 1.0f && y + PIECE_ROW_H <= elem.size.y;
+}
+
+<* The entry under `pos`, element-local, one-based; 0 for none. *>
 fn int PieceBin.row_at(&self, Element* elem, Vec2 pos)
 {
-	float y = pos.y + self.scroll - PIECE_ROW_H;
-	if (y < 0 || pos.x < 0 || pos.x > elem.size.x) return 0;
-	usz row = (usz)(y / PIECE_ROW_H);
-	return row < self.entries.len ? (int)row + 1 : 0;
+	if (pos.x < 0 || pos.x > elem.size.x || pos.y < 0) return 0;
+	foreach (usz i, &entry : self.entries)
+	{
+		Vec2 at;
+		Vec2 size;
+		if (!self.entry_box(elem, i, &at, &size)) continue;
+		if (pos.x >= at.x && pos.x < at.x + size.x && pos.y >= at.y && pos.y < at.y + size.y) return (int)i + 1;
+	}
+	return 0;
+}
+
+<*
+ The tooltip of the action cell under the pointer, for `tip_probe` around a bin.
+
+ @param [&in] holder : "The Tooltip wrapping the bin"
+ @param pos : "The pointer, in window coordinates"
+*>
+fn String piece_bin_tip(Element* holder, Vec2 pos)
+{
+	if (holder.children.len() == 0) return "";
+	Element* bin = holder.children[0];
+	PieceBin* self = bin.widget_as(PieceBin);
+	int over = self.row_at(bin, pos - bin.absolute);
+	return over > 0 ? self.entries[(usz)(over - 1)].tip : "";
 }
 
 fn void PieceBin.paint(&self, Element* elem, Painter* painter) @dynamic
@@ -244,40 +331,112 @@ fn void PieceBin.paint(&self, Element* elem, Painter* painter) @dynamic
 	// edit): the rows are brought up to date here too, not only in `update`.
 	AppState* app = elem.inherit(AppState)!!;
 	if (self.stale(app)) self.refresh(app);
+	float most = self.most_scroll(elem);
+	self.scroll = math::clamp(self.scroll, 0.0f, most);
+	self.painted_drawing = app.cut_pick == PATH_KNOT;
+	// Room at the right edge for the scroll indicator, when the rows need it.
+	float right = elem.size.x - (most > 0.0f ? widgets::THUMB_WIDTH + widgets::THUMB_MARGIN : 0.0f);
 	painter.rect({ 0, 0 }, elem.size, { .color = s.lane, .border_radius = R8 });
-	painter.text({ s.pad_x, (PIECE_ROW_H - s.text_size) * 0.5f }, "Pieces",
+	float title_room = elem.size.x - s.pad_x * 2.0f - PIECE_CELL_W * (float)self.cells;
+	painter.text({ s.pad_x, (PIECE_ROW_H - s.text_size) * 0.5f }, elide(elem, "Pieces", math::max(title_room, 0.0f), s.text_size),
 		{ .size = s.text_size, .color = s.text });
 	foreach (usz i, &entry : self.entries)
 	{
-		float y = PIECE_ROW_H * (float)(i + 1) - self.scroll;
-		// Whole rows only: the bin scrolls rather than spilling past its edge.
-		if (y < PIECE_ROW_H - 1.0f || y + PIECE_ROW_H > elem.size.y) continue;
+		Vec2 at;
+		Vec2 size;
+		if (!self.entry_box(elem, i, &at, &size)) continue;
+		bool lit = self.lit == (int)i + 1 || self.pressed == (int)i + 1;
+		if (entry.icon.len > 0)
+		{
+			// + Path stays lit while the ground clicks draw it.
+			bool on = entry.for_cut && entry.cut.kind == NEW_PATH && self.painted_drawing;
+			if (on || lit)
+			{
+				painter.rect(at + (Vec2){ 1, 1 }, size - (Vec2){ 2, 2 }, { .color = on ? ACCENT : s.lane_alt, .border_radius = LAYER_R4 });
+			}
+			painter.icon(at + size * 0.5f, PIECE_ICON_SIZE, entry.icon, on ? DOT_OUTLINE : s.text);
+			continue;
+		}
+		float y = at.y;
 		if (entry.header)
 		{
-			painter.text({ s.pad_x, y + (PIECE_ROW_H - s.text_size) * 0.5f }, entry.label,
+			painter.text({ s.pad_x, y + (PIECE_ROW_H - s.text_size) * 0.5f }, elide(elem, entry.label, math::max(right - s.pad_x * 2.0f, 0.0f), s.text_size - 1.0f),
 				{ .size = s.text_size - 1.0f, .color = s.dim_text });
 			continue;
 		}
-		bool lit = self.lit == (int)i + 1 || self.pressed == (int)i + 1;
 		if (lit && !entry.disabled)
 		{
-			painter.rect({ 2, y }, { elem.size.x - 4, PIECE_ROW_H }, { .color = s.lane_alt, .border_radius = LAYER_R4 });
+			painter.rect({ 2, y }, { right - 4, PIECE_ROW_H }, { .color = s.lane_alt, .border_radius = LAYER_R4 });
 		}
 		Color chip = STRIP_KEYED;
-		switch (entry.piece.kind)
+		if (entry.for_cut)
 		{
-			case WAVE: case NOISE: case PULSE: chip = STRIP_GENERATOR;
-			case CLIP: chip = STRIP_LINKED;
-			case SHARED: chip = STRIP_SHARED;
-			default: {}
+			chip = cut_piece_color(entry.cut.kind);
+		}
+		else
+		{
+			switch (entry.piece.kind)
+			{
+				case WAVE: case NOISE: case PULSE: chip = STRIP_GENERATOR;
+				case CLIP: chip = STRIP_LINKED;
+				case SHARED: chip = STRIP_SHARED;
+				default: {}
+			}
 		}
 		if (entry.disabled) chip.a = 0.25f;
 		painter.rect({ s.pad_x, y + 5.0f }, { 10.0f, PIECE_ROW_H - 10.0f }, { .color = chip, .border_radius = LAYER_R2 });
-		float room = elem.size.x - s.pad_x * 2.0f - 16.0f;
-		painter.text({ s.pad_x + 16.0f, y + (PIECE_ROW_H - s.text_size) * 0.5f },
-			elide(elem, entry.label, room, s.text_size),
-			{ .size = s.text_size, .color = entry.disabled ? s.dim_text : s.text });
+		float room = right - s.pad_x * 2.0f - 16.0f;
+		float text_y = y + (PIECE_ROW_H - s.text_size) * 0.5f;
+		if (entry.trailing.len > 0)
+		{
+			float wide = elem.ui.text.measure(s.font, entry.trailing, s.text_size).x;
+			painter.text({ right - s.pad_x - wide, text_y }, entry.trailing, { .size = s.text_size, .color = s.dim_text });
+			room -= wide + 6.0f;
+		}
+		Color ink = entry.disabled ? s.dim_text : s.text;
+		// The picked path, whose knots show in the 3D view.
+		if (entry.for_cut && entry.cut.kind == PATH && app.cut_path_pick == entry.cut.path + 1) ink = ACCENT;
+		painter.text({ s.pad_x + 16.0f, text_y }, elide(elem, entry.label, math::max(room, 0.0f), s.text_size), { .size = s.text_size, .color = ink });
 	}
+	if (self.overflows(elem)) self.paint_overflow(elem, painter, most);
+}
+
+// The scroll indicator, as cui's Scroll draws its own: a pill at the right edge, beside the rows under the title.
+fn void PieceBin.paint_overflow(&self, Element* elem, Painter* painter, float most)
+{
+	float view = elem.size.y - PIECE_ROW_H;
+	float track = math::max(view - 2.0f * widgets::THUMB_MARGIN, 0.0f);
+	if (track <= 0.0f) return;
+	float content = PIECE_ROW_H * (float)self.rows;
+	float length = math::clamp(track * view / content, math::min(widgets::THUMB_MIN, track), track);
+	float y = PIECE_ROW_H + widgets::THUMB_MARGIN + (track - length) * (self.scroll / most);
+	float r = widgets::THUMB_WIDTH * 0.5f;
+	painter.rect({ elem.size.x - widgets::THUMB_WIDTH - widgets::THUMB_MARGIN, y }, { widgets::THUMB_WIDTH, length },
+		{ .color = widgets::THUMB_COLOR_DEFAULT, .border_radius = { r, r, r, r } });
+}
+
+<* Each piece in view as a part named `piece-<label>`, an action's cell too. *>
+fn void PieceBin.describe(&self, Element* elem, Description* out) @dynamic
+{
+	AppState* app = elem.inherit(AppState)!!;
+	if (self.stale(app)) self.refresh(app);
+	self.scroll = math::clamp(self.scroll, 0.0f, self.most_scroll(elem));
+	out.text = "Pieces";
+	foreach (usz i, &entry : self.entries)
+	{
+		if (entry.header) continue;
+		Vec2 at;
+		Vec2 size;
+		if (!self.entry_box(elem, i, &at, &size)) continue;
+		out.part(string::tformat("piece-%s", entry.label), at, size);
+	}
+}
+
+// Every sheet a dragged piece may land on, redrawn under it.
+fn void piece_targets_repaint(Ui* ui) @local
+{
+	ui.@each(LayerSheet; sheet) { sheet.request_paint(); };
+	ui.@each(CutsceneTimeline; timeline) { timeline.request_paint(); };
 }
 
 fn void PieceBin.on_hover(&self, Element* elem, bool entered) @dynamic
@@ -293,16 +452,17 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 	switch (event.kind)
 	{
 		case SCROLL:
-			float most = math::max(0.0f, PIECE_ROW_H * (float)(self.entries.len + 1) - elem.size.y);
+			float most = self.most_scroll(elem);
 			self.scroll = math::clamp(self.scroll - event.scroll * PIECE_ROW_H * 2.0f, 0.0f, most);
 			elem.request_paint();
 			return true;
 		case PRESS:
-			if (event.button != MouseButton.LEFT) return false;
 			int row = self.row_at(elem, event.pos);
 			if (row == 0) return false;
 			PieceEntry* entry = &self.entries[(usz)(row - 1)];
 			if (entry.header) return false;
+			if (event.button == MouseButton.RIGHT) return entry.for_cut && cut_piece_menu(elem.ui, entry.cut, event.absolute);
+			if (event.button != MouseButton.LEFT) return false;
 			if (entry.disabled)
 			{
 				app.@notice("%s plays this animation already, so laying it in would have it play itself", entry.label);
@@ -329,17 +489,26 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				app.piece_drag.clear();
 				app.piece_drag.active = true;
 				app.piece_drag.piece = entry.piece;
+				app.piece_drag.for_cut = entry.for_cut;
+				app.piece_drag.cut = entry.cut;
 				app.piece_drag.label = entry.label.copy(mem);
 				if (entry.link.len > 0)
 				{
 					app.piece_drag.link = entry.link.copy(mem);
-					app.piece_drag.piece.link = app.piece_drag.link;
+					if (entry.for_cut)
+					{
+						app.piece_drag.cut.clip = app.piece_drag.link;
+					}
+					else
+					{
+						app.piece_drag.piece.link = app.piece_drag.link;
+					}
 				}
 			}
 			if (app.piece_drag.active)
 			{
 				app.piece_drag.at = event.absolute;
-				elem.ui.@each(LayerSheet; sheet) { sheet.request_paint(); };
+				piece_targets_repaint(elem.ui);
 			}
 			return true;
 		case RELEASE:
@@ -350,18 +519,33 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			if (app.piece_drag.active)
 			{
 				Piece piece = app.piece_drag.piece;
+				bool for_cut = app.piece_drag.for_cut;
+				// The drop may end the drag's state; the clip it names stays for the frame.
+				CutPiece cut = app.piece_drag.cut;
+				cut.clip = cut.clip.tcopy();
 				Element* under = elem.ui.hit_test(event.absolute);
 				Element* target = null;
 				for (Element* at = under; at; at = at.parent)
 				{
-					if (at.is_widget(LayerSheet)) { target = at; break; }
+					if (at.is_widget(LayerSheet) || at.is_widget(CutsceneTimeline)) { target = at; break; }
 				}
-				if (target)
+				if (target && !for_cut && target.is_widget(LayerSheet))
 				{
 					target.widget_as(LayerSheet).drop(target, event.absolute - target.absolute, piece);
 				}
+				if (target && for_cut && target.is_widget(CutsceneTimeline))
+				{
+					target.widget_as(CutsceneTimeline).drop(target, event.absolute - target.absolute, cut);
+				}
 				app.piece_drag.clear();
-				elem.ui.@each(LayerSheet; sheet) { sheet.request_paint(); };
+				piece_targets_repaint(elem.ui);
+				return true;
+			}
+			if (entry.for_cut)
+			{
+				CutPiece cut = entry.cut;
+				cut.clip = cut.clip.tcopy();
+				cut_lay_piece(elem.ui, cut, false);
 				return true;
 			}
 			// A click lays the piece at the playhead, on a track of its own.
@@ -384,7 +568,7 @@ fn bool PieceBin.on_key(&self, Element* elem, KeyEvent event) @dynamic
 	if (!event.down || event.key != Key.ESCAPE || !app.piece_drag.active) return false;
 	app.piece_drag.clear();
 	self.pressed = 0;
-	elem.ui.@each(LayerSheet; sheet) { sheet.request_paint(); };
+	piece_targets_repaint(elem.ui);
 	elem.request_paint();
 	return true;
 }
@@ -707,7 +891,7 @@ fn void LayerSheet.paint(&self, Element* elem, Painter* painter) @dynamic
 	}
 
 	// A piece being dragged in from the bin, where it would land.
-	if (app.piece_drag.active)
+	if (app.piece_drag.active && !app.piece_drag.for_cut)
 	{
 		Vec2 local = app.piece_drag.at - elem.absolute;
 		if (local.x >= span.x && local.x <= elem.size.x && local.y >= s.ruler_height && local.y < elem.size.y)

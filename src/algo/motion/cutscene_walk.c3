@@ -1,10 +1,13 @@
-<* Walks: a path's samples dropped onto the ground, and a move's clip played at the rate that keeps its feet on it. *>
+<* Walks: a path's samples dropped onto the ground, the move a play walks with and follows, and the rate that keeps its feet on the path. *>
 module crig;
 
+import std::collections::list;
 import std::math;
 
 // The ground speed a walk is timed at when its clip says nothing, in m/s.
 const float CUT_DEFAULT_GROUND_SPEED = 1.0f;
+// The least ground speed, in m/s, a play's clip needs for its speed to follow the move it plays over.
+const float CUT_PAIR_GROUND_MIN = 0.1f;
 // How finely a curve span is searched for the place nearest a click.
 const usz WALK_SPAN_SEARCH @local = 24;
 
@@ -98,6 +101,120 @@ fn float cut_walk_seconds(float length, float ground_speed)
 {
 	float speed = ground_speed > 1e-6f ? ground_speed : CUT_DEFAULT_GROUND_SPEED;
 	return math::max(length, 0.0f) / speed;
+}
+
+<*
+ The move an actor walks at `t`, as the pose rule follows it: the latest begun
+ with a path of two points or more that runs then; -1 for none.
+
+ @param [in] strips : "One actor's strips"
+ @param [in] paths : "The cutscene's paths"
+*>
+fn sz cut_move_at(CutStrip[] strips, float t, WalkPath[] paths)
+{
+	sz best = -1;
+	foreach (usz j, &m : strips)
+	{
+		if (m.kind != MOVE || m.path < 0 || m.path >= paths.len || paths[m.path].points.len < 2) continue;
+		if (m.start > t + CUT_SAME_TIME || t >= m.end - CUT_SAME_TIME) continue;
+		if (best < 0 || m.start >= strips[best].start) best = (sz)j;
+	}
+	return best;
+}
+
+<*
+ The move play strip `play` walks with: the one running when it starts (cut_move_at),
+ or -1. Only a play of a clip pairs; a one-off has no ground speed, so it never does.
+
+ @param [in] strips : "One actor's strips"
+ @param [in] paths : "The cutscene's paths"
+ @require play < strips.len : "No such strip"
+*>
+fn sz cut_paired_move(CutStrip[] strips, usz play, WalkPath[] paths)
+{
+	CutStrip* p = &strips[play];
+	if (p.kind != PLAY || p.clip.len == 0 || p.one_off || p.animation >= 0) return -1;
+	return cut_move_at(strips, p.start, paths);
+}
+
+<* A play tied to its move: paired with it and spanning it, so it takes the move's new times. *>
+struct CutTie
+{
+	uint move;   // strip ids
+	uint play;
+	float start; // the move's span when the tie was read
+	float end;
+}
+
+<*
+ Whether play `play` is tied to move `move`: paired with it (cut_paired_move), and
+ starting and ending as it does, within CUT_SAME_TIME.
+
+ @param [in] strips : "One actor's strips"
+ @param [in] paths : "The cutscene's paths"
+ @require play < strips.len && move < strips.len : "No such strip"
+*>
+fn bool cut_play_tied(CutStrip[] strips, usz play, usz move, WalkPath[] paths)
+{
+	if (cut_paired_move(strips, play, paths) != (sz)move) return false;
+	return math::abs(strips[play].start - strips[move].start) <= CUT_SAME_TIME
+		&& math::abs(strips[play].end - strips[move].end) <= CUT_SAME_TIME;
+}
+
+<*
+ The ties among one actor's strips, by strip id; a strip with no id has none.
+
+ @param [in] strips : "One actor's strips"
+ @param [in] paths : "The cutscene's paths"
+ @return "Owned by allocator; empty for none"
+*>
+fn CutTie[] cut_ties(Allocator allocator, CutStrip[] strips, WalkPath[] paths)
+{
+	List{CutTie} found;
+	found.init(mem);
+	defer found.free();
+	foreach (usz k, &p : strips)
+	{
+		if (p.kind != PLAY || p.id == 0) continue;
+		sz move = cut_paired_move(strips, k, paths);
+		if (move < 0 || strips[move].id == 0 || !cut_play_tied(strips, k, (usz)move, paths)) continue;
+		found.push({ .move = strips[move].id, .play = p.id, .start = strips[move].start, .end = strips[move].end });
+	}
+	return found.len() > 0 ? found.to_array(allocator) : {};
+}
+
+fn sz cut_strip_with_id(CutStrip[] strips, uint id) @local
+{
+	foreach (usz k, &s : strips) if (s.id == id) return (sz)k;
+	return -1;
+}
+
+<*
+ After an edit, each play of `ties` (read before it) whose move now runs at other
+ times takes the move's start and end; its offset stays, so its cycle starts where
+ the move does. The lanes then settle around it. A tie whose move or play went is
+ dropped.
+
+ @param [&inout] strips : "One actor's strips, owned by allocator; replaced when settling drops or splits one"
+ @return "Whether a play was carried"
+*>
+fn bool cut_carry_ties(Allocator allocator, CutStrip[]* strips, CutTie[] ties)
+{
+	bool carried;
+	foreach (tie : ties)
+	{
+		sz move = cut_strip_with_id(*strips, tie.move);
+		sz play = cut_strip_with_id(*strips, tie.play);
+		if (move < 0 || play < 0) continue;
+		CutStrip* m = &(*strips)[move];
+		if (m.start == tie.start && m.end == tie.end) continue;
+		CutStrip* p = &(*strips)[play];
+		p.start = m.start;
+		p.end = m.end;
+		carried = true;
+		(void)cut_settle_strips(allocator, strips, (usz)play);
+	}
+	return carried;
 }
 
 <* The clip named most like a walk: "walk" itself, else one starting with it, else one holding it; -1 for none. *>
