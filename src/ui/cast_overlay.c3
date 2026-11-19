@@ -11,7 +11,6 @@ module crig;
 
 import cui;
 import cui::widgets;
-import collision;
 import rig;
 import std::math;
 
@@ -110,31 +109,42 @@ fn bool Viewport.pick_cast(&self, Element* elem, Vec2 pixel)
 		}
 	}
 
-	// Then a body, the nearest one along the ray. Distances compare across
-	// characters because a placement turns and moves a model but never scales it.
-	Vec3? direction = camera.ray_direction(pixel, elem.size);
-	if (catch direction) return false;
-	float nearest = float::max;
-	collision::Ray own = { .origin = app.model_eye(camera), .direction = app.model_direction(direction).normalize() };
-	if (try Vec3 hit = app.picker.snap_inside(own)) nearest = (hit - own.origin).length();
+	// Then a body, the nearest along the ray; the focus's own keeps the click.
+	sz chosen = self.character_at(elem, pixel);
+	if (chosen < 0 || (usz)chosen == app.active) return false;
+	app.focus_character((usz)chosen);
+	return true;
+}
 
+<*
+ The nearest visible character under a pixel, the focus included, or -1. One with
+ no mesh is its bones; in a cutscene every actor's bones count, and outside one the
+ focus is its mesh alone, so a click beside its joints still places one.
+
+ @param pixel : `Viewport-local pixels.`
+*>
+fn sz Viewport.character_at(&self, Element* elem, Vec2 pixel)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	OrbitCamera* camera = self.view_camera(elem);
+	Vec3? direction = camera.ray_direction(pixel, elem.size);
+	if (catch direction) return -1;
+	bool cutscene = app.cutscene_in_dock();
 	sz chosen = -1;
+	float nearest = float::max;
 	for (usz i = 0; i < app.character_count(); i++)
 	{
-		if (i == app.active) continue;
 		Character* c = app.character(i);
-		if (c.hidden || !c.has_mesh()) continue;
-		collision::Ray ray = { .origin = c.model_eye(camera), .direction = c.model_direction(direction).normalize() };
-		Vec3? hit = c.picker.snap_inside(ray);
+		if (c.hidden) continue;
+		bool bones = cutscene || (i != app.active && !c.has_mesh());
+		// World distances, so characters of different sizes compare.
+		float? hit = c.body_hit(camera, direction, bones);
 		if (catch hit) continue;
-		float distance = (hit - ray.origin).length();
-		if (distance < nearest)
+		if (hit < nearest)
 		{
-			nearest = distance;
+			nearest = hit;
 			chosen = (sz)i;
 		}
 	}
-	if (chosen < 0) return false;
-	app.focus_character((usz)chosen);
-	return true;
+	return chosen;
 }

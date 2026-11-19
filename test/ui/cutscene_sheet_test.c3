@@ -632,3 +632,89 @@ fn void cut_sheet_the_walks_card_keeps_each_label_by_its_field() @test
 	test::@check(cut_sheet_beside(&f, crig::CUT_CARD_GROUND_ID, "m/s", false), "m/s is not after the ground speed");
 	test::@check(cut_sheet_beside(&f, crig::CUT_CARD_END_ID, "s", false), "s is not after the end");
 }
+
+// Whether the timeline names part `label`.
+fn bool cut_timeline_has_part(Fixture* f, String label) @local
+{
+	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
+	bool seen;
+	@pool()
+	{
+		Description d = timeline.describe();
+		foreach (part : d.parts) seen = seen || part.label == label;
+	};
+	return seen;
+}
+
+fn void cut_sheet_the_clips_header_opens_the_targets_clips_in_assets() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	(void)cut_sheet_hero(&f, "Walk");
+	usz hero = f.app.active;
+	(void)path::mkdir(CUT_SHEET_FOLDER, true);
+	String extra = CUT_SHEET_FOLDER.tconcat("/browsing.glb");
+	char[] bytes = file::load(mem, "assets/animations/humanoid.glb")!!;
+	defer free(bytes);
+	(void)file::save(extra, bytes);
+	test::@check(f.app.add_actor_from_file(extra, "newcomer"), "no second actor");
+	usz newcomer = f.app.active;
+	test::@check(f.app.focus_character(hero), "the hero did not take the focus back");
+	cut_sheet_tab(&f);
+	test::@check(!f.in_tree(crig::ASSETS_GRID_ID), "the Assets pane is up already");
+
+	// The newcomer's lane name makes him the target; the hero stays the focus.
+	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
+	f.click({ timeline.absolute.x + crig::CUT_GUTTER_W * 0.5f, cut_sheet_point(&f, 1, WHAT, 0.0f).y });
+	test::@check(f.app.cut_target_actor() == 1 && f.app.active == hero, "the lane name made %d the target, %d the focus",
+		f.app.cut_target_actor(), f.app.active);
+	test::@check(cut_timeline_has_part(&f, "cut-clip-hint-1") && !cut_timeline_has_part(&f, "cut-clip-hint-0"),
+		"the hint is not on the target's empty Clip lane alone");
+
+	// The header keeps its words and ends in a cell with its tooltip.
+	test::@check(cut_bin_notes(&f, "Clips · newcomer"), "the clips are not the newcomer's");
+	Vec2 at;
+	Vec2 size;
+	test::@check(cut_bin_part(&f, "to-assets", &at, &size), "the clips' header has no cell");
+	Element* bin = f.ui.find_id(crig::CUT_PIECE_BIN_ID)!!;
+	test::eq(crig::piece_bin_tip(bin.parent, bin.absolute + at + size * 0.5f), "More clips: drag one from the Assets pane onto a Clip lane");
+	test::@check(crig::piece_bin_tip(bin.parent, bin.absolute + (Vec2){ 8.0f, at.y + size.y * 0.5f }).len == 0, "the header's words have a tooltip");
+
+	// A click: the newcomer takes the focus, and the Assets pane, beside the sheet, shows his group.
+	f.click(cut_bin_row(&f, "to-assets"));
+	f.ui.flush();
+	f.feed(f.ui.input.mouse);
+	test::@check(f.app.active == newcomer, "the focus is %d, not the newcomer", f.app.active);
+	test::@check(f.in_tree(crig::ASSETS_GRID_ID), "the Assets pane is not up");
+	crig::AssetFilter shown = f.app.asset_filter;
+	test::@check(shown.current_file && !shown.any_kind && shown.kind == ANIMATION, "the Assets pane is not narrowed to his group");
+	test::@check(f.in_tree(crig::CUT_TIMELINE_ID) && f.app.cut_target_actor() == 1, "the sheet went, or the newcomer is not the target");
+}
+
+fn void cut_sheet_an_empty_clip_lane_says_drag_a_clip_here() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	String walk = cut_sheet_hero(&f, "Walk");
+	cut_sheet_tab(&f);
+	test::@check(f.app.cut_target_actor() == 0, "the hero is not the target");
+	test::@check(cut_timeline_has_part(&f, "cut-clip-hint-0"), "the hero's empty Clip lane has no hint");
+
+	// A drag over the lane shows where it lands instead.
+	Vec2 from = cut_bin_row(&f, walk);
+	Vec2 to = cut_sheet_point(&f, 0, WHAT, 1.0f);
+	f.feed(from);
+	f.feed(from, left: true);
+	f.feed(to, left: true);
+	test::@check(f.app.piece_drag.active, "the walk is not being dragged");
+	test::@check(!cut_timeline_has_part(&f, "cut-clip-hint-0"), "the hint stayed under the drag");
+
+	// Laid, the hero plays it, and the hint is gone.
+	f.feed(to);
+	f.feed(f.ui.input.mouse);
+	CutStrip[] laid = f.app.cutscene().actors[0].strips;
+	test::@check(laid.len == 1 && laid[0].kind == PLAY, "the drop laid %d strips", laid.len);
+	test::@check(!cut_timeline_has_part(&f, "cut-clip-hint-0"), "the hint outlived the play");
+}

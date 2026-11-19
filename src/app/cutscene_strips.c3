@@ -107,6 +107,33 @@ fn sz AppState.cut_target_actor(&self)
 	return self.actor_row.len > 0 ? c.actor_by_row(self.actor_row) : -1;
 }
 
+<*
+ The focus's actor in the active cutscene becomes the one pieces go to; a picked strip of another actor is let go.
+
+ @return "Whether the target or the pick changed"
+*>
+fn bool AppState.target_focus_actor(&self)
+{
+	Cutscene* c = self.cutscene();
+	if (!c || self.actor_row.len == 0) return false;
+	int actor = c.actor_by_row(self.actor_row);
+	if (actor < 0) return false;
+	bool changed;
+	usz picked;
+	usz strip;
+	if (self.cut_selection(&picked, &strip) && picked != (usz)actor)
+	{
+		self.clear_cut_selection();
+		changed = true;
+	}
+	if (self.cut_lane_actor != (usz)actor + 1)
+	{
+		self.cut_lane_actor = (usz)actor + 1;
+		changed = true;
+	}
+	return changed;
+}
+
 // ---------------------------------------------------------------------------
 // Edits, each one undo step
 
@@ -277,6 +304,61 @@ fn sz AppState.add_cut_play(&self, usz actor, String clip)
 	}
 	s.clip = clip.copy(mem);
 	return self.add_cut_strip(actor, s);
+}
+
+<*
+ A play of an Assets clip for `actor` at the playhead, as `add_cut_play` lays one.
+ A clip his character lacks is bound to him first, as the focus, so Ctrl+Z takes
+ back the play and then the binding.
+
+ @param [&in] c : "The clip"
+ @return "The new strip's index, or -1, with a notice, when he cannot play it"
+*>
+fn sz AppState.add_cut_asset_play(&self, usz actor, AssetClip* c)
+{
+	// The character's own bindings, not a one-off's.
+	(void)self.back_to_cutscene();
+	Cutscene* cut = self.cutscene();
+	if (!cut || actor >= cut.actors.len) return -1;
+	String row = cut.actors[actor].row.tcopy();
+	sz holder = self.actor_character(row);
+	if (holder < 0)
+	{
+		self.@notice("%s has no character to play %s", row, c.name);
+		return -1;
+	}
+	// An authored row is the focus's own clip; another's same name is another clip.
+	if (c.authored() && (usz)holder != self.active)
+	{
+		self.@notice("%s is %s's own unsaved clip", c.name, self.label());
+		return -1;
+	}
+	Character* who = self.character((usz)holder);
+	bool bound = who.binds_clip(c.file, c.name);
+	if (!bound)
+	{
+		if (who.level_read)
+		{
+			self.@notice("%s plays the level's clips only", row);
+			return -1;
+		}
+		if (has_bound_clip_named(&who.doc, c.name))
+		{
+			self.@notice("%s already has a clip named %s", row, c.name);
+			return -1;
+		}
+		// Bound on the focus, whose history `undo_latest` weighs against the cutscene's.
+		if ((usz)holder != self.active && !self.focus_character((usz)holder)) return -1;
+		if (!self.bind_asset_clip(c)) return -1;
+	}
+	sz laid = self.add_cut_play(actor, c.name);
+	if (laid < 0)
+	{
+		self.@notice("%s has no clip %s", row, c.name);
+		return -1;
+	}
+	if (!bound) self.@notice("added %s to %s's clips", c.name, row);
+	return laid;
 }
 
 <*

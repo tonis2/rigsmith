@@ -24,6 +24,7 @@
  one onto a track at the time it should start, or click it to lay it at the
  playhead on a new track. cui has no drag and drop, so the bin holds the drag
  (`AppState.piece_drag`) and, on release, asks the UI what is under the pointer.
+ An Assets cell starts the same drag with a clip, and drops through `piece_drag_drop`.
  Mounted with `for_cut` beside a cutscene's sheet, it lists that cutscene's
  pieces instead (cutscene_pieces.c3).
 
@@ -85,13 +86,109 @@ struct PieceDrag
 	String label; // owned
 	String link;  // owned; the piece's `link`, or the cut piece's `clip`, borrows it
 	Vec2 at;
+	// A clip dragged out of the Assets pane; its reference is read at the drop.
+	bool from_asset;
+	AssetClip asset; // owned; `cut.clip` borrows its name
 }
 
 fn void PieceDrag.clear(&self)
 {
 	if (self.label.len > 0) self.label.free(mem);
 	if (self.link.len > 0) self.link.free(mem);
+	self.asset.free();
 	*self = {};
+}
+
+<*
+ Start dragging the clip an Assets cell shows.
+
+ @param [&in] e : "The cell's entry"
+ @require e.kind == AssetKind.ANIMATION : "Not a clip"
+*>
+fn void PieceDrag.start_asset(&self, AssetEntry* e)
+{
+	self.clear();
+	self.active = true;
+	self.from_asset = true;
+	self.asset = asset_clip_of(e, mem);
+	if (e.name.len > 0) self.label = e.name.copy(mem);
+	self.piece = { .kind = CLIP };
+	// So the cutscene sheet's outline lands on the lane a clip plays on.
+	self.cut = { .kind = CLIP, .clip = self.asset.name };
+}
+
+<* Move the drag to `at`, in UI coordinates, and redraw where it would land. *>
+fn void piece_drag_follow(Ui* ui, Vec2 at)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.piece_drag.active) return;
+	app.piece_drag.at = at;
+	piece_targets_repaint(ui);
+}
+
+<*
+ Drop the drag at `at`, in UI coordinates, on the sheet under it, and end it.
+ A bin piece lands on its own kind of sheet; an Assets clip on either.
+*>
+fn void piece_drag_drop(Ui* ui, Vec2 at)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	if (!app.piece_drag.active) return;
+	// Copied: a drop may end the drag's state, and what it names stays for the frame.
+	PieceDrag* drag = &app.piece_drag;
+	Piece piece = drag.piece;
+	piece.link = piece.link.tcopy();
+	bool for_cut = drag.for_cut;
+	bool from_asset = drag.from_asset;
+	CutPiece cut = drag.cut;
+	cut.clip = cut.clip.tcopy();
+	AssetClip asset = {
+		.file = drag.asset.file.tcopy(),
+		.name = drag.asset.name.tcopy(),
+		.library = drag.asset.library,
+		.index = drag.asset.index,
+		.alloc = tmem,
+	};
+
+	Element* target = null;
+	for (Element* e = ui.hit_test(at); e; e = e.parent)
+	{
+		if (e.is_widget(LayerSheet) || e.is_widget(CutsceneTimeline)) { target = e; break; }
+	}
+	if (target && !for_cut && target.is_widget(LayerSheet))
+	{
+		LayerSheet* sheet = target.widget_as(LayerSheet);
+		if (!from_asset)
+		{
+			sheet.drop(target, at - target.absolute, piece);
+		}
+		else if (try ref = app.asset_clip_ref(&asset))
+		{
+			sheet.drop(target, at - target.absolute, { .kind = CLIP, .clip = ref });
+		}
+	}
+	if (target && target.is_widget(CutsceneTimeline))
+	{
+		CutsceneTimeline* timeline = target.widget_as(CutsceneTimeline);
+		if (from_asset)
+		{
+			timeline.drop_asset(target, at - target.absolute, &asset);
+		}
+		else if (for_cut)
+		{
+			timeline.drop(target, at - target.absolute, cut);
+		}
+	}
+	app.end_piece_drag();
+	piece_targets_repaint(ui);
+}
+
+<* Let go of the drag with nothing laid: Esc. *>
+fn void piece_drag_cancel(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	app.end_piece_drag();
+	piece_targets_repaint(ui);
 }
 
 fn Color strip_color(AnimLayer* layer)
@@ -138,7 +235,11 @@ struct PieceEntry
 	String icon;     // borrowed SVG: an action, drawn as a cell of the top row rather than a row
 	String tip;      // borrowed: the cell's tooltip
 	usz slot;        // its row under the title, or its place among the cells
+	bool to_assets;  // a header with a browse cell at its end, for more clips from the Assets pane
 }
+
+// The describe part of a header's browse cell.
+const String PIECE_TO_ASSETS_PART = "piece-to-assets";
 
 struct PieceBin (Widget)
 {
@@ -178,8 +279,9 @@ fn void PieceBin.release(&self)
 fn void PieceBin.unmount(&self, Element* elem) @dynamic
 {
 	self.release();
+	// An Assets drag is not the bin's, and outlives a rebuilt dock.
 	AppState* app = elem.inherit(AppState) ?? null;
-	if (app && app.piece_drag.active) app.piece_drag.clear();
+	if (app && app.piece_drag.active && !app.piece_drag.from_asset) app.piece_drag.clear();
 }
 
 fn void PieceBin.refresh(&self, AppState* app)
@@ -295,7 +397,27 @@ fn bool PieceBin.entry_box(&self, Element* elem, usz i, Vec2* at, Vec2* size)
 	return y >= PIECE_ROW_H - 1.0f && y + PIECE_ROW_H <= elem.size.y;
 }
 
-<* The entry under `pos`, element-local, one-based; 0 for none. *>
+// Where the rows end: short of the scroll indicator when they show it.
+fn float PieceBin.rows_right(&self, Element* elem) => elem.size.x - (self.overflows(elem) ? widgets::THUMB_WIDTH + widgets::THUMB_MARGIN : 0.0f);
+
+<*
+ The browse cell at the end of header `i`, element-local; false when it has none or it is out of view.
+
+ @param [&out] at
+ @param [&out] size
+ @require i < self.entries.len : "No such entry"
+*>
+fn bool PieceBin.assets_box(&self, Element* elem, usz i, Vec2* at, Vec2* size)
+{
+	Vec2 row;
+	Vec2 row_size;
+	if (!self.entries[i].to_assets || !self.entry_box(elem, i, &row, &row_size)) return false;
+	*at = { self.rows_right(elem) - TIMELINE_STYLE.pad_x * 0.5f - PIECE_CELL_W, row.y };
+	*size = { PIECE_CELL_W, PIECE_ROW_H };
+	return true;
+}
+
+<* The entry under `pos`, element-local, one-based; 0 for none. A header with a browse cell is under it only on the cell. *>
 fn int PieceBin.row_at(&self, Element* elem, Vec2 pos)
 {
 	if (pos.x < 0 || pos.x > elem.size.x || pos.y < 0) return 0;
@@ -303,7 +425,8 @@ fn int PieceBin.row_at(&self, Element* elem, Vec2 pos)
 	{
 		Vec2 at;
 		Vec2 size;
-		if (!self.entry_box(elem, i, &at, &size)) continue;
+		bool shown = entry.to_assets ? self.assets_box(elem, i, &at, &size) : self.entry_box(elem, i, &at, &size);
+		if (!shown) continue;
 		if (pos.x >= at.x && pos.x < at.x + size.x && pos.y >= at.y && pos.y < at.y + size.y) return (int)i + 1;
 	}
 	return 0;
@@ -335,7 +458,7 @@ fn void PieceBin.paint(&self, Element* elem, Painter* painter) @dynamic
 	self.scroll = math::clamp(self.scroll, 0.0f, most);
 	self.painted_drawing = app.cut_pick == PATH_KNOT;
 	// Room at the right edge for the scroll indicator, when the rows need it.
-	float right = elem.size.x - (most > 0.0f ? widgets::THUMB_WIDTH + widgets::THUMB_MARGIN : 0.0f);
+	float right = self.rows_right(elem);
 	painter.rect({ 0, 0 }, elem.size, { .color = s.lane, .border_radius = R8 });
 	float title_room = elem.size.x - s.pad_x * 2.0f - PIECE_CELL_W * (float)self.cells;
 	painter.text({ s.pad_x, (PIECE_ROW_H - s.text_size) * 0.5f }, elide(elem, "Pieces", math::max(title_room, 0.0f), s.text_size),
@@ -360,7 +483,16 @@ fn void PieceBin.paint(&self, Element* elem, Painter* painter) @dynamic
 		float y = at.y;
 		if (entry.header)
 		{
-			painter.text({ s.pad_x, y + (PIECE_ROW_H - s.text_size) * 0.5f }, elide(elem, entry.label, math::max(right - s.pad_x * 2.0f, 0.0f), s.text_size - 1.0f),
+			float room = right - s.pad_x * 2.0f;
+			Vec2 cell;
+			Vec2 cell_size;
+			if (self.assets_box(elem, i, &cell, &cell_size))
+			{
+				if (lit) painter.rect(cell + (Vec2){ 1, 1 }, cell_size - (Vec2){ 2, 2 }, { .color = s.lane_alt, .border_radius = LAYER_R4 });
+				painter.icon(cell + cell_size * 0.5f, PIECE_ICON_SIZE, CardGlyph.FOLDER_GLYPH.svg, s.text);
+				room = cell.x - s.pad_x * 1.5f;
+			}
+			painter.text({ s.pad_x, y + (PIECE_ROW_H - s.text_size) * 0.5f }, elide(elem, entry.label, math::max(room, 0.0f), s.text_size - 1.0f),
 				{ .size = s.text_size - 1.0f, .color = s.dim_text });
 			continue;
 		}
@@ -415,7 +547,7 @@ fn void PieceBin.paint_overflow(&self, Element* elem, Painter* painter, float mo
 		{ .color = widgets::THUMB_COLOR_DEFAULT, .border_radius = { r, r, r, r } });
 }
 
-<* Each piece in view as a part named `piece-<label>`, an action's cell too. *>
+<* Each piece in view as a part named `piece-<label>`, an action's cell too, and a header's browse cell as `piece-to-assets`. *>
 fn void PieceBin.describe(&self, Element* elem, Description* out) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
@@ -424,9 +556,10 @@ fn void PieceBin.describe(&self, Element* elem, Description* out) @dynamic
 	out.text = "Pieces";
 	foreach (usz i, &entry : self.entries)
 	{
-		if (entry.header) continue;
 		Vec2 at;
 		Vec2 size;
+		if (entry.to_assets && self.assets_box(elem, i, &at, &size)) out.part(PIECE_TO_ASSETS_PART, at, size);
+		if (entry.header) continue;
 		if (!self.entry_box(elem, i, &at, &size)) continue;
 		out.part(string::tformat("piece-%s", entry.label), at, size);
 	}
@@ -460,7 +593,7 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			int row = self.row_at(elem, event.pos);
 			if (row == 0) return false;
 			PieceEntry* entry = &self.entries[(usz)(row - 1)];
-			if (entry.header) return false;
+			if (entry.header && !entry.to_assets) return false;
 			if (event.button == MouseButton.RIGHT) return entry.for_cut && cut_piece_menu(elem.ui, entry.cut, event.absolute);
 			if (event.button != MouseButton.LEFT) return false;
 			if (entry.disabled)
@@ -483,6 +616,8 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 				}
 				return false;
 			}
+			// The browse cell is a button: it drags nothing.
+			if (self.entries[(usz)(self.pressed - 1)].to_assets) return true;
 			if (!app.piece_drag.active && (event.absolute - self.press_at).length() >= PIECE_DRAG_SLOP)
 			{
 				PieceEntry* entry = &self.entries[(usz)(self.pressed - 1)];
@@ -505,11 +640,7 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 					}
 				}
 			}
-			if (app.piece_drag.active)
-			{
-				app.piece_drag.at = event.absolute;
-				piece_targets_repaint(elem.ui);
-			}
+			piece_drag_follow(elem.ui, event.absolute);
 			return true;
 		case RELEASE:
 			if (event.button != MouseButton.LEFT || self.pressed == 0) return false;
@@ -518,27 +649,12 @@ fn bool PieceBin.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			elem.request_paint();
 			if (app.piece_drag.active)
 			{
-				Piece piece = app.piece_drag.piece;
-				bool for_cut = app.piece_drag.for_cut;
-				// The drop may end the drag's state; the clip it names stays for the frame.
-				CutPiece cut = app.piece_drag.cut;
-				cut.clip = cut.clip.tcopy();
-				Element* under = elem.ui.hit_test(event.absolute);
-				Element* target = null;
-				for (Element* at = under; at; at = at.parent)
-				{
-					if (at.is_widget(LayerSheet) || at.is_widget(CutsceneTimeline)) { target = at; break; }
-				}
-				if (target && !for_cut && target.is_widget(LayerSheet))
-				{
-					target.widget_as(LayerSheet).drop(target, event.absolute - target.absolute, piece);
-				}
-				if (target && for_cut && target.is_widget(CutsceneTimeline))
-				{
-					target.widget_as(CutsceneTimeline).drop(target, event.absolute - target.absolute, cut);
-				}
-				app.piece_drag.clear();
-				piece_targets_repaint(elem.ui);
+				piece_drag_drop(elem.ui, event.absolute);
+				return true;
+			}
+			if (entry.to_assets)
+			{
+				cut_browse_clips(elem.ui);
 				return true;
 			}
 			if (entry.for_cut)
@@ -566,9 +682,8 @@ fn bool PieceBin.on_key(&self, Element* elem, KeyEvent event) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
 	if (!event.down || event.key != Key.ESCAPE || !app.piece_drag.active) return false;
-	app.piece_drag.clear();
+	piece_drag_cancel(elem.ui);
 	self.pressed = 0;
-	piece_targets_repaint(elem.ui);
 	elem.request_paint();
 	return true;
 }

@@ -26,7 +26,11 @@
 module crig;
 
 import rig;
+import collision;
 import std::math;
+
+// How thick a bone is to a click, as a share of its character's height.
+const float BONE_PICK_SHARE = 0.05f;
 
 <*
  How many characters are loaded. One before anything was added, even with no
@@ -164,6 +168,62 @@ fn String Character.label(&self)
 	return file_stem(self.source_path);
 }
 
+<*
+ How far from the eye a ray hits this character, in world units: its mesh, and with
+ `bones` a capsule round each bone where the overlay draws it, a lone joint a ball.
+
+ @param [&in] camera
+ @require world_dir.length_sq() > 0.0f : "No direction"
+ @return `The nearest hit's distance along the ray.`
+ @return? NO_SURFACE : `Nothing of it under the ray.`
+*>
+fn float? Character.body_hit(&self, OrbitCamera* camera, Vec3 world_dir, bool bones)
+{
+	// Where it is drawn: a cutscene's walk or turn moves it off its own placement.
+	collision::Ray ray = {
+		.origin = self.model_eye(camera),
+		.direction = self.placement().inverse_direction(world_dir).normalize(),
+	};
+	float nearest = float::max;
+	if (self.has_mesh())
+	{
+		if (try Vec3 hit = self.picker.snap_inside(ray)) nearest = (hit - ray.origin).length();
+	}
+	if (bones) nearest = math::min(nearest, nearest_bone(self, ray));
+	if (nearest == float::max) return NO_SURFACE~;
+	// Model units are the drawn scale smaller than the world's.
+	return nearest * self.drawn_scale();
+}
+
+// The nearest of a character's bone capsules along a model-space ray, or float::max.
+fn float nearest_bone(Character* c, collision::Ray ray) @local
+{
+	float radius = BONE_PICK_SHARE * model_height(&c.doc, &c.geometry);
+	if (radius <= 0.0f) return float::max;
+	float nearest = float::max;
+	foreach (edge : c.doc.edges.array_view())
+	{
+		Dot* a = c.doc.find(edge.a);
+		Dot* b = c.doc.find(edge.b);
+		if (!a || !b) continue;
+		if (try float t = ray_capsule_hit(ray, c.dot_position(*a), c.dot_position(*b), radius)) nearest = math::min(nearest, t);
+	}
+	foreach (dot : c.doc.dots.array_view())
+	{
+		bool joined;
+		foreach (edge : c.doc.edges.array_view())
+		{
+			if (edge.a != dot.id && edge.b != dot.id) continue;
+			joined = true;
+			break;
+		}
+		if (joined) continue;
+		Vec3 at = c.dot_position(dot);
+		if (try float t = ray_capsule_hit(ray, at, at, radius)) nearest = math::min(nearest, t);
+	}
+	return nearest;
+}
+
 fn rig::Bounds Character.world_bounds(&self)
 {
 	// One read from the level has no mesh: the level copy's box stands in.
@@ -256,6 +316,8 @@ fn bool AppState.focus_character(&self, usz i)
 	self.adopt_scene_clock();
 	self.focus_generation = next_generation();
 	self.reindex_current_model();
+	// Its actor gets what the cutscene sheet adds next.
+	(void)self.target_focus_actor();
 	self.refresh_ui();
 	self.@notice("Editing %s", self.label());
 	return true;

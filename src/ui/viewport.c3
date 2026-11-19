@@ -2072,6 +2072,15 @@ fn bool Viewport.on_release(&self, Element* elem, MouseEvent event, AppState* ap
 				// must not end it — the click above is its ending.
 				app.end_drag();
 			}
+			else if ((self.maybe_pick_model || (self.maybe_place && !app.areaing && !app.brushing))
+				&& app.cutscene_in_dock() && (event.pos - self.press_at).length() <= CLICK_SLOP)
+			{
+				// A click in a cutscene picks an actor and places nothing. Another
+				// character was focused on the press; the focus is retargeted here.
+				sz under = self.character_at(elem, self.press_at);
+				if (under >= 0 && (usz)under == app.active) (void)app.target_focus_actor();
+				app.refresh_ui();
+			}
 			else if (self.maybe_pick_model)
 			{
 				// The tool works on what is selected, and a model just opened has

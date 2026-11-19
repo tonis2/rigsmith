@@ -431,6 +431,8 @@ struct AppState
 	// and what the Pieces bin is dragging onto them.
 	bool anim_show_layers;
 	PieceDrag piece_drag;
+	// An Assets rebuild held off during an Assets drag; see `end_piece_drag`.
+	bool asset_build_owed;
 	float anim_graph_y_zoom;
 	float anim_graph_y_shift;
 	// Whether the plot last drew rotation and position together (normalised), so
@@ -535,6 +537,10 @@ struct AppState
 	 inside a build does not last that long.
 	*>
 	AssetCategory[] asset_categories;
+
+	// The focus's group under Animations: `bound_signature` when it was built, and its label. Owned.
+	uint asset_group_sig;
+	String asset_group_label;
 
 	<*
 	 Which kinds the sidebar has closed, by `AssetKind.ordinal`.
@@ -1633,6 +1639,7 @@ fn void AppState.free(&self)
 	self.forget_renamed_file_clips();
 	free_assets(mem, self.assets);
 	if (self.asset_categories.len > 0) alloc::free(mem, self.asset_categories);
+	if (self.asset_group_label.len > 0) self.asset_group_label.free(mem);
 	if (self.visible_assets.len > 0) alloc::free(mem, self.visible_assets);
 	if (self.asset_filter.search.len > 0) alloc::free(mem, self.asset_filter.search.ptr);
 	self.free_library_labels();
@@ -1821,8 +1828,16 @@ fn void AppState.refresh_ui(&self)
 {
 	// Before the tree check: the index is state, not paint, and a headless check
 	// deletes from it like the browser does.
-	if (self.authored_index_stale) self.reindex_authored_clips();
+	// A bind, unbind, undo or rename moves the signature, and the focus's group is rebuilt once.
+	if (self.authored_index_stale || self.asset_group_sig != self.bound_signature()) self.reindex_authored_clips();
 	if (!self.ui) return;
+	bool hold = self.asset_dragging();
+	// A drag that ended without `end_piece_drag` (its cell was rebuilt) still owes the build.
+	if (!hold && self.asset_build_owed)
+	{
+		self.asset_build_owed = false;
+		self.refresh_asset_sidebar();
+	}
 
 	// Repaints every match rather than the first: each split pane holds its own
 	// viewport, HUD and animation list, and a pane that is skipped goes on
@@ -1839,7 +1854,15 @@ fn void AppState.refresh_ui(&self)
 		// empty grid.
 		if (elem.is_widget(AssetSheet))
 		{
-			elem.request_build();
+			// Not under an Assets drag: it would drop the cell holding the drag.
+			if (hold)
+			{
+				self.asset_build_owed = true;
+			}
+			else
+			{
+				elem.request_build();
+			}
 		}
 		else if (elem.is_widget(SceneOutliner))
 		{

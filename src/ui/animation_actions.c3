@@ -874,18 +874,53 @@ fn void anim_pending_continue(Ui* ui)
 fn void anim_from_library_clicked(Ui* ui)
 {
 	AppState* app = ui.inherit(AppState)!!;
+	show_assets_narrowed(ui, assets_animations(app, false), over_dock: true);
+}
+
+<*
+ The Assets tab, narrowed to the focus's group under Animations: the clips he plays.
+ Found as `anim_from_library_clicked` finds it, but never over the Animations pane,
+ which a clip is dragged onto: the 3D view is split for it instead.
+*>
+fn void show_assets_group(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	// The group is a row under Animations, gone while that is closed.
+	app.set_kind_collapsed(ANIMATION, false);
+	// No clip of his is indexed: the group has no row, so all animations show instead.
+	bool has_group = false;
+	foreach (&row : app.asset_categories) has_group = has_group || row.current_file;
+	show_assets_narrowed(ui, assets_animations(app, has_group), over_dock: false);
+}
+
+// The present filter narrowed to animations, or to the focus's group of them.
+fn AssetFilter assets_animations(AppState* app, bool group) @private
+{
 	AssetFilter narrowed = app.asset_filter;
 	narrowed.any_kind = false;
 	narrowed.kind = ANIMATION;
 	narrowed.any_plan = true;
 	narrowed.plan = "";
-	narrowed.current_file = false;
+	narrowed.current_file = group;
+	return narrowed;
+}
+
+// Narrow the grid and put the Assets pane up; the Animations pane is taken last, and only `over_dock`.
+fn void show_assets_narrowed(Ui* ui, AssetFilter narrowed, bool over_dock) @private
+{
+	AppState* app = ui.inherit(AppState)!!;
 	(void)app.set_asset_filter(narrowed);
 	app.refresh_asset_sidebar();
 
 	AreaNode* target = find_leaf_showing(area_layout.root, LIBRARY_VIEW);
 	if (!target) target = find_leaf_showing(area_layout.root, SCENE_VIEW);
 	if (!target) target = find_other_leaf(area_layout.root);
+	if (!target && !over_dock)
+	{
+		show_pane_view(ui, LIBRARY_VIEW, SplitAxis.HORIZONTAL, 0.5f);
+		app.refresh_ui();
+		return;
+	}
 	if (!target) target = find_leaf_showing(area_layout.root, ANIMATION_VIEW);
 	if (!target) return;
 	target.active = LIBRARY_VIEW;

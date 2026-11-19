@@ -466,3 +466,58 @@ fn bool Picker.occluded(&self, Vec3 eye, Vec3 point, float radius = -1.0f)
 	if (catch entry) return false;
 	return buried((point - eye).length(), entry, radius < 0.0f ? self.body_radius(point) : radius, self.scale);
 }
+
+<*
+ Where a ray enters the capsule round the segment a-b: a cylinder with a ball on
+ each end, so a == b is a ball.
+
+ @param ray : `Origin and unit direction.`
+ @require radius > 0 : "A capsule needs a radius"
+ @require math::abs(ray.direction.length_sq() - 1.0f) < 1e-3f : "The direction must be unit length"
+ @return `How far along the ray it enters; 0 for a ray that starts inside.`
+ @return? NO_SURFACE : `The ray passes it by, or it lies behind the origin.`
+*>
+fn float? ray_capsule_hit(collision::Ray ray, Vec3 a, Vec3 b, float radius)
+{
+	Vec3 axis = b - a;
+	Vec3 from_a = ray.origin - a;
+	float axis_sq = axis.length_sq();
+	// The origin's closest point on the segment, for a ray that starts inside.
+	float along = axis_sq > 0.0f ? math::clamp(from_a.dot(axis) / axis_sq, 0.0f, 1.0f) : 0.0f;
+	if ((from_a - axis * along).length_sq() <= radius * radius) return 0.0f;
+
+	// A ray along the axis can only enter through an end, so the side is skipped.
+	float axis_dir = axis.dot(ray.direction);
+	float side = axis_sq - axis_dir * axis_dir;
+	if (axis_sq > radius * radius * 1e-8f && side > axis_sq * 1e-8f)
+	{
+		float axis_from = axis.dot(from_a);
+		float half_b = axis_sq * ray.direction.dot(from_a) - axis_from * axis_dir;
+		float c = axis_sq * from_a.length_sq() - axis_from * axis_from - radius * radius * axis_sq;
+		float h = half_b * half_b - side * c;
+		// Off the endless cylinder is off the capsule inside it.
+		if (h < 0.0f) return NO_SURFACE~;
+		float t = (-half_b - math::sqrt(h)) / side;
+		float y = axis_from + t * axis_dir;
+		if (t >= 0.0f && y > 0.0f && y < axis_sq) return t;
+	}
+
+	float nearest = float::max;
+	if (try float t = ray_ball_hit(ray, a, radius)) nearest = t;
+	if (try float t = ray_ball_hit(ray, b, radius)) nearest = math::min(nearest, t);
+	if (nearest == float::max) return NO_SURFACE~;
+	return nearest;
+}
+
+// Where a ray from outside a ball enters it.
+fn float? ray_ball_hit(collision::Ray ray, Vec3 center, float radius) @local
+{
+	Vec3 from = ray.origin - center;
+	float half_b = from.dot(ray.direction);
+	float h = half_b * half_b - (from.length_sq() - radius * radius);
+	if (h < 0.0f) return NO_SURFACE~;
+	float t = -half_b - math::sqrt(h);
+	// From outside both crossings share a sign: a negative one is behind.
+	if (t < 0.0f) return NO_SURFACE~;
+	return t;
+}

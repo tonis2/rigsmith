@@ -84,7 +84,7 @@ fn void AppState.adopt_source_rig(&self)
 {
 	if (self.source_path.len == 0) return;
 
-	// The loaded model's own clips become the "Current file" browser group, whichever
+	// The loaded model's own clips are indexed for the focus's Assets group, whichever
 	// tier below adopts the rig — a defer so every exit path indexes them once.
 	defer self.reindex_current_model();
 

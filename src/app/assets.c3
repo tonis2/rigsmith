@@ -40,8 +40,8 @@ fn void AppState.rescan_assets(&self)
 	self.free_library_labels();
 
 	self.assets = scan_assets(mem, self.config.libraries.array_view());
-	// The scan wiped the loaded model's "Current file" entries with the rest; put
-	// them back before the categories and the grid are rebuilt below.
+	// The scan wiped the loaded model's own entries with the rest; put them back
+	// before the categories and the grid are rebuilt below.
 	self.assets.set_current_model(mem, self.source_path);
 	self.refresh_categories();
 	self.selected_asset = -1;
@@ -73,8 +73,50 @@ fn void AppState.rescan_assets(&self)
 fn void AppState.refresh_categories(&self)
 {
 	self.mark_current_entries();
+	self.asset_group_sig = self.bound_signature();
+	String name = self.asset_group_name();
+	if (name != self.asset_group_label)
+	{
+		if (self.asset_group_label.len > 0) self.asset_group_label.free(mem);
+		self.asset_group_label = name.copy(mem);
+	}
 	if (self.asset_categories.len > 0) alloc::free(mem, self.asset_categories);
-	self.asset_categories = self.assets.categories(mem, self.collapsed_kinds[..]);
+	self.asset_categories = self.assets.categories(mem, self.collapsed_kinds[..], self.asset_group_label);
+}
+
+<*
+ What the focus's group under Animations is called: his actor row when he is read from the level, else his label. Borrowed.
+*>
+fn String AppState.asset_group_name(&self)
+{
+	if (self.level_read && self.actor_row.len > 0) return self.actor_row;
+	return self.label();
+}
+
+<*
+ A hash of who the focus is and every clip he binds; the group is rebuilt when it moves.
+
+ @return "FNV-1a over the focus's id, name, file and bindings"
+*>
+fn uint AppState.bound_signature(&self)
+{
+	uint hash = 2166136261u;
+	hash = (hash ^ self.id) * 16777619u;
+	hash = fnv_text(hash, self.asset_group_name());
+	hash = fnv_text(hash, self.source_path);
+	foreach (bound : self.doc.animations.array_view())
+	{
+		hash = fnv_text(hash, bound.file);
+		hash = fnv_text(hash, bound.clip);
+	}
+	return hash;
+}
+
+// One string into an FNV-1a hash, ended by a byte UTF-8 never holds.
+fn uint fnv_text(uint hash, String text) @local
+{
+	foreach (ch : text) hash = (hash ^ ch) * 16777619u;
+	return (hash ^ 0xFFu) * 16777619u;
 }
 
 <*
@@ -167,19 +209,22 @@ fn bool AppState.model_file_holds(&self, String name)
 }
 
 <*
- Mark every index entry that came from the loaded model's own file.
+ Mark the index entries the focus's group lists: the clips he plays, and the models in the scene.
 
- What the "Current file" group reads. Kept here rather than on the entries as they
- are read, because which file is current changes without the index changing — a
- model opened, a save that retargets it aside — and this runs from
- `refresh_categories`, which follows every scan, retag, reindex and delete. A model
- that is itself a library file has its own rows marked, which is why
- `set_current_model` need not inject a second copy for it.
+ Kept here rather than on the entries as they are read, because the focus and his
+ bindings change without the index changing. Runs from `refresh_categories`, which
+ follows every scan, retag and reindex, and `refresh_ui` reindexes when
+ `bound_signature` moves.
 *>
 fn void AppState.mark_current_entries(&self)
 {
 	foreach (&entry : self.assets.entries)
 	{
+		if (entry.kind == AssetKind.ANIMATION)
+		{
+			entry.current = self.plays_entry(entry);
+			continue;
+		}
 		entry.current = entry.authored() || (self.source_path.len > 0 && entry.file == self.source_path);
 		// Every model in the scene, not only the one being edited, is open.
 		if (entry.kind == AssetKind.MODEL && !entry.current) entry.current = self.character_from(entry.file) >= 0;
@@ -187,12 +232,30 @@ fn void AppState.mark_current_entries(&self)
 }
 
 <*
- Refresh the "Current file" group after the loaded model or its clips change.
+ Whether the focus plays the clip an entry names: bound by its file and name, which
+ an authored row's "" file is too, or his own file's clip edited and bound as authored.
 
- The model's own animations become a browser group even when it was opened from
- outside every configured library: `set_current_model` reads them straight from the
- file as sentinel entries, or leaves a library model its own rows (which
- `mark_current_entries` then marks). Call on open, import, save and delete.
+ @param [&in] e
+*>
+fn bool AppState.plays_entry(&self, AssetEntry* e)
+{
+	return e.kind == AssetKind.ANIMATION && self.focus.binds_clip(e.file, e.name);
+}
+
+<* Whether the character binds clip `name` of `file`, as `plays_entry` reads a row. *>
+fn bool Character.binds_clip(&self, String file, String name)
+{
+	if (self.doc.bound_index(file, name) >= 0) return true;
+	return self.source_path.len > 0 && file == self.source_path && self.doc.bound_index("", name) >= 0;
+}
+
+<*
+ Refresh the focus's group after the loaded model or its clips change.
+
+ The model's own animations are indexed even when it was opened from outside every
+ configured library: `set_current_model` reads them straight from the file as
+ sentinel entries, or leaves a library model its own rows, and
+ `mark_current_entries` marks the ones he binds. Call on open, import, save and delete.
 
  Every position into the index moves, since it re-sorts around the model's clips —
  so the selected cell and any open settings panel are reset, as `retag_asset` and
@@ -268,6 +331,11 @@ fn void AppState.set_kind_collapsed(&self, AssetKind kind, bool collapsed)
 fn void AppState.refresh_asset_sidebar(&self)
 {
 	if (!self.ui) return;
+	if (self.asset_dragging())
+	{
+		self.asset_build_owed = true;
+		return;
+	}
 
 	self.ui.@walk(; elem)
 	{
@@ -283,6 +351,22 @@ fn void AppState.refresh_asset_sidebar(&self)
 			}
 		}
 	};
+}
+
+<*
+ Whether an Assets clip is being dragged. A rebuild of the Assets pane would drop
+ the cell holding it, so `end_piece_drag` does the build instead.
+*>
+fn bool AppState.asset_dragging(&self) => self.piece_drag.active && self.piece_drag.from_asset;
+
+<* End the Pieces or Assets drag, and rebuild the Assets pane if it was held off. *>
+fn void AppState.end_piece_drag(&self)
+{
+	self.piece_drag.clear();
+	if (!self.asset_build_owed) return;
+	self.asset_build_owed = false;
+	self.refresh_asset_sidebar();
+	self.refresh_ui();
 }
 
 // The chooser's first option: no library filter at all.
@@ -727,6 +811,95 @@ fn AnimRef AppState.ref_for_asset(&self, int pack, AssetEntry* entry)
 	// it would have had if nothing was skipped.
 	if (entry.index < held.clips.len) return { pack, (int)entry.index };
 	return NO_ANIM;
+}
+
+<*
+ An Assets clip by what finds it again, held while it is bound or dragged: the
+ index re-sorts under a cell, and a copy cannot move with it.
+*>
+struct AssetClip
+{
+	String file; // owned; "" for an authored row
+	String name; // owned
+	int library;
+	usz index;
+	Allocator alloc;
+}
+
+fn void AssetClip.free(&self)
+{
+	if (self.file.len > 0) self.file.free(self.alloc);
+	if (self.name.len > 0) self.name.free(self.alloc);
+	*self = {};
+}
+
+fn bool AssetClip.authored(&self) => self.library == AUTHORED_LIBRARY;
+
+<*
+ A copy of the clip an index entry names.
+
+ @param [&in] e : "The entry"
+ @require e.kind == AssetKind.ANIMATION : "Not a clip"
+ @return "The copy, which the caller frees"
+*>
+fn AssetClip asset_clip_of(AssetEntry* e, Allocator alloc)
+{
+	return {
+		.file = e.file.len > 0 ? e.file.copy(alloc) : "",
+		.name = e.name.len > 0 ? e.name.copy(alloc) : "",
+		.library = e.library,
+		.index = e.index,
+		.alloc = alloc,
+	};
+}
+
+<*
+ The live clip an Assets clip names, reading its file if it has not been read.
+ Says why in a notice when there is none.
+
+ @param [&in] c : "The clip"
+ @return "A reference into the authored pack or the file's"
+ @return? NOT_FOUND
+*>
+fn AnimRef? AppState.asset_clip_ref(&self, AssetClip* c)
+{
+	// An authored row's clip is in the authored pack, which no file names.
+	int pack = c.authored() ? self.authored_pack : self.pack_for_file(c.file);
+	if (pack < 0)
+	{
+		self.@notice("could not read %s", base_name(c.file));
+		return NOT_FOUND~;
+	}
+	// By name only: `ref_for_asset` falls back to the position, a fair guess for
+	// greying a cell and the wrong clip to bind or lay.
+	AssetEntry probe = { .kind = ANIMATION, .name = c.name, .file = c.file, .index = c.index, .library = c.library };
+	AnimRef ref = self.ref_for_asset(pack, &probe);
+	AnimTemplate* named = self.clip(ref);
+	if (!named || named.name != c.name)
+	{
+		self.@notice("%s holds no clip called %s", base_name(c.file), c.name);
+		return NOT_FOUND~;
+	}
+	return ref;
+}
+
+<*
+ Bind an Assets clip to the character, as one undo step.
+
+ @param [&in] c : "The clip"
+ @return "False, with a notice, when it names no clip or is bound already"
+*>
+fn bool AppState.bind_asset_clip(&self, AssetClip* c)
+{
+	AnimRef? ref = self.asset_clip_ref(c);
+	if (catch ref) return false;
+	// Unreachable while the row said unbound; said out loud rather than silent.
+	if (!self.bind_ref_recorded(ref))
+	{
+		self.@notice("%s could not be added", c.name);
+		return false;
+	}
+	return true;
 }
 
 <*

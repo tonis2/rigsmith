@@ -115,11 +115,8 @@ struct AssetEntry
 	float duration; // ANIMATION, in seconds
 	uint vertices;  // MODEL
 
-	// Whether this entry came from the loaded model's own file. Set by the app, not
-	// read from disk — see `AppState.mark_current_entries`, refreshed after every
-	// scan — and read by the "Current file" group. An entry the current model shares
-	// with a library carries it too, which is what keeps that group from injecting a
-	// duplicate for a model that is already on a shelf.
+	// In the focus's group: a clip he plays, or a model in the scene. Set by the app,
+	// not read from disk — see `AppState.mark_current_entries`.
 	bool current;
 }
 
@@ -146,8 +143,8 @@ alias NodeSet = HashMap{uint, bool};
  no bird row. `depth` is what the tree indents by — 0 for "All", 1 for a kind, 2
  for a body plan under that kind.
 
- `label` is borrowed. It is either a literal, or an entry's own `plan` string,
- which lives as long as the index does.
+ `label` is borrowed: a literal, an entry's own `plan` string, which lives as
+ long as the index does, or the group name `categories` was given.
 *>
 struct AssetCategory
 {
@@ -159,9 +156,8 @@ struct AssetCategory
 	String plan;
 	usz count;
 
-	// The "Current file" row: an ANIMATION sub-row that narrows to the loaded
-	// model's own clips. Distinct from the plain Animations row, which differs from
-	// it only here — see `selected_category`.
+	// The focus's group: an ANIMATION sub-row, named after him, that narrows to the
+	// clips he plays. Differs from the plain Animations row only here — see `selected_category`.
 	bool current_file;
 }
 
@@ -184,8 +180,8 @@ struct AssetFilter
 	int library;
 	String search;
 
-	// Keep only the loaded model's own animations — the "Current file" narrowing.
-	// Combines with the kind above (which the category sets to ANIMATION).
+	// Keep only the entries marked `current`: the focus's group. Combines with the
+	// kind above, which the category sets to ANIMATION.
 	bool current_file;
 }
 
@@ -392,7 +388,7 @@ fn void read_file(Allocator allocator, AssetEntryList* found, String file, int l
 }
 
 // The `library` an entry carries when it is the loaded model's own, indexed so the
-// "Current file" group can list a model opened from outside every configured
+// focus's group can list a model's clips opened from outside every configured
 // library. Negative like "all", so the library `Select` filter never hides it, and
 // distinct from -1 so `set_current_model` can find and drop its own past entries.
 const int CURRENT_MODEL_LIBRARY = -2;
@@ -414,7 +410,7 @@ alias AuthoredAssetList = List{AuthoredAsset};
 fn bool AssetEntry.authored(&self) => self.library == AUTHORED_LIBRARY;
 
 <*
- Put the project's unsaved authored clips into the index, under "Current file".
+ Put the project's unsaved authored clips into the index, where the focus's group finds the ones he binds.
 
  The browser is where a clip is deleted, and a clip that is only in the authored
  pack is in no file a scan could find — so without these rows a clip made this
@@ -458,8 +454,8 @@ fn void AssetIndex.set_authored(&self, Allocator allocator, AuthoredAsset[] clip
 }
 
 <*
- The loaded model's own animations, as entries — the reader behind the "Current
- file" group for a model that lives outside every library and so is in no scan.
+ The loaded model's own animations, as entries — the reader behind the focus's
+ group for a model that lives outside every library and so is in no scan.
 
  Animations only: the group is scoped to them, and a model's own skin is not a body
  plan on offer. Named exactly as `read_file` names a library's clips (`asset_name`,
@@ -493,7 +489,7 @@ fn void read_current_animations(Allocator allocator, AssetEntryList* found, Stri
 }
 
 <*
- Put the loaded model's own animations into the index as the "Current file" group.
+ Put the loaded model's own animations into the index, for the focus's group.
 
  Drops whatever sentinel entries a previous current model left, then — unless the
  file is already indexed under a real library, in which case its own rows serve and
@@ -791,14 +787,14 @@ fn bool contains_fold(String haystack, String needle) @local
  Counts are on every row, because the number beside a category is what says
  whether it is worth opening.
 
- Every `label` is borrowed: either a literal or an entry's own `plan`, both of
- which outlive the returned array as long as the index does. The caller owns the
- array itself.
+ Every `label` is borrowed: a literal, an entry's own `plan`, or `group`, which
+ the caller keeps alive as long as the array. The caller owns the array itself.
 
  @param collapsed : `One flag per AssetKind, by ordinal — either AssetKind::len of them or none at all. A flagged kind keeps its own row and contributes none of its plan rows; an empty slice reads as everything open.`
+ @param group : `The label of the row of entries marked current. Borrowed.`
  @return `The rows to draw, in sidebar order.`
 *>
-fn AssetCategory[] AssetIndex.categories(&self, Allocator allocator, bool[] collapsed = {})
+fn AssetCategory[] AssetIndex.categories(&self, Allocator allocator, bool[] collapsed = {}, String group = "Current file")
 {
 	AssetCategoryList out;
 	out.init(allocator);
@@ -837,9 +833,8 @@ fn AssetCategory[] AssetIndex.categories(&self, Allocator allocator, bool[] coll
 		// on screen — which is the whole of what a click on one reports.
 		if (collapsed.len == AssetKind::len && collapsed[kind.ordinal]) continue;
 
-		// The loaded model's own clips, first under Animations, so a model opened from
-		// anywhere — not only a library folder — has a row that lists just its clips
-		// to inspect or delete. Rides the same collapse as the plan rows below it. The
+		// The focus's clips, first under Animations, so he has a row that lists just
+		// what he plays. Rides the same collapse as the plan rows below it. The
 		// `current` flag is the app's; see `AppState.mark_current_entries`.
 		if (kind == AssetKind.ANIMATION)
 		{
@@ -851,7 +846,7 @@ fn AssetCategory[] AssetIndex.categories(&self, Allocator allocator, bool[] coll
 			if (current > 0)
 			{
 				out.push({
-					.label = "Current file",
+					.label = group,
 					.depth = 2,
 					.kind = ANIMATION,
 					.any_plan = true,

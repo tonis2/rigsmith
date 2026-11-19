@@ -4,6 +4,7 @@
  pieces go to (cut_target_actor). A click lays one at the playhead; a drop on the
  sheet lays it for the actor under the pointer at the time there
  (CutsceneTimeline.drop). A path clicked is only picked; dropped, it is a move.
+ The clips' header ends in a folder cell that opens the Assets pane on his clips.
 *>
 module crig;
 
@@ -55,6 +56,8 @@ fn PieceEntry cut_entry(String label, CutPiece piece, String clip = "", String t
 
 fn PieceEntry cut_note(String label) @local => { .label = label.copy(mem), .header = true };
 
+const String CUT_TO_ASSETS_TIP = "More clips: drag one from the Assets pane onto a Clip lane";
+
 // An action of the top row: its glyph in a cell, what it does in the tooltip.
 fn PieceEntry cut_action(String label, CutPieceKind kind, CardGlyph glyph, String tip) @local
 {
@@ -99,7 +102,10 @@ fn void PieceBin.refresh_cut(&self, AppState* app)
 		else
 		{
 			String row = cutscene.actors[target].row;
-			rows.push(cut_note(string::tformat("Clips · %s", row)));
+			PieceEntry clips = cut_note(string::tformat("Clips · %s", row));
+			clips.to_assets = true;
+			clips.tip = CUT_TO_ASSETS_TIP;
+			rows.push(clips);
 			usz before = (usz)rows.len();
 			@pool()
 			{
@@ -186,6 +192,25 @@ fn void cut_lay_piece(Ui* ui, CutPiece piece, bool dropped)
 			if (app.add_cut_one_off_play((usz)actor, piece.clip) < 0) app.@notice("%s has no one-off %s", row, piece.clip);
 	}
 	app.refresh_ui();
+}
+
+<* The clip header's browse cell: the target actor's character takes the focus, then the Assets pane shows his clips. *>
+fn void cut_browse_clips(Ui* ui)
+{
+	AppState* app = ui.inherit(AppState)!!;
+	Cutscene* cutscene = app.cutscene();
+	sz target = app.cut_target_actor();
+	if (!cutscene || target < 0) return;
+	sz holder = app.actor_character(cutscene.actors[target].row);
+	if (holder < 0)
+	{
+		app.@notice("%s has no character", cutscene.actors[target].row);
+		app.refresh_ui();
+		return;
+	}
+	// A refused move of the focus says why itself.
+	if ((usz)holder != app.active && !app.focus_character((usz)holder)) return;
+	show_assets_group(ui);
 }
 
 <* A right press on a piece: a path's menu, the path picked first; the others have none. *>

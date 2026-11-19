@@ -366,53 +366,17 @@ fn bool AppState.toggle_bound_row(&self, usz row)
 		return true;
 	}
 
-	// Binding goes through the pack so the name stored is the pack's own, which is
-	// what `resolve_bound` will look for — and the two have to be the same string,
-	// which is what the guard below is about.
-	// An authored row's clip is in the authored pack, which no file names.
-	int pack = entry.authored() ? self.authored_pack : self.pack_for_file(entry.file);
-	if (pack < 0)
-	{
-		self.@notice("could not read %s", base_name(entry.file));
-		return false;
-	}
-
-	// Re-taken after `pack_for_file`, which reallocates the pack array and with it
-	// every entry pointer the index handed out.
-	entry = self.visible_asset(row);
-	if (!entry) return false;
-
-	// **By name, and only by name.** `ref_for_asset` will hand back a clip by its
-	// position in the file when the name missed — one clip failing to convert shifts
-	// every clip after it — which is a fair guess for greying a cell and the wrong
-	// one for binding it. `resolve_bound` looks a binding up by name and nothing
-	// else, deliberately, so a binding stored under a name this index does not carry
-	// is one the grid can never draw its mark for and the pane can never resolve.
-	// Refusing it in words beats putting an animation on the character that the user
-	// did not point at.
-	AnimRef ref = self.ref_for_asset(pack, entry);
-	AnimTemplate* named = self.clip(ref);
-	if (!named || named.name != entry.name)
-	{
-		self.@notice("%s holds no clip called %s", base_name(entry.file), entry.name);
-		return false;
-	}
-
-	// Unreachable while that guard holds: the row said this clip was not bound, and
-	// the name it would be bound under is the one just compared. Said out loud
-	// rather than returned in silence — a `+` that does nothing and explains nothing
-	// is what made a name mismatch read as broken binding for as long as it did.
-	if (!self.bind_ref_recorded(ref))
-	{
-		self.@notice("%s could not be added", entry.name);
-		return false;
-	}
+	// Through the pack, so the name stored is the pack's own: what `resolve_bound`
+	// looks for. Copied, since reading the pack may move the entry.
+	AssetClip clip = asset_clip_of(entry, mem);
+	defer clip.free();
+	if (!self.bind_asset_clip(&clip)) return false;
 
 	usz total;
 	usz found;
 	self.bound_counts(&total, &found);
 	self.@notice("added %s · %d animation%s on this character",
-		entry.name, total, total == 1 ? "" : "s");
+		clip.name, total, total == 1 ? "" : "s");
 	return true;
 }
 

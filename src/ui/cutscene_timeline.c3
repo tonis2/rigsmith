@@ -38,6 +38,8 @@ const float CUT_DRAG_SLOP = 3.0;
 const float CUT_ZOOM_MOST = 64.0;
 
 const Color CUT_PAST_END = { 0.0, 0.0, 0.0, 0.25 };
+// What the target actor's Clip lane says while he plays nothing.
+const String CUT_CLIP_HINT = "drag a clip here";
 
 enum CutRowKind : char
 {
@@ -308,6 +310,48 @@ fn CutLane cut_piece_lane(CutPiece piece) @local
 	}
 }
 
+<*
+ The actor a piece dragged in from the bin or the Assets pane would land on, and the lane its outline is on; -1 for none.
+
+ @param [&out] lane : "Set only when an actor is returned"
+*>
+fn sz CutsceneTimeline.landing(&self, Element* elem, AppState* app, Cutscene* cutscene, CutLane* lane)
+{
+	if (!app.piece_drag.active || !(app.piece_drag.for_cut || app.piece_drag.from_asset)) return -1;
+	Vec2 local = app.piece_drag.at - elem.absolute;
+	if (local.x < CUT_GUTTER_W || local.x > elem.size.x) return -1;
+	CutTimelineHit hit = self.hit(elem, cutscene, local);
+	if (hit.row != LANE) return -1;
+	*lane = cut_piece_lane(app.piece_drag.cut);
+	return hit.actor;
+}
+
+<*
+ Where the target actor's Clip lane says a clip may be dragged there, element-local:
+ while he has no play and no drag lands on it. False when it is not shown.
+
+ @param [&out] actor
+ @param [&out] at
+ @param [&out] size
+*>
+fn bool CutsceneTimeline.clip_hint_box(&self, Element* elem, AppState* app, Cutscene* cutscene, usz* actor, Vec2* at, Vec2* size)
+{
+	sz target = app.cut_target_actor();
+	if (target < 0) return false;
+	foreach (&strip : cutscene.actors[target].strips) if (strip.kind == PLAY) return false;
+	CutLane lane;
+	if (self.landing(elem, app, cutscene, &lane) == target && lane == WHAT) return false;
+	TimelineStyle s = TIMELINE_STYLE;
+	float y = self.lane_top(elem, cutscene, (usz)target, WHAT);
+	float left = self.span(elem).x + 6.0f;
+	float room = elem.size.x - left - s.pad_x;
+	if (y < s.ruler_height || y + CUT_LANE_H > elem.size.y || room <= 0.0f) return false;
+	*actor = (usz)target;
+	*at = { left, y };
+	*size = { math::min(elem.ui.text.measure(s.font, CUT_CLIP_HINT, s.text_size).x, room), CUT_LANE_H };
+	return true;
+}
+
 fn void CutsceneTimeline.paint(&self, Element* elem, Painter* painter) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
@@ -390,6 +434,15 @@ fn void CutsceneTimeline.paint(&self, Element* elem, Painter* painter) @dynamic
 		painter.rect({ from, s.ruler_height }, { right_edge - from, elem.size.y - s.ruler_height }, { .color = CUT_PAST_END });
 	}
 
+	// Under the strips: a move that plays its own clip may cover it.
+	usz hinted;
+	Vec2 hint_at;
+	Vec2 hint_size;
+	if (self.clip_hint_box(elem, app, cutscene, &hinted, &hint_at, &hint_size))
+	{
+		painter.text({ hint_at.x, hint_at.y + text_dy }, elide(elem, CUT_CLIP_HINT, hint_size.x, s.text_size), { .size = s.text_size, .color = s.dim_text });
+	}
+
 	// The strips, the picked one outlined; a play's fade a ramp up to its handle.
 	foreach (usz a, &actor : cutscene.actors)
 	{
@@ -419,20 +472,17 @@ fn void CutsceneTimeline.paint(&self, Element* elem, Painter* painter) @dynamic
 		}
 	}
 
-	// A piece being dragged in from the bin, where it would land.
-	if (app.piece_drag.active && app.piece_drag.for_cut)
+	// A piece being dragged in from the bin or the Assets pane, where it would land.
+	CutLane landing_lane;
+	sz landing = self.landing(elem, app, cutscene, &landing_lane);
+	if (landing >= 0)
 	{
-		Vec2 local = app.piece_drag.at - elem.absolute;
-		CutTimelineHit hit = self.hit(elem, cutscene, local);
-		if (local.x >= CUT_GUTTER_W && local.x <= elem.size.x && hit.row == LANE)
-		{
-			float x = self.x_of(elem, cutscene, self.drop_time(elem, app, cutscene, local.x));
-			float y = self.lane_top(elem, cutscene, (usz)hit.actor, cut_piece_lane(app.piece_drag.cut)) + 3.0f;
-			painter.rect({ x, y }, { math::max(math::min(80.0f, right_edge - x), 4.0f), CUT_LANE_H - 6.0f },
-				{ .border_color = ACCENT, .border_width = 1.5f, .border_radius = LAYER_R4 });
-			painter.text({ x + 6.0f, y + (CUT_LANE_H - 6.0f - s.text_size) * 0.5f }, app.piece_drag.label,
-				{ .size = s.text_size, .color = ACCENT });
-		}
+		float x = self.x_of(elem, cutscene, self.drop_time(elem, app, cutscene, app.piece_drag.at.x - elem.absolute.x));
+		float y = self.lane_top(elem, cutscene, (usz)landing, landing_lane) + 3.0f;
+		painter.rect({ x, y }, { math::max(math::min(80.0f, right_edge - x), 4.0f), CUT_LANE_H - 6.0f },
+			{ .border_color = ACCENT, .border_width = 1.5f, .border_radius = LAYER_R4 });
+		painter.text({ x + 6.0f, y + (CUT_LANE_H - 6.0f - s.text_size) * 0.5f }, app.piece_drag.label,
+			{ .size = s.text_size, .color = ACCENT });
 	}
 
 	// The ruler over the rows scrolled under it, then its labels.
@@ -464,7 +514,10 @@ fn void CutsceneTimeline.update(&self, Element* elem, float dt) @dynamic
 	}
 }
 
-<* Each actor's header as a part named `cut-actor-<actor>`, each strip in view as `cut-strip-<actor>-<strip>`, and `cut-add-actor`. *>
+<*
+ Each actor's header as a part named `cut-actor-<actor>`, each strip in view as `cut-strip-<actor>-<strip>`,
+ `cut-add-actor`, and the target's empty Clip lane hint as `cut-clip-hint-<actor>`.
+*>
 fn void CutsceneTimeline.describe(&self, Element* elem, Description* out) @dynamic
 {
 	AppState* app = elem.inherit(AppState)!!;
@@ -491,6 +544,10 @@ fn void CutsceneTimeline.describe(&self, Element* elem, Description* out) @dynam
 	}
 	float add = self.actor_top(elem, cutscene, cutscene.actors.len);
 	if (add >= floor && add + CUT_HEADER_H <= elem.size.y) out.part("cut-add-actor", { 0, add }, { elem.size.x, CUT_HEADER_H });
+	usz hinted;
+	Vec2 at;
+	Vec2 size;
+	if (self.clip_hint_box(elem, app, cutscene, &hinted, &at, &size)) out.part(string::tformat("cut-clip-hint-%d", hinted), at, size);
 }
 
 fn void CutsceneTimeline.on_hover(&self, Element* elem, bool entered) @dynamic
@@ -670,21 +727,50 @@ fn bool CutsceneTimeline.menu(&self, Element* elem, AppState* app, Cutscene* cut
 }
 
 <*
+ The actor whose lanes are under a drop at `pos` (element-local): pieces go to him,
+ nothing is picked and the playhead moves to the snapped drop time. Only a lane
+ takes a drop: not the ruler, a header, "+ Add actor" or the gutter.
+
+ @param [&inout] app
+ @return "The actor, or -1 off the lanes"
+*>
+fn sz CutsceneTimeline.drop_actor(&self, Element* elem, AppState* app, Vec2 pos)
+{
+	Cutscene* cutscene = app.cutscene();
+	if (!cutscene || pos.x < CUT_GUTTER_W || pos.x > elem.size.x) return -1;
+	CutTimelineHit hit = self.hit(elem, cutscene, pos);
+	if (hit.row != LANE) return -1;
+	app.cut_lane_actor = (usz)hit.actor + 1;
+	app.clear_cut_selection();
+	app.show_cutscene_at(self.drop_time(elem, app, cutscene, pos.x));
+	return hit.actor;
+}
+
+<*
  A piece dropped from the bin at `pos` (element-local): the actor under it gets it
- at the time under it, laid as a click lays it, and a path as a move. Only a lane
- takes one: not the ruler, a header, "+ Add actor" or the gutter.
+ at the time under it, laid as a click lays it, and a path as a move.
 *>
 fn void CutsceneTimeline.drop(&self, Element* elem, Vec2 pos, CutPiece piece)
 {
 	AppState* app = elem.inherit(AppState)!!;
-	Cutscene* cutscene = app.cutscene();
-	if (!cutscene || pos.x < CUT_GUTTER_W || pos.x > elem.size.x) return;
-	CutTimelineHit hit = self.hit(elem, cutscene, pos);
-	if (hit.row != LANE) return;
-	app.cut_lane_actor = (usz)hit.actor + 1;
-	app.clear_cut_selection();
-	app.show_cutscene_at(self.drop_time(elem, app, cutscene, pos.x));
+	if (self.drop_actor(elem, app, pos) < 0) return;
 	cut_lay_piece(elem.ui, piece, true);
+	elem.request_paint();
+}
+
+<*
+ An Assets clip dropped at `pos` (element-local): a play of it for the actor under
+ it, bound to him first if he lacks it. `piece_drag_drop` ends the drag after.
+
+ @param [&in] c : "The clip, valid for the call"
+*>
+fn void CutsceneTimeline.drop_asset(&self, Element* elem, Vec2 pos, AssetClip* c)
+{
+	AppState* app = elem.inherit(AppState)!!;
+	sz actor = self.drop_actor(elem, app, pos);
+	if (actor < 0) return;
+	(void)app.add_cut_asset_play((usz)actor, c);
+	app.refresh_ui();
 	elem.request_paint();
 }
 

@@ -231,7 +231,8 @@ fn usz hud_lines(AppState* app, HudSnapshot shown, char[] buffer, HudLine[] out)
 	usz bones = (usz)app.doc.edges.len();
 	String source = app.source_path.len > 0
 		? base_name(app.source_path)
-		: (app.has_mesh() ? "" : app.has_level() ? "no character" : "no model");
+		: (app.has_mesh() ? "" : app.level_read && app.actor_row.len > 0 ? app.actor_row
+			: app.has_level() ? "no character" : "no model");
 	String head = source.len > 0
 		? text.@printf("%s · %d joint%s · %d bone%s",
 			source, dots, dots == 1 ? "" : "s", bones, bones == 1 ? "" : "s")

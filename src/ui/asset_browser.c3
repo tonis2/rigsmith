@@ -19,7 +19,7 @@
  grid used to play them, which made the library's pane the only way to start an
  animation and left the pane listing the character's own clips with less to do
  than the one listing everybody's. See `AppState.activate_asset`, and `asset_flags`
- for what greys.
+ for what greys. A clip dragged out lays onto a sheet (`piece_drag_drop`).
 
  The category rows and the chooser's options are held on the AppState rather than
  built here: cui borrows both for the life of the element, and a temporary made
@@ -127,7 +127,7 @@ fn usz selected_category(AppState* app)
 		if (!category.any_kind && category.kind != app.asset_filter.kind) continue;
 		if (category.any_plan != app.asset_filter.any_plan) continue;
 		if (!category.any_plan && category.plan != app.asset_filter.plan) continue;
-		// "Current file" differs from the plain Animations row only here.
+		// The focus's group differs from the plain Animations row only here.
 		if (category.current_file != app.asset_filter.current_file) continue;
 		return i;
 	}
@@ -322,6 +322,10 @@ struct AssetCell (Widget)
 	// name its file, add it to the character — so the cell tracks which of the two
 	// small ones the pointer is inside and treats everything else as the body.
 	bool on_bind;
+
+	// A press on a clip's body, which a move past `PIECE_DRAG_SLOP` makes a drag.
+	bool pressed;
+	Vec2 press_at;
 }
 
 <*
@@ -576,6 +580,20 @@ fn bool AssetCell.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			// through to the sheet behind it.
 			if (app.asset_flags(self.row).disabled) return true;
 
+			// A clip's body may become a drag. Its pick only repaints the cells: a
+			// rebuild would release this one and the pointer capture with it.
+			AssetEntry* entry = app.visible_asset(self.row);
+			if (entry && entry.kind == AssetKind.ANIMATION)
+			{
+				self.pressed = true;
+				self.press_at = event.absolute;
+				if (app.activate_asset(self.row))
+				{
+					elem.ui.@each(AssetCell; cell) { cell.request_paint(); };
+				}
+				return true;
+			}
+
 			if (app.activate_asset(self.row))
 			{
 				// Through the app rather than this element: what moved is which cell is
@@ -587,6 +605,16 @@ fn bool AssetCell.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			return true;
 
 		case MOVE:
+			if (self.pressed)
+			{
+				if (!app.piece_drag.active && (event.absolute - self.press_at).length() >= PIECE_DRAG_SLOP)
+				{
+					AssetEntry* entry = app.visible_asset(self.row);
+					if (entry && entry.kind == AssetKind.ANIMATION) app.piece_drag.start_asset(entry);
+				}
+				if (app.asset_dragging()) piece_drag_follow(elem.ui, event.absolute);
+				return true;
+			}
 			bool gear = self.over_gear(elem, event.pos);
 			bool bind = !gear && self.over_bind(elem, event.pos);
 			if (!self.hovered || gear != self.on_gear || bind != self.on_bind)
@@ -598,9 +626,35 @@ fn bool AssetCell.on_mouse(&self, Element* elem, MouseEvent event) @dynamic
 			}
 			return false;
 
+		case RELEASE:
+			if (event.button != MouseButton.LEFT || !self.pressed) return false;
+			self.pressed = false;
+			if (!app.asset_dragging()) return false;
+			piece_drag_drop(elem.ui, event.absolute);
+			return true;
+
 		default:
 			return false;
 	}
+}
+
+// Esc lets go of the drag with nothing laid.
+fn bool AssetCell.on_key(&self, Element* elem, KeyEvent event) @dynamic
+{
+	if (!event.down || event.key != Key.ESCAPE || !self.pressed) return false;
+	self.pressed = false;
+	AppState* app = elem.inherit(AppState)!!;
+	if (!app.asset_dragging()) return false;
+	piece_drag_cancel(elem.ui);
+	return true;
+}
+
+// A rebuild under the drag ends it, since the cell holding it is gone.
+fn void AssetCell.unmount(&self, Element* elem) @dynamic
+{
+	if (!self.pressed) return;
+	AppState* app = elem.inherit(AppState) ?? null;
+	if (app && app.asset_dragging()) app.piece_drag.clear();
 }
 
 // Leaving produces no MOVE, so the highlight would stay lit on the cell the

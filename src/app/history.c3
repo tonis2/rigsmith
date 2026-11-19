@@ -854,7 +854,7 @@ fn void AppState.save_own_session(&self)
 		// when the model itself was written — a save that fell back to the sidecar
 		// put nothing new in any .glb the browser reads.
 		if (into_model) self.reindex_saved_model(target);
-		// The "Current file" group follows the model wherever the save put it — a copy
+		// The focus's Assets group follows the model wherever the save put it — a copy
 		// aside retargets `source_path` — and reflects a clip a delete-then-save removed.
 		self.reindex_current_model();
 		self.mark_saved();

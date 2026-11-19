@@ -153,7 +153,7 @@ fn void anim_trim_remove(Ui* ui)
 	float length = clip.duration - (end - start);
 	if (length < ANIM_SAME_TIME * 2.0f)
 	{
-		app.@notice("Removing the whole animation leaves nothing to play; to be rid of it, delete it in the Assets panel (Current file)");
+		app.@notice("Removing the whole animation leaves nothing to play; to be rid of it, delete it in the Assets panel under Animations › %s", app.asset_group_label);
 		return;
 	}
 	usz before = clip.keyframes.len;

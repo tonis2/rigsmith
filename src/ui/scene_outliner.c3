@@ -300,6 +300,8 @@ fn void scene_outliner_chosen(Ui* ui, usz row) @private
 	else
 	{
 		app.select_scene(scene_selection_of(item.kind));
+		// His own row is a pick too: his actor gets what the cutscene sheet adds next.
+		if (item.kind == MODEL_ITEM) (void)app.target_focus_actor();
 	}
 	app.refresh_ui();
 }
@@ -511,7 +513,8 @@ fn Element* SceneOutliner.build(&self, Element* elem) @dynamic
 			case SCENE_ITEM: label = "Scene";
 			case MODEL_ITEM:
 				Character* c = app.character(item.character);
-				label = c.source_path.len > 0 ? base_name(c.source_path) : "Model";
+				// One read from the level has no file: his row names him.
+				label = c.source_path.len > 0 ? base_name(c.source_path) : c.level_read && c.actor_row.len > 0 ? c.actor_row : "Model";
 				if (item.character != app.active) trailing = string::tformat("%d joints", c.doc.dots.len());
 			case MESH_ITEM:
 				label = "Mesh";

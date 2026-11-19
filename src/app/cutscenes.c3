@@ -770,7 +770,7 @@ fn bool AppState.remove_actor(&self, usz i)
 
 <*
  Load the character at `path` as an actor: beside the others, or standing at `at`,
- dropped onto the ground under it when `ground`. It becomes the focus.
+ dropped onto the ground under it when `ground`. It becomes the focus and the cutscene's target.
 
  @return "False, with a notice, when it would not load or its row is taken"
 *>
@@ -817,6 +817,8 @@ fn bool AppState.add_actor_from_file(&self, String path, String row = "", Vec3* 
 	}
 	if (ground) (void)self.drop_actor_to_ground(self.active, recorded: already >= 0);
 	if (!self.make_actor(self.active, row)) return false;
+	// The newcomer gets what the cutscene sheet adds next.
+	(void)self.target_focus_actor();
 	self.refresh_ui();
 	return true;
 }
