@@ -342,7 +342,7 @@ fn Vec3 OrbitCamera.view_direction(&self, Vec3 world)
 // panel takes a slice off the right, and a projection that forgets it puts
 // every dot progressively further off as x grows.
 
-faultdef BEHIND_CAMERA, DEGENERATE_VIEW;
+excuse BEHIND_CAMERA, DEGENERATE_VIEW;
 
 <*
  Where a world point lands on screen.

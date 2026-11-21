@@ -19,7 +19,7 @@ import std::collections::object;
 import std::math;
 import std::collections::list;
 
-faultdef WEIGHTS_BAD_ARGS;
+excuse WEIGHTS_BAD_ARGS;
 
 <*
  show_weights: paint one of the weight views, for the person at the screen.

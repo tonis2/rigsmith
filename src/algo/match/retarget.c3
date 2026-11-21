@@ -849,7 +849,7 @@ fn AnimTemplate clip_in_words(Allocator allocator, AnimTemplate source, String[]
 		}
 	}
 	foreach (&path : out.paths) name_in_words(allocator, &path.joint, from, to, &words);
-	foreach (usz i, &layer : out.layers)
+	foreach (&layer : out.layers)
 	{
 		name_in_words(allocator, &layer.joint, from, to, &words);
 		name_in_words(allocator, &layer.tip, from, to, &words);

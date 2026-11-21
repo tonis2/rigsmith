@@ -380,7 +380,7 @@ fn Quaternionf AppState.blocked_joint_rotation(
 	// own smallest step is blocked too, and every halving would only learn
 	// that; asked first, it costs one test — the common case while the
 	// pointer keeps pushing — and a step that is clear seeds the search.
-	usz steps = self.collision_search_depth(rotation_angle_between(accepted, requested));
+	usz steps = self.collision_search_depth(angle_between_turns(accepted, requested));
 	float low = 1.0f / (float)(1 << steps);
 	Quaternionf landed = constrain_joint_rotation(frame, limits, accepted.slerp(requested, low).normalize());
 	report.tests++;
@@ -458,7 +458,7 @@ fn bool AppState.blocked_chain_pass(
 	// clearance, so a solve far into the body is not searched for the
 	// hair's breadth of it that is clear.
 	float sweep = 0.0f;
-	foreach (usz i, joint : joints) sweep = math::max(sweep, rotation_angle_between(before[i], after[i]));
+	foreach (usz i, joint : joints) sweep = math::max(sweep, angle_between_turns(before[i], after[i]));
 	usz steps = self.collision_search_depth(sweep);
 	float low = 1.0f / (float)(1 << steps);
 	float travel = sweep * reach;
@@ -541,7 +541,7 @@ fn bool AppState.blocked_body_pass(
 		if (bent)
 		{
 			turned = true;
-			sweep = math::max(sweep, rotation_angle_between(before.rotations[j], pose.rotations[j]));
+			sweep = math::max(sweep, angle_between_turns(before.rotations[j], pose.rotations[j]));
 		}
 		// A joint the last move turned is still turned in the surface, whether or not
 		// this answer has it back where it began.

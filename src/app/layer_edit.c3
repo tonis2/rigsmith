@@ -123,8 +123,6 @@ fn AnimLayer* AppState.procedural_layer_of(&self, AnimRef ref)
 	return layer && layer.procedural() ? layer : null;
 }
 
-fn bool AppState.layer_keys_active(&self, AnimRef ref) => self.keyed_layer_of(ref) != null;
-
 <*
  The clip whose keys the timeline edits: the clip itself, or with a keyed layer
  active a view of that layer's keys dressed as a clip (same name, length, loop and

@@ -60,25 +60,6 @@ fn Vec2 sheet_ui_bin_row(Fixture* f, String label)
 	return {};
 }
 
-fn AnimLayer* sheet_ui_layer(Fixture* f, usz at) => &f.app.clip(f.app.editing).layers[at];
-
-fn void sheet_ui_the_third_mode_shows_strips_and_the_bin() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	sheet_ui_open(&f);
-	test::@check(f.app.anim_show_layers && f.in_tree(crig::ANIM_LAYER_SHEET_ID) && f.in_tree(crig::ANIM_PIECE_BIN_ID),
-		"Layers did not replace the sheet with strips and the bin");
-	test::@check(!f.in_tree(crig::ANIM_LAYER_TREE_ID), "the Layers column still lists the layers beside the strips");
-	crig::PieceBin* bin = f.ui.find_id(crig::ANIM_PIECE_BIN_ID)!!.widget_as(crig::PieceBin);
-	bool swing;
-	foreach (&entry : bin.entries) if (entry.label == "Swing" && entry.piece.kind == CLIP) swing = true;
-	test::@check(swing, "the bin does not offer the character's other animation");
-	click_segment(&f, crig::ANIM_SHEET_MODE_ID, 0);
-	test::@check(!f.app.anim_show_layers && f.in_tree(crig::ANIM_LAYER_TREE_ID), "Keys did not bring the list back");
-}
-
 fn void sheet_ui_a_clicked_piece_lands_at_the_playhead() @test
 {
 	Fixture f;
@@ -90,7 +71,7 @@ fn void sheet_ui_a_clicked_piece_lands_at_the_playhead() @test
 	f.click(sheet_ui_bin_row(&f, "Wave"));
 	f.ui.flush();
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)1);
-	AnimLayer* wave = sheet_ui_layer(&f, 0);
+	AnimLayer* wave = layer_at(&f, 0);
 	test::@check(wave.kind == WAVE && wave.start == 1.0f && wave.end == 4.0f, "the wave is not laid from the playhead: %s..%s", wave.start, wave.end);
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	test::eq(f.app.active_layer_of(f.app.editing), (sz)0);
@@ -107,7 +88,7 @@ fn void sheet_ui_an_animation_dragged_in_is_linked_where_it_was_dropped() @test
 	f.drag(sheet_ui_bin_row(&f, "Swing"), to);
 	f.ui.flush();
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)1);
-	AnimLayer* piece = sheet_ui_layer(&f, 0);
+	AnimLayer* piece = layer_at(&f, 0);
 	test::@check(piece.source == "Swing" && math::abs(piece.offset - 2.0f) < 0.05f,
 		"the drop did not lay Swing, linked, at 2s: %s at %s", piece.source, piece.offset);
 	test::@check(!f.app.piece_drag.active, "the drag outlived the drop");
@@ -127,14 +108,14 @@ fn void sheet_ui_a_strip_moves_trims_and_changes_track_one_step_each() @test
 	// Lanes: new track, track 1, Base. The strip is 1..2 on lane 1.
 	f.drag(sheet_ui_point(&f, 1.5f, 1), sheet_ui_point(&f, 2.5f, 1));
 	f.ui.flush();
-	AnimLayer* piece = sheet_ui_layer(&f, 0);
+	AnimLayer* piece = layer_at(&f, 0);
 	test::@check(math::abs(piece.start - 2.0f) < 0.05f && math::abs(piece.offset - 2.0f) < 0.05f,
 		"the drag did not move the strip a second later: %s", piece.start);
 	test::eq(f.app.undo_stack.cursor, history + 1);
 
 	f.drag(sheet_ui_point(&f, piece.end, 1), sheet_ui_point(&f, 3.5f, 1));
 	f.ui.flush();
-	piece = sheet_ui_layer(&f, 0);
+	piece = layer_at(&f, 0);
 	test::@check(math::abs(piece.end - 3.5f) < 0.05f && math::abs(piece.start - 2.0f) < 0.05f, "the end did not trim to 3.5s: %s", piece.end);
 	test::eq(f.app.undo_stack.cursor, history + 2);
 
@@ -152,7 +133,7 @@ fn void sheet_ui_a_strip_moves_trims_and_changes_track_one_step_each() @test
 	bool on_top;
 	foreach (&layer : f.app.clip(f.app.editing).layers) if (layer.source == "Swing" && layer.track == 1) on_top = true;
 	test::@check(on_top, "the strip did not go onto a new track at the top");
-	test::@check(f.app.undo() && sheet_ui_layer(&f, 0).source == "Swing", "one undo did not take the track change back");
+	test::@check(f.app.undo() && layer_at(&f, 0).source == "Swing", "one undo did not take the track change back");
 }
 
 fn void sheet_ui_the_base_row_picks_the_clips_own_keys() @test

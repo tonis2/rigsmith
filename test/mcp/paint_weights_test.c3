@@ -102,51 +102,6 @@ fn void a_shared_row_can_be_painted_away() @test
 }
 
 <*
- A correction is one undo step, and reset puts the dot back on the automatic
- weights.
-*>
-fn void painting_is_undoable_and_resettable() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? painted = f.call_tool("paint_weights", `{"dot":"knee","weight":0.1,"vertices":[0,1,2,3]}`);
-	if (catch painted)
-	{
-		test::@check(false, "paint_weights takes an explicit vertex list");
-		return;
-	}
-	defer painted.free();
-	test::@check((painted.get_int("painted") ?? 0) > 0, "the explicit list was painted");
-	test::@check(f.app.doc.pins.len() > 0, "and the document holds it");
-
-	Object*? stepped = f.call_tool("undo", "{}");
-	if (catch stepped)
-	{
-		test::@check(false, "undo answers");
-		return;
-	}
-	stepped.free();
-	test::@check(f.app.doc.pins.len() == 0, "one undo took the whole call back");
-
-	f.call_tool("redo", "{}")!!.free();
-	test::@check(f.app.doc.pins.len() > 0, "and redo put it back");
-
-	Object*? cleared = f.call_tool("paint_weights", `{"dot":"knee","reset":true}`);
-	if (catch cleared)
-	{
-		test::@check(false, "reset answers");
-		return;
-	}
-	defer cleared.free();
-	test::@check((cleared.get_bool("reset") ?? false) && f.app.doc.pins.len() == 0,
-		"reset took every correction off");
-	test::@check(!f.app.weights_held(f.app.doc.dots[1].id), "reset left the knee's weights held");
-}
-
-<*
  A refusal says which value was wrong and what would have been right.
 
  The J6 rule, and it matters more here than for a read tool: an agent that

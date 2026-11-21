@@ -23,6 +23,7 @@ import cui;
 import cui::widgets;
 import std::math;
 import std::math::vector;
+import std::hash::fnv32a;
 
 const String ANIM_SHEET_MODE_ID = "anim-sheet-mode";
 const String ANIM_CURVES_ID = "anim-curves";
@@ -166,16 +167,17 @@ struct CurveLabels
 // points and shows its handles without rebuilding the pane.
 fn uint anim_key_selection_hash(AppState* app) @private
 {
-	uint hash = 2166136261u;
-	hash = (hash ^ (uint)app.anim_key_selection_ref.pack) * 16777619u;
-	hash = (hash ^ (uint)app.anim_key_selection_ref.clip) * 16777619u;
-	foreach (time : app.anim_key_selection) hash = (hash ^ bitcast(time, uint)) * 16777619u;
+	Fnv32a hash;
+	hash.init();
+	hash.mix(app.anim_key_selection_ref);
+	foreach (time : app.anim_key_selection) hash.mix(time);
 	foreach (key : app.anim_channel_key_selection)
 	{
-		hash = (hash ^ bitcast(key.time, uint) ^ (uint)key.channel) * 16777619u;
-		foreach (c : key.joint) hash = (hash ^ c) * 16777619u;
+		hash.mix(key.time);
+		hash.mix(key.channel);
+		hash.text(key.joint);
 	}
-	return hash;
+	return (uint)hash;
 }
 
 fn void AnimCurves.release(&self)

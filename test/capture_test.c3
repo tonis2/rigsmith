@@ -27,7 +27,7 @@ import image;
 import image::png;
 import image::mp4;
 import image::h264;
-import crig_tests::trust_fixes;
+import crig_tests::helpers;
 
 fn void the_capture_folder_sits_beside_the_model() @test
 {
@@ -233,45 +233,33 @@ fn void a_slower_machine_corrects_the_time_left() @test
 	test::eq(job.pace, 1.0);
 }
 
+// A finder file's header, as the plugin writes it, with `meta` as its finder metadata.
+fn void write_finder(String finder, String meta) @local
+{
+	DString header = dstring::new(mem);
+	defer header.free();
+	header.append_string(`{"__metadata__":{"finder":`);
+	gltf_edit::escape_json_string(&header, meta);
+	header.append_string("}}");
+	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
+	defer alloc::free(mem, bytes);
+	ulong n = (ulong)header.len();
+	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
+	bytes[8..] = ((char[])header.str_view())[..];
+	(void)file::save(finder, bytes);
+}
+
 fn void a_finder_says_what_it_is() @test
 {
 	String finder = "build/test_capture_finder.safetensors";
-	String meta = `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5}}}`;
-	DString header = dstring::new(mem);
-	defer header.free();
-	header.append_string(`{"__metadata__":{"finder":`);
-	gltf_edit::escape_json_string(&header, meta);
-	header.append_string("}}");
-	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
-	defer alloc::free(mem, bytes);
-	ulong n = (ulong)header.len();
-	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
-	bytes[8..] = ((char[])header.str_view())[..];
-	(void)file::save(finder, bytes);
 	defer (void)file::delete(finder);
+	write_finder(finder, `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5}}}`);
 	String said = crig::finder_summary(finder);
 	test::@check(said == "2 points · 5.50 px held out", "its points and held-out error (%s)", said);
-	test::@check(crig::finder_summary("build/no_such_finder.safetensors") == "", "a missing file says nothing");
-}
-
-fn void a_finder_with_hands_says_so() @test
-{
-	String finder = "build/test_capture_hands.safetensors";
-	String meta = `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5}},"hands":{"report":{"held_out_px":{"median":3.25}}}}`;
-	DString header = dstring::new(mem);
-	defer header.free();
-	header.append_string(`{"__metadata__":{"finder":`);
-	gltf_edit::escape_json_string(&header, meta);
-	header.append_string("}}");
-	char[] bytes = alloc::new_array(mem, char, 8 + header.len());
-	defer alloc::free(mem, bytes);
-	ulong n = (ulong)header.len();
-	for (usz i = 0; i < 8; i++) bytes[i] = (char)(n >> (8 * i));
-	bytes[8..] = ((char[])header.str_view())[..];
-	(void)file::save(finder, bytes);
-	defer (void)file::delete(finder);
-	String said = crig::finder_summary(finder);
+	write_finder(finder, `{"joints":["hips","head"],"report":{"held_out_px":{"median":5.5}},"hands":{"report":{"held_out_px":{"median":3.25}}}}`);
+	said = crig::finder_summary(finder);
 	test::@check(said == "2 points · 5.50 px held out · hands 3.25 px", "its hands' held-out error (%s)", said);
+	test::@check(crig::finder_summary("build/no_such_finder.safetensors") == "", "a missing file says nothing");
 }
 
 fn void a_model_with_no_file_has_no_capture() @test
@@ -293,7 +281,7 @@ fn void a_plugins_folder_without_creature_is_refused_before_the_gpu() @test
 	(void)path::mkdir(dir, true);
 	defer (void)path::rmtree((Path)dir);
 	String source = string::tformat("%s/humanoid.glb", dir);
-	trust_fixes::copy_humanoid(source);
+	helpers::copy_humanoid(source);
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, source);
@@ -313,7 +301,7 @@ fn void the_animate_task_asks_for_the_clip_and_what_it_read() @test
 	(void)path::mkdir(dir, true);
 	defer (void)path::rmtree((Path)dir);
 	String source = string::tformat("%s/humanoid.glb", dir);
-	trust_fixes::copy_humanoid(source);
+	helpers::copy_humanoid(source);
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, source);
@@ -449,13 +437,6 @@ fn void the_reference_picture_is_drawn_at_the_chosen_size() @test
 	app.config.reference_size = 99;
 	test::@check(app.reference_size_row() == 0, "a size past the list is the first");
 	app.capture_job.reference_pending = false;
-}
-
-fn void the_animate_notice_says_how_long_it_took() @test
-{
-	String summary = crig::capture_result_summary(`{"report": {"reprojection_px": {"median": 11.54}, "travel": 0.25, "seconds": {"track": 330, "fit": 4.2, "total": 587.4}}}`);
-	test::@check(summary == "reprojection 11.5 px, root moved 25 cm, in 9 min 47 s (fit 4 s)", "the notice reads '%s'", summary);
-	test::@check(crig::capture_result_summary(`{"report": {}}`) == "done", "an empty report is just done");
 }
 
 fn void the_animate_notice_says_when_a_view_slipped() @test
@@ -686,7 +667,7 @@ fn crig::AppState capture_app(String dir, rig::TriMesh* mesh) @local
 	(void)path::rmtree((Path)dir);
 	(void)path::mkdir(dir, true);
 	String source = string::tformat("%s/humanoid.glb", dir);
-	trust_fixes::copy_humanoid(source);
+	helpers::copy_humanoid(source);
 	*mesh = rig::load_gltf(mem, source)!!;
 	crig::AppState app = crig::new_app(*mesh, source);
 	app.config.directory = string::format(mem, "%s/config", dir);

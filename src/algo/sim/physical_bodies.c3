@@ -23,7 +23,7 @@ import std::math::quaternion;
 import std::core::string;
 import std::collections::list;
 
-faultdef PHYSICAL_BODY_INSUFFICIENT_GEOMETRY;
+excuse PHYSICAL_BODY_INSUFFICIENT_GEOMETRY;
 
 // A four-influence skin always has one share of at least 0.25. Taking nearby
 // 0.20 shares too leaves overlap across a bending seam, while rejecting the

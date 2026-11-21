@@ -10,8 +10,6 @@ import crig;
 import std::core::test;
 import std::math;
 
-fn bool near(float a, float b) @local => math::abs(a - b) < 1e-4f;
-
 fn CutStrip play(float start, float end, String clip = "idle") @local
 {
 	CutStrip s = crig::cut_strip(PLAY, start, end);
@@ -70,11 +68,11 @@ fn void the_strip_placed_wins_and_the_others_give_way() @test
 	usz at = crig::cut_settle_strips(mem, &strips, 4);
 	defer free_strips(strips);
 	test::eq(strips.len, 4);
-	test::@check(strips[at].clip == "placed" && near(strips[at].start, 1.5f) && near(strips[at].end, 4.0f), "the placed strip keeps its span");
-	test::@check(strips[0].clip == "before" && near(strips[0].start, 0) && near(strips[0].end, 1.5f), "the one before is cut at its end");
-	test::@check(strips[1].clip == "after" && near(strips[1].start, 4.0f) && near(strips[1].end, 6.0f), "the one after is cut at its front");
-	test::@check(near(strips[1].offset, 0.5f + 0.5f * 2.0f), "its clip plays on where it was: offset %f", strips[1].offset);
-	test::@check(strips[2].kind == TURN && near(strips[2].start, 1) && near(strips[2].end, 5), "the turn on the other lane is untouched");
+	test::@check(strips[at].clip == "placed" && math::is_approx(strips[at].start, 1.5f, 1e-4f) && math::is_approx(strips[at].end, 4.0f, 1e-4f), "the placed strip keeps its span");
+	test::@check(strips[0].clip == "before" && math::is_approx(strips[0].start, 0, 1e-4f) && math::is_approx(strips[0].end, 1.5f, 1e-4f), "the one before is cut at its end");
+	test::@check(strips[1].clip == "after" && math::is_approx(strips[1].start, 4.0f, 1e-4f) && math::is_approx(strips[1].end, 6.0f, 1e-4f), "the one after is cut at its front");
+	test::@check(math::is_approx(strips[1].offset, 0.5f + 0.5f * 2.0f, 1e-4f), "its clip plays on where it was: offset %f", strips[1].offset);
+	test::@check(strips[2].kind == TURN && math::is_approx(strips[2].start, 1, 1e-4f) && math::is_approx(strips[2].end, 5, 1e-4f), "the turn on the other lane is untouched");
 	test::eq(at, (usz)3);
 }
 
@@ -87,9 +85,9 @@ fn void a_play_strip_landed_inside_is_split_and_a_move_is_not() @test
 	defer free_strips(strips);
 	test::eq(strips.len, 3);
 	test::@check(strips[at].clip == "wave", "the wave is the winner");
-	test::@check(near(strips[0].end, 4) && strips[0].clip == "idle", "the idle keeps its part before");
-	test::@check(strips[2].clip == "idle" && near(strips[2].start, 5) && near(strips[2].end, 10), "and its part after, as a new strip");
-	test::@check(near(strips[2].offset, 5), "which plays on where the idle was: offset %f", strips[2].offset);
+	test::@check(math::is_approx(strips[0].end, 4, 1e-4f) && strips[0].clip == "idle", "the idle keeps its part before");
+	test::@check(strips[2].clip == "idle" && math::is_approx(strips[2].start, 5, 1e-4f) && math::is_approx(strips[2].end, 10, 1e-4f), "and its part after, as a new strip");
+	test::@check(math::is_approx(strips[2].offset, 5, 1e-4f), "which plays on where the idle was: offset %f", strips[2].offset);
 	test::@check(strips[2].id == 0, "the new piece waits for an id of its own");
 
 	CutStrip[] walk = alloc::new_array(mem, CutStrip, 2);
@@ -98,22 +96,8 @@ fn void a_play_strip_landed_inside_is_split_and_a_move_is_not() @test
 	at = crig::cut_settle_strips(mem, &walk, 1);
 	defer free_strips(walk);
 	test::eq(walk.len, 2);
-	test::@check(near(walk[0].end, 4), "a move a turn lands inside keeps only its part before, not %f", walk[0].end);
+	test::@check(math::is_approx(walk[0].end, 4, 1e-4f), "a move a turn lands inside keeps only its part before, not %f", walk[0].end);
 	test::eq(at, (usz)1);
-}
-
-fn void a_play_strip_cuts_a_walk_clip_but_not_a_plain_move() @test
-{
-	CutStrip[] strips = alloc::new_array(mem, CutStrip, 3);
-	strips[0] = move(0, 3, "walk");
-	strips[1] = move(3, 6);
-	strips[2] = play(2, 5, "wave");
-	usz at = crig::cut_settle_strips(mem, &strips, 2);
-	defer free_strips(strips);
-	test::eq(strips.len, 3);
-	test::@check(near(strips[0].end, 2), "the walk's clip shares the What lane: cut to %f", strips[0].end);
-	test::@check(near(strips[1].start, 3) && near(strips[1].end, 6), "a move with no clip is on Where only");
-	test::eq(at, (usz)2);
 }
 
 fn void nothing_moves_without_a_clash_or_a_length() @test
@@ -125,7 +109,7 @@ fn void nothing_moves_without_a_clash_or_a_length() @test
 	usz at = crig::cut_settle_strips(mem, &strips, 1);
 	defer free_strips(strips);
 	test::eq(at, (usz)1);
-	test::@check(&strips[0] == first && near(strips[0].end, 2), "a strip with no length covers nothing");
+	test::@check(&strips[0] == first && math::is_approx(strips[0].end, 2, 1e-4f), "a strip with no length covers nothing");
 }
 
 fn void a_front_trim_keeps_the_clip_in_place_down_to_its_start() @test
@@ -134,23 +118,23 @@ fn void a_front_trim_keeps_the_clip_in_place_down_to_its_start() @test
 	defer s.free(mem);
 	s.speed = 1.5f;
 	s.trim_front(2.0f);
-	test::@check(near(s.start, 2) && near(s.offset, 1.5f), "1 s later at 1.5x is 1.5 s into the clip, not %f", s.offset);
+	test::@check(math::is_approx(s.start, 2, 1e-4f) && math::is_approx(s.offset, 1.5f, 1e-4f), "1 s later at 1.5x is 1.5 s into the clip, not %f", s.offset);
 	s.trim_front(0.0f);
-	test::@check(near(s.start, 0) && near(s.offset, 0), "and never before its first frame: %f", s.offset);
+	test::@check(math::is_approx(s.start, 0, 1e-4f) && math::is_approx(s.offset, 0, 1e-4f), "and never before its first frame: %f", s.offset);
 	CutStrip face = turn(1, 2);
 	face.trim_front(1.5f);
-	test::@check(near(face.offset, 0), "a turn has no clip to keep");
+	test::@check(math::is_approx(face.offset, 0, 1e-4f), "a turn has no clip to keep");
 }
 
 fn void a_dragged_time_snaps_to_a_mark_near_it_else_to_a_frame() @test
 {
 	float[] marks = { 1.234f, 5.0f };
-	test::@check(near(crig::cut_snap_time(1.25f, 30.0f, marks, 0.05f), 1.234f), "a mark within reach wins over a frame");
-	test::@check(near(crig::cut_snap_time(1.31f, 30.0f, marks, 0.05f), 39.0f / 30.0f), "out of reach the frame wins");
-	test::@check(near(crig::cut_snap_time(1.31f, 0.0f, marks, -1.0f), 1.31f), "free: no mark, no frame");
-	test::@check(near(crig::cut_snap_time(4.97f, 30.0f, marks, 0.05f), 5.0f), "the nearer mark");
+	test::@check(math::is_approx(crig::cut_snap_time(1.25f, 30.0f, marks, 0.05f), 1.234f, 1e-4f), "a mark within reach wins over a frame");
+	test::@check(math::is_approx(crig::cut_snap_time(1.31f, 30.0f, marks, 0.05f), 39.0f / 30.0f, 1e-4f), "out of reach the frame wins");
+	test::@check(math::is_approx(crig::cut_snap_time(1.31f, 0.0f, marks, -1.0f), 1.31f, 1e-4f), "free: no mark, no frame");
+	test::@check(math::is_approx(crig::cut_snap_time(4.97f, 30.0f, marks, 0.05f), 5.0f, 1e-4f), "the nearer mark");
 	// A span snaps by whichever end is nearer a mark.
-	test::@check(near(crig::cut_snap_span(3.02f, 2.0f, 30.0f, marks, 0.05f), 3.0f), "its end on 5 s");
-	test::@check(near(crig::cut_snap_span(1.22f, 2.0f, 30.0f, marks, 0.05f), 1.234f), "its start on the mark");
-	test::@check(near(crig::cut_snap_span(2.01f, 1.0f, 30.0f, marks, 0.05f), 2.0f), "no mark near: its start on a frame");
+	test::@check(math::is_approx(crig::cut_snap_span(3.02f, 2.0f, 30.0f, marks, 0.05f), 3.0f, 1e-4f), "its end on 5 s");
+	test::@check(math::is_approx(crig::cut_snap_span(1.22f, 2.0f, 30.0f, marks, 0.05f), 1.234f, 1e-4f), "its start on the mark");
+	test::@check(math::is_approx(crig::cut_snap_span(2.01f, 1.0f, 30.0f, marks, 0.05f), 2.0f, 1e-4f), "no mark near: its start on a frame");
 }

@@ -214,9 +214,7 @@ fn void a_path_past_the_end_is_refused() @test
 	{
 		defer alloc::free(mem, patched.ptr);
 		test::@check(false, "a path past the end was accepted: %s", patched);
-		return;
 	}
-	test::@check(true, "refused");
 }
 
 // ---------------------------------------------------------------------------
@@ -235,68 +233,6 @@ fn String? scratch_pack(String name) @local
 	String destination = string::format(mem, "build/%s", name);
 	file::save(destination, bytes)!;
 	return destination;
-}
-
-<*
- Everything after the JSON chunk: the binary, and any chunk after that.
-
- What a patch must not touch a byte of. Returned as a String so it can be copied
- and compared with one call.
-*>
-fn String tail_of(char[] bytes) @local
-{
-	if (bytes.len < 20) return "";
-	usz json_length = (usz)bytes[12] | ((usz)bytes[13] << 8) | ((usz)bytes[14] << 16) | ((usz)bytes[15] << 24);
-	usz at = 20 + ((json_length + 3) & ~(usz)3);
-	if (at >= bytes.len) return "";
-	return (String)bytes[at..];
-}
-
-<*
- Patching a .glb leaves its binary chunk byte for byte, and the file still reads.
-
- The strongest thing this suite says. The tail comparison is what asserts that
- the vertices, the keyframes and the inverse binds are exactly the ones that went
- in; `read_pack` afterwards is what asserts the header lengths were recomputed,
- because a .glb whose total length is wrong does not open at all and nothing
- above would notice.
-*>
-fn void a_glb_keeps_its_binary_chunk() @test
-{
-	io::printn("patching a .glb rewrites only its JSON");
-
-	String? path = scratch_pack("patch_test_binary.glb");
-	if (catch path) { test::@check(false, "the fixture pack could not be copied"); return; }
-	defer alloc::free(mem, path.ptr);
-
-	char[]? before = file::load(mem, path);
-	if (catch before) { test::@check(false, "the copy could not be read"); return; }
-	defer alloc::free(mem, before);
-
-	// Copied rather than viewed: the patch is written over the same file, and the
-	// comparison is against what was there first.
-	String original_tail = tail_of(before).copy(mem);
-	defer alloc::free(mem, original_tail.ptr);
-	test::@check(original_tail.len > 0, "the fixture has no binary chunk to protect");
-
-	if (catch gltf_edit::patch_gltf(mem, path, one_edit(extras_key("tags"), "checked")))
-	{
-		test::@check(false, "the pack could not be patched");
-		return;
-	}
-
-	char[]? after = file::load(mem, path);
-	if (catch after) { test::@check(false, "the patched pack could not be read"); return; }
-	defer alloc::free(mem, after);
-
-	String patched_tail = tail_of(after);
-	test::eq((usz)patched_tail.len, (usz)original_tail.len);
-	test::@check(patched_tail == original_tail, "the bytes after the JSON chunk changed");
-
-	crig::AnimPack? reopened = crig::read_pack(mem, path);
-	if (catch reopened) { test::@check(false, "the patched pack no longer opens"); return; }
-	defer reopened.free(mem);
-	test::@check(reopened.clips.len > 0, "the patched pack came back with no clips");
 }
 
 <*

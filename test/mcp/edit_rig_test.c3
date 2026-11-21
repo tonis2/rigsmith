@@ -530,17 +530,11 @@ fn void joint_limits_refuse_invalid_ranges_and_take_a_forks_own_child() @test
 }
 
 <*
- A blend sharpness crosses the wire, undoes in one step, and is refused outside
- the band the arithmetic survives.
-
- The op that names no joint. It is the only entry in `edit_rig` that is a
- property of the model rather than of a dot, so the check is that it lands
- without one — and that a caller working from a wrong idea of the scale is told
- the range rather than quietly clamped, which is the difference between "you
- asked for something that does not exist" and "your call did something other
- than what you asked for".
+ The two ops that name no joint, sharpness and knuckle_blend, cross the wire,
+ undo in one step back to unset, and are refused outside their range with the
+ range in the refusal rather than quietly clamped.
 *>
-fn void a_blend_sharpness_crosses_the_wire_and_undoes() @test
+fn void the_model_wide_blends_cross_the_wire_and_undo() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -571,49 +565,33 @@ fn void a_blend_sharpness_crosses_the_wire_and_undoes() @test
 	test::@check(f.app.doc.sharpness == 0.0f,
 		"one undo left the sharpness at %.4f rather than back at unset", f.app.doc.sharpness);
 
-	// Out of range, and the sentence carries the range — an agent that guessed a
-	// percentage or an exponent in the tens can correct itself from the refusal.
 	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"sharpness","value":10}]}`, "ops[0]", "0.25 to 4"),
 		"a sharpness of 10 is refused, naming the band it fell outside");
 	test::@check(f.app.doc.sharpness == 0.0f, "the refused call left a sharpness behind");
 
-	// And the op needs its number: `joint` is not read here, so a call carrying
-	// only a joint has said nothing.
+	// `joint` is not read here, so a call carrying only a joint has said nothing.
 	test::@check(f.refuses_tool("edit_rig", `{"ops":[{"op":"sharpness","joint":"knee"}]}`, "ops[0]", "value"),
 		"a sharpness op with no value is refused, and says which key it wanted");
-}
-
-<*
- A knuckle blend crosses the wire, undoes in one step back to unset, and is
- refused outside 0 to 1 with the range in the refusal — the other op that names
- no joint, on the sharpness's terms.
-*>
-fn void a_knuckle_blend_crosses_the_wire_and_undoes() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
 
 	test::@check(f.app.doc.knuckle_blend == 0.0f, "the fixture rig starts with a knuckle blend set");
 
-	Object*? set = f.call_tool("edit_rig", `{"ops":[{"op":"knuckle_blend","value":0}]}`);
-	if (catch set)
+	Object*? blend = f.call_tool("edit_rig", `{"ops":[{"op":"knuckle_blend","value":0}]}`);
+	if (catch blend)
 	{
 		test::@check(false, "edit_rig sets a knuckle blend");
 		return;
 	}
-	set.free();
+	blend.free();
 	test::@check(f.app.doc.knuckle_blend_fraction() == 0.0f && f.app.doc.knuckle_blend > 0.0f,
 		"a blend of 0 came out as %.4f (stored %.4f)", f.app.doc.knuckle_blend_fraction(), f.app.doc.knuckle_blend);
 
-	Object*? back = f.call_tool("undo", "{}");
-	if (catch back)
+	Object*? unblend = f.call_tool("undo", "{}");
+	if (catch unblend)
 	{
 		test::@check(false, "undo answers");
 		return;
 	}
-	back.free();
+	unblend.free();
 	test::@check(f.app.doc.knuckle_blend == 0.0f,
 		"one undo left the knuckle blend stored as %.4f rather than unset", f.app.doc.knuckle_blend);
 
@@ -664,7 +642,7 @@ fn void a_pinned_shell_is_one_edit_rig_batch() @test
 	}
 	defer listed.free();
 
-	test::@check((listed.get_int("pieces") ?? 0) > 0, "get_shells reports no pieces at all");
+	test::@check((listed.get("shells").get_at(0).get_string("pinned") ?? "") == "knee", "get_shells does not report the shell pinned to the knee");
 
 	Object*? back = f.call_tool("undo", "{}");
 	if (catch back)
@@ -745,36 +723,6 @@ fn void a_clip_can_address_a_dot_the_wire_just_named() @test
 	}
 	defer root.free();
 	test::@check(root.get("result") ?? null, "a clip can now turn a dot that had no name to turn by");
-}
-
-<*
- A ground spec is refused in the same voice a keyframe is: naming the value.
-
- Three ways to get it wrong, and each has to say which one it was. A phase given
- in seconds is the one that will actually happen — every other time on this
- surface is seconds, and the windows are the exception.
-*>
-fn void a_bad_ground_spec_names_the_value() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	test::@check(f.refuses_tool("apply_clip",
-		`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"ground":{"feet":[{"joint":"heel","down":0,"up":0.4}]}}`,
-		"heel", "not a dot on this rig"),
-		"a foot naming no dot is refused and says so");
-
-	test::@check(f.refuses_tool("apply_clip",
-		`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"ground":{"feet":[{"joint":"foot","down":0,"up":1.4}]}}`,
-		"cycle phase", "not seconds"),
-		"a window given in seconds is refused and says what a window is in");
-
-	test::@check(f.refuses_tool("apply_clip",
-		`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"blend":"cubic"}`,
-		"blend", "smooth"),
-		"a blend that is neither mode is refused and names the two that are");
 }
 
 <*

@@ -35,7 +35,7 @@ module crig;
 
 import std::collections::object;
 
-faultdef DOCS_BAD_ARGS;
+excuse DOCS_BAD_ARGS;
 
 const String API_DOCS_URI = "crig://api-docs";
 

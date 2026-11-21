@@ -4,6 +4,7 @@ module crig;
 import rig;
 import std::math::vector;
 import std::collections::list;
+import std::sort;
 
 // Two copies of one point whose rows a pose can pull apart.
 struct TearLink
@@ -196,14 +197,6 @@ fn TearPatch[] find_tear_patches(Allocator allocator, rig::TriMesh* geometry, ri
 		if (k >= 0) tears[(usz)k].vertices[vertex_count[(usz)k]++] = (uint)v;
 	}
 
-	for (usz i = 0; i + 1 < tears.len; i++)
-	{
-		usz top = i;
-		for (usz j = i + 1; j < tears.len; j++) if (tears[j].pull > tears[top].pull) top = j;
-		if (top == i) continue;
-		TearPatch swap = tears[i];
-		tears[i] = tears[top];
-		tears[top] = swap;
-	}
+	sort::insertionsort(tears, fn int(TearPatch* a, TearPatch* b) => (int)(b.pull > a.pull) - (int)(b.pull < a.pull));
 	return tears;
 }

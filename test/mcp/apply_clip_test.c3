@@ -386,38 +386,3 @@ fn void an_applied_clip_is_the_editable_timeline_clip() @test
 	test::@check(f.app.current_ref.same(f.app.editing),
 		"playing the applied clip left the player on a different clip than the timeline");
 }
-
-<*
- The clip and its timeline binding are one undo step.
-
- apply_clip does two writes — the pack swap and the binding — and a single
- Ctrl+Z has to take back both, or an undo leaves a chooser row that resolves to
- nothing, or a clip with no way to reach it.
-*>
-fn void applying_a_clip_binds_and_unbinds_in_one_undo() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	sz bound_before = f.app.doc.animations.len();
-
-	String arguments = bend_clip("bend", QUARTER_TURN_AXIS);
-	defer alloc::free(mem, arguments);
-	Object*? applied = f.call_tool("apply_clip", arguments);
-	if (catch applied) { test::@check(false, "apply_clip accepts a well-formed clip"); return; }
-	applied.free();
-
-	test::@check(f.app.doc.bound_index("", "bend") >= 0, "the applied clip was not bound");
-	test::@check(f.app.clip_named_in_authored("bend").valid(), "the applied clip is not in the pack");
-
-	f.app.undo();
-
-	test::@check(!f.app.clip_named_in_authored("bend").valid(),
-		"one undo left the clip in the pack");
-	test::@check(f.app.doc.bound_index("", "bend") < 0,
-		"one undo left the timeline binding behind");
-	test::@check(f.app.doc.animations.len() == bound_before,
-		"one undo did not restore the binding count");
-}

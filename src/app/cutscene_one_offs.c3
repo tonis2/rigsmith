@@ -109,12 +109,7 @@ fn sz AppState.new_cut_one_off(&self, usz actor, float length = CUT_ONE_OFF_LENG
 	c = self.cutscene();
 	String name = self.free_one_off_name(c, actor, CUT_ONE_OFF_NAME);
 	defer name.free(mem);
-	usz count = c.one_offs.len;
-	CutOneOff[] grown = alloc::new_array(mem, CutOneOff, (sz)count + 1);
-	foreach (usz k, one : c.one_offs) grown[k] = one;
-	grown[count] = { .row = c.actors[actor].row.copy(mem), .clip = empty_one_off(name, length) };
-	if (count > 0) alloc::free(mem, c.one_offs);
-	c.one_offs = grown;
+	slice_push(mem, &c.one_offs, (CutOneOff){ .row = c.actors[actor].row.copy(mem), .clip = empty_one_off(name, length) });
 	CutStrip s = cut_strip(PLAY, self.cut_time, self.cut_time + length);
 	s.clip = name.copy(mem);
 	s.one_off = true;
@@ -191,7 +186,7 @@ fn bool AppState.delete_cut_one_off(&self, usz actor, String name)
 	c = self.cutscene();
 	CutActor* who = &c.actors[actor];
 	usz left;
-	foreach (usz k, &s : who.strips)
+	foreach (&s : who.strips)
 	{
 		if (s.one_off && s.clip == kept)
 		{
@@ -216,13 +211,7 @@ fn void Cutscene.remove_one_off(&self, sz at)
 {
 	if (at < 0 || (usz)at >= self.one_offs.len) return;
 	self.one_offs[at].free(mem);
-	for (usz k = (usz)at; k + 1 < self.one_offs.len; k++) self.one_offs[k] = self.one_offs[k + 1];
-	self.one_offs = self.one_offs[:self.one_offs.len - 1];
-	if (self.one_offs.len == 0)
-	{
-		alloc::free(mem, self.one_offs.ptr);
-		self.one_offs = {};
-	}
+	slice_remove_at(mem, &self.one_offs, (usz)at);
 }
 
 <* Which one-offs some strip plays now, one flag each. The caller frees it. *>

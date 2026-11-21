@@ -51,7 +51,7 @@ import std::math;
 import std::math::matrix;
 import std::math::quaternion;
 
-faultdef PATCH_REFUSED;
+excuse PATCH_REFUSED;
 
 const String PATCH_CLIP_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip to patch. get_scene lists every pack and clip; get_clip reads one back in the shape apply_clip takes."},

@@ -7,6 +7,7 @@
 module crig_tests::layers;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::collections::object;
 import std::core::test;
@@ -18,34 +19,11 @@ import std::math;
 import std::math::vector;
 import std::math::quaternion;
 
-// root
-//  |- a - b - c
-//  `- d
-Vec3[5] rig_joints @local = {
-	{ 0, 1, 0 }, { 0, 0.8f, 0 }, { 0, 0.6f, 0 }, { 0, 0.4f, 0 }, { 0.3f, 0.9f, 0 },
-};
-int[5] rig_parents @local = { -1, 0, 1, 2, 0 };
-String[5] rig_names @local = { "root", "a", "b", "c", "d" };
-
 const Vec3 X = { 1, 0, 0 };
 const Vec3 Y = { 0, 1, 0 };
 
-fn rig::Skeleton small_rig() => { .joints = rig_joints[..], .parents = rig_parents[..] };
-
 // ---------------------------------------------------------------------------
 // Builders. Every string is a heap copy: `AnimTemplate.free` releases them.
-
-fn AnimKeyframe key_of(float time, String joint, Vec3 axis, float angle)
-{
-	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
-	dots[0] = { .joint_name = joint.copy(mem), .axis = axis, .angle = angle, .channels = ROTATION };
-	return { .time = time, .dots = dots };
-}
-
-fn AnimTemplate clip_of(String name, float duration, bool loop, AnimKeyframe[] keys)
-{
-	return { .name = name.copy(mem), .duration = duration, .keyframes = keys, .loop = loop, .owned = true };
-}
 
 fn AnimKeyframe[] keys_of(AnimKeyframe first, AnimKeyframe second = {})
 {
@@ -98,17 +76,10 @@ macro bool @failed(#result)
 	return false;
 }
 
-fn bool near(float a, float b, float tolerance = 1.0e-4f) => math::abs(a - b) <= tolerance;
-
-fn bool same_rotation(Quaternionf a, Quaternionf b, float tolerance = 1.0e-4f)
-{
-	return 1.0f - math::abs(a.v.dot(b.v)) <= tolerance;
-}
-
 fn rig::Pose pose_of(AnimTemplate* clip, float time, bool honor_solo = true)
 {
-	rig::Skeleton skeleton = small_rig();
-	return clip.pose(mem, &skeleton, rig_names[..], time, false, honor_solo);
+	rig::Skeleton skeleton = helpers::small_rig();
+	return clip.pose(mem, &skeleton, helpers::small_rig_names[..], time, false, honor_solo);
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +87,8 @@ fn rig::Pose pose_of(AnimTemplate* clip, float time, bool honor_solo = true)
 
 fn void a_wave_layer_loops_seamlessly() @test
 {
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.0f));
-	AnimTemplate clip = clip_of("loops", 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.0f));
+	AnimTemplate clip = helpers::clip_of("loops", 1.0f, true, keys);
 	defer clip.free(mem);
 	// 1.6 cycles would not close; a looping clip rounds it to 2.
 	AnimLayer[1] stack = { wave_layer("wave", "a", 0.3f, 1.6f) };
@@ -132,13 +103,13 @@ fn void a_wave_layer_loops_seamlessly() @test
 
 	for (usz j = 0; j < 5; j++)
 	{
-		test::@check(same_rotation(start.rotations[j], end.rotations[j]),
-			"joint %s differs between t=0 and t=duration", rig_names[j]);
+		test::@check(helpers::same_rotation(start.rotations[j], end.rotations[j], 1.0e-4f),
+			"joint %s differs between t=0 and t=duration", helpers::small_rig_names[j]);
 	}
 	// It moves in between, and down the chain: a, b and c, but not d.
 	test::@check(math::abs(turn_about(middle.rotations[1], X)) > 0.05f, "the wave did not move a");
 	test::@check(math::abs(turn_about(middle.rotations[3], X)) > 0.05f, "the wave did not reach c");
-	test::@check(same_rotation(middle.rotations[4], quaternion::IDENTITY), "the wave moved d, off its chain");
+	test::@check(helpers::same_rotation(middle.rotations[4], quaternion::IDENTITY, 1.0e-4f), "the wave moved d, off its chain");
 	// Falloff above one grows toward the tip: c swings further than a at its peak
 	// (lag 0.15 per joint puts the peaks at different instants, so compare maxima).
 	float peak_a = 0.0f;
@@ -155,8 +126,8 @@ fn void a_wave_layer_loops_seamlessly() @test
 
 fn void noise_and_pulse_layers_loop_and_stay_bounded() @test
 {
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.0f));
-	AnimTemplate clip = clip_of("procedural", 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.0f));
+	AnimTemplate clip = helpers::clip_of("procedural", 1.0f, true, keys);
 	defer clip.free(mem);
 	AnimLayer noise = wave_layer("noise", "d", 0.25f, 3.0f);
 	noise.kind = NOISE;
@@ -174,7 +145,7 @@ fn void noise_and_pulse_layers_loop_and_stay_bounded() @test
 	defer end.free(mem);
 	for (usz j = 0; j < 5; j++)
 	{
-		test::@check(same_rotation(start.rotations[j], end.rotations[j]), "noise/pulse does not close on %s", rig_names[j]);
+		test::@check(helpers::same_rotation(start.rotations[j], end.rotations[j], 1.0e-4f), "noise/pulse does not close on %s", helpers::small_rig_names[j]);
 	}
 	float biggest = 0.0f;
 	for (uint i = 0; i < 100; i++)
@@ -186,7 +157,7 @@ fn void noise_and_pulse_layers_loop_and_stay_bounded() @test
 	test::@check(biggest > 0.05f && biggest <= 0.25f + 1.0e-4f, "noise peak %.3f is not within its amplitude", biggest);
 	rig::Pose hit = pose_of(&clip, 0.5f);
 	defer hit.free(mem);
-	test::@check(near(math::abs(turn_about(hit.rotations[3], X)), 0.5f, 2.0e-3f),
+	test::@check(math::is_approx(math::abs(turn_about(hit.rotations[3], X)), 0.5f, 2.0e-3f),
 		"the pulse did not peak at its amplitude at `at` (%.4f)", turn_about(hit.rotations[3], X));
 	rig::Pose far = pose_of(&clip, 0.9f);
 	defer far.free(mem);
@@ -199,10 +170,10 @@ fn void noise_and_pulse_layers_loop_and_stay_bounded() @test
 // A base that holds b at 0.2 about X, and the hold a keyed layer adds to.
 fn AnimTemplate base_b()
 {
-	return clip_of("base", 1.0f, false, keys_of(key_of(0.0f, "b", X, 0.2f)));
+	return helpers::clip_of("base", 1.0f, false, keys_of(helpers::key_of(0.0f, "b", X, 0.2f)));
 }
 
-fn AnimKeyframe[] delta_b(float angle) => keys_of(key_of(0.0f, "b", X, angle));
+fn AnimKeyframe[] delta_b(float angle) => keys_of(helpers::key_of(0.0f, "b", X, angle));
 
 fn float b_angle(AnimTemplate* clip, bool honor_solo = true)
 {
@@ -215,21 +186,21 @@ fn void an_additive_keyed_layer_adds_exactly_its_delta() @test
 {
 	AnimTemplate clip = base_b();
 	defer clip.free(mem);
-	test::@check(near(b_angle(&clip), 0.2f), "the base alone is not 0.2");
+	test::@check(math::is_approx(b_angle(&clip), 0.2f, 1e-4f), "the base alone is not 0.2");
 
 	AnimLayer[1] full = { keyed_layer("nod", ADDITIVE, 1.0f, delta_b(0.4f)) };
 	give_layers(&clip, full[..]);
-	test::@check(near(b_angle(&clip), 0.6f), "weight 1 gives %.5f, not base + delta", b_angle(&clip));
+	test::@check(math::is_approx(b_angle(&clip), 0.6f, 1e-4f), "weight 1 gives %.5f, not base + delta", b_angle(&clip));
 
 	clip.layers[0].weight = 0.5f;
-	test::@check(near(b_angle(&clip), 0.4f), "weight 0.5 gives %.5f, not base + half the delta", b_angle(&clip));
+	test::@check(math::is_approx(b_angle(&clip), 0.4f, 1e-4f), "weight 0.5 gives %.5f, not base + half the delta", b_angle(&clip));
 
 	clip.layers[0].weight = 0.0f;
-	test::@check(near(b_angle(&clip), 0.2f), "weight 0 changed the pose");
+	test::@check(math::is_approx(b_angle(&clip), 0.2f, 1e-4f), "weight 0 changed the pose");
 
 	clip.layers[0].weight = 1.0f;
 	clip.layers[0].mute = true;
-	test::@check(near(b_angle(&clip), 0.2f), "a muted layer changed the pose");
+	test::@check(math::is_approx(b_angle(&clip), 0.2f, 1e-4f), "a muted layer changed the pose");
 }
 
 fn void solo_isolates_one_layer_but_an_export_ignores_it() @test
@@ -241,27 +212,27 @@ fn void solo_isolates_one_layer_but_an_export_ignores_it() @test
 		keyed_layer("small", ADDITIVE, 1.0f, delta_b(0.1f)),
 	};
 	give_layers(&clip, stack[..]);
-	test::@check(near(b_angle(&clip), 0.7f), "both layers add: %.5f", b_angle(&clip));
+	test::@check(math::is_approx(b_angle(&clip), 0.7f, 1e-4f), "both layers add: %.5f", b_angle(&clip));
 
 	clip.layers[1].solo = true;
-	test::@check(near(b_angle(&clip), 0.3f), "solo leaves only the soloed layer: %.5f", b_angle(&clip));
-	test::@check(near(b_angle(&clip, false), 0.7f), "an export must ignore solo: %.5f", b_angle(&clip, false));
+	test::@check(math::is_approx(b_angle(&clip), 0.3f, 1e-4f), "solo leaves only the soloed layer: %.5f", b_angle(&clip));
+	test::@check(math::is_approx(b_angle(&clip, false), 0.7f, 1e-4f), "an export must ignore solo: %.5f", b_angle(&clip, false));
 
 	// A muted layer cannot solo the others away.
 	clip.layers[1].mute = true;
-	test::@check(near(b_angle(&clip), 0.6f), "a muted solo layer silenced the rest: %.5f", b_angle(&clip));
+	test::@check(math::is_approx(b_angle(&clip), 0.6f, 1e-4f), "a muted solo layer silenced the rest: %.5f", b_angle(&clip));
 }
 
 fn void a_layer_can_drive_a_joint_the_base_never_keys() @test
 {
-	AnimTemplate clip = clip_of("sparse", 1.0f, false, keys_of(key_of(0.0f, "a", Y, 0.3f)));
+	AnimTemplate clip = helpers::clip_of("sparse", 1.0f, false, keys_of(helpers::key_of(0.0f, "a", Y, 0.3f)));
 	defer clip.free(mem);
-	AnimLayer[1] stack = { keyed_layer("c only", ADDITIVE, 1.0f, keys_of(key_of(0.0f, "c", X, 0.5f))) };
+	AnimLayer[1] stack = { keyed_layer("c only", ADDITIVE, 1.0f, keys_of(helpers::key_of(0.0f, "c", X, 0.5f))) };
 	give_layers(&clip, stack[..]);
 	rig::Pose p = pose_of(&clip, 0.0f);
 	defer p.free(mem);
-	test::@check(near(turn_about(p.rotations[3], X), 0.5f), "the layer did not move c");
-	test::@check(near(turn_about(p.rotations[1], Y), 0.3f), "the base on a was disturbed");
+	test::@check(math::is_approx(turn_about(p.rotations[3], X), 0.5f, 1e-4f), "the layer did not move c");
+	test::@check(math::is_approx(turn_about(p.rotations[1], Y), 0.3f, 1e-4f), "the base on a was disturbed");
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +245,7 @@ fn void an_override_layer_acts_only_inside_its_mask() @test
 	String[3] joints = { "a", "b", "c" };
 	foreach (usz i, joint : joints) dots[i] = { .joint_name = joint.copy(mem), .axis = Y, .angle = 0.3f, .channels = ROTATION };
 	base_keys[0] = { .time = 0.0f, .dots = dots };
-	AnimTemplate clip = clip_of("override", 1.0f, false, base_keys);
+	AnimTemplate clip = helpers::clip_of("override", 1.0f, false, base_keys);
 	defer clip.free(mem);
 
 	AnimKeyDot[] layer_dots = alloc::new_array(mem, AnimKeyDot, 3);
@@ -289,15 +260,15 @@ fn void an_override_layer_acts_only_inside_its_mask() @test
 
 	rig::Pose p = pose_of(&clip, 0.0f);
 	defer p.free(mem);
-	test::@check(near(turn_about(p.rotations[1], Y), 0.3f), "a, outside the mask, was overridden (%.4f)", turn_about(p.rotations[1], Y));
-	test::@check(near(turn_about(p.rotations[2], Y), 1.0f), "b, the mask's joint, was not overridden");
-	test::@check(near(turn_about(p.rotations[3], Y), 1.0f), "c, below the masked joint, was not overridden");
+	test::@check(math::is_approx(turn_about(p.rotations[1], Y), 0.3f, 1e-4f), "a, outside the mask, was overridden (%.4f)", turn_about(p.rotations[1], Y));
+	test::@check(math::is_approx(turn_about(p.rotations[2], Y), 1.0f, 1e-4f), "b, the mask's joint, was not overridden");
+	test::@check(math::is_approx(turn_about(p.rotations[3], Y), 1.0f, 1e-4f), "c, below the masked joint, was not overridden");
 
 	clip.layers[0].weight = 0.5f;
 	rig::Pose half = pose_of(&clip, 0.0f);
 	defer half.free(mem);
-	test::@check(near(turn_about(half.rotations[2], Y), 0.65f, 1.0e-3f), "half weight did not blend (%.4f)", turn_about(half.rotations[2], Y));
-	test::@check(near(turn_about(half.rotations[1], Y), 0.3f), "a moved at half weight");
+	test::@check(math::is_approx(turn_about(half.rotations[2], Y), 0.65f, 1.0e-3f), "half weight did not blend (%.4f)", turn_about(half.rotations[2], Y));
+	test::@check(math::is_approx(turn_about(half.rotations[1], Y), 0.3f, 1e-4f), "a moved at half weight");
 }
 
 fn void a_ranged_layer_fades_in_and_out_of_its_window() @test
@@ -325,10 +296,10 @@ fn void a_ranged_layer_fades_in_and_out_of_its_window() @test
 	defer middle.free(mem);
 	rig::Pose after = pose_of(&clip, 3.5f);
 	defer after.free(mem);
-	test::@check(near(at_before, 0.2f), "the layer acts before its range (%.4f)", at_before);
-	test::@check(near(turn_about(rising.rotations[2], X), 0.4f), "half way through the fade-in is half the delta");
-	test::@check(near(turn_about(middle.rotations[2], X), 0.6f), "full delta in the middle of the range");
-	test::@check(near(turn_about(after.rotations[2], X), 0.2f), "the layer acts after its range");
+	test::@check(math::is_approx(at_before, 0.2f, 1e-4f), "the layer acts before its range (%.4f)", at_before);
+	test::@check(math::is_approx(turn_about(rising.rotations[2], X), 0.4f, 1e-4f), "half way through the fade-in is half the delta");
+	test::@check(math::is_approx(turn_about(middle.rotations[2], X), 0.6f, 1e-4f), "full delta in the middle of the range");
+	test::@check(math::is_approx(turn_about(after.rotations[2], X), 0.2f, 1e-4f), "the layer acts after its range");
 }
 
 // ---------------------------------------------------------------------------
@@ -336,8 +307,8 @@ fn void a_ranged_layer_fades_in_and_out_of_its_window() @test
 
 fn AnimTemplate layered_clip(String name)
 {
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.25f));
-	AnimTemplate clip = clip_of(name, 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.25f));
+	AnimTemplate clip = helpers::clip_of(name, 1.0f, true, keys);
 	AnimLayer breath = keyed_layer("breath \"in\"", ADDITIVE, 0.75f, delta_b(0.125f));
 	breath.mask = alloc::new_array(mem, String, 2);
 	breath.mask[0] = "b".copy(mem);
@@ -415,7 +386,7 @@ fn void a_sidecar_without_layers_reads_and_other_versions_are_refused() @test
 {
 	RigDocument doc = {};
 	defer doc.free();
-	AnimTemplate clip = clip_of("Plain", 1.0f, false, keys_of(key_of(0.0f, "a", Y, 0.5f)));
+	AnimTemplate clip = helpers::clip_of("Plain", 1.0f, false, keys_of(helpers::key_of(0.0f, "a", Y, 0.5f)));
 	defer clip.free(mem);
 	AnimTemplate[1] source = { clip };
 	String text = crig::session_text(mem, &doc, "hero.glb", source[..]);
@@ -479,8 +450,8 @@ fn void save_flattens_the_layers_into_the_model_and_the_sidecar_keeps_them() @te
 	app.doc.rotation_limits.clear();
 	app.saves_in_place = true;
 
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "hips", Y, 0.0f), key_of(1.0f, "hips", Y, 0.2f));
-	AnimTemplate clip = clip_of("Layered", 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "hips", Y, 0.0f), helpers::key_of(1.0f, "hips", Y, 0.2f));
+	AnimTemplate clip = helpers::clip_of("Layered", 1.0f, true, keys);
 	AnimLayer wave = wave_layer("arm wave", "shoulder_L", 0.3f, 2.0f);
 	wave.axis = { 0, 0, 1 };
 	AnimLayer[1] stack = { wave };
@@ -517,7 +488,7 @@ fn void save_flattens_the_layers_into_the_model_and_the_sidecar_keeps_them() @te
 		defer want.free(mem);
 		rig::Pose got = baked.pose(mem, &view.skeleton, view.names, t, false);
 		defer got.free(mem);
-		test::@check(same_rotation(want.rotations[shoulder], got.rotations[shoulder], 1.0e-4f),
+		test::@check(helpers::same_rotation(want.rotations[shoulder], got.rotations[shoulder], 1.0e-4f),
 			"the file's channel differs from the layered pose at t=%.3f (%.4f vs %.4f)", t,
 			turn_about(want.rotations[shoulder], Y), turn_about(got.rotations[shoulder], Y));
 	}
@@ -539,7 +510,7 @@ fn void save_flattens_the_layers_into_the_model_and_the_sidecar_keeps_them() @te
 	defer view2.free(mem);
 	rig::Pose after = again.pose(mem, &view2.skeleton, view2.names, 0.125f, false);
 	defer after.free(mem);
-	test::@check(same_rotation(before.rotations[shoulder], after.rotations[shoulder]),
+	test::@check(helpers::same_rotation(before.rotations[shoulder], after.rotations[shoulder], 1.0e-4f),
 		"the reopened clip poses differently — the wave was doubled or lost");
 }
 
@@ -558,19 +529,19 @@ fn Quaternionf pose_rotation(AnimTemplate* clip, RigView* view, String joint, fl
 
 fn void a_pack_export_bakes_a_layered_clip() @test
 {
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.0f));
-	AnimTemplate clip = clip_of("Waving", 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.0f));
+	AnimTemplate clip = helpers::clip_of("Waving", 1.0f, true, keys);
 	defer clip.free(mem);
 	AnimLayer[2] stack = { wave_layer("wave", "a", 0.3f, 2.0f), wave_layer("muted", "d", 0.5f, 1.0f) };
 	stack[1].mute = true;
 	stack[1].solo = true; // solo must not matter to a file
 	give_layers(&clip, stack[..]);
 
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	String path = "build/layers-pack.glb";
 	defer (void)file::delete(path);
 	AnimTemplate[1] written = { clip };
-	if (catch fault error = crig::export_animations_glb(mem, path, &skeleton, rig_names[..], written[..]))
+	if (catch fault error = crig::export_animations_glb(mem, path, &skeleton, helpers::small_rig_names[..], written[..]))
 	{
 		test::@check(false, "the export failed: %s", error);
 		return;
@@ -590,18 +561,18 @@ fn void a_pack_export_bakes_a_layered_clip() @test
 		float t = (float)i / 32.0f;
 		rig::Pose want = pose_of(&clip, t, false);
 		defer want.free(mem);
-		rig::Pose got = back.pose(mem, &skeleton, rig_names[..], t, false);
+		rig::Pose got = back.pose(mem, &skeleton, helpers::small_rig_names[..], t, false);
 		defer got.free(mem);
 		for (usz j = 0; j < 5; j++)
 		{
-			test::@check(same_rotation(want.rotations[j], got.rotations[j], 1.0e-4f),
-				"%s differs from the layered pose at t=%.3f", rig_names[j], t);
+			test::@check(helpers::same_rotation(want.rotations[j], got.rotations[j], 1.0e-4f),
+				"%s differs from the layered pose at t=%.3f", helpers::small_rig_names[j], t);
 		}
 	}
 	// The muted layer left d still.
-	rig::Pose mid = back.pose(mem, &skeleton, rig_names[..], 0.25f, false);
+	rig::Pose mid = back.pose(mem, &skeleton, helpers::small_rig_names[..], 0.25f, false);
 	defer mid.free(mem);
-	test::@check(same_rotation(mid.rotations[4], quaternion::IDENTITY), "a muted layer was baked");
+	test::@check(helpers::same_rotation(mid.rotations[4], quaternion::IDENTITY, 1.0e-4f), "a muted layer was baked");
 }
 
 fn void a_library_pack_save_bakes_a_layered_clip() @test
@@ -618,8 +589,8 @@ fn void a_library_pack_save_bakes_a_layered_clip() @test
 	app.doc.root_id = root;
 	app.library_path = library.copy(mem);
 
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.0f));
-	AnimTemplate clip = clip_of("Flap", 1.0f, true, keys);
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.0f));
+	AnimTemplate clip = helpers::clip_of("Flap", 1.0f, true, keys);
 	AnimLayer[1] stack = { wave_layer("wave", "a", 0.3f, 2.0f) };
 	give_layers(&clip, stack[..]);
 	test::@check(app.author_clip(clip).valid(), "the layered clip did not land");
@@ -674,8 +645,8 @@ fn void ToolFixture.open(&self)
 	self.app.doc.connect(a, b);
 	self.app.doc.connect(b, c);
 	self.app.doc.root_id = root;
-	AnimKeyframe[] keys = keys_of(key_of(0.0f, "a", Y, 0.0f), key_of(1.0f, "a", Y, 0.3f));
-	self.ref = self.app.author_clip(clip_of("Base", 1.0f, true, keys));
+	AnimKeyframe[] keys = keys_of(helpers::key_of(0.0f, "a", Y, 0.0f), helpers::key_of(1.0f, "a", Y, 0.3f));
+	self.ref = self.app.author_clip(helpers::clip_of("Base", 1.0f, true, keys));
 }
 
 fn String call_set_layer(ToolFixture* f, String text, bool* ok)
@@ -719,7 +690,7 @@ fn void set_layer_adds_replaces_moves_and_removes_in_one_undo_step_each() @test
 	AnimTemplate* clip = f.app.clip(f.ref);
 	test::@check(clip.layers.len == 2 && clip.layers[0].name == "nod" && clip.layers[1].name == "tail"
 		&& clip.layers[0].kind == KEYED && clip.layers[0].keyframes.len == 1
-		&& near(clip.layers[0].keyframes[0].dots[0].angle, 0.4f) && clip.layers[0].weight == 0.5f,
+		&& math::is_approx(clip.layers[0].keyframes[0].dots[0].angle, 0.4f, 1e-4f) && clip.layers[0].weight == 0.5f,
 		"the keyed layer is not at the bottom of the stack");
 
 	// Replace merges: only the named fields change.
@@ -785,10 +756,10 @@ fn void merge_layers_bakes_the_stack_into_keys_in_one_undo_step() @test
 	test::@check(ok && f.app.clip(f.ref).layers.len == 2, "could not build the stack");
 
 	// What the layered clip looks like, to compare the merge with.
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	rig::Pose[9] expected;
 	AnimTemplate* layered = f.app.clip(f.ref);
-	for (usz i = 0; i < 9; i++) expected[i] = layered.pose(mem, &skeleton, rig_names[..], (float)i / 8.0f, false);
+	for (usz i = 0; i < 9; i++) expected[i] = layered.pose(mem, &skeleton, helpers::small_rig_names[..], (float)i / 8.0f, false);
 	defer foreach (&p : expected) p.free(mem);
 
 	Object* args = args_of(`{"clip":"Base"}`);
@@ -808,12 +779,12 @@ fn void merge_layers_bakes_the_stack_into_keys_in_one_undo_step() @test
 	test::@check(flat.keyframes.len > 2, "the keys were not baked (%d)", flat.keyframes.len);
 	for (usz i = 0; i < 9; i++)
 	{
-		rig::Pose got = flat.pose(mem, &skeleton, rig_names[..], (float)i / 8.0f, false);
+		rig::Pose got = flat.pose(mem, &skeleton, helpers::small_rig_names[..], (float)i / 8.0f, false);
 		defer got.free(mem);
 		for (usz j = 0; j < 5; j++)
 		{
-			test::@check(same_rotation(expected[i].rotations[j], got.rotations[j], 1.0e-3f),
-				"%s differs after the merge at t=%.3f", rig_names[j], (float)i / 8.0f);
+			test::@check(helpers::same_rotation(expected[i].rotations[j], got.rotations[j], 1.0e-3f),
+				"%s differs after the merge at t=%.3f", helpers::small_rig_names[j], (float)i / 8.0f);
 		}
 	}
 

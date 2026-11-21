@@ -37,7 +37,7 @@ const float FAR_DIM = 0.45;
 
 const float GIZMO_LABEL_SIZE = 11.0;
 
-faultdef NO_BALL, NO_VIEW_KEY;
+excuse NO_BALL, NO_VIEW_KEY;
 
 struct ViewGizmo (Widget)
 {
@@ -106,7 +106,7 @@ fn void ViewGizmo.paint(&self, Element* elem, Painter* painter) @dynamic
 	// clearest way to write it and the fastest.
 	ViewAxis[ViewAxis::values.len] order = ViewAxis::values;
 
-	foreach (usz i, value: ViewAxis::values) {
+	for (usz i = 0; i < order.len; i++) {
 		usz furthest = i;
 		for (usz j = i + 1; j < order.len; j++)
 		{

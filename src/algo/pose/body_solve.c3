@@ -133,8 +133,7 @@ const float POINT_POSE_TURN_LENGTH = 0.1;
 // body going along is no displacement, a part left behind is. A turn then costs the
 // mass it swings times its lever squared, and a light part answers a pull before a
 // heavy one. Trades the body's say against the grab's: three times as much and the
-// body hangs back from the pointer (`locks::a_chair_sit_holds_the_feet_and_undoes_in_one_step`,
-// `locks::sitting_back_leans_the_body_over_the_feet`,
+// body hangs back from the pointer (`locks::sitting_back_leans_the_body_over_the_feet`,
 // `ui::posing_bends_the_limb_and_barely_moves_the_fork`); a third as much and the arm
 // swings with nothing to say otherwise (`pose_mass::a_knuckle_pulled_turns_the_hand_not_the_arm`).
 const float POINT_POSE_STIFFNESS = 1e-3;

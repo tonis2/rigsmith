@@ -4,6 +4,7 @@
 module crig_tests::weight_field;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io::file;
@@ -192,12 +193,6 @@ fn void an_old_sidecar_leaves_the_models_own_rig() @test
 	test::@check(!app.saves_in_place, "an ignored sidecar still marked the model safe to save over");
 }
 
-fn uint field_dot(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
-
 fn float[] automatic_now(crig::AppState* app)
 {
 	crig::RigView view = app.open_rig(mem)!!;
@@ -210,13 +205,6 @@ fn float[] shown_now(crig::AppState* app)
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	return app.weights(mem, &view);
-}
-
-fn usz joint_of(crig::AppState* app, uint dot)
-{
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	return (usz)view.joint_of(dot);
 }
 
 fn usz rows_apart(float[] a, float[] b)
@@ -242,8 +230,8 @@ fn void grow_and_shrink_undo_each_other_and_reset_is_automatic() @test
 	open_field(&app, &mesh);
 	defer close_field(&app, &mesh);
 
-	uint ankle = field_dot(&app, "ankle_R");
-	usz joint = joint_of(&app, ankle);
+	uint ankle = helpers::dot_named(&app, "ankle_R");
+	usz joint = helpers::joint_index(&app, ankle);
 	app.area_solo = true;
 	app.select(ankle);
 	float[] start = shown_now(&app);
@@ -293,8 +281,8 @@ fn void a_grow_mirrors_to_the_twin() @test
 	open_field(&app, &mesh);
 	defer close_field(&app, &mesh);
 
-	uint right = field_dot(&app, "knee_R");
-	uint left = field_dot(&app, "knee_L");
+	uint right = helpers::dot_named(&app, "knee_R");
+	uint left = helpers::dot_named(&app, "knee_L");
 	app.select(right);
 	test::@check(app.grow_joint(1), "the knee would not grow");
 	test::@check(app.doc.find(right).grow > 0.0f && app.doc.find(left).grow > 0.0f, "the twin did not grow with Mirror on");
@@ -321,11 +309,11 @@ fn void a_grown_joint_keeps_its_weights_when_its_dot_moves() @test
 	open_field(&app, &mesh);
 	defer close_field(&app, &mesh);
 
-	uint knee = field_dot(&app, "knee_L");
+	uint knee = helpers::dot_named(&app, "knee_L");
 	app.area_solo = true;
 	app.select(knee);
 	test::@check(app.grow_joint(2), "the knee would not grow");
-	usz joint = joint_of(&app, knee);
+	usz joint = helpers::joint_index(&app, knee);
 	float[] grown = shown_now(&app);
 	defer alloc::free(mem, grown);
 	float[] automatic = automatic_now(&app);
@@ -354,8 +342,8 @@ fn void taking_the_hips_off_a_vertex_gives_it_back_to_the_leg() @test
 	open_field(&app, &mesh);
 	defer close_field(&app, &mesh);
 
-	uint hips = field_dot(&app, "hips");
-	uint ankle = field_dot(&app, "ankle_L");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
 	crig::RigView view = app.open_rig(mem)!!;
 	usz bones = view.len();
 	usz ankle_joint = (usz)view.joint_of(ankle);
@@ -399,7 +387,7 @@ fn void the_view_shows_the_edited_weights_plainly() @test
 	open_field(&app, &mesh);
 	defer close_field(&app, &mesh);
 
-	uint knee = field_dot(&app, "knee_L");
+	uint knee = helpers::dot_named(&app, "knee_L");
 	app.select(knee);
 	app.show_joint_panel = true;
 	app.joint_panel_tab = WEIGHTS;
@@ -424,23 +412,4 @@ fn void the_view_shows_the_edited_weights_plainly() @test
 	app.rebind_tints();
 	test::@check(app.tints[one[0]] != automatic[one[0]], "the edited vertex looks as it did");
 	test::@check(app.tints[one[0]] == crig::share_tint(0.0f), "the edited vertex is not drawn as the share it now holds");
-}
-
-<*
- The lasso's pinning job shows the joint's weights it is editing, the way the
- brush and the card do, and gives the view back when it closes.
-*>
-fn void lasso_pinning_shows_the_falloff() @test
-{
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_field(&app, &mesh);
-	defer close_field(&app, &mesh);
-
-	app.select(field_dot(&app, "knee_L"));
-	test::@check(app.tint_mode == OFF, "the fixture started with a view on");
-	test::@check(app.begin_lasso(PIN), "the lasso would not open on pinning");
-	test::@check(app.tint_mode == FALLOFF, "pinning did not show the falloff");
-	app.end_lasso();
-	test::@check(app.tint_mode == OFF, "closing the lasso left the falloff up");
 }

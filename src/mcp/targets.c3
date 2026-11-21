@@ -41,7 +41,7 @@ import std::math;
 import std::math::matrix;
 import std::math::quaternion;
 
-faultdef TARGETS_INVALID;
+excuse TARGETS_INVALID;
 
 const String SOLVE_TARGETS_SCHEMA = `{"type":"object","properties":{
 	"targets":{"type":"array","description":"The hands and feet to place, each reached independently. Left and right limbs do not share joints, so they do not interfere; two targets on one limb would, and the later one wins.","items":{"type":"object","properties":{

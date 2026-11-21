@@ -57,7 +57,7 @@ const float EXACT_POSITION = 1.0e-6f;
 // A reader that knows nothing about crig
 // ---------------------------------------------------------------------------
 
-faultdef IMPORT_NO_SKIN, IMPORT_UNSUPPORTED;
+excuse IMPORT_NO_SKIN, IMPORT_UNSUPPORTED;
 
 <*
  One joint of a file: where it rests in world space, and what it is called.

@@ -362,18 +362,3 @@ fn AnimTemplate clip_curve_cleaned(Allocator allocator, AnimTemplate source, Ani
 	};
 	return clip;
 }
-
-fn AnimTemplate curves_euler_filtered(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, usz* changed)
-	=> clip_curve_cleaned(allocator, source, picks, EULER_FILTER, changed);
-
-fn AnimTemplate curves_smoothed(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, usz* changed)
-	=> clip_curve_cleaned(allocator, source, picks, SMOOTH, changed);
-
-fn AnimTemplate curves_simplified(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, usz* changed)
-	=> clip_curve_cleaned(allocator, source, picks, SIMPLIFY, changed);
-
-fn AnimTemplate curves_flattened(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, usz* changed)
-	=> clip_curve_cleaned(allocator, source, picks, FLATTEN, changed);
-
-fn AnimTemplate curves_loop_matched(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, usz* changed)
-	=> clip_curve_cleaned(allocator, source, picks, LOOP_SEAM, changed);

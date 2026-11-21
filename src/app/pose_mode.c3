@@ -391,7 +391,7 @@ fn void AppState.refresh_posed(&self)
 // ---------------------------------------------------------------------------
 // The chain, and the two gestures over it.
 
-faultdef NO_DRAG_DIRECTION;
+excuse NO_DRAG_DIRECTION;
 
 <*
  Resolve a temporary directional lock into the world direction this gesture
@@ -766,7 +766,7 @@ fn void AppState.measure_position_locks(&self, RigView* view, rig::Pose pose, ui
 			? (view.skeleton.joints[(usz)j].transform(palette[(usz)j]) - lock.target).length()
 			: 0.0f;
 		self.position_locks[i].turn_residual = lock.rotation && !carried
-			? rotation_angle_between(world[(usz)j], lock.orient)
+			? angle_between_turns(world[(usz)j], lock.orient)
 			: 0.0f;
 	}
 }
@@ -1598,7 +1598,7 @@ fn void AppState.turn_joint_to(&self, JointRotationAxis axis, float angle)
 	self.land_turn(&view, &pose, (usz)joint, requested, frame, limits);
 }
 
-faultdef NO_TURN;
+excuse NO_TURN;
 
 <*
  The angle the turning joint had about one bone-local axis when the gesture

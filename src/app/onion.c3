@@ -14,6 +14,7 @@ module crig;
 
 import rig;
 import std::math;
+import std::hash::fnv32a;
 
 struct GhostPose
 {
@@ -74,21 +75,17 @@ fn bool AppState.onion_gesture(&self)
 fn uint AppState.draft_signature(&self)
 {
 	if (!self.pose_edit_active) return 0;
-	uint hash = 2166136261u;
-	hash = (hash ^ bitcast(self.edit_time, uint)) * 16777619u;
+	Fnv32a hash;
+	hash.init();
+	hash.mix(self.edit_time);
 	foreach (joint : self.pose_edit_draft)
 	{
-		float[7] parts = { joint.rotation.i, joint.rotation.j, joint.rotation.k, joint.rotation.l,
-			joint.offset.x, joint.offset.y, joint.offset.z };
-		hash = (hash ^ joint.dot_id) * 16777619u;
-		foreach (part : parts) hash = (hash ^ bitcast(part, uint)) * 16777619u;
+		hash.mix(joint.dot_id);
+		hash.mix(joint.rotation);
+		hash.mix(joint.offset);
 	}
-	foreach (aim : self.aim_draft)
-	{
-		float[3] parts = { aim.at.x, aim.at.y, aim.at.z };
-		foreach (part : parts) hash = (hash ^ bitcast(part, uint)) * 16777619u;
-	}
-	return hash | 1u;
+	foreach (aim : self.aim_draft) hash.mix(aim.at);
+	return (uint)hash | 1u;
 }
 
 <*

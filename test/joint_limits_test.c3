@@ -9,6 +9,7 @@ module crig_tests::joint_limits;
 import crig;
 import crig_tests::euler_reference;
 import crig_tests::library;
+import crig_tests::helpers;
 import rig;
 import collision;
 import std::collections::list;
@@ -16,12 +17,7 @@ import std::encoding::json;
 import std::collections::object;
 import std::core::test;
 import std::io;
-import std::io::file;
 import std::math;
-import std::os::env;
-
-fn bool near(float a, float b) => math::abs(a - b) < 1.0e-5f;
-fn bool near_vec(Vec3 a, Vec3 b) => (a - b).length_sq() < 1.0e-10f;
 
 struct LimitRig
 {
@@ -45,18 +41,6 @@ fn void LimitRig.open(&self)
 
 fn void LimitRig.close(&self) => self.doc.free();
 
-fn crig::JointLimitFrame frame_of(crig::RigDocument* doc, uint id)
-{
-	uint[] ids;
-	rig::Skeleton skeleton = crig::build_skeleton(doc, mem, &ids)!!;
-	defer
-	{
-		skeleton.free(mem);
-		alloc::free(mem, ids);
-	}
-	return crig::joint_limit_frame(&skeleton, ids, doc.rotation_limits_of(id));
-}
-
 fn void absent_limits_are_really_unconstrained() @test
 {
 	LimitRig fixture;
@@ -67,8 +51,8 @@ fn void absent_limits_are_really_unconstrained() @test
 	test::@check(!limits.constrained, "an untouched joint was constrained");
 	test::@check(limits.axes[0].allowed && limits.axes[1].allowed && limits.axes[2].allowed,
 		"the panel defaults do not allow all three axes");
-	test::@check(near(limits.axes[0].minimum, -(float)math::PI)
-		&& near(limits.axes[0].maximum, (float)math::PI),
+	test::@check(math::is_approx(limits.axes[0].minimum, -(float)math::PI, 1e-5f)
+		&& math::is_approx(limits.axes[0].maximum, (float)math::PI, 1e-5f),
 		"the default X range was %.3f..%.3f", limits.axes[0].minimum, limits.axes[0].maximum);
 	test::@check(fixture.doc.rotation_limits.len() == 0,
 		"reading defaults materialized document data");
@@ -91,14 +75,14 @@ fn void settings_are_dot_keyed_normalized_and_reset_to_absence() @test
 
 	crig::JointRotationLimits held = fixture.doc.rotation_limits_of(fixture.middle);
 	test::@check(held.dot_id == fixture.middle && held.constrained, "settings landed on the wrong dot");
-	test::@check(near(held.saved_frame.v.w, 1.0f), "saved frame was not normalized (w %.3f)", held.saved_frame.v.w);
-	test::@check(!held.axes[1].allowed && near(held.axes[1].locked, 0.2f),
+	test::@check(math::is_approx(held.saved_frame.v.w, 1.0f, 1e-5f), "saved frame was not normalized (w %.3f)", held.saved_frame.v.w);
+	test::@check(!held.axes[1].allowed && math::is_approx(held.axes[1].locked, 0.2f, 1e-5f),
 		"the locked Y row changed");
 	test::@check(!fixture.doc.set_rotation_limits(fixture.middle, held), "an exact no-op reported a change");
 	held.constrained = false;
 	test::@check(fixture.doc.set_rotation_limits(fixture.middle, held), "limits could not be switched off");
 	test::@check(fixture.doc.rotation_limits.len() == 1
-		&& near(fixture.doc.rotation_limits_of(fixture.middle).axes[1].locked, 0.2f),
+		&& math::is_approx(fixture.doc.rotation_limits_of(fixture.middle).axes[1].locked, 0.2f, 1e-5f),
 		"switching limits off erased the editable axis values");
 
 	crig::JointRotationLimits reset = crig::unconstrained_rotation(fixture.middle);
@@ -120,15 +104,15 @@ fn void chain_frames_follow_the_child_and_leaf_follows_its_parent() @test
 	fixture.open();
 	defer fixture.close();
 
-	crig::JointLimitFrame root = frame_of(&fixture.doc, fixture.root);
-	crig::JointLimitFrame leaf = frame_of(&fixture.doc, fixture.leaf);
+	crig::JointLimitFrame root = helpers::frame_of(&fixture.doc, fixture.root);
+	crig::JointLimitFrame leaf = helpers::frame_of(&fixture.doc, fixture.leaf);
 	test::@check(root.usable() && leaf.usable(), "a plain chain did not produce frames");
-	test::@check(near_vec(root.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }),
+	test::@check(helpers::near3(root.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }, 1e-5f),
 		"root +Y did not follow its child");
-	test::@check(near_vec(root.axis(crig::JointRotationAxis.X), { 1, 0, 0 })
-		&& near_vec(root.axis(crig::JointRotationAxis.Z), { 0, 0, 1 }),
+	test::@check(helpers::near3(root.axis(crig::JointRotationAxis.X), { 1, 0, 0 }, 1e-5f)
+		&& helpers::near3(root.axis(crig::JointRotationAxis.Z), { 0, 0, 1 }, 1e-5f),
 		"upright chain got a rolled or left-handed frame");
-	test::@check(near_vec(leaf.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }),
+	test::@check(helpers::near3(leaf.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }, 1e-5f),
 		"leaf +Y did not continue parent to joint");
 }
 
@@ -141,13 +125,13 @@ fn void bone_local_angles_round_trip_through_the_named_frame() @test
 	// A diagonal bone makes the frame materially different from model axes, so
 	// this catches a conversion that merely calls to_euler on the stored pose.
 	fixture.doc.move_dot(fixture.leaf, { 1, 2, 1 });
-	crig::JointLimitFrame frame = frame_of(&fixture.doc, fixture.middle);
+	crig::JointLimitFrame frame = helpers::frame_of(&fixture.doc, fixture.middle);
 	test::@check(frame.usable(), "the diagonal bone did not produce a frame");
 
 	Vec3 entered = { 0.35f, -0.20f, 0.50f };
 	Quaternionf rotation = crig::rotation_from_joint_angles(frame, entered);
 	Vec3 shown = crig::joint_angles_from_rotation(frame, rotation);
-	test::@check(near_vec(entered, shown),
+	test::@check(helpers::near3(entered, shown, 1e-5f),
 		"bone-local angles changed across the quaternion (%s -> %s)", entered, shown);
 
 	Quaternionf rebuilt = crig::rotation_from_joint_angles(frame, shown);
@@ -160,7 +144,7 @@ fn void simple_axis_table_clamps_allowed_axes_and_holds_locked_ones() @test
 	LimitRig fixture;
 	fixture.open();
 	defer fixture.close();
-	crig::JointLimitFrame frame = frame_of(&fixture.doc, fixture.middle);
+	crig::JointLimitFrame frame = helpers::frame_of(&fixture.doc, fixture.middle);
 	crig::JointRotationLimits limits = crig::unconstrained_rotation(fixture.middle);
 	limits.constrained = true;
 	limits.axes[0] = { .allowed = true, .minimum = -0.2f, .maximum = 0.4f };
@@ -170,7 +154,7 @@ fn void simple_axis_table_clamps_allowed_axes_and_holds_locked_ones() @test
 	Quaternionf asked = crig::rotation_from_joint_angles(frame, { 0.8f, -0.7f, -0.6f });
 	Quaternionf constrained = crig::constrain_joint_rotation(frame, limits, asked);
 	Vec3 got = crig::joint_angles_from_rotation(frame, constrained);
-	test::@check(near_vec(got, { 0.4f, 0.15f, -0.3f }),
+	test::@check(helpers::near3(got, { 0.4f, 0.15f, -0.3f }, 1e-5f),
 		"constraint produced %s instead of the allowed/locked values", got);
 
 	limits.constrained = false;
@@ -229,7 +213,7 @@ fn void sampled_playback_obeys_limits_without_rewriting_its_keys() @test
 	rig::Pose raw = clip.pose(mem, &view.skeleton, view.names, 0.5f, false);
 	defer raw.free(mem);
 	Vec3 raw_angles = crig::joint_angles_from_rotation(frame, raw.rotations[at]);
-	test::@check(near(raw_angles.x, 0.8f),
+	test::@check(math::is_approx(raw_angles.x, 0.8f, 1e-5f),
 		"the raw midpoint was %.3f, so the fixture never crossed the limit", raw_angles.x);
 
 	app.current_anim = clip;
@@ -238,9 +222,9 @@ fn void sampled_playback_obeys_limits_without_rewriting_its_keys() @test
 	rig::Pose shown = app.sampled_pose(mem, &view);
 	defer shown.free(mem);
 	Vec3 shown_angles = crig::joint_angles_from_rotation(frame, shown.rotations[at]);
-	test::@check(near_vec(shown_angles, { 0.25f, 0.0f, 0.0f }),
+	test::@check(helpers::near3(shown_angles, { 0.25f, 0.0f, 0.0f }, 1e-5f),
 		"playback showed %s instead of the constrained midpoint", shown_angles);
-	test::@check(near_vec(shown.offsets[at], raw.offsets[at]),
+	test::@check(helpers::near3(shown.offsets[at], raw.offsets[at], 1e-5f),
 		"limit evaluation changed the clip's translation channel");
 
 	// Grounding must measure the constrained limb. With the raw 0.8 rad bend the
@@ -264,12 +248,12 @@ fn void sampled_playback_obeys_limits_without_rewriting_its_keys() @test
 	{
 		test::@check(raw_grounded.offsets[(usz)root_at].y > 0.1f,
 			"the raw bend did not require a useful ground correction");
-		test::@check(near(evaluated_grounded.offsets[(usz)root_at].y, 0.0f),
+		test::@check(math::is_approx(evaluated_grounded.offsets[(usz)root_at].y, 0.0f, 1e-5f),
 			"grounding ran before limits and left a %.3f root lift",
 			evaluated_grounded.offsets[(usz)root_at].y);
 	}
 
-	test::@check(near(first_dots[0].angle, 0.6f) && near(last_dots[0].angle, 1.0f),
+	test::@check(math::is_approx(first_dots[0].angle, 0.6f, 1e-5f) && math::is_approx(last_dots[0].angle, 1.0f, 1e-5f),
 		"evaluating the clip rewrote its stored keys");
 }
 
@@ -300,7 +284,7 @@ fn void direct_fk_turn_stops_at_the_same_axis_limit() @test
 		view.dot_ids, app.doc.rotation_limits_of(joint));
 	app.turn_joint(frame.axis(crig::JointRotationAxis.X), 1.0f);
 	Vec3 got = crig::joint_angles_from_rotation(frame, app.working_pose(joint).rotation);
-	test::@check(near(got.x, 0.25f), "R crossed the X maximum and reached %.3f", got.x);
+	test::@check(math::is_approx(got.x, 0.25f, 1e-5f), "R crossed the X maximum and reached %.3f", got.x);
 	app.cancel_drag();
 }
 
@@ -346,7 +330,7 @@ fn void foot_ik_carries_only_the_turn_a_locked_knee_allows() @test
 		view.dot_ids, app.doc.rotation_limits_of(knee));
 	Vec3 knee_angles = crig::joint_angles_from_rotation(frame,
 		app.working_pose(knee).rotation);
-	test::@check(near_vec(knee_angles, {}),
+	test::@check(helpers::near3(knee_angles, {}, 1e-5f),
 		"foot IK moved a locked knee to %s", knee_angles);
 	test::@check(app.working_pose(thigh).rotation.v.w != 1.0f,
 		"locking the knee prevented the free thigh from helping");
@@ -380,11 +364,11 @@ fn void limit_frame_is_carried_by_the_parent_but_not_the_joint_it_limits() @test
 	Quaternionf carried = crig::carried_joint_limit_frame(frame, &skeleton, world, 1);
 	Vec3 expected = pose.rotations[0].rotate_vec3(frame.axis(crig::JointRotationAxis.Y));
 	Vec3 got = carried.rotate_vec3({ 0, 1, 0 });
-	test::@check(near_vec(got, expected),
+	test::@check(helpers::near3(got, expected, 1e-5f),
 		"the parent's pose did not carry the local Y gizmo axis (%s vs %s)", got, expected);
 
 	Vec3 wrongly_carried = world[1].rotate_vec3(frame.axis(crig::JointRotationAxis.Y));
-	test::@check(!near_vec(got, wrongly_carried),
+	test::@check(!helpers::near3(got, wrongly_carried, 1e-5f),
 		"the selected joint rotated its own limit boundary");
 }
 
@@ -427,13 +411,13 @@ fn void directional_and_plane_locks_project_the_pointer_without_drift() @test
 {
 	collision::Ray down = { .origin = { 4, 5, 10 }, .direction = { 0, 0, -1 } };
 	Vec3 in_xy = crig::slide_in_plane({ 1, 2, 3 }, crig::DragAxis.XY, down)!!;
-	test::@check(near_vec(in_xy, { 4, 5, 3 }),
+	test::@check(helpers::near3(in_xy, { 4, 5, 3 }, 1e-5f),
 		"the XY lock changed its held Z coordinate (%s)", in_xy);
 
 	Vec3 diagonal = (Vec3){ 1, 1, 0 }.normalize();
 	Vec3 along = crig::slide_along_direction({}, diagonal,
 		{ .origin = { 2, 0, 5 }, .direction = { 0, 0, -1 } })!!;
-	test::@check(near_vec(along, { 1, 1, 0 }),
+	test::@check(helpers::near3(along, { 1, 1, 0 }, 1e-5f),
 		"the bone-direction projection missed the closest point (%s)", along);
 }
 
@@ -451,34 +435,34 @@ fn void a_fork_follows_the_child_that_carries_its_bone_on() @test
 
 	uint side = fixture.doc.add_dot({ 1, 1, 0 }, "side");
 	fixture.doc.connect(fixture.middle, side);
-	crig::JointLimitFrame automatic = frame_of(&fixture.doc, fixture.middle);
+	crig::JointLimitFrame automatic = helpers::frame_of(&fixture.doc, fixture.middle);
 	test::@check(automatic.usable() && automatic.direction_dot == fixture.leaf,
 		"a fork did not follow the child along its bone (%s, dot %d)", automatic.status, automatic.direction_dot);
-	test::@check(near_vec(automatic.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }),
+	test::@check(helpers::near3(automatic.axis(crig::JointRotationAxis.Y), { 0, 1, 0 }, 1e-5f),
 		"the continuing child did not become +Y");
 
 	uint tail = fixture.doc.add_dot({ -1, -0.5f, 0 }, "tail");
 	fixture.doc.connect(fixture.root, tail);
-	crig::JointLimitFrame root = frame_of(&fixture.doc, fixture.root);
+	crig::JointLimitFrame root = helpers::frame_of(&fixture.doc, fixture.root);
 	test::@check(root.usable() && root.direction_dot == fixture.middle,
 		"the root followed its short branch (%s, dot %d)", root.status, root.direction_dot);
 
 	crig::JointRotationLimits settings = crig::unconstrained_rotation(fixture.middle);
 	settings.primary_child = side;
 	test::@check(fixture.doc.set_rotation_limits(fixture.middle, settings), "primary child was not stored");
-	crig::JointLimitFrame chosen = frame_of(&fixture.doc, fixture.middle);
+	crig::JointLimitFrame chosen = helpers::frame_of(&fixture.doc, fixture.middle);
 	test::@check(chosen.usable() && chosen.direction_dot == side,
 		"the chosen child did not define the frame");
-	test::@check(near_vec(chosen.axis(crig::JointRotationAxis.Y), { 1, 0, 0 }),
+	test::@check(helpers::near3(chosen.axis(crig::JointRotationAxis.Y), { 1, 0, 0 }, 1e-5f),
 		"the selected side child did not become +Y");
 
 	settings.primary_child = 0;
 	settings.has_saved_frame = true;
 	settings.saved_frame = { .v = { 0, 0, 0.70710678f, 0.70710678f } };
 	test::@check(fixture.doc.set_rotation_limits(fixture.middle, settings), "explicit frame was not stored");
-	crig::JointLimitFrame explicit = frame_of(&fixture.doc, fixture.middle);
+	crig::JointLimitFrame explicit = helpers::frame_of(&fixture.doc, fixture.middle);
 	test::@check(explicit.usable()
-		&& near_vec(explicit.axis(crig::JointRotationAxis.Y), { -1, 0, 0 }),
+		&& helpers::near3(explicit.axis(crig::JointRotationAxis.Y), { -1, 0, 0 }, 1e-5f),
 		"a saved frame did not win over the fork's own child");
 }
 
@@ -527,13 +511,13 @@ fn void zero_length_and_invalid_primary_edges_are_reported() @test
 	crig::JointRotationLimits settings = crig::unconstrained_rotation(fixture.leaf);
 	settings.primary_child = coincident;
 	test::@check(fixture.doc.set_rotation_limits(fixture.leaf, settings), "zero child choice was not stored");
-	crig::JointLimitFrame zero = frame_of(&fixture.doc, fixture.leaf);
+	crig::JointLimitFrame zero = helpers::frame_of(&fixture.doc, fixture.leaf);
 	test::@check(zero.status == crig::JointLimitFrameStatus.ZERO_LENGTH,
 		"a zero-length chosen edge reported %s", zero.status);
 
 	settings.primary_child = fixture.root;
 	test::@check(fixture.doc.set_rotation_limits(fixture.leaf, settings), "existing invalid child choice was not stored");
-	crig::JointLimitFrame wrong = frame_of(&fixture.doc, fixture.leaf);
+	crig::JointLimitFrame wrong = helpers::frame_of(&fixture.doc, fixture.leaf);
 	test::@check(wrong.status == crig::JointLimitFrameStatus.PRIMARY_CHILD_INVALID,
 		"a non-child primary reported %s", wrong.status);
 }
@@ -587,7 +571,7 @@ fn void limits_round_trip_through_the_project_session() @test
 		"active state or primary child was lost");
 	test::@check(held.axes[0].same(limits.axes[0]) && held.axes[1].same(limits.axes[1])
 		&& held.axes[2].same(limits.axes[2]), "an active or parked axis value changed");
-	test::@check(held.has_saved_frame && near(held.saved_frame.v.w, 1.0f),
+	test::@check(held.has_saved_frame && math::is_approx(held.saved_frame.v.w, 1.0f, 1e-5f),
 		"the normalized saved frame did not round-trip");
 }
 
@@ -633,7 +617,7 @@ fn void a_recorded_limit_table_undoes_and_redoes_as_one_edit() @test
 		"undo left a sparse constraint entry");
 	test::@check(app.redo(), "the limit edit would not redo");
 	test::@check(app.doc.rotation_limits_of(knee).constrained
-		&& near(app.doc.rotation_limits_of(knee).axes[0].maximum, 2.375f),
+		&& math::is_approx(app.doc.rotation_limits_of(knee).axes[0].maximum, 2.375f, 1e-5f),
 		"redo did not restore the complete table");
 
 	// Fork the history after undo. The abandoned payload must be dropped before
@@ -669,16 +653,16 @@ fn void moving_a_joint_keeps_its_parents_limit_axes() @test
 	limits.axes[0] = { .allowed = true, .minimum = -2.0f, .maximum = 0.5f };
 	test::@check(app.set_rotation_limits_recorded(hip, limits), "the table did not land");
 	app.undo_stack.commit();
-	Vec3 x_before = frame_of(&app.doc, hip).axis(X);
+	Vec3 x_before = helpers::frame_of(&app.doc, hip).axis(X);
 
 	// Leaning sideways more than forward: the derived rule would now seed Z.
 	test::@check(app.move_recorded(knee, { 0.06f, 0.5f, 0.125f }, { 0.125f, 0.5f, 0.06f }), "the knee did not move");
 	app.undo_stack.commit();
 	crig::JointRotationLimits held = app.doc.rotation_limits_of(hip);
 	test::@check(held.has_saved_frame, "the move let the hip's axes be re-derived");
-	Vec3 x_after = frame_of(&app.doc, hip).axis(X);
+	Vec3 x_after = helpers::frame_of(&app.doc, hip).axis(X);
 	test::@check(x_after.dot(x_before) > 0.99f, "the hip's X turned %s -> %s", x_before, x_after);
-	test::@check(near(frame_of(&app.doc, hip).axis(Y).dot(((Vec3){ 0.125f, -0.5f, 0.06f }).normalize()), 1.0f),
+	test::@check(math::is_approx(helpers::frame_of(&app.doc, hip).axis(Y).dot(((Vec3){ 0.125f, -0.5f, 0.06f }).normalize()), 1.0f, 1e-5f),
 		"the kept axes do not follow the bone");
 
 	test::@check(app.undo(), "the move would not undo");
@@ -817,10 +801,10 @@ fn void reflecting_a_rotation_keeps_the_turn_about_the_normal() @test
 		Vec3 y = mirrored.rotate_vec3({ 0, 1, 0 });
 		Vec3 z = mirrored.rotate_vec3({ 0, 0, 1 });
 		Vec3 bone = frame.rotate_vec3({ 0, 1, 0 });
-		test::@check(near_vec(x.cross(y), z), "the reflected frame with signs %s is not right-handed", signs);
-		test::@check(near_vec(y, { -bone.x, bone.y, bone.z }), "the bone axis did not reflect with signs %s", signs);
+		test::@check(helpers::near3(x.cross(y), z, 1e-5f), "the reflected frame with signs %s is not right-handed", signs);
+		test::@check(helpers::near3(y, { -bone.x, bone.y, bone.z }, 1e-5f), "the bone axis did not reflect with signs %s", signs);
 		Vec3 read;
-		test::@check(crig::reflection_signs_between(frame, mirrored, &read) && near_vec(read, signs),
+		test::@check(crig::reflection_signs_between(frame, mirrored, &read) && helpers::near3(read, signs, 1e-5f),
 			"the signs read back off the reflection are %s for %s", read, signs);
 	}
 }
@@ -845,12 +829,12 @@ fn void a_hip_reflects_its_flexion_as_is_and_its_twist_and_abduction_the_other_w
 		"the other hip's table is its own bone's, not a pinned frame");
 
 	// A leg's X is the plane's normal: flexion reads the same on both sides.
-	test::@check(twin.axes[0].allowed && near(twin.axes[0].minimum, -0.5f) && near(twin.axes[0].maximum, 1.6f),
+	test::@check(twin.axes[0].allowed && math::is_approx(twin.axes[0].minimum, -0.5f, 1e-5f) && math::is_approx(twin.axes[0].maximum, 1.6f, 1e-5f),
 		"flexion came back as [%.2f, %.2f], wanted [-0.50, 1.60]", twin.axes[0].minimum, twin.axes[0].maximum);
 	// Twist and abduction run the other way round.
-	test::@check(!twin.axes[1].allowed && near(twin.axes[1].locked, -0.2f),
+	test::@check(!twin.axes[1].allowed && math::is_approx(twin.axes[1].locked, -0.2f, 1e-5f),
 		"the twist lock came back as %.2f, wanted -0.20", twin.axes[1].locked);
-	test::@check(twin.axes[2].allowed && near(twin.axes[2].minimum, -0.8f) && near(twin.axes[2].maximum, 0.2f),
+	test::@check(twin.axes[2].allowed && math::is_approx(twin.axes[2].minimum, -0.8f, 1e-5f) && math::is_approx(twin.axes[2].maximum, 0.2f, 1e-5f),
 		"abduction came back as [%.2f, %.2f], wanted [-0.80, 0.20]", twin.axes[2].minimum, twin.axes[2].maximum);
 
 	test::@check(sides.reflects_the_same(hip, twin), "constraining and reflecting do not commute on the hips");
@@ -881,11 +865,11 @@ fn void a_shoulder_reflects_its_raise_as_is_and_its_swing_and_twist_the_other_wa
 
 	// An arm's bone lies in the plane, so its Z is the one that keeps its
 	// direction: the raise reads the same, the swing and the twist reverse.
-	test::@check(near(twin.axes[0].minimum, -0.5f) && near(twin.axes[0].maximum, 1.0f),
+	test::@check(math::is_approx(twin.axes[0].minimum, -0.5f, 1e-5f) && math::is_approx(twin.axes[0].maximum, 1.0f, 1e-5f),
 		"the swing came back as [%.2f, %.2f], wanted [-0.50, 1.00]", twin.axes[0].minimum, twin.axes[0].maximum);
-	test::@check(near(twin.axes[1].minimum, -0.9f) && near(twin.axes[1].maximum, 0.3f),
+	test::@check(math::is_approx(twin.axes[1].minimum, -0.9f, 1e-5f) && math::is_approx(twin.axes[1].maximum, 0.3f, 1e-5f),
 		"the twist came back as [%.2f, %.2f], wanted [-0.90, 0.30]", twin.axes[1].minimum, twin.axes[1].maximum);
-	test::@check(!twin.axes[2].allowed && near(twin.axes[2].locked, 0.4f),
+	test::@check(!twin.axes[2].allowed && math::is_approx(twin.axes[2].locked, 0.4f, 1e-5f),
 		"the raise lock came back as %.2f, wanted 0.40", twin.axes[2].locked);
 
 	test::@check(sides.reflects_the_same(shoulder, twin), "constraining and reflecting do not commute on the shoulders");
@@ -943,7 +927,7 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 	hip.axes[0] = { .allowed = true, .minimum = -0.5f, .maximum = 1.6f, .locked = 0.0f };
 	hip.axes[1] = { .allowed = true, .minimum = -0.4f, .maximum = 0.4f, .locked = 0.0f };
 	hip.axes[2] = { .allowed = true, .minimum = -0.2f, .maximum = 0.8f, .locked = 0.0f };
-	crig::JointLimitFrame derived = frame_of(&sides.doc, sides.hip_l);
+	crig::JointLimitFrame derived = helpers::frame_of(&sides.doc, sides.hip_l);
 	hip.has_saved_frame = true;
 	hip.saved_frame = derived.rotation.mul(quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.3f)).normalize();
 	test::@check(sides.doc.set_rotation_limits(sides.hip_l, hip), "the hip's saved frame was refused");
@@ -954,7 +938,7 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 
 	// The roll crosses as the same roll the other way off the other hip's own
 	// bone — what the twin's table would read as if its frame were derived.
-	crig::JointLimitFrame twin_derived = frame_of(&sides.doc, sides.hip_r);
+	crig::JointLimitFrame twin_derived = helpers::frame_of(&sides.doc, sides.hip_r);
 	Quaternionf adjustment = twin_derived.rotation.invert().mul(twin.saved_frame).normalize();
 	Quaternionf unrolled = quaternion::from_axis_angle{float}({ 0, 1, 0 }, -0.3f);
 	test::@check(math::abs(adjustment.v.dot(unrolled.v)) > 1.0f - 1.0e-4f,
@@ -978,21 +962,6 @@ fn void a_primary_child_and_a_saved_frame_cross_the_plane_with_the_table() @test
 // the two must agree.
 
 const float DEG = (float)math::PI / 180.0f;
-
-// A line of the report: on the screen, and appended to the file named by the
-// `LIMITS_LOG` environment variable when there is one (the runner hides the screen
-// of a test that passes).
-fn void note(String format, args...)
-{
-	String line = string::tformat(format, ...args);
-	io::printn(line);
-	String? path = env::tget_var("LIMITS_LOG");
-	if (catch path) return;
-	File? out = file::open(path, "a");
-	if (catch out) return;
-	(void)io::fprintn(&out, line);
-	(void)out.close();
-}
 
 fn crig::JointLimitFrame frame_from(Quaternionf rotation)
 {
@@ -1072,7 +1041,7 @@ fn void a_rotation_reads_as_where_the_bone_points_and_how_it_rolls() @test
 		// A twist of 143 degrees with a swing: all three come back as entered.
 		Vec3 entered = { 0.5f, 2.5f, 0.3f };
 		Vec3 shown = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, entered));
-		test::@check(near_vec(entered, shown), "swing and twist %s read back as %s", entered, shown);
+		test::@check(helpers::near3(entered, shown, 1e-5f), "swing and twist %s read back as %s", entered, shown);
 
 		// The twist goes first, so the bone points where the swing alone says.
 		Vec3 bone = frame.axis(crig::JointRotationAxis.Y);
@@ -1081,7 +1050,7 @@ fn void a_rotation_reads_as_where_the_bone_points_and_how_it_rolls() @test
 		foreach (twist : twists)
 		{
 			Vec3 pointed = crig::rotation_from_joint_angles(frame, { entered.x, twist, entered.z }).rotate_vec3(bone);
-			test::@check(near_vec(pointed, swung), "twist %.1f moved the bone from %s to %s", twist, swung, pointed);
+			test::@check(helpers::near3(pointed, swung, 1e-5f), "twist %.1f moved the bone from %s to %s", twist, swung, pointed);
 		}
 
 		// One axis alone is that angle on that axis, however far.
@@ -1093,19 +1062,19 @@ fn void a_rotation_reads_as_where_the_bone_points_and_how_it_rolls() @test
 				Vec3 alone;
 				alone[axis] = angle;
 				Vec3 back = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, alone));
-				test::@check(near_vec(back, alone), "%.1f about axis %d read as %s", angle, axis, back);
+				test::@check(helpers::near3(back, alone, 1e-5f), "%.1f about axis %d read as %s", angle, axis, back);
 			}
 		}
 
 		// The twist is in (-pi, pi]: past it, it comes round.
 		Vec3 past = crig::joint_angles_from_rotation(frame, crig::rotation_from_joint_angles(frame, { 0.0f, 3.3f, 0.0f }));
-		test::@check(near(past.y, 3.3f - (float)math::TAU), "a twist of 3.3 read as %.4f", past.y);
+		test::@check(math::is_approx(past.y, 3.3f - (float)math::TAU, 1e-5f), "a twist of 3.3 read as %.4f", past.y);
 
 		// A half-turn swing has no twist to read; it is the swing, whole.
 		Vec3 half = { (float)math::PI * (float)math::cos(0.3f), 0.0f, (float)math::PI * (float)math::sin(0.3f) };
 		Quaternionf over = crig::rotation_from_joint_angles(frame, half);
 		Vec3 seen = crig::joint_angles_from_rotation(frame, over);
-		test::@check(near(seen.y, 0.0f) && near(math::sqrt(seen.x * seen.x + seen.z * seen.z), (float)math::PI),
+		test::@check(math::is_approx(seen.y, 0.0f, 1e-5f) && math::is_approx(math::sqrt(seen.x * seen.x + seen.z * seen.z), (float)math::PI, 1e-5f),
 			"a half-turn swing read as %s", seen);
 		test::@check(rotation_gap(crig::rotation_from_joint_angles(frame, seen), over) < 1.0e-4f,
 			"a half-turn swing did not read back to itself");
@@ -1136,7 +1105,6 @@ fn void swing_and_twist_round_trip_for_any_rotation_short_of_a_half_turn() @test
 			checked++;
 		}
 	}
-	note("  swing-twist round trip: %d rotations, worst %.2e rad", checked, worst);
 	test::@check(checked > 3000, "only %d rotations were checked", checked);
 	test::@check(worst < 1.0e-5f, "a rotation came back %.2e rad away", worst);
 }
@@ -1184,7 +1152,6 @@ fn void the_reading_and_the_clamp_are_continuous_through_the_old_gimbal_and_the_
 			}
 		}
 	}
-	note("  continuity: the reading moved at most %.4f and the clamp %.4f rad for a %.4f rad step", worst_reading, worst_clamp, step);
 	test::@check(worst_reading < step * 1.01f, "the reading jumped by %.4f for a sweep step of %.4f", worst_reading, step);
 	test::@check(worst_clamp < step * 1.01f, "the clamp jumped by %.4f for a sweep step of %.4f", worst_clamp, step);
 
@@ -1203,7 +1170,6 @@ fn void the_reading_and_the_clamp_are_continuous_through_the_old_gimbal_and_the_
 		before = got;
 		begun = true;
 	}
-	note("  continuity through a half turn of twist: the clamp moved at most %.4f rad for a %.4f rad step", jump, step);
 	test::@check(jump < step * 1.01f, "the clamp jumped by %.4f through a twist of a half turn", jump);
 
 	// The same through the old gimbal as the old reading built it: R = Rz(z) Ry(t) Rx(x), the
@@ -1247,7 +1213,6 @@ fn void the_reading_and_the_clamp_are_continuous_through_the_old_gimbal_and_the_
 			}
 		}
 	}
-	note("  through the Euler gimbal: the reading and the clamp moved at most %.2f times the rotation; the Euler reading jumped %.2f rad", worst_ratio, worst_flip);
 	test::@check(worst_ratio < 4.0f, "the reading or the clamp moved %.2f times as far as the rotation through the old gimbal", worst_ratio);
 	// The old reading did flip there, so the sweep has teeth.
 	test::@check(worst_flip > 1.0f, "the old reading no longer flips through its gimbal (%.2f rad), so this sweep proves nothing", worst_flip);
@@ -1272,7 +1237,7 @@ fn void an_angle_past_a_range_goes_to_the_nearer_end_round_the_circle() @test
 		{
 			Quaternionf bent = crig::rotation_from_joint_angles(frame, { degrees * DEG, 0.0f, 0.0f });
 			Vec3 got = crig::joint_angles_from_rotation(frame, crig::constrain_joint_rotation(frame, knee, bent));
-			test::@check(near_vec(got, { lands[i] * DEG, 0.0f, 0.0f }), "%.0f degrees landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), lands[i]);
+			test::@check(helpers::near3(got, { lands[i] * DEG, 0.0f, 0.0f }, 1e-5f), "%.0f degrees landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), lands[i]);
 		}
 	}
 
@@ -1285,7 +1250,7 @@ fn void an_angle_past_a_range_goes_to_the_nearer_end_round_the_circle() @test
 	{
 		Quaternionf turned = crig::rotation_from_joint_angles(frame, { 0.3f, degrees * DEG, 0.2f });
 		Vec3 got = crig::joint_angles_from_rotation(frame, crig::constrain_joint_rotation(frame, twist, turned));
-		test::@check(near_vec(got, { 0.3f, twist_lands[i] * DEG, 0.2f }), "a twist of %.0f landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), twist_lands[i]);
+		test::@check(helpers::near3(got, { 0.3f, twist_lands[i] * DEG, 0.2f }, 1e-5f), "a twist of %.0f landed at %s, wanted %.0f", degrees, got * (1.0f / DEG), twist_lands[i]);
 	}
 	crig::JointRotationLimits across = box_limits({ -1.0f, 150.0f * DEG, -1.0f }, { 1.0f, 180.0f * DEG, 1.0f });
 	Quaternionf over = crig::rotation_from_joint_angles(frame, { 0.0f, 190.0f * DEG, 0.0f });
@@ -1295,7 +1260,7 @@ fn void an_angle_past_a_range_goes_to_the_nearer_end_round_the_circle() @test
 	Quaternionf inside = crig::rotation_from_joint_angles(frame, { 0.0f, 160.0f * DEG, 0.0f });
 	test::@check(rotation_gap(crig::constrain_joint_rotation(frame, across, inside), inside) < 1.0e-5f, "an angle inside its range moved");
 	crig::JointAxisLimit row = { .allowed = true, .minimum = 150.0f * DEG, .maximum = 200.0f * DEG };
-	test::@check(near(row.clamp(-170.0f * DEG), -170.0f * DEG) && near(row.overshoot(-170.0f * DEG), 0.0f),
+	test::@check(math::is_approx(row.clamp(-170.0f * DEG), -170.0f * DEG, 1e-5f) && math::is_approx(row.overshoot(-170.0f * DEG), 0.0f, 1e-5f),
 		"-170 is 190 round the circle, inside a range of 150..200");
 }
 
@@ -1398,7 +1363,6 @@ fn void the_clamp_lands_no_farther_than_sampled_allowed_rotations() @test
 			foreach (face : faces) nearest = math::min(nearest, rotation_gap(asked, crig::rotation_from_joint_angles(identity, face)));
 			worst = math::max(worst, own - nearest);
 		}
-		note("  nearest: with a swing up to %.1f rad the clamp is at most %.4f rad (%.2f deg) past the nearest sampled face rotation (bound %.4f)", reach, worst, worst / DEG, 0.4f * reach * reach);
 		test::@check(worst <= 0.4f * reach * reach, "with a swing up to %.1f rad the clamp was %.4f rad past the nearest", reach, worst);
 	}
 }
@@ -1463,7 +1427,6 @@ fn void a_hinge_clamps_as_it_did_under_the_euler_reading() @test
 			}
 		}
 	}
-	note("  hinge parity: %d turns past a bound; worst difference from the Euler clamp %.2e rad with 1e-3 noise, %.2e rad with 0.05 noise past a bound", clamped, worst_small, worst_large);
 	test::@check(worst_small < 1.0e-5f, "a hinge with a hair of noise differs from the Euler clamp by %.2e rad", worst_small);
 	test::@check(worst_large < 1.0e-5f, "a hinge past its bound differs from the Euler clamp by %.2e rad", worst_large);
 }
@@ -1485,8 +1448,8 @@ fn void the_swing_twist_reading_reflects_one_angle_at_a_time() @test
 	Dice dice = { .state = 17 };
 	foreach (pair : pairs)
 	{
-		crig::JointLimitFrame from = frame_of(&sides.doc, pair[0]);
-		crig::JointLimitFrame to = frame_of(&sides.doc, pair[1]);
+		crig::JointLimitFrame from = helpers::frame_of(&sides.doc, pair[0]);
+		crig::JointLimitFrame to = helpers::frame_of(&sides.doc, pair[1]);
 		Vec3 signs;
 		test::@check(crig::reflection_signs_between(from.rotation, to.rotation, &signs), "the pair has no reflected frame");
 		float worst = 0.0f;
@@ -1499,7 +1462,6 @@ fn void the_swing_twist_reading_reflects_one_angle_at_a_time() @test
 			float gap = math::max(math::abs(read.x - expected.x), math::max(circle_gap(read.y, expected.y), math::abs(read.z - expected.z)));
 			worst = math::max(worst, gap);
 		}
-		note("  mirror: pair %d, signs %s, the reflected reading is off by %.2e rad at worst", (int)pair[0], signs, worst);
 		test::@check(worst < 5.0e-5f, "a reflected rotation read %.2e rad from the mirrored angles (signs %s)", worst, signs);
 	}
 }

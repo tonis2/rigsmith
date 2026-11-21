@@ -173,9 +173,3 @@ fn bool AppState.curve_cleanup(&self, AnimRef ref, CurveCleanup op)
 		return true;
 	};
 }
-
-fn bool AppState.euler_filter_selection(&self, AnimRef ref) => self.curve_cleanup(ref, EULER_FILTER);
-fn bool AppState.smooth_selection(&self, AnimRef ref) => self.curve_cleanup(ref, SMOOTH);
-fn bool AppState.simplify_selection(&self, AnimRef ref) => self.curve_cleanup(ref, SIMPLIFY);
-fn bool AppState.flatten_selection(&self, AnimRef ref) => self.curve_cleanup(ref, FLATTEN);
-fn bool AppState.match_loop_seam_selection(&self, AnimRef ref) => self.curve_cleanup(ref, LOOP_SEAM);

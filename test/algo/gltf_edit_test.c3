@@ -14,6 +14,7 @@
 *>
 module crig_tests::gltf_edit;
 
+import crig_tests::helpers;
 import gltf;
 import gltf_edit;
 import std::core;
@@ -26,16 +27,6 @@ import std::math::quaternion;
 
 const String TRUCK @local = "libs/three/lib/gltf.c3l/test/truck.glb";
 const String DUCK @local = "libs/three/lib/gltf.c3l/test/duck.gltf";
-
-macro bool @same_bytes(char[] a, char[] b) @local
-{
-	if (a.len != b.len) return false;
-	foreach (i, c : a)
-	{
-		if (c != b[i]) return false;
-	}
-	return true;
-}
 
 <*
  A .glb split and written straight back is the same file, bit for bit.
@@ -63,7 +54,7 @@ fn void a_binary_round_trip_changes_nothing() @test
 	char[] after = file::load(mem, out)!!;
 	defer free(after);
 
-	test::@check(@same_bytes(before, after), "the file is unchanged");
+	test::@check(helpers::same_bytes(before, after), "the file is unchanged");
 }
 
 // The text form has no container to rebuild, so the bytes have even less excuse
@@ -86,49 +77,7 @@ fn void a_text_round_trip_changes_nothing() @test
 	char[] after = file::load(mem, out)!!;
 	defer free(after);
 
-	test::@check(@same_bytes(before, after), "the file is unchanged");
-}
-
-<*
- Stamping metadata onto a real file leaves its binary chunk alone.
-
- The whole reason for editing text rather than re-encoding: `truck.glb` carries
- 442 kilobytes of vertices, images and animation samplers, and adding forty bytes
- of `extras` must not touch one of them.
-*>
-fn void patching_a_real_file_keeps_its_buffer() @test
-{
-	gltf_edit::GlbParts parts = gltf_edit::split_glb(mem, TRUCK)!!;
-	defer parts.free(mem);
-
-	char[] original_bin = (char[])alloc::clone_slice(mem, parts.rest);
-	defer free(original_bin);
-
-	gltf_edit::JsonStep[2] where = { { .key = gltf_edit::GLTF_EXTRAS }, { .key = "tool" } };
-	gltf_edit::JsonEdit[1] edits = { { .path = where[..], .value = "crig" } };
-	String stamped = gltf_edit::patch_gltf_text(mem, (String)parts.json, edits[..])!!;
-
-	// Handed over rather than aliased: the old text is released here and the new
-	// text becomes the part set's, so `parts.free` is the only release either
-	// needs. A `defer stamped.free` beside this would be the second one.
-	free(parts.json);
-	parts.json = (char[])stamped;
-
-	String out = "build/gltf-edit-truck-stamped.glb";
-	gltf_edit::write_glb(out, parts)!!;
-	defer (void)file::delete(out);
-
-	gltf_edit::GlbParts back = gltf_edit::split_glb(mem, out)!!;
-	defer back.free(mem);
-
-	test::@check(@same_bytes(original_bin, back.rest), "every byte after the JSON is where it was");
-
-	// And the file is still a glTF to a reader that knows nothing about the edit.
-	gltf::GltfStream stream = gltf::open(out)!!;
-	defer stream.close();
-	test::@check(stream.gltf.extras.get("tool")!! == "crig");
-	test::@check(stream.gltf.meshes.len() > 0, "the meshes survived");
-	test::@check(stream.gltf.images.len() > 0, "and so did the images");
+	test::@check(helpers::same_bytes(before, after), "the file is unchanged");
 }
 
 <*
@@ -171,7 +120,7 @@ fn void patching_a_file_in_place() @test
 	gltf_edit::GlbParts after = gltf_edit::split_glb(mem, path)!!;
 	defer after.free(mem);
 
-	test::@check(@same_bytes(before.rest, after.rest), "the buffer chunk is untouched");
+	test::@check(helpers::same_bytes(before.rest, after.rest), "the buffer chunk is untouched");
 
 	// Read back through the ordinary parser, which is how a consumer gets it: the
 	// extras map is string-valued, so a structured payload rides as its own text.

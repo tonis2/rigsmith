@@ -14,7 +14,7 @@ import rig;
 import std::math;
 import std::math::quaternion;
 
-faultdef GAIT_REFUSED, GAIT_BAD_FOOT;
+excuse GAIT_REFUSED, GAIT_BAD_FOOT;
 
 // One foot as the caller names it. `offset` is honoured only when `has_offset`;
 // otherwise the gait's own pattern places the foot.

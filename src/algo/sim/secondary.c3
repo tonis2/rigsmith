@@ -418,16 +418,7 @@ fn usz secondary_run(rig::Skeleton* skeleton, usz root, usz tip, usz[] out)
 		walk = (usz)parent;
 	}
 
-	usz low = 0;
-	usz high = length - 1;
-	while (low < high)
-	{
-		usz swap = out[low];
-		out[low] = out[high];
-		out[high] = swap;
-		low++;
-		high--;
-	}
+	for (usz i = 0; i < length / 2; i++) @swap(out[i], out[length - 1 - i]);
 	return length;
 }
 

@@ -8,6 +8,7 @@
 module crig_tests::strips;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::collections::object;
 import std::core::test;
@@ -19,24 +20,12 @@ import std::math::quaternion;
 const Vec3 X = { 1, 0, 0 };
 const Vec3 Y = { 0, 1, 0 };
 
-fn AnimKeyframe key_of(float time, String joint, Vec3 axis, float angle)
-{
-	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
-	dots[0] = { .joint_name = joint.copy(mem), .axis = axis, .angle = angle, .channels = ROTATION };
-	return { .time = time, .dots = dots };
-}
-
-fn AnimTemplate clip_of(String name, float duration, bool loop, AnimKeyframe[] keys)
-{
-	return { .name = name.copy(mem), .duration = duration, .keyframes = keys, .loop = loop, .owned = true };
-}
-
 fn AnimKeyframe[] three_keys(String joint, Vec3 axis, float peak, float duration)
 {
 	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, 3);
-	keys[0] = key_of(0.0f, joint, axis, 0.0f);
-	keys[1] = key_of(duration * 0.5f, joint, axis, peak);
-	keys[2] = key_of(duration, joint, axis, 0.0f);
+	keys[0] = helpers::key_of(0.0f, joint, axis, 0.0f);
+	keys[1] = helpers::key_of(duration * 0.5f, joint, axis, peak);
+	keys[2] = helpers::key_of(duration, joint, axis, 0.0f);
 	return keys;
 }
 
@@ -59,8 +48,8 @@ fn void Strips.open(&self)
 	self.app.doc.connect(a, b);
 	self.app.doc.connect(b, c);
 	self.app.doc.root_id = root;
-	self.bend = self.app.author_clip(clip_of("Bend", 1.0f, false, three_keys("b", X, 0.8f, 1.0f)));
-	self.walk = self.app.author_clip(clip_of("Walk", 2.0f, true, three_keys("a", Y, 0.3f, 2.0f)));
+	self.bend = self.app.author_clip(helpers::clip_of("Bend", 1.0f, false, three_keys("b", X, 0.8f, 1.0f)));
+	self.walk = self.app.author_clip(helpers::clip_of("Walk", 2.0f, true, three_keys("a", Y, 0.3f, 2.0f)));
 	self.app.undo_stack.clear();
 }
 
@@ -76,11 +65,6 @@ fn Quaternionf Strips.turn(&self, AnimRef ref, usz j, float time)
 	rig::Pose pose = self.app.evaluated_clip_pose(mem, &view, *self.app.clip(ref), ref, time, false);
 	defer pose.free(mem);
 	return pose.rotations[j];
-}
-
-fn bool near_turn(Quaternionf a, Quaternionf b, float tolerance = 1.0e-4f)
-{
-	return 1.0f - math::abs(a.v.dot(b.v)) < tolerance;
 }
 
 fn usz Strips.lay_bend(&self, float at)
@@ -108,8 +92,8 @@ fn void a_linked_piece_plays_at_its_place() @test
 	test::@check(strip.fit == KEEP && strip.mode == OVERRIDE, "a one-pass piece should keep its seconds and override");
 
 	Quaternionf bend_peak = s.turn(s.named("Bend"), 2, 0.5f);
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 1.0f), bend_peak), "the piece's middle is not at 1.0s");
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 0.25f), quaternion::IDENTITY), "the piece played before its start");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 1.0f), bend_peak, 1.0e-4f), "the piece's middle is not at 1.0s");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 0.25f), quaternion::IDENTITY, 1.0e-4f), "the piece played before its start");
 	test::@check(s.app.undo() && s.app.clip(s.named("Walk")).layers.len == 0, "one undo did not take the piece back");
 }
 
@@ -123,12 +107,12 @@ fn void editing_the_source_updates_the_piece_in_one_undo_step() @test
 	defer s.close();
 	s.lay_bend(0.0f);
 	Quaternionf before = s.turn(s.named("Walk"), 2, 0.5f);
-	s.app.land_clip(s.named("Bend"), crig::clip_with_key(mem, *s.app.clip(s.named("Bend")), key_of(0.5f, "b", X, 1.4f)));
+	s.app.land_clip(s.named("Bend"), crig::clip_with_key(mem, *s.app.clip(s.named("Bend")), helpers::key_of(0.5f, "b", X, 1.4f)));
 	Quaternionf after = s.turn(s.named("Walk"), 2, 0.5f);
-	test::@check(!near_turn(before, after), "the strip did not follow the edit of its source");
-	test::@check(near_turn(after, s.turn(s.named("Bend"), 2, 0.5f)), "the strip does not play the edited source");
+	test::@check(!helpers::same_rotation(before, after, 1.0e-4f), "the strip did not follow the edit of its source");
+	test::@check(helpers::same_rotation(after, s.turn(s.named("Bend"), 2, 0.5f), 1.0e-4f), "the strip does not play the edited source");
 	test::@check(s.app.undo(), "the edit did not undo");
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 0.5f), before), "one undo left the strip edited");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 0.5f), before, 1.0e-4f), "one undo left the strip edited");
 }
 
 <*
@@ -164,7 +148,7 @@ fn void renaming_and_deleting_the_source_keep_the_piece() @test
 	s.app.undo_stack.commit();
 	AnimLayer* kept = &s.app.clip(s.named("Walk")).layers[at];
 	test::@check(kept.source.len == 0 && kept.keyframes.len > 0, "a deleted source left its strip linked or empty");
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 0.5f), played), "the strip lost its motion with its source");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 0.5f), played, 1.0e-4f), "the strip lost its motion with its source");
 	test::@check(s.app.undo() && s.app.clip(s.named("Walk")).layers[at].source == "Bow", "undo did not relink the strip");
 }
 
@@ -182,7 +166,7 @@ fn void moving_a_strip_carries_its_motion_and_refuses_an_overlap() @test
 	test::@check(moved >= 0, "the strip would not move: %s", s.app.notice());
 	AnimLayer* strip = &s.app.clip(s.named("Walk")).layers[(usz)moved];
 	test::@check(strip.offset == 0.25f && strip.start == 0.25f && strip.end == 1.25f, "the strip did not move by a quarter second");
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 0.75f), s.turn(s.named("Bend"), 2, 0.5f)), "the motion did not move with the strip");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 0.75f), s.turn(s.named("Bend"), 2, 0.5f), 1.0e-4f), "the motion did not move with the strip");
 
 	// A wave on a track of its own, then onto the strip's track over it.
 	crig::Piece wave = { .kind = WAVE };
@@ -211,7 +195,7 @@ fn void a_strip_sped_down_plays_its_seconds_longer() @test
 	test::@check(s.app.speed_strip(s.named("Walk"), at, 2.0f), "the strip would not slow");
 	AnimLayer* strip = &s.app.clip(s.named("Walk")).layers[at];
 	test::@check(math::abs(strip.speed - 0.5f) < 1.0e-5f && strip.end == 2.0f, "the strip is not at half speed to 2s");
-	test::@check(near_turn(s.turn(s.named("Walk"), 2, 1.0f), s.turn(s.named("Bend"), 2, 0.5f)), "half speed did not put the middle at 1s");
+	test::@check(helpers::same_rotation(s.turn(s.named("Walk"), 2, 1.0f), s.turn(s.named("Bend"), 2, 0.5f), 1.0e-4f), "half speed did not put the middle at 1s");
 	test::@check(s.app.set_strip_fades(s.named("Walk"), at, 0.5f, 5.0f), "the fades would not land");
 	strip = &s.app.clip(s.named("Walk")).layers[at];
 	test::@check(strip.fade_in == 0.5f && strip.fade_out == 1.5f, "the fades were not clamped to the strip");
@@ -245,7 +229,7 @@ fn void a_retime_moves_a_placed_piece_and_a_flatten_matches_it() @test
 		defer baked.free(mem);
 		foreach (usz j, turn : live.rotations)
 		{
-			test::@check(near_turn(turn, baked.rotations[j], 1.0e-3f), "joint %d differs at %ss after flattening", j, t);
+			test::@check(helpers::same_rotation(turn, baked.rotations[j], 1.0e-3f), "joint %d differs at %ss after flattening", j, t);
 		}
 	}
 }

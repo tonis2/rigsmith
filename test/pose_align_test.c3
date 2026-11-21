@@ -15,6 +15,7 @@ module crig_tests::pose_align;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::math;
@@ -33,15 +34,6 @@ struct Figure
 	uint top;
 }
 
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
-}
-
 <*
  A biped whose neck and head lean about Z by a different amount at each key,
  stopped, with neck, head and head top selected in that order.
@@ -50,9 +42,9 @@ fn bool Figure.open(&self, bool lean = true)
 {
 	self.app = shared_app::open();
 	if (!self.app.apply_plan_named("biped")) return false;
-	self.neck = dot_named(&self.app, NECK);
-	self.head = dot_named(&self.app, HEAD);
-	self.top = dot_named(&self.app, TOP);
+	self.neck = helpers::dot_named(&self.app, NECK);
+	self.head = helpers::dot_named(&self.app, HEAD);
+	self.top = helpers::dot_named(&self.app, TOP);
 	if (self.neck == 0 || self.head == 0 || self.top == 0) return false;
 
 	crig::AnimRef clip = self.app.new_clip("lean", 1.0f, from_rest: true);
@@ -118,7 +110,6 @@ fn void a_leaning_head_lines_up_at_the_playhead() @test
 	if (!opened) { test::@check(false, "could not build the biped fixture with a neck, head and head top"); return; }
 	float before = f.off_line(TIMES[0]);
 	float other = f.off_line(TIMES[1]);
-	io::printfn("neck, head, head top on X at the playhead: %.4f off before", before);
 	test::@check(before > 0.01f, "the fixture's chain does not lean (%.4f off)", before);
 
 	Vec3[3] rest = { f.rest(f.neck), f.rest(f.head), f.rest(f.top) };
@@ -203,28 +194,24 @@ fn void an_imported_clip_lines_up_as_it_plays() @test
 	}
 }
 
-fn void a_straight_chain_turns_nothing() @test
+// A chain already on the line turns nothing, and a lone joint has nothing to line
+// up with: neither is keyed nor put on the ledger.
+fn void nothing_to_line_up_writes_no_history() @test
 {
+	Figure straight;
+	bool opened = straight.open(lean: false);
+	defer straight.close();
+	if (!opened) { test::@check(false, "could not build the biped fixture with a neck, head and head top"); return; }
+	sz cursor = straight.app.undo_stack.cursor;
+	test::eq(straight.app.align_pose_to_anchor(0), (usz)2);
+	test::@check(straight.app.undo_stack.cursor == cursor, "aligning a straight chain wrote history");
+
 	Figure f;
-	bool opened = f.open(lean: false);
+	opened = f.open();
 	defer f.close();
 	if (!opened) { test::@check(false, "could not build the biped fixture with a neck, head and head top"); return; }
-	io::printn("a chain already on the line: nothing keyed, nothing on the ledger");
-
-	sz cursor = f.app.undo_stack.cursor;
-	test::eq(f.app.align_pose_to_anchor(0), (usz)2);
-	test::@check(f.app.undo_stack.cursor == cursor, "aligning a straight chain wrote history");
-}
-
-fn void one_joint_has_nothing_to_line_up_with() @test
-{
-	Figure f;
-	bool opened = f.open();
-	defer f.close();
-	if (!opened) { test::@check(false, "could not build the biped fixture with a neck, head and head top"); return; }
-
 	f.app.select(f.head);
-	sz cursor = f.app.undo_stack.cursor;
+	cursor = f.app.undo_stack.cursor;
 	test::eq(f.app.align_pose_to_anchor(0), (usz)0);
 	test::@check(f.app.undo_stack.cursor == cursor, "a lone joint wrote history");
 }

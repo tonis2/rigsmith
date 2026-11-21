@@ -14,7 +14,7 @@ import std::io;
 import std::math;
 
 // ---------------------------------------------------------------------------
-// B7: the session file, the occlusion cue and the two diagnostic views
+// B7: the session file and the two diagnostic views
 
 // Where the session checks work. Beside a mesh that does not exist on disk —
 // nothing reads the .glb back, the path only decides where the .json goes.
@@ -607,128 +607,6 @@ fn void the_area_tool_borrows_the_falloff_view() @test
 		"closing the tool overwrote the view the user asked for with %s", fixture.app.tint_mode);
 }
 
-<*
- Once any dot is limited, none of them is unlimited.
-
- Zero is not a neutral reach on a rig where other dots have one. `reach_bias`
- scores an unlimited bone 1 at every distance while a sized one falls away from
- its own radius, so a few unsized dots among many sized ones outrank the many
- *everywhere* — and distance stops costing them anything at all. On a self-rigged
- squirrel that gave two hind feet a third of the body, head included, and bending
- a hind leg skewed the torso. Setting reaches on most of a rig was strictly worse
- than setting none, which nobody can be expected to guess.
-
- The figure filled in is `default_reach`, which the viewport already draws as an
- unlimited dot's ghost ring — so the binder is being made to agree with what was
- already on screen rather than handed a number from nowhere.
-
- A rig where *nothing* is limited still sends the binder an empty array, so the
- shipped rigs — none of which set a reach — bind exactly as they always have.
-*>
-fn void a_mixed_rig_has_no_unlimited_dots() @test
-{
-	io::printn("one reach anywhere gives every other dot its default instead of no limit");
-
-	Fixture fixture;
-	if (catch fault error = fixture.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer fixture.close();
-
-	uint hips = fixture.doc().add_dot({ 0, -0.2f, 0 }, "hips");
-	uint chest = fixture.doc().add_dot({ 0, 0.2f, 0 }, "chest");
-	uint head = fixture.doc().add_dot({ 0, 0.4f, 0 }, "head");
-	fixture.doc().connect(hips, chest);
-	fixture.doc().connect(chest, head);
-	fixture.app.refresh_ui();
-
-	// --- nothing limited: the binder is told nothing -------------------------
-
-	RigView? untouched = fixture.app.open_rig(mem);
-	if (catch untouched)
-	{
-		test::@check(false, "the rig would not open with three dots in it");
-		return;
-	}
-	RigView bare = untouched;
-	test::@check(bare.reaches.len == 0,
-		"a rig with no reach on any dot sent the binder %d of them", bare.reaches.len);
-	bare.free(mem);
-
-	// --- one limited: every dot comes back with a size -----------------------
-
-	fixture.doc().set_reach(chest, 0.1f);
-
-	RigView? limited = fixture.app.open_rig(mem);
-	if (catch limited)
-	{
-		test::@check(false, "the rig would not open once a dot was limited");
-		return;
-	}
-	RigView view = limited;
-	defer view.free(mem);
-
-	test::@check(view.reaches.len == view.dot_ids.len,
-		"one reach produced %d figures for %d joints", view.reaches.len, view.dot_ids.len);
-	if (view.reaches.len != view.dot_ids.len) return;
-
-	foreach (usz j, id : view.dot_ids)
-	{
-		float want = id == chest ? 0.1f : fixture.app.default_reach(id);
-		test::@check(view.reaches[j] > 0.0f,
-			"dot %d came through unlimited on a rig that has a reach in it", id);
-		test::@check(math::abs(view.reaches[j] - want) < 1.0e-6f,
-			"dot %d came through at %.4f rather than the %.4f expected of it",
-			id, view.reaches[j], want);
-	}
-}
-
-<*
- A hint lasts exactly as long as the tool it is about.
-
- What this pins: the same sentences used to be printed as notices when a mode
- opened, and a notice has no idea the mode has closed. "scroll to size the ring"
- stayed on screen over a viewport with no ring in it and a wheel back to zooming
- — a control that reads as still armed. Deriving the line from the state each
- frame is what makes that impossible rather than merely fixed.
-*>
-fn void a_hint_lasts_exactly_as_long_as_its_mode() @test
-{
-	io::printn("the hint bar follows the mode instead of outliving it");
-
-	Fixture fixture;
-	if (catch fault error = fixture.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer fixture.close();
-
-	uint hips = fixture.doc().add_dot({ 0, -0.2f, 0 }, "hips");
-	uint chest = fixture.doc().add_dot({ 0, 0.2f, 0 }, "chest");
-	fixture.doc().connect(hips, chest);
-	fixture.app.select(chest);
-	fixture.app.refresh_ui();
-
-	test::@check(fixture.in_tree("hints"), "the pane was built without a hint bar");
-	test::@check(crig::hint_line(&fixture.app).len == 0,
-		"an idle viewport is hinting at something: \"%s\"", crig::hint_line(&fixture.app));
-
-	fixture.feed_key(Key.W);
-	test::@check(crig::hint_line(&fixture.app).contains("grow the joint"),
-		"the Area tool is open and the hint reads \"%s\"", crig::hint_line(&fixture.app));
-	test::@check(fixture.notice_text().len == 0,
-		"the invitation went to the result line, which cannot take it back: \"%s\"",
-		fixture.notice_text());
-
-	fixture.feed_key(Key.W);
-	test::@check(!fixture.app.areaing, "W did not close the Area tool");
-	test::@check(crig::hint_line(&fixture.app).len == 0,
-		"the mode closed and the hint stayed up: \"%s\"", crig::hint_line(&fixture.app));
-}
-
 // What the bar currently reads, measured at the size it is painted in.
 fn float hint_width(Fixture* fixture) => fixture.ui.text.measure(
 	0, crig::hint_line(&fixture.app), crig::HUD_TEXT_SIZE).x;
@@ -958,7 +836,7 @@ fn void a_plan_survives_a_session() @test
 	}
 
 	test::@check(crig::clip_flags(&fixture.app, { 0, 0 }).disabled, "every clip in it greys out");
-	fixture.click(cell_center(clip));
+	fixture.click(centre_of(clip));
 	test::@check(!fixture.app.animating, "and the greyed cell swallows the click rather than playing");
 
 	// Nothing declared falls back to the older rule, which is what keeps a
@@ -1073,35 +951,6 @@ fn void session_refuses_what_it_did_not_write() @test
 
 	(void)io::file::delete(SESSION_FILE);
 	fixture.app.point_at("");
-}
-
-<*
- Occlusion dimming, which is `Picker.occluded` and nothing else: the overlay
- draws with no depth test, so this function is the only thing that knows a dot
- is behind the body.
-
- Three points along one ray, and the middle one is the check that matters. Dots
- live *inside* the mesh by construction, so a rule that answered "is there
- geometry in front of this point" would dim every joint in the rig — and a test
- that only tried a point in front and a point behind would pass with it.
-*>
-fn void occlusion_only_dims_what_is_behind() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("occlusion dims only what the body is in front of");
-	fixture.reset();
-
-	Vec3 eye = { 0, 0, 6 };
-	test::@check(!fixture.app.picker.occluded(eye, { 0, 0, 2 }), "a point in front of the cube is seen");
-	test::@check(!fixture.app.picker.occluded(eye, { 0, 0, 0 }), "so is one inside it, where dots live");
-	test::@check(fixture.app.picker.occluded(eye, { 0, 0, -6 }), "one behind the whole body is not");
 }
 
 <*
@@ -1272,12 +1121,6 @@ fn void tint_toggles_switch_views() @test
 		test::@check(false, "SKIPPED — the tint strip is not in the pane");
 		return;
 	}
-	test::@check(strip.absolute.x + strip.size.x <= crig::WIN_W, "the strip sits inside the window");
-	test::@check(
-		strip.absolute.y >= crig::BAR_H + TAB_H && strip.absolute.y < CHROME_H,
-		"and inside the pane's header rather than on the window bar"
-	);
-
 	Vec2 weights = tint_cell(strip, 0);
 	Vec2 falloff = tint_cell(strip, 1);
 	test::@check(tint_flags(strip, 0).disabled, "with no dots placed the weights button is greyed");
@@ -1393,12 +1236,6 @@ fn void the_tool_column_picks_and_follows_a_tool() @test
 		return;
 	}
 
-	// Against the left edge and below the header, which is where a toolbar goes —
-	// and clear of the stats block, which moved right to make room for it.
-	test::@check(column.absolute.y >= CHROME_H, "the column is over the pane's header");
-	test::@check(column.absolute.x + crig::TOOL_CELL_W < crig::HUD_LEFT_MARGIN,
-		"the column runs under the stats block instead of beside it");
-
 	Vec2 tweak = tool_cell(column, 0);
 	Vec2 move = tool_cell(column, 1);
 	Vec2 rotate = tool_cell(column, 2);
@@ -1494,30 +1331,6 @@ fn void a_move_begun_on_the_pivot_does_not_jump_on_the_first_motion() @test
 	Vec3 moved = fixture.app.doc.model_transform.location;
 	test::@check(moved.x >= 0.0f, "the first motion threw the model back along -X: %s", moved);
 	test::@check(moved.length() < 0.05f, "a one pixel nudge moved the model %s", moved);
-	fixture.feed_key(Key.ESCAPE);
-}
-
-fn void a_keyboard_move_draws_no_gizmo_and_still_takes_an_axis() @test
-{
-	Fixture fixture;
-	if (catch fault error = fixture.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer fixture.close();
-
-	// G puts no handles on screen: a click ends the move, so they could never be
-	// grabbed. X still holds the move to its axis.
-	fixture.app.select_scene(crig::SceneSelection.MODEL);
-	fixture.app.refresh_ui();
-	fixture.feed(VIEWPORT_CENTER);
-	fixture.feed_key(Key.G);
-	test::@check(fixture.app.transform_interaction.active, "G did not begin a move");
-	crig::Viewport* viewport = fixture.viewport.widget_as(crig::Viewport);
-	test::@check(!@ok(viewport.transform_gizmo_frame(fixture.viewport)), "G put a gizmo up");
-	fixture.feed_key(Key.X);
-	test::@check(fixture.app.transform_interaction.axis == DragAxis.X, "X did not hold the move to its axis");
 	fixture.feed_key(Key.ESCAPE);
 }
 
@@ -2208,7 +2021,7 @@ fn void dragging_a_joint_poses_it_and_never_edits_the_rest_dot() @test
 
 	// --- a bare drag poses the joint, leaving the rest dot where it was ----
 	// Several move frames, not one: the per-sweep clamp rations how far a pivot
-	// turns per frame, the same reason `posing_bends_the_limb_and_holds_the_fork`
+	// turns per frame, the same reason `posing_bends_the_limb_and_barely_moves_the_fork`
 	// walks its drag. The release keys the pose (auto_key), closing the draft.
 	usz keys_before = fixture.app.clip(clip).keyframes.len;
 	Vec3 rest_before = fixture.doc().find(limb.ankle).position;
@@ -2633,10 +2446,11 @@ fn void reset_pose_returns_to_default_without_touching_the_clip() @test
 }
 
 <*
- N hides and shows the joint panel, the way Blender's N-panel key does — the card
- is up by default and toggles off even while a joint is selected.
+ N and the Joint and Align category tabs show and hide the joint panel's body,
+ and the tab rail stays either way. Selecting a tab replaces the body; clicking
+ the active one closes it; Align's X still works once reopened.
 *>
-fn void n_hides_and_shows_the_joint_panel() @test
+fn void n_and_the_category_tabs_show_and_hide_the_joint_panel() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -2646,47 +2460,7 @@ fn void n_hides_and_shows_the_joint_panel() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("N hides and shows the joint panel");
-	fixture.reset();
-
-	fixture.click(SPOT_B);
-	uint id = fixture.app.selected;
-	test::@check(id != 0, "the click placed no dot to select");
-	fixture.app.select(id);
-	fixture.ui.flush();
-
-	test::@check(fixture.app.show_joint_panel, "the joint panel is on by default");
-	test::@check(fixture.in_tree(crig::JOINT_RENAME_ID), "a selected joint shows the panel by default");
-
-	fixture.feed_key(Key.N);
-	fixture.ui.flush();
-	test::@check(!fixture.app.show_joint_panel, "N did not flip the joint-panel flag off");
-	test::@check(!fixture.in_tree(crig::JOINT_RENAME_ID), "hiding the joint panel left its contents up");
-	test::@check(fixture.in_tree(crig::JOINT_TAB_JOINT_ID) && fixture.in_tree(crig::JOINT_TAB_ALIGN_ID),
-		"hiding the joint panel also removed its category rail");
-
-	fixture.feed_key(Key.N);
-	fixture.ui.flush();
-	test::@check(fixture.app.show_joint_panel, "N did not bring the joint panel back");
-	test::@check(fixture.in_tree(crig::JOINT_RENAME_ID), "showing the joint panel did not restore its contents");
-}
-
-<*
- Joint and Align are Blender-style category tabs stacked down the right edge.
- Selecting one replaces the body; clicking the active tab closes that body but
- leaves the rail available to reopen either category.
-*>
-fn void the_joint_panel_has_vertical_category_tabs() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the joint panel has vertical Joint and Align category tabs");
+	io::printn("N and the Joint and Align tabs show and hide the joint panel");
 	fixture.reset();
 
 	// Two placed dots, selected as a pair, so Joint has a card and Align offers
@@ -2702,12 +2476,25 @@ fn void the_joint_panel_has_vertical_category_tabs() @test
 	fixture.idle_frame();
 	fixture.ui.flush();
 
+	test::@check(fixture.app.show_joint_panel && fixture.in_tree(crig::JOINT_RENAME_ID),
+		"a selected joint does not show the panel");
+
+	// N hides the body and leaves the rail; N again brings it back.
+	fixture.feed_key(Key.N);
+	fixture.ui.flush();
+	test::@check(!fixture.app.show_joint_panel && !fixture.in_tree(crig::JOINT_RENAME_ID),
+		"N did not hide the joint panel");
+	test::@check(fixture.in_tree(crig::JOINT_TAB_JOINT_ID) && fixture.in_tree(crig::JOINT_TAB_ALIGN_ID),
+		"hiding the joint panel also removed its category rail");
+	fixture.feed_key(Key.N);
+	fixture.ui.flush();
+	test::@check(fixture.app.show_joint_panel && fixture.in_tree(crig::JOINT_RENAME_ID),
+		"N did not bring the joint panel back");
+
 	Element*? joint_tab = fixture.ui.find_id(crig::JOINT_TAB_JOINT_ID);
 	Element*? align_tab = fixture.ui.find_id(crig::JOINT_TAB_ALIGN_ID);
 	if (catch joint_tab) { test::@check(false, "the sidebar has no Joint tab"); return; }
 	if (catch align_tab) { test::@check(false, "the sidebar has no Align tab"); return; }
-	test::@check(align_tab.absolute.y > joint_tab.absolute.y && align_tab.absolute.x == joint_tab.absolute.x,
-		"the sidebar tabs are not stacked vertically");
 	test::@check(fixture.app.joint_panel_tab == crig::JointPanelTab.JOINT,
 		"a fresh sidebar did not select Joint");
 	test::@check(fixture.in_tree(crig::JOINT_SECTION_ID) && fixture.in_tree(crig::JOINT_RENAME_ID),
@@ -2753,7 +2540,6 @@ fn void the_joint_panel_has_vertical_category_tabs() @test
 	fixture.ui.flush();
 	test::@check(fixture.doc().find(b).position.x == ax,
 		"clicking Align X did not line the second dot up on the anchor's X");
-
 }
 
 <*

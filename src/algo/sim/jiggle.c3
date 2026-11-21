@@ -112,28 +112,28 @@ const float JIGGLE_GRAVITY = 9.8f;
 <*
  Raised when a chain names no joints at all.
 *>
-faultdef JIGGLE_EMPTY_CHAIN;
+excuse JIGGLE_EMPTY_CHAIN;
 
 <*
  Raised when a chain names a joint this skeleton does not have.
 *>
-faultdef JIGGLE_UNKNOWN_JOINT;
+excuse JIGGLE_UNKNOWN_JOINT;
 
 <*
  Raised when a chain does not carry one `JiggleParams` per joint.
 *>
-faultdef JIGGLE_PARAM_MISMATCH;
+excuse JIGGLE_PARAM_MISMATCH;
 
 <*
  Raised when a chain's joints are not a run — each one the parent of the next.
 *>
-faultdef JIGGLE_BROKEN_CHAIN;
+excuse JIGGLE_BROKEN_CHAIN;
 
 <*
  Raised when a sim is asked to write into a pose that is not the shape of the
  skeleton it was built against.
 *>
-faultdef JIGGLE_POSE_MISMATCH;
+excuse JIGGLE_POSE_MISMATCH;
 
 <*
  How one dynamic bone behaves.

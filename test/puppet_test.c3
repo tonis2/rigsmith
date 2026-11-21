@@ -14,23 +14,19 @@
  read back with the gesture still open (`dot_position`, the draft's rotations),
  and `end_drag` for the release where the keyed pose is what is measured.
 
- Every test prints its numbers, and appends them to the file named by the
- `PUPPET_LOG` environment variable when there is one — the runner may hide stdout.
-
-     `PUPPET_LOG=/tmp/puppet.txt c3c test --trust=full --test-noleak --test-filter crig_tests::puppet`
+     `c3c test --trust=full --test-noleak --test-filter crig_tests::puppet`
 *>
 module crig_tests::puppet;
 
 import crig;
 import rig;
 import crig_tests::library;
+import crig_tests::helpers;
 import std::collections::list;
 import std::core::test;
 import std::io;
-import std::io::file;
 import std::math;
 import std::math::quaternion;
-import std::os::env;
 
 const String PERSON = "humanoid.glb";
 const String DOG = "quadruped.glb";
@@ -53,27 +49,6 @@ const int REFINE_STEPS = 8;
 const float SMOOTH_SHARE = 0.5f;
 
 // ---------------------------------------------------------------------------
-// The log
-
-fn void log_line(String line)
-{
-	String? path = env::tget_var("PUPPET_LOG");
-	if (catch path) return;
-	File? out = file::open(path, "a");
-	if (catch out) return;
-	(void)io::fprintn(&out, line);
-	(void)out.close();
-}
-
-// A line of the report: on the screen, and in the log when there is one.
-fn void note(String format, args...)
-{
-	String line = string::tformat(format, ...args);
-	io::printn(line);
-	log_line(line);
-}
-
-// ---------------------------------------------------------------------------
 // The verdict: every assertion of a test, counted rather than stopping at the first
 
 struct Verdict
@@ -84,11 +59,7 @@ struct Verdict
 	usz misses;
 }
 
-fn Verdict verdict(String name)
-{
-	note("%s", name);
-	return { .name = name, .missed = dstring::new(mem) };
-}
+fn Verdict verdict(String name) => { .name = name, .missed = dstring::new(mem) };
 
 fn void Verdict.expect(&self, bool ok, String format, args...)
 {
@@ -97,7 +68,6 @@ fn void Verdict.expect(&self, bool ok, String format, args...)
 	self.misses++;
 	String line = string::tformat(format, ...args);
 	self.missed.appendf("\n  - %s", line);
-	log_line(string::tformat("  MISS  %s", line));
 }
 
 // The test's one failure, once everything has been measured and the figure freed.
@@ -107,7 +77,6 @@ fn void Verdict.finish(&self)
 	usz checks = self.checks;
 	usz misses = self.misses;
 	self.missed.free();
-	note("  -> %d of %d assertions missed", misses, checks);
 	test::@check(misses == 0, "%d of %d puppet assertions missed:%s", misses, checks, text);
 }
 
@@ -118,15 +87,6 @@ fn void Verdict.held(&self, String what, float off)
 
 // ---------------------------------------------------------------------------
 // Quaternion helpers
-
-// The angle of a rotation, in degrees, 0 to 180. Read off the vector part so a
-// tiny turn keeps its precision.
-fn float angle_of(Quaternionf q)
-{
-	q = q.normalize();
-	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
-	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * DEGREES;
-}
 
 // The largest component difference between two rotations, whichever sign of the
 // pair is nearer: q and -q are the same turn.
@@ -233,16 +193,7 @@ fn bool Model.open(&self, String file)
  Gives the clip on show a ground spec with both named joints planted for the whole
  cycle — a figure standing on them — and puts it back on show.
 *>
-fn void Model.stand_on(&self, String left, String right)
-{
-	crig::AnimTemplate* clip = self.app.clip(self.app.editing);
-	clip.ground.free(mem);
-	crig::AnimFoot[] feet = alloc::new_array(mem, crig::AnimFoot, 2);
-	feet[0] = { .joint = left.copy(mem), .down = 0.0f, .up = 1.0f };
-	feet[1] = { .joint = right.copy(mem), .down = 0.0f, .up = 1.0f };
-	clip.ground = { .feet = feet };
-	test::@check(self.app.park_clip(self.app.editing, 0.0f), "the standing clip would not park");
-}
+fn void Model.stand_on(&self, String left, String right) => helpers::stand_on(&self.app, left, right);
 
 fn void Model.close(&self)
 {
@@ -352,7 +303,7 @@ fn float Model.twist(&self, String name, Frame* start, Frame* now)
 fn float Model.turned(&self, String name, Frame* start, Frame* now)
 {
 	usz j = self.joint(name);
-	return angle_of(now.world[j].mul(start.world[j].invert()));
+	return helpers::angle_of(now.world[j].mul(start.world[j].invert()));
 }
 
 // The angle a leg is folded by at `knee`, in degrees: 0 for a straight leg.
@@ -400,7 +351,7 @@ fn float Model.limit_excess(&self, String* worst_at)
 		crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, limits);
 		if (!frame.usable()) continue;
 		Quaternionf asked = pose.rotations[j].normalize();
-		float excess = angle_of(asked.mul(crig::constrain_joint_rotation(frame, limits, asked).invert()));
+		float excess = helpers::angle_of(asked.mul(crig::constrain_joint_rotation(frame, limits, asked).invert()));
 		if (excess > worst)
 		{
 			worst = excess;
@@ -410,24 +361,13 @@ fn float Model.limit_excess(&self, String* worst_at)
 	return worst;
 }
 
-// A joint's turn as the limits' own X, Y and Z, in degrees. For the log only.
-fn Vec3 Model.angles(&self, String name, Frame* now)
-{
-	usz j = self.joint(name);
-	crig::RigView view = self.app.open_rig(mem)!!;
-	defer view.free(mem);
-	crig::JointRotationLimits limits = self.app.doc.rotation_limits_of(self.ids[j]);
-	crig::JointLimitFrame frame = crig::joint_limit_frame(&view.skeleton, view.dot_ids, limits);
-	return crig::joint_angles_from_rotation(frame, now.local[j]) * DEGREES;
-}
-
 // How many joints have a different turn from `start`, by more than a hundredth of a degree.
 fn usz Model.stirred(&self, Frame* start, Frame* now)
 {
 	usz count;
 	foreach (usz j, turn : now.local)
 	{
-		if (angle_of(turn.mul(start.local[j].invert())) > 0.01f) count++;
+		if (helpers::angle_of(turn.mul(start.local[j].invert())) > 0.01f) count++;
 	}
 	return count;
 }
@@ -526,7 +466,7 @@ fn void Sweep.to(&self, Vec3 offset)
 				self.jumps.move_joint = j;
 				self.jumps.move_step = self.count + step;
 			}
-			float turn = angle_of(now.local[j].mul(self.last.local[j].invert()));
+			float turn = helpers::angle_of(now.local[j].mul(self.last.local[j].invert()));
 			if (turn > self.jumps.turn)
 			{
 				self.jumps.turn = turn;
@@ -560,7 +500,7 @@ fn float Sweep.refine(&self, int step, usz joint, bool turn)
 	{
 		(void)m.app.pose_toward(a + (b - a) * ((float)sub / (float)REFINE_STEPS));
 		Frame now = m.frame();
-		float change = turn ? angle_of(now.local[joint].mul(before.local[joint].invert()))
+		float change = turn ? helpers::angle_of(now.local[joint].mul(before.local[joint].invert()))
 			: (now.position[joint] - before.position[joint]).length() / m.height;
 		most = math::max(most, change);
 		before.free();
@@ -589,25 +529,12 @@ fn void Sweep.finish(&self)
  One viewport turn: R on `name`, the pointer sweeping `angle` about `axis` in a
  few moves, and let go.
 *>
-fn void Model.turn(&self, String name, Vec3 axis, float angle)
-{
-	self.app.select(self.id(name));
-	test::@check(self.app.begin_turn(true), "the turn on %s did not begin", name);
-	for (int step = 1; step <= 8; step++)
-	{
-		self.app.turn_joint(axis, angle * ((float)step / 8.0f));
-	}
-	self.app.end_drag();
-}
+fn void Model.turn(&self, String name, Vec3 axis, float angle) => helpers::turn_gesture(&self.app, self.id(name), name, axis, angle);
 
 // ---------------------------------------------------------------------------
 // The humanoid, read as a figure on its feet
 
-<*
- How the humanoid stands after a gesture, against how it stood before it. Every
- field is measured whether or not the test asserts it, so the log shows the same
- columns for every test.
-*>
+// How the humanoid stands after a gesture, against how it stood before it.
 struct Posture
 {
 	// Feet and toes, in rig heights off where they were.
@@ -621,22 +548,16 @@ struct Posture
 	// Leans, degrees.
 	float hips_tilt;
 	float chest_tilt;
-	// Rolls about the bone, degrees.
+	// The spine's roll about its bone, degrees.
 	float spine_twist;
-	float upper_spine_twist;
-	float chest_twist;
 	// The legs.
 	float fold_l;
 	float fold_r;
 	float forward_l;
 	float forward_r;
-	// How far the hips and the spine came down, in rig heights.
-	float hips_drop;
-	float spine_drop;
 	// The limits.
 	float excess;
 	String excess_at;
-	Vec3 spine_angles;
 	usz stirred;
 }
 
@@ -652,42 +573,14 @@ fn Posture Model.posture(&self, Frame* start, Frame* now)
 		.hips_tilt = self.tilt("hips", start, now),
 		.chest_tilt = self.tilt("chest", start, now),
 		.spine_twist = self.twist("spine", start, now),
-		.upper_spine_twist = self.twist("upper_spine", start, now),
-		.chest_twist = self.twist("chest", start, now),
 		.fold_l = self.fold("thigh_L", "knee_L", "ankle_L", now),
 		.fold_r = self.fold("thigh_R", "knee_R", "ankle_R", now),
 		.forward_l = self.forward("thigh_L", "knee_L", "ankle_L", now),
 		.forward_r = self.forward("thigh_R", "knee_R", "ankle_R", now),
-		.hips_drop = (start.position[self.joint("hips")].y - now.position[self.joint("hips")].y) / self.height,
-		.spine_drop = (start.position[self.joint("spine")].y - now.position[self.joint("spine")].y) / self.height,
-		.spine_angles = self.angles("spine", now),
 		.stirred = self.stirred(start, now),
 	};
 	p.excess = self.limit_excess(&p.excess_at);
 	return p;
-}
-
-fn void Posture.print(&self)
-{
-	note("  ankles off pin  L %.4f  R %.4f   toes off  L %.4f  R %.4f   (heights)", self.ankle_l, self.ankle_r, self.toe_l, self.toe_r);
-	note("  feet turned     L %.2f  R %.2f  (deg)", self.foot_l, self.foot_r);
-	note("  tilt            hips %.2f  chest %.2f  (deg)", self.hips_tilt, self.chest_tilt);
-	note("  twist           spine %.2f  upper_spine %.2f  chest %.2f  (deg)", self.spine_twist, self.upper_spine_twist, self.chest_twist);
-	note("  knees           fold L %.1f  R %.1f (deg)   forward of the hip-ankle line L %.3f  R %.3f (heights)",
-		self.fold_l, self.fold_r, self.forward_l, self.forward_r);
-	note("  dropped         hips %.3f  spine %.3f  (heights)", self.hips_drop, self.spine_drop);
-	note("  limits          worst %.2f deg outside, at %s   spine X %.1f Y %.1f Z %.1f (deg)",
-		self.excess, self.excess_at, self.spine_angles.x, self.spine_angles.y, self.spine_angles.z);
-	note("  joints stirred  %d", (int)self.stirred);
-}
-
-fn void Jumps.print(&self)
-{
-	note("  per-step jump   position %.4f heights at %s on move %d (pointer step %.4f, %.1fx)   turn %.2f deg at %s on move %d   solver gap up to %.4f",
-		self.move, self.move_at, self.move_step, self.asked, self.move / math::max(self.asked, 1.0e-9f), self.turn, self.turn_at, self.turn_step, self.gap);
-	if (!self.refined) return;
-	note("  refined x%d     the worst move's largest sub-step %.4f heights (%.0f%% of the step)   the worst turn's largest sub-step %.2f deg (%.0f%% of the step)",
-		REFINE_STEPS, self.move_sub, 100.0f * self.move_sub / math::max(self.move, 1.0e-9f), self.turn_sub, 100.0f * self.turn_sub / math::max(self.turn, 1.0e-9f));
 }
 
 // The feet stay flat, and the body upright: the checks every sit shares.
@@ -743,7 +636,6 @@ fn void Verdict.smooth(&self, Sweep* s)
 		jumps.refined = true;
 		s.settle();
 	}
-	jumps.print();
 	self.expect(jumps.move <= SMOOTH_MOVE * jumps.asked, "%s moved %.4f heights in one step, over %.0f times the pointer's %.4f",
 		jumps.move_at, jumps.move, SMOOTH_MOVE, jumps.asked);
 	self.expect(jumps.turn <= SMOOTH_TURN, "%s turned %.2f degrees in one step (limit %.0f)", jumps.turn_at, jumps.turn, SMOOTH_TURN);
@@ -783,7 +675,6 @@ fn void sit_on_position_pinned_ankles(Model* m, Verdict* v)
 	Frame now = m.frame();
 	defer now.free();
 	Posture p = m.posture(&start, &now);
-	p.print();
 	v.smooth(&s);
 	s.finish();
 
@@ -827,7 +718,6 @@ fn void sit_on_fully_pinned_feet(Model* m, Verdict* v)
 	Frame now = m.frame();
 	defer now.free();
 	Posture p = m.posture(&start, &now);
-	p.print();
 	v.smooth(&s);
 	s.finish();
 
@@ -870,7 +760,6 @@ fn void sit_grounded(Model* m, Verdict* v)
 	Frame now = m.frame();
 	defer now.free();
 	Posture p = m.posture(&start, &now);
-	p.print();
 	v.smooth(&s);
 	s.finish();
 
@@ -913,7 +802,6 @@ fn void chair_sit(Model* m, Verdict* v)
 	Frame now = m.frame();
 	defer now.free();
 	Posture p = m.posture(&start, &now);
-	p.print();
 	v.smooth(&s);
 	s.finish();
 
@@ -958,12 +846,8 @@ fn void dog_sits(Model* m, Verdict* v)
 	float hoof_l = m.off("hind_hoof_L", &start, &now);
 	float hoof_r = m.off("hind_hoof_R", &start, &now);
 	float dropped = start.position[m.joint("pelvis")].y - now.position[m.joint("pelvis")].y;
-	float tilt = m.tilt("pelvis", &start, &now);
 	String worst_at;
 	float excess = m.limit_excess(&worst_at);
-	note("  rig height %.3f   hooves off pin  L %.4f  R %.4f (heights)   pelvis dropped %.3f of 0.2 (model units)   pelvis tilt %.2f deg",
-		m.height, hoof_l, hoof_r, dropped, tilt);
-	note("  limits          worst %.2f deg outside, at %s   joints stirred %d", excess, worst_at, (int)m.stirred(&start, &now));
 	v.smooth(&s);
 	s.finish();
 
@@ -1006,8 +890,6 @@ fn void a_free_hand(Model* m, Verdict* v)
 	Vec3 forward = { 0, 0, 1 };
 	Vec3 near = (forward * 0.8f + toward * 0.6f).normalize() * (0.08f * h);
 	Vec3 far = near + forward * (0.5f * h);
-	note("  arm length %.3f heights   first pull to %.3f,%.3f,%.3f heights, then to %.3f,%.3f,%.3f",
-		(shoulder - wrist).length() / h, near.x / h, near.y / h, near.z / h, far.x / h, far.y / h, far.z / h);
 
 	Sweep s = m.grab("wrist_L");
 	s.to(near);
@@ -1019,11 +901,8 @@ fn void a_free_hand(Model* m, Verdict* v)
 
 	float hips_near = m.off("hips", &start, &mid);
 	float chest_near = m.tilt("chest", &start, &mid);
-	float wrist_near = (mid.position[m.joint("wrist_L")] - (wrist + near)).length() / h;
 	float hips_far = m.off("hips", &start, &end);
 	float wrist_far = (end.position[m.joint("wrist_L")] - (wrist + far)).length() / h;
-	note("  within reach    hips moved %.4f heights  chest tilt %.2f deg  wrist missed the pointer by %.4f heights", hips_near, chest_near, wrist_near);
-	note("  past reach      hips moved %.4f heights  wrist missed the pointer by %.4f heights", hips_far, wrist_far);
 	v.smooth(&s);
 	s.finish();
 
@@ -1074,20 +953,13 @@ fn void there_and_back(Model* m, Verdict* v)
 	String turn_at = "none";
 	float offset_gap;
 	String offset_at = "none";
-	float place_gap;
-	String place_at = "none";
 	foreach (usz j, name : m.names)
 	{
 		float turn = component_gap(back.local[j], start.local[j]);
 		if (turn > turn_gap) { turn_gap = turn; turn_at = name; }
 		float offset = (back.offset[j] - start.offset[j]).length() / h;
 		if (offset > offset_gap) { offset_gap = offset; offset_at = name; }
-		float place = (back.position[j] - start.position[j]).length() / h;
-		if (place > place_gap) { place_gap = place; place_at = name; }
 	}
-	note("  at the bottom   spine dropped %.3f heights, joints stirred %d", (start.position[m.joint("spine")].y - low.position[m.joint("spine")].y) / h, (int)m.stirred(&start, &low));
-	note("  back at A       worst local turn gap %.6f at %s   worst offset gap %.6f heights at %s   worst position gap %.6f heights at %s",
-		turn_gap, turn_at, offset_gap, offset_at, place_gap, place_at);
 
 	v.expect(m.stirred(&start, &low) > 0, "no joint turned on the way down: the pose did not read back");
 	v.expect(turn_gap < 1.0e-4f, "%s came back %.6f off its starting turn (limit 1e-4)", turn_at, turn_gap);
@@ -1124,8 +996,6 @@ fn void turn_the_hips(Model* m, Verdict* v)
 	Posture p = m.posture(&start, &now);
 	float hips = m.turned("hips", &start, &now);
 
-	p.print();
-	note("  the hips turned %.2f deg of the 17.19 asked", hips);
 	v.expect(hips > 1.0f, "the hips turned only %.2f degrees: the turn did not read back, so the other numbers mean nothing", hips);
 	v.held("ankle_L", p.ankle_l);
 	v.held("ankle_R", p.ankle_r);
@@ -1173,14 +1043,7 @@ fn void mirror_a_sit(Model* m, Verdict* v)
 	Frame now = m.frame();
 	defer now.free();
 	Posture after = m.posture(&start, &now);
-	float moved;
-	foreach (usz j, position : now.position) moved = math::max(moved, (position - sat.position[j]).length() / h);
 
-	note("  before the mirror");
-	before.print();
-	note("  after the mirror (mirror_pose returned %s)", mirrored);
-	after.print();
-	note("  the mirror moved a joint by up to %.4f heights", moved);
 	v.expect(mirrored, "the mirror was refused");
 	v.moved(&before);
 	v.expect(after.fold_l > 60.0f, "the left knee folded only %.1f degrees after the mirror (need over 60)", after.fold_l);

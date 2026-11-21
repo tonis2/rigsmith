@@ -15,32 +15,10 @@ import rig;
 import gltf;
 import collision;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::matrix;
-
-fn bool near(float a, float b) => math::abs(a - b) < 1.0e-5f;
-
-const uint[36] BOX_FACES @local = {
-	4, 5, 6, 4, 6, 7,
-	0, 3, 2, 0, 2, 1,
-	1, 2, 6, 1, 6, 5,
-	0, 4, 7, 0, 7, 3,
-	3, 7, 6, 3, 6, 2,
-	0, 1, 5, 0, 5, 4,
-};
-
-fn void corners(Vec3[] into, Vec3 low, Vec3 high) @local
-{
-	into[0] = { low.x, low.y, low.z };
-	into[1] = { high.x, low.y, low.z };
-	into[2] = { high.x, high.y, low.z };
-	into[3] = { low.x, high.y, low.z };
-	into[4] = { low.x, low.y, high.z };
-	into[5] = { high.x, low.y, high.z };
-	into[6] = { high.x, high.y, high.z };
-	into[7] = { low.x, high.y, high.z };
-}
 
 const float CLEARANCE @local = 0.2f;
 
@@ -78,13 +56,13 @@ struct ChainFixture
 
 fn void ChainFixture.init(&self)
 {
-	corners(self.positions[0:8], { -2.5, -0.5, -0.5 }, { -1.5, 0.5, 0.5 });
-	corners(self.positions[8:8], { -1.4, -0.9, -0.5 }, { -0.4, 0.1, 0.5 });
-	corners(self.positions[16:8], { -2.5, 0.6, -0.5 }, { -1.5, 1.6, 0.5 });
-	corners(self.positions[24:8], { 1.5, -0.5, -0.5 }, { 2.5, 0.5, 0.5 });
+	helpers::corners(self.positions[0:8], { -2.5, -0.5, -0.5 }, { -1.5, 0.5, 0.5 });
+	helpers::corners(self.positions[8:8], { -1.4, -0.9, -0.5 }, { -0.4, 0.1, 0.5 });
+	helpers::corners(self.positions[16:8], { -2.5, 0.6, -0.5 }, { -1.5, 1.6, 0.5 });
+	helpers::corners(self.positions[24:8], { 1.5, -0.5, -0.5 }, { 2.5, 0.5, 0.5 });
 	for (usz box = 0; box < 4; box++)
 	{
-		foreach (usz i, corner : BOX_FACES) self.indices[box * 36 + i] = corner + (uint)(box * 8);
+		foreach (usz i, corner : helpers::BOX_FACES) self.indices[box * 36 + i] = corner + (uint)(box * 8);
 		for (usz vertex = 0; vertex < 8; vertex++)
 		{
 			self.joints[box * 8 + vertex] = (ushort)box;
@@ -142,18 +120,18 @@ fn void triangle_distance_reads_every_feature_pair_and_zero_for_a_crossing() @te
 	collision::TriangleVerts flat = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 } };
 
 	collision::TriangleVerts lifted = { { 0, 0, 0.5f }, { 1, 0, 0.5f }, { 0, 1, 0.5f } };
-	test::@check(near(crig::triangle_distance(flat, lifted), 0.5f),
+	test::@check(math::is_approx(crig::triangle_distance(flat, lifted), 0.5f, 1e-5f),
 		"parallel copies half a unit apart read %.4f", crig::triangle_distance(flat, lifted));
 
 	// A vertex over the face's interior: the nearest feature is vertex–face.
 	collision::TriangleVerts hovering = { { 0.2f, 0.2f, 0.3f }, { 2, 2, 1 }, { 2, -1, 1 } };
-	test::@check(near(crig::triangle_distance(flat, hovering), 0.3f),
+	test::@check(math::is_approx(crig::triangle_distance(flat, hovering), 0.3f, 1e-5f),
 		"a vertex 0.3 over the face read %.4f", crig::triangle_distance(flat, hovering));
-	test::@check(near(crig::triangle_distance(hovering, flat), 0.3f), "the distance is not symmetric");
+	test::@check(math::is_approx(crig::triangle_distance(hovering, flat), 0.3f, 1e-5f), "the distance is not symmetric");
 
 	// An edge running level over the face: edge–edge where it crosses the rim.
 	collision::TriangleVerts spanning = { { 0.5f, -1, 0.25f }, { 0.5f, 2, 0.25f }, { 0.5f, 2, 3 } };
-	test::@check(near(crig::triangle_distance(flat, spanning), 0.25f),
+	test::@check(math::is_approx(crig::triangle_distance(flat, spanning), 0.25f, 1e-5f),
 		"an edge a quarter over the face read %.4f", crig::triangle_distance(flat, spanning));
 
 	// An edge straight through the face, with no vertex of either near the other.
@@ -165,10 +143,10 @@ fn void triangle_distance_reads_every_feature_pair_and_zero_for_a_crossing() @te
 	// Coplanar: overlapping reads zero from the feature search alone, apart is apart.
 	collision::TriangleVerts overlapping = { { 0.1f, 0.1f, 0 }, { 2, 0.1f, 0 }, { 0.1f, 2, 0 } };
 	test::@check(!crig::triangles_cross(flat, overlapping), "coplanar overlap was reported as an edge crossing");
-	test::@check(near(crig::triangle_distance(flat, overlapping), 0.0f),
+	test::@check(math::is_approx(crig::triangle_distance(flat, overlapping), 0.0f, 1e-5f),
 		"coplanar overlap read %.6f, not zero", crig::triangle_distance(flat, overlapping));
 	collision::TriangleVerts beside = { { 2, 0, 0 }, { 3, 0, 0 }, { 2, 1, 0 } };
-	test::@check(near(crig::triangle_distance(flat, beside), 1.0f),
+	test::@check(math::is_approx(crig::triangle_distance(flat, beside), 1.0f, 1e-5f),
 		"coplanar triangles a unit apart read %.4f", crig::triangle_distance(flat, beside));
 
 	// Touching at a vertex is a distance of zero, however it is found.
@@ -475,7 +453,7 @@ fn void a_moved_region_meeting_a_distant_one_is_a_candidate_until_excluded() @te
 fn void a_split_seam_reads_as_shared_topology_given_the_welds() @test
 {
 	Vec3[8] shared;
-	corners(shared[..], { -0.5, -0.5, -0.5 }, { 0.5, 0.5, 0.5 });
+	helpers::corners(shared[..], { -0.5, -0.5, -0.5 }, { 0.5, 0.5, 0.5 });
 	Vec3[24] positions;
 	uint[36] indices;
 	ushort[24] joints;
@@ -483,7 +461,7 @@ fn void a_split_seam_reads_as_shared_topology_given_the_welds() @test
 	for (usz face = 0; face < 6; face++)
 	{
 		// The face's two triangles name four unique corners of the shared box.
-		uint[6] quad = BOX_FACES[face * 6 : 6];
+		uint[6] quad = helpers::BOX_FACES[face * 6 : 6];
 		uint[4] used;
 		usz unique;
 		foreach (corner : quad)
@@ -522,7 +500,7 @@ fn void a_split_seam_reads_as_shared_topology_given_the_welds() @test
 		"the faces did not land on the regions the check wants: %d and %d",
 		surface.region_for_triangle(0), surface.region_for_triangle(6));
 	test::@check(!surface.triangles_share_vertex(0, 6), "the split faces share an index after all");
-	test::@check(near(crig::triangle_distance(surface.rest_triangle(0), surface.rest_triangle(6)), 0.0f),
+	test::@check(math::is_approx(crig::triangle_distance(surface.rest_triangle(0), surface.rest_triangle(6)), 0.0f, 1e-5f),
 		"the crease is not at distance zero");
 
 	crig::CollisionPolicy by_index = crig::build_collision_policy(&surface, parents[..], dot_ids[..], CLEARANCE);
@@ -723,7 +701,7 @@ fn void an_exclusion_edit_is_one_undo_step_and_reaches_the_live_policy() @test
 	test::@check(app.collision_policy.ready, "binding the skin did not build a collision policy");
 	test::eq(app.collision_policy.joints, (uint)view.len());
 	test::@check(app.collision_policy.clearance > 0.0f
-		&& near(app.collision_policy.clearance, app.picker.scale * crig::COLLISION_CLEARANCE),
+		&& math::is_approx(app.collision_policy.clearance, app.picker.scale * crig::COLLISION_CLEARANCE, 1e-5f),
 		"the clearance is not scaled from the mesh");
 
 	uint first = view.dot_ids[0];

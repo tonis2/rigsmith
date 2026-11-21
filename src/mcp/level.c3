@@ -4,7 +4,7 @@ module crig;
 import std::collections::object;
 import std::math;
 
-faultdef LEVEL_REFUSED;
+excuse LEVEL_REFUSED;
 
 fn void add_level_tools(ToolTable* table, AppState* app)
 {
@@ -123,7 +123,6 @@ fn String? tool_get_level(Object* args, void* user_data, DString* detail) @priva
 
 fn String? tool_ground_at(Object* args, void* user_data, DString* detail) @private
 {
-	AppState* app = (AppState*)user_data;
 	if (!takes_object(args, detail, `ground_at takes {"at": [x,y,z]} or {"screen": [x,y]}`)) return LEVEL_REFUSED~;
 	if (!level_shown())
 	{

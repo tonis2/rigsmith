@@ -266,7 +266,7 @@ struct DragMate
 *>
 const Vec2 TURN_UNANCHORED = { -1, -1 };
 
-faultdef AXIS_EDGE_ON;
+excuse AXIS_EDGE_ON;
 
 <*
  How nearly parallel to the view ray an axis may be and still be draggable.

@@ -12,6 +12,7 @@ module crig;
 import cui;
 import cui::widgets;
 import std::math;
+import std::hash::fnv32a;
 
 const String ANIM_CURVE_KEY_FIELD_ID = "anim-curve-key-field";
 const String ANIM_CURVE_FRAME_ID = "anim-curve-frame";
@@ -194,7 +195,9 @@ fn void AnimCurveKeyField.update(&self, Element* elem, float dt) @dynamic
 	float last;
 	bool selected = app.selected_key_span(app.editing, &first, &last);
 	String[4] texts;
-	uint hash = selected ? bitcast(first, uint) : 0;
+	Fnv32a hash;
+	hash.init();
+	hash.mix(selected ? first : 0.0f);
 	for (int axis = 0; axis < 3; axis++)
 	{
 		float value;
@@ -202,12 +205,14 @@ fn void AnimCurveKeyField.update(&self, Element* elem, float dt) @dynamic
 		bool rotation = !curves || curves.graph.selected_rotation();
 		usz count = curves ? curves.graph.selected_values(rotation, axis, &value, &mixed) : 0;
 		if (count > 0 && !mixed) texts[axis + 1] = string::tformat(rotation ? "%.1f" : "%.3f", value);
-		hash = (hash ^ (uint)count ^ (mixed ? 7u : 0u) ^ (count > 0 && !mixed ? bitcast(value, uint) : 0)) * 16777619u;
+		hash.mix(count);
+		hash.mix(mixed);
+		hash.mix(count > 0 && !mixed ? value : 0.0f);
 	}
 	if (selected) texts[0] = string::tformat("%d", (int)math::round(first * (float)app.anim_fps));
-	if (self.synced && hash == self.shown) return;
+	if (self.synced && (uint)hash == self.shown) return;
 	self.synced = true;
-	self.shown = hash;
+	self.shown = (uint)hash;
 	String[4] ids = { ANIM_CURVE_FRAME_ID, ANIM_CURVE_VALUE_IDS[0], ANIM_CURVE_VALUE_IDS[1], ANIM_CURVE_VALUE_IDS[2] };
 	foreach (i, id : ids)
 	{

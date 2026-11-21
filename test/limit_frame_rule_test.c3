@@ -8,23 +8,12 @@
 module crig_tests::limit_frame_rule;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::math;
 
 const String HUMANOID = "assets/animations/humanoid.glb";
-
-fn crig::JointLimitFrame frame_of(crig::RigDocument* doc, uint id)
-{
-	uint[] ids;
-	rig::Skeleton skeleton = crig::build_skeleton(doc, mem, &ids)!!;
-	defer
-	{
-		skeleton.free(mem);
-		alloc::free(mem, ids);
-	}
-	return crig::joint_limit_frame(&skeleton, ids, doc.rotation_limits_of(id));
-}
 
 // A wrist and four fingers held out along +X, each leaning a degree or two
 // another way, as placed fingers do.
@@ -45,7 +34,7 @@ fn void fingers_leaning_by_a_degree_share_their_axes() @test
 		crig::JointRotationLimits limits = crig::unconstrained_rotation(knuckle);
 		limits.constrained = true;
 		test::@check(doc.set_rotation_limits(knuckle, limits), "the table did not land");
-		Vec3 x = frame_of(doc, knuckle).axis(X);
+		Vec3 x = helpers::frame_of(doc, knuckle).axis(X);
 		test::@check(x.z > 0.99f, "finger %d's X is %s, not across the palm", i, x);
 	}
 }
@@ -68,7 +57,7 @@ fn void bones_near_y_or_z_take_world_x_and_leaning_ones_the_least_axis() @test
 		crig::JointRotationLimits limits = crig::unconstrained_rotation(joint);
 		limits.constrained = true;
 		test::@check(doc.set_rotation_limits(joint, limits), "the table did not land");
-		Vec3 x = frame_of(doc, joint).axis(X);
+		Vec3 x = helpers::frame_of(doc, joint).axis(X);
 		test::@check(x.dot(seeds[i]) > 0.95f, "bone %d's X is %s, not along %s", i, x, seeds[i]);
 	}
 }
@@ -103,7 +92,7 @@ fn void the_humanoids_fingers_all_curl_about_x() @test
 				// square to the bone. Which way round X runs follows the hand's own
 				// lean, so the side that closes the finger is read off the bone: the
 				// turn that carries its tip down toward the palm.
-				Vec3 x = frame_of(&app.doc, id).axis(X);
+				Vec3 x = helpers::frame_of(&app.doc, id).axis(X);
 				test::@check(math::abs(x.y) < 0.35f, "%s's X is %s, not across the palm", name, x);
 				String next = string::tformat("%s_%d_%s", finger, k + 1, side);
 				Vec3 joint;

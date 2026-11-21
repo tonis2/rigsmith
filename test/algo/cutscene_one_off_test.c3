@@ -9,6 +9,7 @@
 module crig_tests::cutscene_one_off;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf_edit;
 import std::collections::object;
@@ -21,8 +22,6 @@ import std::math::vector;
 import std::math::quaternion;
 
 const String FOLDER @local = "build/cutscene-one-off";
-
-fn bool near(float a, float b, float eps = 1e-5f) @local => math::abs(a - b) <= eps;
 
 fn Quaternionf yaw(float degrees) @local
 {
@@ -77,9 +76,9 @@ fn void a_level_rig_with_its_origin_at_the_hips_takes_the_root_where_it_rests() 
 	crig::carry_channels(channels[..], own, level);
 	// At rest the hips rest where the level's do, and they rise by what the clip lifts them.
 	float[6] hips = { 0.004f, -0.035f, 0.061f, 0.004f, 0.015f, 0.061f };
-	foreach (usz i, v : hips) test::@check(near(channels[0].values[i], v), "hips value %d is %f, not %f", i, channels[0].values[i], v);
+	foreach (usz i, v : hips) test::@check(math::is_approx(channels[0].values[i], v, 1e-5f), "hips value %d is %f, not %f", i, channels[0].values[i], v);
 	float[8] arm = { 0, 0, 0, 1, 0, 0.7071068f, 0, 0.7071068f };
-	foreach (usz i, v : arm) test::@check(near(channels[1].values[i], v), "a rotation was changed at %d", i);
+	foreach (usz i, v : arm) test::@check(math::is_approx(channels[1].values[i], v, 1e-5f), "a rotation was changed at %d", i);
 }
 
 fn void a_rig_that_differs_is_named_and_not_guessed() @test
@@ -116,12 +115,6 @@ fn void a_rig_that_differs_is_named_and_not_guessed() @test
 	test::@check(said.contains("arm"), "'%s' does not name the joint", said);
 }
 
-fn float turn_between(Quaternionf a, Quaternionf b) @local
-{
-	float d = math::min(math::abs(a.v.dot(b.v)), 1.0f);
-	return 2.0f * math::acos(d);
-}
-
 <*
  The same rig with other rest rotations, as a level's armature holds the character Rigsmith reads:
  each channel is carried into those frames so the joints turn and slide as they did in the first.
@@ -154,11 +147,11 @@ fn void channels_carry_into_a_rig_resting_in_other_joint_frames() @test
 		Quaternionf written = { .v = { channels[0].values[k * 4], channels[0].values[k * 4 + 1], channels[0].values[k * 4 + 2], channels[0].values[k * 4 + 3] } };
 		Quaternionf world_delta = hips_rest.mul(written).mul(hips_rest.mul(arm_rest).invert()).normalize();
 		Quaternionf made = k == 0 ? (Quaternionf)quaternion::IDENTITY : bend;
-		test::@check(turn_between(world_delta, made) < 1e-4f, "key %d turns the arm %f rad off", k, turn_between(world_delta, made));
+		test::@check(helpers::turn_between(world_delta, made) < 1e-4f, "key %d turns the arm %f rad off", k, helpers::turn_between(world_delta, made));
 	}
 	// The root has no parent joint: its slide keeps its offset from the rest, in the armature's frame.
 	float[6] hips = { 0.004f, -0.035f, 0.061f, 0.004f, -0.135f, 0.161f };
-	foreach (usz i, v : hips) test::@check(near(channels[1].values[i], v, 1e-4f), "hips value %d is %f, not %f", i, channels[1].values[i], v);
+	foreach (usz i, v : hips) test::@check(math::is_approx(channels[1].values[i], v, 1e-4f), "hips value %d is %f, not %f", i, channels[1].values[i], v);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,20 +182,20 @@ fn void a_baked_one_off_has_channels_only_for_the_joints_it_keys() @test
 	test::@check(turn >= 0, "the arm's turn was not written");
 	if (turn < 0) return;
 	CutChannel* r = &baked.channels[turn];
-	test::@check(near(r.times[0], 0.0f) && near(r.times[^1], 1.0f), "the turn runs %f to %f", r.times[0], r.times[^1]);
-	test::@check(near(r.values[^2], 0.7071068f, 1e-4f) && near(r.values[^1], 0.7071068f, 1e-4f), "it ends a quarter turn about z");
+	test::@check(math::is_approx(r.times[0], 0.0f, 1e-5f) && math::is_approx(r.times[^1], 1.0f, 1e-5f), "the turn runs %f to %f", r.times[0], r.times[^1]);
+	test::@check(math::is_approx(r.values[^2], 0.7071068f, 1e-4f) && math::is_approx(r.values[^1], 0.7071068f, 1e-4f), "it ends a quarter turn about z");
 	foreach (&c : baked.channels)
 	{
 		if (c.path != TRANSLATION) continue;
 		// The arm's own rest offset from the spine, as the file holds it.
-		test::@check(near(c.values[0], 0.3f, 1e-4f) && near(c.values[1], 0.2f, 1e-4f), "the arm slides from its rest");
+		test::@check(math::is_approx(c.values[0], 0.3f, 1e-4f) && math::is_approx(c.values[1], 0.2f, 1e-4f), "the arm slides from its rest");
 	}
 
 	// Its rig at rest, as Rigsmith writes it, is the frames the bake is in.
 	JointRest[] rests = crig::skeleton_rests(mem, &skeleton, names[..]);
 	defer free(rests);
 	test::@check(rests[0].parent == "" && rests[2].parent == "spine", "the parents are '%s' and '%s'", rests[0].parent, rests[2].parent);
-	test::@check(near(rests[0].translation.y, 1.0f) && near(rests[2].translation.x, 0.3f), "the rest offsets");
+	test::@check(math::is_approx(rests[0].translation.y, 1.0f, 1e-5f) && math::is_approx(rests[2].translation.x, 0.3f, 1e-5f), "the rest offsets");
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +325,7 @@ fn void the_engines_own_one_off_reads_the_same_way() @test
 		"its one channel moves the arm");
 	if (read[0].channels.len == 1)
 	{
-		test::@check(read[0].channels[0].times.len == 2 && near(read[0].channels[0].times[1], 0.33333334f), "two keys over a third of a second");
+		test::@check(read[0].channels[0].times.len == 2 && math::is_approx(read[0].channels[0].times[1], 0.33333334f, 1e-5f), "two keys over a third of a second");
 	}
 	sz strip = -1;
 	foreach (usz k, &s : intro.actors[0].strips) if (s.animation == 0) strip = (sz)k;
@@ -443,18 +436,18 @@ fn void two_poses_mix_the_short_way_round_and_leave_an_unkeyed_joint_alone() @te
 	defer half.free(mem);
 	crig::blend_poses(&half, from, 0.5f, { true, false });
 	Quaternionf q = half.rotations[0];
-	test::@check(near(q.v.y, yaw(45.0f).v.y, 1e-4f) && near(q.v.w, yaw(45.0f).v.w, 1e-4f), "halfway is not 45 degrees");
-	test::@check(near(half.offsets[0].y, 0.0f), "the offset is %f, not halfway", half.offsets[0].y);
+	test::@check(math::is_approx(q.v.y, yaw(45.0f).v.y, 1e-4f) && math::is_approx(q.v.w, yaw(45.0f).v.w, 1e-4f), "halfway is not 45 degrees");
+	test::@check(math::is_approx(half.offsets[0].y, 0.0f, 1e-5f), "the offset is %f, not halfway", half.offsets[0].y);
 	test::@check(half.rotations[1].v == from.rotations[1].v, "a joint the incoming clip does not key was mixed");
 
 	rig::Pose start = into.copy(mem);
 	defer start.free(mem);
 	crig::blend_poses(&start, from, 0.0f);
-	test::@check(start.rotations[0].v == from.rotations[0].v && near(start.offsets[0].y, -0.2f), "weight 0 is not the outgoing pose");
+	test::@check(start.rotations[0].v == from.rotations[0].v && math::is_approx(start.offsets[0].y, -0.2f, 1e-5f), "weight 0 is not the outgoing pose");
 	rig::Pose end = into.copy(mem);
 	defer end.free(mem);
 	crig::blend_poses(&end, from, 1.0f);
-	test::@check(near(end.rotations[0].v.y, into.rotations[0].v.y) && near(end.offsets[0].y, 0.2f), "weight 1 is not the incoming pose");
+	test::@check(math::is_approx(end.rotations[0].v.y, into.rotations[0].v.y, 1e-5f) && math::is_approx(end.offsets[0].y, 0.2f, 1e-5f), "weight 1 is not the incoming pose");
 
 	// The other hemisphere of the same turn mixes the short way.
 	rig::Pose flipped = rig::rest_pose(mem, 2);
@@ -485,14 +478,14 @@ fn void a_strip_fades_in_from_the_one_before_as_the_player_plays_it() @test
 	// Into the bow from the wave held on its last frame since 1 s: a quarter in at 2.25 s.
 	CutActorPose at = crig::cutscene_actor_shown(&c, curves, 0, 2.25f);
 	CutFade fade = crig::cutscene_actor_fade(&c, curves, 0, 2.25f, at);
-	test::@check(fade.strip == 0 && near(fade.clip_time, 1.0f) && near(fade.weight, 0.5f), "the fade is from %d at %f, %f in", fade.strip, fade.clip_time, fade.weight);
+	test::@check(fade.strip == 0 && math::is_approx(fade.clip_time, 1.0f, 1e-5f) && math::is_approx(fade.weight, 0.5f, 1e-5f), "the fade is from %d at %f, %f in", fade.strip, fade.clip_time, fade.weight);
 	CutActorPose later = crig::cutscene_actor_shown(&c, curves, 0, 2.6f);
 	test::@check(crig::cutscene_actor_fade(&c, curves, 0, 2.6f, later).strip < 0, "the fade outlasts its length");
 
 	// Out of the bow as it ends into the idle: it was still playing, so it plays on through the fade.
 	CutActorPose next = crig::cutscene_actor_shown(&c, curves, 0, 3.2f);
 	CutFade on = crig::cutscene_actor_fade(&c, curves, 0, 3.2f, next);
-	test::@check(on.strip == 1 && near(on.weight, 0.5f), "the idle fades from %d, %f in", on.strip, on.weight);
+	test::@check(on.strip == 1 && math::is_approx(on.weight, 0.5f, 1e-5f), "the idle fades from %d, %f in", on.strip, on.weight);
 	test::@check(on.clip_time > 1.0f, "the bow stopped at %f instead of playing on", on.clip_time);
 
 	// No fade before the first strip has anything to fade from.

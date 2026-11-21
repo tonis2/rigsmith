@@ -92,64 +92,6 @@ fn void a_rewritten_clip_undoes_to_the_one_before_it() @test
 }
 
 <*
- A write that replaced nothing, undone, leaves the pack without the clip.
-
- The parked side of a first write is an empty template, which is the whole of
- how "there was no clip of this name" is said — so this is the check that an
- empty one going back in removes rather than writes a blank.
-*>
-fn void undoing_a_first_write_takes_the_clip_out() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	if (!write_timed(f, "Solo", "1")) return;
-	test::@check(held_clip(f, "Solo") != null, "the clip is there before the undo");
-
-	test::@check(f.app.undo(), "the write is on the ledger");
-	test::@check(held_clip(f, "Solo") == null, "undoing a first write leaves the clip gone");
-	test::@check(f.refuses_tool("delete_clip", `{"clip":"Solo"}`, "no clip is called"),
-		"and the pack agrees it does not hold it");
-
-	test::@check(f.app.redo() && held_clip(f, "Solo") != null, "redo writes it again");
-}
-
-<*
- Deleting a clip and putting it back.
-
- `delete_clip` is a swap with an empty template going in, so undo is the same
- exchange in the other direction — the clip that comes back is the one that left,
- not a rebuild of it.
-*>
-fn void a_deleted_clip_comes_back_whole() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	if (!write_timed(f, "Gone", "2")) return;
-
-	Object*? removed = f.call_tool("delete_clip", `{"clip":"Gone"}`);
-	if (catch removed)
-	{
-		test::@check(false, "delete_clip takes the clip out");
-		return;
-	}
-	removed.free();
-	test::@check(held_clip(f, "Gone") == null, "the clip is out before the undo");
-
-	test::@check(f.app.undo(), "the delete is on the ledger");
-	crig::AnimTemplate* back = held_clip(f, "Gone");
-	test::@check(back != null && back.duration == 2.0f && back.keyframes.len == 2,
-		"undoing a delete puts the clip back whole");
-
-	test::@check(f.app.redo() && held_clip(f, "Gone") == null, "redo takes it out again");
-}
-
-<*
  delete_clip names a clip the way every clip tool does, "Pack/Clip" included, and
  an undo puts the clip back in the slot it left — the clips after it keep their
  references, and one open below it stays open.

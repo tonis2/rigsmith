@@ -305,7 +305,7 @@ fn crig::ConstraintRig fixture_constraints(rig::Skeleton* skeleton)
 
 // Raised rather than asserted: a file the replay cannot read is a check that
 // says so, not one that quietly compares nothing.
-faultdef REPLAY_NO_SKIN, REPLAY_UNSUPPORTED, REPLAY_JOINT_OUT_OF_RANGE;
+excuse REPLAY_NO_SKIN, REPLAY_UNSUPPORTED, REPLAY_JOINT_OUT_OF_RANGE;
 
 // Where every joint and every vertex of a file ends up at one instant.
 struct ReplayFrame
@@ -919,8 +919,7 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 		mem, FIXTURE, bench.body, &bench.skeleton, JOINTS[..], bench.dense,
 		exporting, "body", constraints: constraints))
 	{
-		test::@check(false, "SKIPPED — the writer refused the fixture");
-		io::printfn("  %s", error);
+		test::@check(false, "SKIPPED — the writer refused the fixture: %s", error);
 		return;
 	}
 
@@ -1002,8 +1001,7 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 		ReplayFrame? played = replay_frame(mem, &stream, 0, time);
 		if (catch fault error = played)
 		{
-			test::@check(false, "the written file can be replayed as glTF");
-			io::printfn("  %s at t=%.3f", error, time);
+			test::@check(false, "the written file can be replayed as glTF: %s at t=%.3f", error, time);
 			return;
 		}
 		ReplayFrame frame = played;
@@ -1026,8 +1024,6 @@ fn void check_rigged_replay(bool reopen, bool sparse, bool stretch = false,
 		}
 	}
 
-	io::printfn("  replayed as glTF: joints %.7f out, vertices %.7f out",
-		worst_joint, worst_vertex);
 	// Auto is baked at the editor's documented four subdivisions per authored
 	// span. Its small between-sample fitting error is bounded separately from
 	// the float-roundtrip tolerance used by exact Linear/Hold curves.
@@ -1086,8 +1082,6 @@ fn void the_preview_binds_what_the_writer_writes() @test
 		}
 	}
 
-	io::printfn("  %d of %d vertices bound differently, worst weight %.7f out",
-		differing, vertices, worst);
 	test::@check(differing == 0, "the preview and the writer bind every vertex the same");
 }
 
@@ -1129,7 +1123,6 @@ fn void check_the_fixture_reaches_actually_bite() @test
 		}
 	}
 
-	io::printfn("  reaches move %d of %d vertices", differing, bench.body.positions.len);
 	test::@check(differing > 0, "the fixture's reaches change what it binds");
 }
 

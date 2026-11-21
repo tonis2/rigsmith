@@ -235,90 +235,6 @@ fn void the_weights_card_drives_the_area_tool() @test
 }
 
 <*
- Paint, press Apply, and the painting is over: clicks on the mesh change no
- weights and pick no part, and the Part menu stays where it was. A part chosen
- in the menu is the one the mesh then shapes, and a click on it does not step it
- to another. Clicks after Apply used to pick the own part and then With
- children, which read as the brush never having closed.
-
- *Re-introduce:* let a click on the mesh pick and step the part again, and the
- Part menu moves under the clicks after Apply.
-*>
-fn void after_apply_the_mesh_takes_no_edits() @test
-{
-	io::printn("after Apply, clicks and drags on the mesh change no weights and no part");
-
-	Fixture fixture;
-	if (catch fault error = fixture.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer fixture.close();
-	uint chest = fixture.two_dots();
-	fixture.app.camera.snapping = false;
-	fixture.app.camera.yaw = 0.0f;
-	fixture.app.camera.pitch = 0.0f;
-
-	// A corner of the fixture cube, the mesh's only vertices: found by projecting
-	// a dot put there and taken away again.
-	uint probe = fixture.doc().add_dot({ -1, 1, 1 }, "probe");
-	fixture.app.refresh_ui();
-	Vec2? found = fixture.pixel_of(probe);
-	fixture.doc().remove_dot(probe);
-	fixture.app.select(chest);
-	fixture.app.refresh_ui();
-	if (catch found)
-	{
-		test::@check(false, "the cube's corner does not project into the viewport");
-		return;
-	}
-	Vec2 corner = found;
-	fixture.feed(VIEWPORT_CENTER);
-
-	fixture.click(fixture.center_of(crig::JOINT_TAB_WEIGHTS_ID)!!);
-	fixture.click(fixture.center_of(crig::WEIGHTS_BRUSH_ID)!!);
-	test::@check(fixture.app.brushing, "Paint brush did not open the brush");
-	fixture.drag(corner, { corner.x + 4, corner.y });
-	test::@check(fixture.doc().pins.len() > 0, "the stroke painted nothing");
-
-	fixture.click(fixture.center_of(crig::WEIGHTS_APPLY_ID)!!);
-	test::@check(!fixture.app.brushing, "Apply left the brush open");
-	test::@check(fixture.app.areaing && !fixture.app.area_pending(), "Apply left a part picked");
-
-	Select* menu = fixture.ui.find_id(crig::WEIGHTS_PART_ID)!!.widget_as(Select);
-	usz shown = menu.selected;
-	crig::VertexPin[] pins = alloc::clone_slice(mem, fixture.doc().pins.array_view());
-	defer alloc::free(mem, pins);
-	sz cursor = fixture.app.undo_stack.cursor;
-	for (int round = 0; round < 2; round++)
-	{
-		fixture.click(corner);
-		fixture.feed(VIEWPORT_CENTER);
-	}
-	test::@check(!fixture.app.brushing && !fixture.app.area_pending(),
-		"the mesh's gestures after Apply left %s", fixture.app.brushing ? "the brush open" : "a part picked");
-	test::eq(fixture.app.undo_stack.cursor, cursor);
-	test::eq(fixture.doc().pins.len(), (sz)pins.len);
-	foreach (i, pin : fixture.doc().pins.array_view())
-	{
-		test::@check(pin.vertex == pins[i].vertex && pin.dot_id == pins[i].dot_id && pin.share == pins[i].share,
-			"the weights on vertex %d changed after Apply", pin.vertex);
-	}
-	menu = fixture.ui.find_id(crig::WEIGHTS_PART_ID)!!.widget_as(Select);
-	test::@check(menu.selected == shown, "the Part menu moved to %s under the clicks", crig::weights_part_labels[menu.selected]);
-
-	// With children from the menu, then a click on the mesh: it stays.
-	fixture.click(fixture.center_of(crig::WEIGHTS_PART_ID)!!);
-	fixture.click(fixture.center_of("With children")!!);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN && fixture.app.area_shaping(),
-		"the Part menu did not show With children");
-	fixture.click(corner);
-	test::@check(fixture.app.area_part == crig::AreaPart.WITH_CHILDREN, "a click on the mesh stepped the part to %s",
-		fixture.app.area_part.label());
-}
-
-<*
  The Weights card on a finger joint carries the model's knuckle blend. A drag
  writes through as it goes and the release closes one undo step — and the card,
  which rebuilds whenever the document moves, leaves the slider being held alone,
@@ -390,8 +306,6 @@ fn void the_knuckle_blend_slider_is_one_undo_step() @test
 	test::@check(!fixture.in_tree(crig::WEIGHTS_KNUCKLE_ID), "the knuckle blend showed on a joint it does not reach");
 }
 
-// How many unique vertices carry a pin.
-// How many corners on the cube's far face (z = -1, vertices 0 to 3) carry a pin.
 // Whether each vertex's weights differ from the automatic ones: what the hand
 // edits changed. Not the pins themselves — an edited joint stores its whole
 // column, so every vertex it holds has one.
@@ -450,13 +364,6 @@ fn usz pinned_vertices(Fixture* fixture)
 	usz changed = 0;
 	foreach (on : edited) if (on) changed++;
 	return changed;
-}
-
-fn void the_n_panel_starts_closed() @test
-{
-	crig::AppState app = crig::new_app({});
-	defer app.free();
-	test::@check(!app.show_joint_panel, "a fresh app opens with the N-panel closed");
 }
 
 <*

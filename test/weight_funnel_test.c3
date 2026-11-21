@@ -5,6 +5,7 @@
 module crig_tests::weight_funnel;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import std::core::test;
@@ -43,15 +44,6 @@ fn void FunnelFixture.close(&self)
 	(void)file::delete(sidecar);
 }
 
-fn uint funnel_dot(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
-}
-
 <*
  An Apply that pins the knee's own part, so the edited weights differ from the
  automatic ones and a reader that skipped them would show it.
@@ -59,7 +51,7 @@ fn uint funnel_dot(crig::AppState* app, String name)
 fn void FunnelFixture.edit(&self)
 {
 	crig::AppState* app = &self.app;
-	uint knee = funnel_dot(app, "knee_L");
+	uint knee = helpers::dot_named(app, "knee_L");
 	test::@check(knee != 0, "the humanoid has no knee_L");
 	bool[] part = app.area_part_mask(mem, knee, OWN);
 	defer alloc::free(mem, part);
@@ -118,7 +110,7 @@ fn void the_falloff_view_and_the_skin_draw_the_funnel() @test
 	f.edit();
 	crig::AppState* app = &f.app;
 
-	uint knee = funnel_dot(app, "knee_L");
+	uint knee = helpers::dot_named(app, "knee_L");
 	crig::RigView view = app.open_rig(mem)!!;
 	defer view.free(mem);
 	usz bones = view.len();
@@ -193,7 +185,7 @@ fn void get_weights_rows_read_the_funnel() @test
 		for (sz k = 0; k < joints.get_len(); k++)
 		{
 			Object* held = joints.get_at(k);
-			uint dot = funnel_dot(app, held.get_string("name")!!);
+			uint dot = helpers::dot_named(app, held.get_string("name")!!);
 			float want = mine[(usz)view.joint_of(dot)] / sum;
 			test::@check(math::abs((float)held.get_float("share")!! - want) < 1.0e-3f,
 				"vertex %d: get_weights says %s holds %f, the bind %f", v, held.get_string("name")!!,
@@ -213,7 +205,7 @@ fn void the_falloff_view_with_no_joint_is_grey() @test
 	defer f.close();
 	crig::AppState* app = &f.app;
 
-	app.select(funnel_dot(app, "knee_L"));
+	app.select(helpers::dot_named(app, "knee_L"));
 	app.show_tint(FALLOFF);
 	app.select(0);
 	app.rebind_tints();

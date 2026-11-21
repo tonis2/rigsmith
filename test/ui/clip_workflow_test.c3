@@ -163,7 +163,7 @@ fn void wireframe_shows_the_rig_through_the_mesh() @test
  with the dots when the body is in front of them, and a dot fitted into a cube
  can land either side of the skin depending on the plan — which would make every
  colour below a coin toss. That the dimming happens at all is
- `check_wireframe_shows_the_rig_through_the_mesh`'s claim, not this one's.
+ `wireframe_shows_the_rig_through_the_mesh`'s claim, not this one's.
 
  The ring and the line are asserted by colour on the canvas rather than by
  reading the state back, because the state is a lookup that a paint can perfectly
@@ -341,8 +341,7 @@ fn void a_dot_shows_its_name_and_where_the_plan_wants_it() @test
 
  Driven in wireframe, because an occluded dot is drawn in a dimmed colour and
  the colour is how the drawings below are found. Whether the cube's skin happens
- to be in front of a given joint is `check_occlusion_only_dims_what_is_behind`'s
- question.
+ to be in front of a given joint is `test/pick_test.c3`'s question.
 *>
 fn void the_rig_walks_with_the_body() @test
 {
@@ -557,7 +556,7 @@ fn void the_rig_walks_with_the_body() @test
  company.
 
  Driven from a front view with a dot past the far wall, the same construction
- `check_wireframe_shows_the_rig_through_the_mesh` uses: "behind the body" has to
+ `wireframe_shows_the_rig_through_the_mesh` uses: "behind the body" has to
  be exact, not a guess about where an earlier check left the camera.
 *>
 fn void the_mesh_and_the_rig_hide_apart() @test

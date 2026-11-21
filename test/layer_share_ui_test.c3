@@ -9,17 +9,12 @@
 module crig_tests::ui;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import cui;
 import std::core::test;
 import std::math;
 import std::math::quaternion;
-
-fn uint share_dot(Fixture* f, String name)
-{
-	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
 
 // A clip of the biped keyed at rest at 0, 1 and 2 s.
 fn AnimRef share_clip(Fixture* f, String name, float duration)
@@ -33,7 +28,7 @@ fn AnimRef share_clip(Fixture* f, String name, float duration)
 // layer when one is chosen, the base otherwise.
 fn void share_key_thigh(Fixture* f, float time, float angle)
 {
-	uint thigh = share_dot(f, "thigh_L");
+	uint thigh = helpers::dot_named(&f.app, "thigh_L");
 	f.app.edit_time = time;
 	test::@check(f.app.pose_from_clip(f.app.editing, time), "could not open a pose draft");
 	Quaternionf bend = quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, angle);
@@ -66,7 +61,7 @@ fn String share_three(Fixture* f, AnimRef* a, AnimRef* b, AnimRef* c)
 	*a = share_clip(f, "A", 4.0f);
 	f.app.editing = *a;
 	share_key_thigh(f, 1.0f, 0.5f);
-	f.app.select(share_dot(f, "thigh_L"));
+	f.app.select(helpers::dot_named(&f.app, "thigh_L"));
 	test::@check(f.app.move_joints_to_layer(f.app.editing) == 0, "the thigh did not move to a layer");
 	*a = f.app.editing;
 	AnimRef[2] targets = { *b, *c };
@@ -99,7 +94,7 @@ fn void share_a_library_tail_moves_to_a_layer_and_keeps_its_pose() @test
 	defer foreach (&pose : before) pose.free(mem);
 
 	f.app.editing = idle;
-	f.app.select(share_dot(&f, "tail_base"));
+	f.app.select(helpers::dot_named(&f.app, "tail_base"));
 	test::eq(f.app.move_joints_to_layer(idle), (sz)0);
 	AnimRef landed = f.app.editing;
 	test::@check(landed.pack == f.app.authored_pack, "the library clip did not fork");
@@ -249,7 +244,7 @@ fn void share_sharing_into_a_library_clip_forks_and_rebinds_once() @test
 	AnimRef a = share_clip(&f, "A", 4.0f);
 	f.app.editing = a;
 	share_key_thigh(&f, 1.0f, 0.5f);
-	f.app.select(share_dot(&f, "thigh_L"));
+	f.app.select(helpers::dot_named(&f.app, "thigh_L"));
 	test::eq(f.app.move_joints_to_layer(f.app.editing), (sz)0);
 	a = f.app.editing;
 	usz authored = f.app.authored().clips.len;
@@ -291,7 +286,7 @@ fn void share_the_dialogs_add_a_layer_to_ticked_and_picked_clips() @test
 	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
 	f.ui.flush();
 	share_key_thigh(&f, 1.0f, 0.5f);
-	f.app.select(share_dot(&f, "thigh_L"));
+	f.app.select(helpers::dot_named(&f.app, "thigh_L"));
 	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_MOVE_JOINTS_ID);
 	a = f.app.editing;
 	test::eq(f.app.active_layer_of(a), (sz)0);

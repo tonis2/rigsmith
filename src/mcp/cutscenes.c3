@@ -6,7 +6,7 @@ import std::io;
 import std::io::file;
 import std::math;
 
-faultdef CUTSCENE_REFUSED;
+excuse CUTSCENE_REFUSED;
 
 fn void add_cutscene_tools(ToolTable* table, AppState* app)
 {

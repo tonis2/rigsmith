@@ -31,7 +31,7 @@ import rig;
 import std::collections::object;
 import std::math;
 
-faultdef PHYSICS_REFUSED;
+excuse PHYSICS_REFUSED;
 
 // The rates a bake will take. The top is the solver's own substep, below which
 // there is nothing more to record; the bottom is a sample every ten seconds,

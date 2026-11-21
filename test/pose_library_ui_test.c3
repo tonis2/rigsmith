@@ -5,6 +5,7 @@
 module crig_tests::ui;
 
 import crig;
+import crig_tests::helpers;
 import cui;
 import cui::widgets;
 import std::core::test;
@@ -48,16 +49,18 @@ fn void pose_library_ui_saves_applies_renames_and_deletes() @test
 	f.click(f.center_of(crig::ANIM_POSE_APPLY_ID)!!);
 	f.ui.flush();
 	test::eq(f.app.undo_stack.cursor, history + 1);
-	test::@check((pose_turn(&f, POSE_LEFT, 2) - pose_turn_of(turn)).length() < 1.0e-4f,
+	test::@check((pose_turn(&f, POSE_LEFT, 2) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
 		"Apply did not key the saved turn at 2 s");
 
 	f.click(f.center_of(crig::ANIM_POSE_APPLY_MIRRORED_ID)!!);
 	f.ui.flush();
 	test::eq(f.app.undo_stack.cursor, history + 2);
-	Vec3 want = pose_turn_of(turn);
+	Vec3 want = helpers::turn_of_quaternion(turn);
 	want = { want.x, -want.y, -want.z };
 	test::@check((pose_turn(&f, POSE_RIGHT, 2) - want).length() < 1.0e-4f,
 		"Apply mirrored did not put the reflection on the right leg");
+	test::@check((pose_turn(&f, POSE_LEFT, 2) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
+		"Apply mirrored rewrote the left leg");
 	test::@check(f.app.undo() && pose_turn(&f, POSE_RIGHT, 2).length() < 1.0e-6f,
 		"the mirrored apply did not undo as one step");
 	f.ui.flush();

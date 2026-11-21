@@ -12,7 +12,7 @@ import rig;
 import std::collections::object;
 import std::math;
 
-faultdef PATH_REFUSED;
+excuse PATH_REFUSED;
 
 const String GET_PATHS_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."}

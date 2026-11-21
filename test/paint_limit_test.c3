@@ -9,6 +9,7 @@ import std::core::test;
 import std::io;
 import std::math;
 import crig_tests::areas;
+import crig_tests::helpers;
 
 const String LIMIT_COPY = "build/paint-limit-humanoid.glb";
 
@@ -47,7 +48,7 @@ fn float[] full_pulls(usz n)
 fn void a_finger_is_never_painted_onto_the_foot() @test
 {
 	io::printn("a finger is never painted onto the foot");
-	areas::copy_fixture(LIMIT_COPY);
+	helpers::copy_humanoid(LIMIT_COPY);
 	defer areas::remove_fixture(LIMIT_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
@@ -58,9 +59,9 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
 	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
-	uint ring = areas::named(&app, "ring_1_L");
-	uint ankle = areas::named(&app, "ankle_L");
-	uint hand_joint = areas::named(&app, "ring_2_L");
+	uint ring = helpers::dot_named(&app, "ring_1_L");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
+	uint hand_joint = helpers::dot_named(&app, "ring_2_L");
 	test::@check(ring != 0 && ankle != 0 && hand_joint != 0, "the humanoid has no ring finger or ankle");
 	app.select(ring);
 
@@ -114,7 +115,7 @@ fn void a_finger_is_never_painted_onto_the_foot() @test
 fn void a_joint_is_painted_onto_the_part_its_parent_hangs_from() @test
 {
 	io::printn("a joint is painted onto the part its parent hangs from");
-	areas::copy_fixture(LIMIT_COPY);
+	helpers::copy_humanoid(LIMIT_COPY);
 	defer areas::remove_fixture(LIMIT_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
@@ -125,8 +126,8 @@ fn void a_joint_is_painted_onto_the_part_its_parent_hangs_from() @test
 	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
-	uint shoulder = areas::named(&app, "shoulder_L");
-	uint chest = areas::named(&app, "chest");
+	uint shoulder = helpers::dot_named(&app, "shoulder_L");
+	uint chest = helpers::dot_named(&app, "chest");
 	test::@check(shoulder != 0 && chest != 0, "the humanoid has no shoulder_L or chest");
 	app.select(shoulder);
 
@@ -155,7 +156,7 @@ fn void a_joint_is_painted_onto_the_part_its_parent_hangs_from() @test
 fn void an_apply_stops_at_the_joints_limb() @test
 {
 	io::printn("an apply stops at the joint's limb");
-	areas::copy_fixture(LIMIT_COPY);
+	helpers::copy_humanoid(LIMIT_COPY);
 	defer areas::remove_fixture(LIMIT_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
@@ -166,8 +167,8 @@ fn void an_apply_stops_at_the_joints_limb() @test
 	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
-	uint ring = areas::named(&app, "ring_1_L");
-	uint ankle = areas::named(&app, "ankle_L");
+	uint ring = helpers::dot_named(&app, "ring_1_L");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
 	uint[] foot = owned_by(&app, ankle, 40);
 	defer alloc::free(mem, foot);
 	test::@check(foot.len > 10, "the left ankle owns only %d vertices", foot.len);
@@ -222,7 +223,7 @@ fn void an_apply_stops_at_the_joints_limb() @test
 fn void the_weight_view_greys_out_what_the_joint_cannot_take() @test
 {
 	io::printn("the weight view greys out what the joint cannot take");
-	areas::copy_fixture(LIMIT_COPY);
+	helpers::copy_humanoid(LIMIT_COPY);
 	defer areas::remove_fixture(LIMIT_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, LIMIT_COPY)!!;
@@ -233,9 +234,9 @@ fn void the_weight_view_greys_out_what_the_joint_cannot_take() @test
 	(void)app.release_all_recorded();
 	app.mark_rig_stale();
 
-	uint ring = areas::named(&app, "ring_1_L");
-	uint ankle = areas::named(&app, "ankle_L");
-	uint hand_joint = areas::named(&app, "ring_2_L");
+	uint ring = helpers::dot_named(&app, "ring_1_L");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
+	uint hand_joint = helpers::dot_named(&app, "ring_2_L");
 	uint[] foot = owned_by(&app, ankle, 40);
 	defer alloc::free(mem, foot);
 	uint[] finger = owned_by(&app, hand_joint, 10);

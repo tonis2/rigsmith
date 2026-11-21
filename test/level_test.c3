@@ -11,6 +11,7 @@ import three;
 import collision;
 import crig_tests::library;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io;
@@ -91,8 +92,6 @@ fn void Pieces.close(&self)
 
 fn crig::GroundHit Pieces.below(&self, Vec3 at) => crig::ground_below_in(self.scene, &self.assets, self.level, at);
 
-fn bool near(Vec3 a, Vec3 b) => (a - b).length() < 1.0e-4f;
-
 <*
  A point's ground is the first collider under it, starting half a metre up: a
  stone within that reach is ground, a branch above it is not.
@@ -104,12 +103,12 @@ fn void the_ground_is_the_first_collider_below() @test
 	defer p.close();
 
 	crig::GroundHit open = p.below({ 0, 0, 0 });
-	test::@check(open.hit && near(open.point, { 0, 0, 0 }), "under the branch the ground is the ground: %s", open.point);
-	test::@check(near(open.normal, { 0, 1, 0 }), "and faces up: %s", open.normal);
+	test::@check(open.hit && helpers::near3(open.point, { 0, 0, 0 }, 1e-4f), "under the branch the ground is the ground: %s", open.point);
+	test::@check(helpers::near3(open.normal, { 0, 1, 0 }, 1e-4f), "and faces up: %s", open.normal);
 	test::eq(crig::level_name_in(p.scene, open.node), "ground");
 
 	crig::GroundHit stone = p.below({ 2, 0, 0 });
-	test::@check(stone.hit && near(stone.point, { 2, 0.3f, 0 }), "a stone within reach is stood on: %s", stone.point);
+	test::@check(stone.hit && helpers::near3(stone.point, { 2, 0.3f, 0 }, 1e-4f), "a stone within reach is stood on: %s", stone.point);
 
 	crig::GroundHit sunk = p.below({ 0, -0.7f, 0 });
 	test::@check(!sunk.hit, "nothing is below the ground's floor");
@@ -126,13 +125,13 @@ fn void only_colliders_are_ground() @test
 	defer p.close();
 
 	crig::GroundHit fern = p.below({ -2, 0.2f, 0 });
-	test::@check(fern.hit && near(fern.point, { -2, 0, 0 }), "the fern is walked through: %s", fern.point);
+	test::@check(fern.hit && helpers::near3(fern.point, { -2, 0, 0 }, 1e-4f), "the fern is walked through: %s", fern.point);
 
 	crig::GroundHit beside = p.below({ 3, 1.5f, 3 });
-	test::@check(beside.hit && near(beside.point, { 3, 0, 3 }), "a character is not ground: %s", beside.point);
+	test::@check(beside.hit && helpers::near3(beside.point, { 3, 0, 3 }, 1e-4f), "a character is not ground: %s", beside.point);
 
 	crig::GroundHit crate = p.below({ -3.5f, 0.2f, -3.5f });
-	test::@check(crate.hit && near(crate.point, { -3.5f, 0.4f, -3.5f }), "a collider's proxy shape is: %s", crate.point);
+	test::@check(crate.hit && helpers::near3(crate.point, { -3.5f, 0.4f, -3.5f }, 1e-4f), "a collider's proxy shape is: %s", crate.point);
 }
 
 <* A view ray lands on the first collider it meets and is dropped onto the ground there. *>
@@ -145,17 +144,17 @@ fn void a_view_ray_lands_on_the_ground() @test
 	Vec3 eye = { 0, 5, 5 };
 	collision::Ray ray = { .origin = eye, .direction = ((Vec3){ 0, 0, 0 } - eye).normalize() };
 	crig::GroundHit hit = crig::ground_along_in(p.scene, &p.assets, p.level, ray);
-	test::@check(hit.hit && near(hit.point, { 0, 0, 0 }), "the ray lands where it points: %s", hit.point);
+	test::@check(hit.hit && helpers::near3(hit.point, { 0, 0, 0 }, 1e-4f), "the ray lands where it points: %s", hit.point);
 
 	// A ray that starts inside a collider passes out of it, as a camera inside a trunk's hull does.
 	collision::Ray inside = { .origin = { -3.5f, 0.2f, -3.5f }, .direction = { 0, -1, 0 } };
 	crig::GroundHit through = crig::first_collider_hit(p.scene, &p.assets, p.level, inside);
-	test::@check(through.hit && near(through.point, { -3.5f, 0, -3.5f }), "the ray leaves the crate: %s", through.point);
+	test::@check(through.hit && helpers::near3(through.point, { -3.5f, 0, -3.5f }, 1e-4f), "the ray leaves the crate: %s", through.point);
 	test::eq(crig::level_name_in(p.scene, through.node), "ground");
 
 	collision::Ray up = { .origin = { 0, 0.5f, 0 }, .direction = { 0, 1, 0 } };
 	crig::GroundHit branch = crig::first_collider_hit(p.scene, &p.assets, p.level, up);
-	test::@check(branch.hit && near(branch.normal, { 0, -1, 0 }), "a normal faces the ray: %s", branch.normal);
+	test::@check(branch.hit && helpers::near3(branch.normal, { 0, -1, 0 }, 1e-4f), "a normal faces the ray: %s", branch.normal);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,21 +193,12 @@ fn void a_scene_writes_its_level_beside_it() @test
 	test::@check(@catch(crig::parse_scene_file(mem, wrong, "x.json")) == crig::SCENE_SHAPE, "a level that is not a path does not read");
 }
 
-fn String copy_into(String folder, String source, String name) @local
-{
-	String target = string::format(mem, "%s/%s", folder, name);
-	char[] bytes = file::load(mem, source)!!;
-	defer alloc::free(mem, bytes);
-	file::save(target, bytes)!!;
-	return target;
-}
-
 <* A saved scene opens with its level again; the level is not one of its characters. *>
 fn void a_saved_scene_keeps_its_level() @test
 {
 	if (catch path::mkdir((Path)LEVEL_FOLDER)) {}
-	String person = copy_into(LEVEL_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "person.glb");
-	String backdrop = copy_into(LEVEL_FOLDER, "assets/animations/humanoid.glb", "backdrop.glb");
+	String person = helpers::copy_into(LEVEL_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "person.glb");
+	String backdrop = helpers::copy_into(LEVEL_FOLDER, "assets/animations/humanoid.glb", "backdrop.glb");
 	defer { person.free(mem); backdrop.free(mem); }
 	(void)file::delete(LEVEL_FOLDER +++ "/person.rigsmith.json");
 	(void)file::delete(LEVEL_FOLDER +++ "/person_copy.glb");
@@ -240,7 +230,7 @@ fn void a_saved_scene_keeps_its_level() @test
 fn void a_missing_level_still_opens_the_scene() @test
 {
 	if (catch path::mkdir((Path)LEVEL_FOLDER)) {}
-	String person = copy_into(LEVEL_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "lonely.glb");
+	String person = helpers::copy_into(LEVEL_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "lonely.glb");
 	defer person.free(mem);
 	(void)file::delete(LEVEL_FOLDER +++ "/lonely.rigsmith.json");
 	String scene = LEVEL_FOLDER +++ "/gone.rigsmith-scene.json";

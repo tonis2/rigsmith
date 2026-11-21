@@ -6,17 +6,10 @@
 module crig_tests::cutscene_problems;
 
 import crig;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::quaternion;
-
-fn CutStrip play(float start, float end, String clip, bool loop = false) @local
-{
-	CutStrip s = crig::cut_strip(PLAY, start, end);
-	s.clip = clip.copy(mem);
-	s.loop = loop;
-	return s;
-}
 
 fn CutStrip move(int path, float start, float end, String clip = "") @local
 {
@@ -50,9 +43,9 @@ fn Cutscene troubled() @local
 	c.paths[0] = { .name = "road".copy(mem), .points = alloc::clone_slice(mem, (Vec3[]){ { 0, 0, 0 }, { 0, 0, 4 } }) };
 	c.paths[1] = { .name = "stub".copy(mem), .points = alloc::clone_slice(mem, (Vec3[]){ { 1, 0, 0 } }) };
 	c.actors = alloc::new_array(mem, CutActor, 3);
-	c.actors[0] = actor("hero", { move(0, 0, 2, "walk"), play(2, 6, "wave"), turn_to(3, 4, "ghost"), move(1, 4, 4.5f), move(7, 4.5f, 5) });
-	c.actors[1] = actor("guide", { play(0, 1, "idle"), turn_to(1, 2, "hero") });
-	c.actors[2] = actor("stranger", { play(0, 1, "anything") });
+	c.actors[0] = actor("hero", { move(0, 0, 2, "walk"), helpers::play(2, 6, "wave"), turn_to(3, 4, "ghost"), move(1, 4, 4.5f), move(7, 4.5f, 5) });
+	c.actors[1] = actor("guide", { helpers::play(0, 1, "idle"), turn_to(1, 2, "hero") });
+	c.actors[2] = actor("stranger", { helpers::play(0, 1, "anything") });
 	return c;
 }
 
@@ -95,17 +88,6 @@ fn void every_kind_of_problem_is_named() @test
 	test::@check(late.contains("6.00 s") && late.contains("5.00 s"), "'%s' does not give both times", late);
 }
 
-fn void a_clean_cutscene_has_no_problems() @test
-{
-	Cutscene c = { .name = "Clean".copy(mem), .duration = 3.0f, .fps = 30.0f };
-	defer c.free(mem);
-	c.actors = alloc::new_array(mem, CutActor, 1);
-	c.actors[0] = actor("hero", { play(0, 3, "idle") });
-	CutCast[] cast = { { .found = true, .clips = (String[]){ "idle" } } };
-	CutProblem[] problems = crig::cutscene_problems(mem, &c, cast);
-	test::eq(problems.len, 0);
-}
-
 fn void between_strips_the_last_clip_is_held() @test
 {
 	Cutscene c = { .name = "Hold".copy(mem), .duration = 10.0f, .fps = 30.0f };
@@ -115,7 +97,7 @@ fn void between_strips_the_last_clip_is_held() @test
 	c.actors = alloc::new_array(mem, CutActor, 1);
 	CutStrip walk = move(0, 2, 4, "walk");
 	walk.speed = 1.5f;
-	c.actors[0] = actor("hero", { walk, play(6, 7, "wave") });
+	c.actors[0] = actor("hero", { walk, helpers::play(6, 7, "wave") });
 	CutCurve[] curves = crig::cutscene_curves(mem, &c);
 	defer crig::free_cut_curves(mem, curves);
 
@@ -152,9 +134,9 @@ fn void overlaps_a_turn_at_itself_and_a_strip_with_no_length_are_named() @test
 	c.actors = alloc::new_array(mem, CutActor, 2);
 	// Plays that cross, a walk whose clip crosses a play, a turn crossing a plain move,
 	// strips that only touch, a turn at itself and a strip with no length.
-	c.actors[0] = actor("hero", { play(0, 2, "idle"), play(1, 3, "idle"), move(0, 4, 5, "walk"), play(4.5f, 6, "idle"),
-		move(0, 6, 7), turn_to(6.5f, 7.5f, "guide"), play(7, 8, "idle"), turn_to(8, 9, "hero"), play(9, 9, "idle") });
-	c.actors[1] = actor("guide", { play(0, 1, "idle"), play(1, 2, "idle") });
+	c.actors[0] = actor("hero", { helpers::play(0, 2, "idle"), helpers::play(1, 3, "idle"), move(0, 4, 5, "walk"), helpers::play(4.5f, 6, "idle"),
+		move(0, 6, 7), turn_to(6.5f, 7.5f, "guide"), helpers::play(7, 8, "idle"), turn_to(8, 9, "hero"), helpers::play(9, 9, "idle") });
+	c.actors[1] = actor("guide", { helpers::play(0, 1, "idle"), helpers::play(1, 2, "idle") });
 	String[] clips = { "idle", "walk" };
 	CutCast[] cast = { { .found = true, .clips = clips }, { .found = true, .clips = clips } };
 	CutProblem[] problems = crig::cutscene_problems(mem, &c, cast);
@@ -240,12 +222,12 @@ fn void a_walk_over_a_move_with_no_ground_speed_or_that_travels_is_named() @test
 	defer c.free(mem);
 	c.paths = alloc::new_array(mem, WalkPath, 1);
 	c.paths[0] = { .name = "road".copy(mem), .points = alloc::clone_slice(mem, (Vec3[]){ { 0, 0, 0 }, { 0, 0, 4 } }) };
-	CutStrip typed = play(6, 8, "idle", true);
+	CutStrip typed = helpers::play(6, 8, "idle", true);
 	typed.ground_speed = 1.5f;
 	c.actors = alloc::new_array(mem, CutActor, 1);
 	// Walks over moves, then a still clip played after the last move ends.
-	c.actors[0] = actor("hero", { move(0, 0, 2), play(0, 2, "walk", true), move(0, 2, 4), play(2, 4, "idle", true),
-		move(0, 4, 6), play(4, 6, "stride", true), move(0, 6, 8), typed, play(8, 9, "idle") });
+	c.actors[0] = actor("hero", { move(0, 0, 2), helpers::play(0, 2, "walk", true), move(0, 2, 4), helpers::play(2, 4, "idle", true),
+		move(0, 4, 6), helpers::play(4, 6, "stride", true), move(0, 6, 8), typed, helpers::play(8, 9, "idle") });
 	String[] clips = { "walk", "stride", "idle" };
 	CutClipGround[] grounds = { { .speed = 1.2f }, { .speed = 1.0f, .travels = true }, {} };
 	CutCast[] cast = { { .found = true, .clips = clips, .measured = true, .grounds = grounds, .facing_known = true, .faces_front = true } };

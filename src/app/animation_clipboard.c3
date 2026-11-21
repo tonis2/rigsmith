@@ -133,7 +133,7 @@ fn bool AppState.paste_animation_keys_count(&self, AnimRef ref, float time, usz 
 	for (usz f = 0; f < count; f++) foreach (dot : self.anim_key_clipboard.keyframes[f].dots)
 	{
 		bool found;
-		foreach (usz j, name : view.names) if (name == dot.joint_name)
+		foreach (name : view.names) if (name == dot.joint_name)
 		{ found = true; break; }
 		if (!found) { self.@notice("The copied poses belong to a different rig; their joints must match."); return false; }
 	}

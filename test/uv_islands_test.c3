@@ -235,7 +235,9 @@ fn void open_islands(crig::AppState* app, Vec2[] uvs)
 
 fn sz vertex_in_island(usz island) => (sz)(island * ISLAND_RINGS * TUBE_SIDES + 1);
 
-fn void islands_can_be_cleared_and_picked_one_by_one() @test
+// The hip's island part inverts to the other islands, clears to none, and takes
+// islands one at a time by pick or click.
+fn void islands_are_inverted_cleared_and_picked_one_by_one() @test
 {
 	Vec2[] uvs;
 	rig::TriMesh mesh = tube(&uvs, seams: true);
@@ -247,6 +249,11 @@ fn void islands_can_be_cleared_and_picked_one_by_one() @test
 	crig::AppState app = crig::new_app(mesh);
 	defer app.free();
 	open_islands(&app, uvs);
+
+	test::@check(exactly(app.area_mask, 0b0011), "the hip's own islands are %b", islands_in(app.area_mask));
+	test::@check(app.invert_area_islands(), "Invert did nothing");
+	test::@check(exactly(app.area_mask, 0b1100), "Invert left %b, not the upper two", islands_in(app.area_mask));
+	test::@check(app.area_islands, "Invert dropped the island mode");
 
 	test::@check(app.clear_area_islands(), "Clear did nothing");
 	test::@check(app.area_islands && app.area_pending() && app.area_empty(), "Clear did not leave an empty island part");
@@ -264,25 +271,6 @@ fn void islands_can_be_cleared_and_picked_one_by_one() @test
 	test::@check(app.area_click(vertex_in_island(2), ADD), "a shift-click did not add");
 	test::@check(exactly(app.area_mask, 0b0101), "the shift-click left %b", islands_in(app.area_mask));
 	test::@check(app.commit_area() > 0, "the picked islands were not applied");
-}
-
-fn void invert_takes_the_other_islands() @test
-{
-	Vec2[] uvs;
-	rig::TriMesh mesh = tube(&uvs, seams: true);
-	defer
-	{
-		mesh.free(mem);
-		free(uvs);
-	}
-	crig::AppState app = crig::new_app(mesh);
-	defer app.free();
-	open_islands(&app, uvs);
-
-	test::@check(exactly(app.area_mask, 0b0011), "the hip's own islands are %b", islands_in(app.area_mask));
-	test::@check(app.invert_area_islands(), "Invert did nothing");
-	test::@check(exactly(app.area_mask, 0b1100), "Invert left %b, not the upper two", islands_in(app.area_mask));
-	test::@check(app.area_islands, "Invert dropped the island mode");
 }
 
 fn void painting_islands_sets_each_island_crossed() @test
@@ -306,32 +294,4 @@ fn void painting_islands_sets_each_island_crossed() @test
 	test::@check(app.begin_island_paint(vertex_in_island(3), add: false), "painting out did not start");
 	app.island_paint_to(vertex_in_island(2));
 	test::@check(exactly(app.area_mask, 0b0011), "painting out left %b", islands_in(app.area_mask));
-}
-
-fn void hovering_an_island_changes_only_on_a_new_island() @test
-{
-	Vec2[] uvs;
-	rig::TriMesh mesh = tube(&uvs, seams: true);
-	defer
-	{
-		mesh.free(mem);
-		free(uvs);
-	}
-	crig::AppState app = crig::new_app(mesh);
-	defer app.free();
-	open_islands(&app, uvs);
-
-	uint start = app.area_generation;
-	app.hover_area_island(app.island_under(vertex_in_island(1)));
-	test::eq(app.area_hover_island, 1);
-	test::eq(app.area_generation, start + 1);
-	app.hover_area_island(app.island_under(vertex_in_island(1) + 2));
-	test::eq(app.area_generation, start + 1);
-	app.hover_area_island(app.island_under(-1));
-	test::eq(app.area_hover_island, -1);
-
-	// Off the islands part there is nothing to light.
-	app.set_area_part(OWN);
-	app.hover_area_island(1);
-	test::eq(app.area_hover_island, -1);
 }

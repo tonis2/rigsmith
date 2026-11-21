@@ -16,42 +16,6 @@ import std::core::test;
 
 const String GLB = "assets/animations/quadruped.glb";
 
-fn void a_deferred_pack_stubs_its_clips() @test
-{
-	crig::AnimPack? read = crig::read_pack(mem, GLB, defer_clips: true);
-	if (catch read) { test::@check(false, "deferred read_pack failed"); return; }
-	crig::AnimPack pack = read;
-	defer pack.free(mem);
-
-	test::eq(pack.clips.len, (sz)1);
-	test::@check(pack.clips[0].lazy, "the clip was retargeted instead of stubbed");
-	test::@check(pack.clips[0].keyframes.len == 0, "a stub carried keyframes");
-	test::@check(pack.clips[0].name == "Idle", "stub named the clip wrong: %s", pack.clips[0].name);
-	test::@check(pack.clips[0].duration > 0.0f, "the stub has no length");
-	test::@check(pack.stream_held, "a deferred pack did not keep its parsed file");
-}
-
-fn void a_stub_names_the_clip_the_eager_read_would() @test
-{
-	crig::AnimPack? lazy_read = crig::read_pack(mem, GLB, defer_clips: true);
-	if (catch lazy_read) { test::@check(false, "deferred read failed"); return; }
-	crig::AnimPack lazy = lazy_read;
-	defer lazy.free(mem);
-
-	crig::AnimPack? eager_read = crig::read_pack(mem, GLB);
-	if (catch eager_read) { test::@check(false, "eager read failed"); return; }
-	crig::AnimPack eager = eager_read;
-	defer eager.free(mem);
-
-	test::eq(lazy.clips.len, eager.clips.len);
-	// The invariant binding depends on: a binding is stored under the stub's name,
-	// and must still find the clip once it is read.
-	test::@check(lazy.clips[0].name == eager.clips[0].name,
-		"stub name %s != eager name %s", lazy.clips[0].name, eager.clips[0].name);
-	test::@check(eager.clips[0].keyframes.len > 0, "the eager clip has no keyframes to compare against");
-	test::@check(!eager.clips[0].lazy, "the eager clip was left marked lazy");
-}
-
 fn void a_stub_retargets_to_the_same_clip_on_demand() @test
 {
 	crig::AnimPack? lazy_read = crig::read_pack(mem, GLB, defer_clips: true);
@@ -63,6 +27,16 @@ fn void a_stub_retargets_to_the_same_clip_on_demand() @test
 	if (catch eager_read) { test::@check(false, "eager read failed"); return; }
 	crig::AnimPack eager = eager_read;
 	defer eager.free(mem);
+
+	// The stub: named, timed and empty, with the parsed file kept to read it from.
+	test::eq(lazy.clips.len, eager.clips.len);
+	test::@check(lazy.clips[0].lazy && lazy.clips[0].keyframes.len == 0, "the clip was retargeted instead of stubbed");
+	test::@check(lazy.clips[0].duration > 0.0f, "the stub has no length");
+	test::@check(lazy.stream_held, "a deferred pack did not keep its parsed file");
+	// A binding is stored under the stub's name and must find the clip once it is read.
+	test::@check(lazy.clips[0].name == "Idle" && lazy.clips[0].name == eager.clips[0].name,
+		"stub name %s != eager name %s", lazy.clips[0].name, eager.clips[0].name);
+	test::@check(eager.clips[0].keyframes.len > 0 && !eager.clips[0].lazy, "the eager clip is empty or lazy");
 
 	// Reproduce what `ensure_clip_imported` does: import the stub's source clip
 	// from the pack's held stream. With no plans it keeps source names, the same

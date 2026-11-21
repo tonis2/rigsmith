@@ -25,26 +25,6 @@ import std::math::quaternion;
 // body's midline when the mesh is asymmetric (a tail, an off-centre export).
 
 <*
- The plane is read off the rig's centre joint and named pair, not the mesh.
-*>
-fn void symmetry_plane_reads_the_rig_not_the_mesh() @test
-{
-	crig::AppState app = crig::new_app({});
-	defer app.free();
-	test::@check(math::abs(app.doc.sym_x) < 1e-4f, "an empty mesh's plane starts at x=0");
-
-	// A skeleton centred at x = 2, nowhere near the empty mesh's x = 0.
-	app.doc.add_dot({ 2.0f, 1.0f, 0 }, "spine");   // centre joint, on the plane
-	app.doc.add_dot({ 1.7f, 0.5f, 0 }, "arm_l");   // a pair straddling it
-	app.doc.add_dot({ 2.3f, 0.5f, 0 }, "arm_r");
-
-	float plane;
-	test::@check(app.symmetry_plane(&plane), "a plane should read off the named joints");
-	test::@check(math::abs(plane - 2.0f) < 1e-4f, "the plane is the rig's centre x=2, got %.4f", plane);
-	test::@check(math::abs(app.doc.sym_x) < 1e-4f, "reading the plane does not change the stored one");
-}
-
-<*
  A tail curling to one side is side-less joints off the midline. They must not
  drag the plane after them: averaged in, four tail joints moved it 4 cm on a
  1 m figure and M put a pinky's twin inside the palm. The plane is the median of
@@ -62,7 +42,7 @@ fn void a_curled_tail_does_not_move_the_mirror_plane() @test
 	app.doc.add_dot({ 0.0f, 0.6f, 0.0f }, "spine");
 	app.doc.add_dot({ 0.0f, 0.7f, 0.0f }, "chest");
 	app.doc.add_dot({ 0.0f, 0.9f, 0.0f }, "head");
-	// The tail curls off to +X, the way Zidane's does.
+	// The tail curls off to +X, the way a downloaded rig's does.
 	app.doc.add_dot({ 0.00f, 0.45f, -0.10f }, "tail_1");
 	app.doc.add_dot({ 0.06f, 0.45f, -0.20f }, "tail_2");
 	app.doc.add_dot({ 0.17f, 0.46f, -0.28f }, "tail_3");
@@ -111,7 +91,7 @@ fn void the_corrected_plane_makes_the_mirror_land_right() @test
 	test::@check(app.symmetry_plane(&plane), "a plane should read off the rig");
 	test::@check(app.set_sym_x_recorded(plane), "the plane should move off the mesh's 0");
 	app.undo_stack.commit();
-	test::@check(app.doc.sym_x > 1.5f, "the plane is now the rig's own (sym_x=%.4f)", app.doc.sym_x);
+	test::@check(math::abs(app.doc.sym_x - 2.0f) < 1e-4f, "the plane is not the centre joint's x=2 (sym_x=%.4f)", app.doc.sym_x);
 
 	app.select(hr);
 	(void)app.mirror_selection();

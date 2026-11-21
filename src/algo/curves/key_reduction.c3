@@ -144,9 +144,9 @@ fn void pose_positions(rig::Skeleton* skeleton, rig::Pose* pose, Vec3[] at, Quat
 	}
 }
 
-// acos, not `angle_between_turns`: its rounding keeps keys the exact angle would
-// drop. Changing it cuts an imported clip's keys by two thirds; see bugs.md.
-fn float turn_gap(Quaternionf a, Quaternionf b) @local
+// The angle between two turns, either sign. acos, not `angle_between_turns`: key
+// reduction depends on its rounding, and changing it cuts an imported clip's keys by two thirds; see bugs.md.
+fn float turn_gap(Quaternionf a, Quaternionf b)
 {
 	float d = math::min(math::abs(a.v.dot(b.v)), 1.0f);
 	return 2.0f * math::acos(d);

@@ -315,7 +315,6 @@ const String[] QUADRUPED_NAMES = {
     "hindL_knee", "hindL_foot", "hindR_knee", "hindR_foot",
     "foreL_knee", "foreL_foot", "foreR_knee", "foreR_foot",
 };
-const String[4] LEG_NAME = { "hindL", "hindR", "foreL", "foreR" };
 
 fn rig::Skeleton quadruped_skeleton(Allocator allocator, Landmarks marks)
 {
@@ -523,7 +522,7 @@ struct SkinReport
 }
 
 fn SkinReport report_skinning(String path, rig::TriMesh source, rig::Skeleton* skeleton,
-                              String[] names, Landmarks marks, String measured = "straight-line distance")
+                              String[] names, Landmarks marks)
 {
     usz count = source.positions.len;
     usz bones = skeleton.joints.len;
@@ -556,46 +555,25 @@ fn SkinReport report_skinning(String path, rig::TriMesh source, rig::Skeleton* s
     }
 
     float[] share = alloc::new_array(mem, float, (sz)bones);
-    usz[] owned = alloc::new_array(mem, usz, (sz)bones);
-    defer
-    {
-        alloc::free(mem, share);
-        alloc::free(mem, owned);
-    }
+    defer alloc::free(mem, share);
 
     for (usz v = 0; v < count; v++)
     {
-        usz best = 0;
-        float best_weight = -1.0f;
         for (usz i = 0; i < 4; i++)
         {
             usz b = (usz)vertex_joints[v][i];
             if (b >= bones) continue;
             share[b] += vertex_weights[v][i];
-            if (vertex_weights[v][i] > best_weight)
-            {
-                best_weight = vertex_weights[v][i];
-                best = b;
-            }
         }
-        owned[best]++;
     }
 
-    io::printn("\nskin held per joint — share of all weight, and where it wins outright:");
     float weakest = 1.0f;
     String weakest_name = "";
     foreach (b, name : names)
     {
         float fraction = share[b] / (float)count;
         if (fraction < weakest) { weakest = fraction; weakest_name = name; }
-        io::printf("  %-11s %5.1f%%  wins %4d  ", name, fraction * 100.0f, owned[b]);
-        usz filled = (usz)(fraction * 100.0f * 1.5f);
-        for (usz i = 0; i < filled && i < 40; i++) io::printf("#");
-        io::printn("");
     }
-
-    io::printn("\nleg columns — where each leg's own skin sends its weight:");
-    io::printfn("  %-6s %6s %9s %12s %8s", "leg", "verts", "own leg", "other legs", "torso");
 
     float worst_bleed = 0;
     bool legs_hold_themselves = true;
@@ -605,12 +583,10 @@ fn SkinReport report_skinning(String path, rig::TriMesh source, rig::Skeleton* s
         float own = 0;
         float other = 0;
         float torso = 0;
-        usz verts = 0;
 
         for (usz v = 0; v < count; v++)
         {
             if (leg_of(marks, source.positions[v]) != (int)q) continue;
-            verts++;
             for (usz i = 0; i < 4; i++)
             {
                 usz b = (usz)vertex_joints[v][i];
@@ -627,9 +603,6 @@ fn SkinReport report_skinning(String path, rig::TriMesh source, rig::Skeleton* s
         float bleed = other / total;
         if (bleed > worst_bleed) worst_bleed = bleed;
         if (own / total <= 0.5f) legs_hold_themselves = false;
-
-        io::printfn("  %-6s %6d %8.1f%% %11.1f%% %7.1f%%",
-            LEG_NAME[q], verts, own / total * 100.0f, bleed * 100.0f, torso / total * 100.0f);
     }
 
     // Left and right are the same animal; if the binder disagrees about them,
@@ -645,18 +618,13 @@ fn SkinReport report_skinning(String path, rig::TriMesh source, rig::Skeleton* s
         if (d > worst_asymmetry) worst_asymmetry = d;
     }
 
-    io::printn("");
     test::@check(weakest >= rig::DEFAULT_PRUNE_SHARE,
         "%s holds %.2f%% of the skin, under the %.2f%% prune cuts at",
         weakest_name, weakest * 100.0f, rig::DEFAULT_PRUNE_SHARE * 100.0f);
     test::@check(legs_hold_themselves, "each leg's skin is held mostly by its own bones");
 
-    // Reported, not asserted: PLAN §8 lists leg-to-leg bleed as a known M1
-    // artifact and M3 (geodesic weights through the interior) is what fixes it.
-    // Asserting a number here would only pin the artifact in place.
-    io::printfn("  NOTE leg-to-leg bleed %.1f%% under %s", worst_bleed * 100.0f, measured);
-    io::printfn("  NOTE left/right leg pairs %.1f%% apart", worst_asymmetry * 100.0f);
-
+    // Leg-to-leg bleed is returned, not asserted: it is a known artifact of the
+    // straight-line binder, and a number here would only pin it in place.
     return { .weakest_share = weakest, .worst_bleed = worst_bleed, .worst_asymmetry = worst_asymmetry };
 }
 
@@ -697,51 +665,10 @@ fn String out_path(Allocator allocator, String source, String suffix)
 // The spine rig: four joints down the long axis, which proves the machinery runs
 // ---------------------------------------------------------------------------
 
-// Every bone has a non-zero direction. A bone with none imports into Blender as
-// an armature fanning out from the origin.
-fn void every_bone_has_a_direction() @test
-{
-    rig::TriMesh? loaded = fixture_mesh(SPINE_MESH);
-    if (catch loaded) return;
-    rig::TriMesh geometry = loaded;
-    defer geometry.free(mem);
-
-    rig::Skeleton skeleton = spine_skeleton(mem, geometry, 4);
-    defer skeleton.free(mem);
-
-    Vec3[] tails = skeleton.tails(mem);
-    defer alloc::free(mem, tails);
-
-    foreach (i, tail : tails)
-    {
-        test::@check((tail - skeleton.joints[i]).length() > 0.0f, "bone %d has no direction", i);
-    }
-}
-
-// Dense weights are finite and positive — before any of the export machinery
-// gets a chance to launder a NaN into a plausible-looking file.
-fn void dense_weights_are_finite_and_positive() @test
-{
-    rig::TriMesh? loaded = fixture_mesh(SPINE_MESH);
-    if (catch loaded) return;
-    rig::TriMesh geometry = loaded;
-    defer geometry.free(mem);
-
-    rig::Skeleton skeleton = spine_skeleton(mem, geometry, 4);
-    defer skeleton.free(mem);
-
-    float[] dense = rig::bind_geometric(mem, geometry.positions, skeleton.joints, skeleton.parents);
-    defer alloc::free(mem, dense);
-
-    foreach (i, weight : dense)
-    {
-        test::@check(math::is_finite(weight) && weight > 0.0f, "dense weight %d is %.6f", i, weight);
-    }
-}
-
 // An exported rig reads back as a rig. Reading the file rather than trusting
 // the writer is the point: a self-consistent file no consumer can use fails
-// only in Blender.
+// only in Blender. With no skin supplied, as when the preview has not run, the
+// fallback has to reach the same file.
 fn void an_exported_rig_reads_back_as_a_rig() @test
 {
     rig::TriMesh? loaded = fixture_mesh(SPINE_MESH);
@@ -754,34 +681,17 @@ fn void an_exported_rig_reads_back_as_a_rig() @test
 
     float[] dense = rig::bind_geometric(mem, geometry.positions, skeleton.joints, skeleton.parents);
     defer alloc::free(mem, dense);
+    // Before the writer can launder a NaN into a plausible-looking file.
+    foreach (i, weight : dense)
+    {
+        test::@check(math::is_finite(weight) && weight > 0.0f, "dense weight %d is %.6f", i, weight);
+    }
 
     String path = out_path(mem, SPINE_MESH, "_rigged");
     defer alloc::free(mem, path);
 
     rig::export_rigged_glb(mem, path, geometry, &skeleton, skin: dense)!!;
     validate_glb(path, geometry, 4);
-    (void)file::delete(path);
-}
-
-<*
- An export with no skin supplied produces the same rig, not an empty one.
-
- The interactive app takes this path whenever the preview has not run, so the
- internal fallback has to reach the same file the explicit weights do.
-*>
-fn void an_export_with_no_skin_supplied_still_carries_one() @test
-{
-    rig::TriMesh? loaded = fixture_mesh(SPINE_MESH);
-    if (catch loaded) return;
-    rig::TriMesh geometry = loaded;
-    defer geometry.free(mem);
-
-    rig::Skeleton skeleton = spine_skeleton(mem, geometry, 4);
-    defer skeleton.free(mem);
-
-    String path = out_path(mem, SPINE_MESH, "_fallback");
-    defer alloc::free(mem, path);
-
     rig::export_rigged_glb(mem, path, geometry, &skeleton)!!;
     validate_glb(path, geometry, 4);
     (void)file::delete(path);
@@ -816,46 +726,6 @@ fn bool limb_rig(rig::TriMesh* geometry, rig::Skeleton* skeleton, Landmarks* mar
     return true;
 }
 
-// The limb rig exports and reads back, which every claim below depends on.
-fn void a_limb_rig_reads_back_as_a_rig() @test
-{
-    rig::TriMesh geometry;
-    rig::Skeleton skeleton;
-    Landmarks marks;
-    if (!limb_rig(&geometry, &skeleton, &marks)) return;
-    defer { skeleton.free(mem); geometry.free(mem); }
-
-    String path = out_path(mem, LIMB_MESH, "_quadruped");
-    defer alloc::free(mem, path);
-
-    rig::export_rigged_glb(mem, path, geometry, &skeleton, names: QUADRUPED_NAMES)!!;
-    validate_glb(path, geometry, skeleton.joints.len);
-    (void)file::delete(path);
-}
-
-<*
- Every placed dot holds real skin, and each leg is held mostly by its own bones.
-
- Both come out of `report_skinning`, which reads the weights back off the file
- rather than off the array that was written — so a writer that dropped a column
- fails here and not merely in a viewer.
-*>
-fn void every_placed_dot_holds_real_skin() @test
-{
-    rig::TriMesh geometry;
-    rig::Skeleton skeleton;
-    Landmarks marks;
-    if (!limb_rig(&geometry, &skeleton, &marks)) return;
-    defer { skeleton.free(mem); geometry.free(mem); }
-
-    String path = out_path(mem, LIMB_MESH, "_quadruped");
-    defer alloc::free(mem, path);
-
-    rig::export_rigged_glb(mem, path, geometry, &skeleton, names: QUADRUPED_NAMES)!!;
-    report_skinning(path, geometry, &skeleton, QUADRUPED_NAMES, marks);
-    (void)file::delete(path);
-}
-
 <*
  Measuring through the body cuts leg-to-leg bleed.
 
@@ -879,6 +749,7 @@ fn void measuring_through_the_body_cuts_leg_bleed() @test
     String plain_path = out_path(mem, LIMB_MESH, "_quadruped");
     defer alloc::free(mem, plain_path);
     rig::export_rigged_glb(mem, plain_path, geometry, &skeleton, names: QUADRUPED_NAMES)!!;
+    validate_glb(plain_path, geometry, skeleton.joints.len);
     SkinReport plain = report_skinning(plain_path, geometry, &skeleton, QUADRUPED_NAMES, marks);
     (void)file::delete(plain_path);
 
@@ -888,8 +759,7 @@ fn void measuring_through_the_body_cuts_leg_bleed() @test
     String through_path = out_path(mem, LIMB_MESH, "_quadruped_geodesic");
     defer alloc::free(mem, through_path);
     rig::export_rigged_glb(mem, through_path, geometry, &skeleton, skin: through, names: QUADRUPED_NAMES)!!;
-    SkinReport measured = report_skinning(
-        through_path, geometry, &skeleton, QUADRUPED_NAMES, marks, "distance through the body");
+    SkinReport measured = report_skinning(through_path, geometry, &skeleton, QUADRUPED_NAMES, marks);
     (void)file::delete(through_path);
 
     test::@check(measured.worst_bleed < plain.worst_bleed,

@@ -25,7 +25,7 @@ import std::math;
  skeleton from, which is a state the user can be in and not an error in the
  sense the rig code means it.
 *>
-faultdef NO_DOTS;
+excuse NO_DOTS;
 
 <*
  The document as a `rig::Skeleton`: joints in BFS order from the root, each

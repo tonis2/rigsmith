@@ -10,55 +10,26 @@
  world rotation (`POINT_POSE_PIN_SOFT_TURN`), the way the app asks for it; the
  grab holds its own part's world rotation too (`POINT_POSE_GRAB_HOLD`).
 
- Every test prints its numbers, and appends them to the file named by the
- `BODY_SOLVE_LOG` environment variable when there is one — the runner may hide
- stdout.
-
-     `BODY_SOLVE_LOG=/tmp/body.txt c3c test --trust=full --test-noleak --test-filter crig_tests::body_solve`
+     `c3c test --trust=full --test-noleak --test-filter crig_tests::body_solve`
 *>
 module crig_tests::body_solve;
 
 import crig;
 import rig;
 import crig_tests::library;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
-import std::io::file;
 import std::math;
 import std::math::vector;
 import std::math::quaternion;
 import std::core::string;
-import std::os::env;
 import std::time;
 
 const String PERSON = "humanoid.glb";
 
 // Radians to degrees.
 const float DEGREES = 57.29578f;
-
-// ---------------------------------------------------------------------------
-// The log
-
-// A line of the report: on the screen, and in the log when there is one.
-fn void note(String format, args...)
-{
-	String line = string::tformat(format, ...args);
-	io::printn(line);
-	String? path = env::tget_var("BODY_SOLVE_LOG");
-	if (catch path) return;
-	File? out = file::open(path, "a");
-	if (catch out) return;
-	(void)io::fprintn(&out, line);
-	(void)out.close();
-}
-
-// The angle of a rotation, in degrees, 0 to 180.
-fn float angle_of(Quaternionf q)
-{
-	q = q.normalize();
-	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
-	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * DEGREES;
-}
 
 // ---------------------------------------------------------------------------
 // The fixture
@@ -153,13 +124,7 @@ fn usz Body.joint(&self, String name)
 	return 0;
 }
 
-fn Vec3 Body.at(&self, String name)
-{
-	usz j = self.joint(name);
-	Matrix4f[] palette = rig::joint_palette(mem, &self.view.skeleton, self.pose)!!;
-	defer alloc::free(mem, palette);
-	return self.view.skeleton.joints[j].transform(palette[j]);
-}
+fn Vec3 Body.at(&self, String name) => helpers::joint_at(&self.view.skeleton, self.pose, self.joint(name));
 
 fn Quaternionf Body.world(&self, String name)
 {
@@ -239,15 +204,10 @@ fn crig::PointGoal Body.pin(&self, String name, bool turn = true, bool hard_turn
 fn float Body.off(&self, String name, Vec3 point) => (self.at(name) - point).length() / self.height;
 
 // How far a joint's world rotation is from `was`, in degrees.
-fn float Body.turned(&self, String name, Quaternionf was) => angle_of(self.world(name).mul(was.invert()));
+fn float Body.turned(&self, String name, Quaternionf was) => helpers::angle_of(self.world(name).mul(was.invert()));
 
 // How far a joint's up has leaned from where `was` had it, in degrees.
-fn float Body.tilt(&self, String name, Quaternionf was)
-{
-	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
-	Vec3 after = self.world(name).rotate_vec3({ 0, 1, 0 });
-	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * DEGREES;
-}
+fn float Body.tilt(&self, String name, Quaternionf was) => helpers::tilt_of(was, self.world(name));
 
 // Every bone of the solved pose inside its joint's limits, to a hair.
 fn void Body.check_limits(&self, String what)
@@ -322,7 +282,6 @@ fn void limit_axes_follow_the_angles() @test
 	if (!b.open()) return;
 	defer b.close();
 	uint seed = 99;
-	usz checked = 0;
 	foreach (usz j, pj : b.joints)
 	{
 		if (!pj.limited()) continue;
@@ -345,11 +304,9 @@ fn void limit_axes_follow_the_angles() @test
 				if (delta.v.w < 0.0f) delta.v = -delta.v;
 				Vec3 turn = (Vec3){ delta.v.x, delta.v.y, delta.v.z } * 2.0f / 1.0e-3f;
 				test::@check((turn - axes[a]).length() < 2.0e-2f, "%s angle %d at %s: the axis is %s, a hair of it turns %s", b.view.names[j], a, angles, axes[a], turn);
-				checked++;
 			}
 		}
 	}
-	note("  limit axes: %d derivatives checked against the angles", checked);
 }
 
 <*
@@ -401,7 +358,6 @@ fn void limit_axes_match_central_differences_at_the_hard_points() @test
 			}
 		}
 	}
-	note("  limit axes: %d derivatives checked by central differences, worst off by %.2e", bases.len * points.len * 3, worst);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,13 +434,6 @@ fn SitReading Body.read_sit(&self, Sit* sit)
 	};
 }
 
-fn void SitReading.print(&self, String what)
-{
-	note("  %s: ankles %.6f %.6f h, feet turned %.2f %.2f deg, hips tilt %.2f, chest tilt %.2f, hips dropped %.4f h, grab missed %.4f h, knees %.1f %.1f deg ahead %.3f %.3f h",
-		what, self.ankle_l, self.ankle_r, self.foot_l, self.foot_r, self.hips_tilt, self.chest_tilt, self.hips_dropped, self.miss,
-		self.knee_l, self.knee_r, self.ahead_l, self.ahead_r);
-}
-
 <*
  1. The hips grabbed and pulled down 0.15 of the height with both ankles pinned
  (position hard, angle soft): the ankles stay on their points, the feet stay
@@ -498,7 +447,6 @@ fn void the_hips_drop_on_pinned_ankles() @test
 	Sit sit = b.sit("hips", 0.15f);
 	b.solve(sit.goals[..]);
 	SitReading r = b.read_sit(&sit);
-	r.print("hips down 0.15h");
 	test::@check(r.ankle_l < 1.0e-4f && r.ankle_r < 1.0e-4f, "an ankle slipped %.6f %.6f heights", r.ankle_l, r.ankle_r);
 	test::@check(r.foot_l < 3.0f && r.foot_r < 3.0f, "a foot turned %.2f %.2f degrees", r.foot_l, r.foot_r);
 	test::@check(r.hips_tilt < 5.0f, "the hips tilted %.2f degrees", r.hips_tilt);
@@ -521,7 +469,6 @@ fn void the_spine_sits_the_body_on_pinned_ankles() @test
 	Sit sit = b.sit("spine", 0.18f);
 	b.solve(sit.goals[..]);
 	SitReading r = b.read_sit(&sit);
-	r.print("spine down 0.18h");
 	test::@check(r.ankle_l < 1.0e-4f && r.ankle_r < 1.0e-4f, "an ankle slipped %.6f %.6f heights", r.ankle_l, r.ankle_r);
 	test::@check(r.foot_l < 3.0f && r.foot_r < 3.0f, "a foot turned %.2f %.2f degrees", r.foot_l, r.foot_r);
 	test::@check(r.hips_tilt < 10.0f && r.chest_tilt < 10.0f, "the hips tilted %.2f and the chest %.2f degrees", r.hips_tilt, r.chest_tilt);
@@ -543,7 +490,6 @@ fn void hard_feet_hold_and_the_grab_gives_way() @test
 	Sit sit = b.sit("spine", 0.25f, true);
 	b.solve(sit.goals[..]);
 	SitReading r = b.read_sit(&sit);
-	r.print("spine down 0.25h, hard feet");
 	test::@check(r.ankle_l < 1.0e-4f && r.ankle_r < 1.0e-4f, "an ankle slipped %.6f %.6f heights", r.ankle_l, r.ankle_r);
 	test::@check(r.foot_l < 1.0f && r.foot_r < 1.0f, "a foot turned %.2f %.2f degrees", r.foot_l, r.foot_r);
 	test::@check(r.hips_tilt < 10.0f && r.chest_tilt < 10.0f, "the hips tilted %.2f and the chest %.2f degrees", r.hips_tilt, r.chest_tilt);
@@ -575,8 +521,6 @@ fn void a_free_hand_reaches_and_the_trunk_stays() @test
 	float miss = b.off("wrist_L", target);
 	float moved = b.off("hips", hips);
 	float tilt = b.tilt("chest", chest);
-	note("  free hand: wrist missed %.6f h, hips moved %.5f h, chest tilt %.2f deg, elbow %.1f deg", miss, moved, tilt,
-		b.fold("shoulder_L", "elbow_L", "wrist_L"));
 	test::@check(miss < 1.0e-3f, "the wrist missed by %.5f heights", miss);
 	test::@check(moved < 0.005f, "the hips moved %.5f heights for a reach the arm could make", moved);
 	test::@check(tilt < 3.0f, "the chest tilted %.2f degrees", tilt);
@@ -718,7 +662,7 @@ fn float Body.refine_path(&self, rig::Pose* start, crig::PointGoal[] goals, Path
 		self.solve_path(start, goals, path, (float)(step - 1) + (float)sub / (float)REFINE_STEPS);
 		Vec3 at = self.at(self.view.names[joint]);
 		Quaternionf rotation = self.pose.rotations[joint];
-		float change = turn ? angle_of(rotation.mul(was_turn.invert())) : (at - was_at).length() / self.height;
+		float change = turn ? helpers::angle_of(rotation.mul(was_turn.invert())) : (at - was_at).length() / self.height;
 		most = math::max(most, change);
 		was_at = at;
 		was_turn = rotation;
@@ -760,7 +704,7 @@ fn Jumps Body.sweep(&self, Path* path, int steps)
 		{
 			float moved = (at - before[j]).length() / self.height;
 			if (moved > jumps.move) { jumps.move = moved; jumps.move_at = self.view.names[j]; jumps.move_joint = j; jumps.move_step = k; }
-			float turn = angle_of(self.pose.rotations[j].mul(was[j].invert()));
+			float turn = helpers::angle_of(self.pose.rotations[j].mul(was[j].invert()));
 			if (turn > jumps.turn) { jumps.turn = turn; jumps.turn_at = self.view.names[j]; jumps.turn_joint = j; jumps.turn_step = k; }
 		}
 		jumps.ankle = math::max(jumps.ankle, math::max(self.off("ankle_L", goals[1].target), self.off("ankle_R", goals[2].target)));
@@ -778,14 +722,6 @@ fn Jumps Body.sweep_spine(&self, float total, int steps)
 {
 	Path path = self.down_path("spine", total, steps);
 	return self.sweep(&path, steps);
-}
-
-fn void Jumps.print(&self, String what)
-{
-	note("  %s: the most any joint moved in a step %.4f h at %s on step %d (pointer step %.4f h, %.1fx), the most any joint turned %.2f deg at %s on step %d, ankles off by up to %.6f h",
-		what, self.move, self.move_at, self.move_step, self.push, self.move / self.push, self.turn, self.turn_at, self.turn_step, self.ankle);
-	note("  %s, refined x%d: the worst move's largest sub-step %.4f h (%.0f%% of the step), the worst turn's largest sub-step %.2f deg (%.0f%% of the step)",
-		what, REFINE_STEPS, self.move_sub, 100.0f * self.move_sub / math::max(self.move, 1.0e-9f), self.turn_sub, 100.0f * self.turn_sub / math::max(self.turn, 1.0e-9f));
 }
 
 // The three smoothness checks of a sweep: no explosion in a move, none in a turn, and the worst of each spread over its sub-steps.
@@ -812,7 +748,6 @@ fn void a_sweep_never_jumps_and_repeats_exactly() @test
 	if (!b.open()) return;
 	defer b.close();
 	Jumps jumps = b.sweep_spine(0.18f, 40);
-	jumps.print("sweep");
 
 	// The same inputs twice: the same bits.
 	rig::Pose start = b.pose.copy(mem);
@@ -827,7 +762,6 @@ fn void a_sweep_never_jumps_and_repeats_exactly() @test
 	bool same = true;
 	foreach (usz j, rotation : b.pose.rotations) same = same && rotation.v == first.rotations[j].v;
 	foreach (usz j, offset : b.pose.offsets) same = same && offset == first.offsets[j];
-	note("  the same sit solved twice gives %s bits", same ? "the same" : "different");
 	jumps.check();
 	test::@check(jumps.ankle < 1.0e-4f, "an ankle slipped %.6f heights during the sweep", jumps.ankle);
 	test::@check(same, "the same inputs gave different rotations");
@@ -850,7 +784,6 @@ fn void a_sweep_with_the_balance_on_never_jumps() @test
 	defer b.close();
 	b.balance = true;
 	Jumps jumps = b.sweep_spine(0.18f, 40);
-	jumps.print("sweep, balance on");
 	jumps.check();
 	test::@check(jumps.ankle < 1.0e-4f, "an ankle slipped %.6f heights during the sweep", jumps.ankle);
 	b.check_limits("sweep, balance on");
@@ -896,8 +829,6 @@ fn void an_elbow_never_leaves_its_limit() @test
 		float bend = crig::joint_angles_from_rotation(b.joints[elbow_joint].frame, b.pose.rotations[elbow_joint])[hinge] * DEGREES;
 		float slip = 0.0f;
 		foreach (usz i, name : held) slip = math::max(slip, b.off(name, goals[i + 1].target));
-		note("  elbow limit (%s): wrist missed %.4f h (reported %.4f), elbow bend %.1f deg, the pins slipped up to %.6f h", near ? "near" : "far",
-			actual, reported, bend, slip);
 		test::@check(math::abs(reported - actual) < 1.0e-4f, "the residual says %.5f, the wrist is %.5f off", reported, actual);
 		test::@check(actual > (near ? 0.03f : 0.2f), "the wrist missed only %.4f heights: it was not out of reach", actual);
 		test::@check(math::abs(bend - (near ? fold_end : straight_end)) < 1.0f,
@@ -926,8 +857,6 @@ fn void the_floor_holds_the_feet() @test
 	b.solve(goals[..]);
 	float lowest = float::max;
 	foreach (name : floored) lowest = math::min(lowest, b.at(name).y);
-	note("  floor: the lowest floored joint ended %.6f h above the floor, hips dropped %.4f h of 0.3 asked, knee folded %.1f deg",
-		(lowest - b.floor) / b.height, -b.pose.offsets[b.joint("hips")].y / b.height, b.fold("thigh_L", "knee_L", "ankle_L"));
 	test::@check(lowest >= b.floor - 1.0e-4f * b.height, "a floored joint sank %.6f heights through the floor", (b.floor - lowest) / b.height);
 	test::@check((b.pose.offsets[b.joint("hips")].y * -1.0f) / b.height > 0.1f, "the hips came down only %.4f heights", -b.pose.offsets[b.joint("hips")].y / b.height);
 	b.check_limits("floor");
@@ -949,7 +878,6 @@ fn void a_hinge_folds_the_way_it_opens_from_straight_or_past_it() @test
 		if (!b.open(knee_back: back)) return;
 		defer b.close();
 		b.begin();
-		float rest_ahead = b.knee_ahead("thigh_L", "knee_L", "ankle_L");
 		crig::PointGoal[3] goals;
 		goals[1] = b.pin("ankle_L", false);
 		goals[2] = b.pin("ankle_R", false);
@@ -958,8 +886,6 @@ fn void a_hinge_folds_the_way_it_opens_from_straight_or_past_it() @test
 		b.solve(goals[..]);
 		float ahead = b.knee_ahead("thigh_L", "knee_L", "ankle_L");
 		depth[run] = (hips.y - b.at("hips").y) / b.height;
-		note("  knee back %.2f: rest %.4f ahead, drop %.4f ahead, hips dropped %.4f h, ankles off %.6f %.6f h", back, rest_ahead, ahead, depth[run],
-			b.off("ankle_L", goals[1].target), b.off("ankle_R", goals[2].target));
 		test::@check(ahead > 0.02f, "the knee went %.4f ahead, not forward", ahead);
 		test::@check(depth[run] > 0.09f, "the hips dropped only %.4f of 0.1", depth[run]);
 		test::@check(b.off("ankle_L", goals[1].target) < 1.0e-4f && b.off("ankle_R", goals[2].target) < 1.0e-4f, "an ankle slipped");
@@ -1010,7 +936,6 @@ fn void a_solve_is_fast() @test
 		double fastest;
 		double slowest;
 		double median = b.time_sit(&sit, &start, &fastest, &slowest);
-		note("  time: one spine-sit solve%s takes %.3f ms (fastest %.3f, slowest %.3f)", balance ? " with the balance on" : "", median * 1000.0, fastest * 1000.0, slowest * 1000.0);
 		test::@check(median < 0.005, "a solve took %.3f ms", median * 1000.0);
 	}
 }
@@ -1036,8 +961,6 @@ fn void a_pin_out_of_reach_stands_down() @test
 	goals[2] = b.grab("wrist_L", wrist + (Vec3){ 0, 0, 0.05f * b.height });
 	b.solve(goals[..]);
 	float moved = b.off("hips", hips);
-	note("  stood down: %s, its miss %.4f h, hips moved %.5f h, other ankle off %.6f h, hand off %.6f h", goals[0].stood_down ? "yes" : "no",
-		goals[0].residual / b.height, moved, b.off("ankle_R", ankle_r), b.off("wrist_L", goals[2].target));
 	test::@check(goals[0].stood_down, "the pin was not stood down");
 	test::@check(!goals[1].stood_down && !goals[2].stood_down, "a pin in reach was stood down");
 	test::@check(goals[0].residual > 0.9f * b.height, "the miss was reported as %.4f heights", goals[0].residual / b.height);
@@ -1072,8 +995,6 @@ fn void the_balance_leans_the_chest_over_the_feet() @test
 		b.solve(goals[..]);
 		Vec3 spine = b.at("chest") - b.at("hips");
 		leans[run] = spine.z / spine.length();
-		note("  balance %s: lean %.3f, hips miss %.4f h, the centre of mass %.4f h off its feet, ankles off %.6f %.6f h", balance ? "on" : "off", leans[run],
-			b.off("hips", goals[0].target), b.balance_miss / b.height, b.off("ankle_L", goals[1].target), b.off("ankle_R", goals[2].target));
 		test::@check(balance || b.balance_miss == 0.0f, "the balance was off and reported a miss");
 		test::@check(!balance || b.balance_miss / b.height < 0.01f, "the centre of mass ended %.4f heights off its feet", b.balance_miss / b.height);
 		test::@check(b.off("ankle_L", goals[1].target) < 1.0e-4f && b.off("ankle_R", goals[2].target) < 1.0e-4f, "an ankle slipped");
@@ -1108,8 +1029,6 @@ fn void a_pose_off_balance_is_not_thrown_onto_its_feet() @test
 	b.solve(goals[..]);
 	float moved = b.off("hips", hips);
 	float tilt = b.tilt("chest", chest);
-	note("  off balance: hips moved %.5f h, chest tilt %.2f deg, the hand %.5f h short, the centre %.5f h outside", moved, tilt,
-		b.off("wrist_L", target), b.balance_miss / b.height);
 	test::@check(moved < 0.005f, "the hips lurched %.5f heights for a small reach", moved);
 	test::@check(tilt < 2.0f, "the chest tilted %.2f degrees for a small reach", tilt);
 	test::@check(b.off("wrist_L", target) < 2.0e-3f, "the hand was %.5f heights short", b.off("wrist_L", target));
@@ -1139,8 +1058,6 @@ fn void the_fork_does_not_carry_the_masses_the_body_solve_asks_for() @test
 	usz thigh = b.joint("thigh_L");
 	usz spine = b.joint("spine");
 	usz hips = b.joint("hips");
-	note("  masses with the fork's carry: thigh %.2f spine %.2f hips %.2f; without: thigh %.2f spine %.2f hips %.2f",
-		1.0f / carried[thigh], 1.0f / carried[spine], 1.0f / carried[hips], 1.0f / free[thigh], 1.0f / free[spine], 1.0f / free[hips]);
 	test::@check(math::abs(1.0f / carried[thigh] - crig::POINT_POSE_ROOT_MASS) < 1.0e-3f, "the carried thigh weighs %.2f, not the root's", 1.0f / carried[thigh]);
 	test::@check(math::abs(1.0f / free[thigh] - 1.0f) < 1.0e-3f, "the thigh weighs %.2f when nothing carries it, not a limb's 1", 1.0f / free[thigh]);
 	test::@check(math::abs(1.0f / free[spine] - crig::POINT_POSE_TRUNK_MASS) < 1.0e-3f, "the spine weighs %.2f, not a trunk's", 1.0f / free[spine]);
@@ -1184,7 +1101,6 @@ fn void random_targets_stay_inside_every_limit() @test
 		foreach (rotation : b.pose.rotations) test::@check(rotation.v.length() > 0.99f && rotation.v.length() < 1.01f && rotation.v.x == rotation.v.x, "step %d: a rotation is not a rotation", k);
 		worst_slip = math::max(worst_slip, math::max(b.off("ankle_L", goals[2].target), b.off("ankle_R", goals[3].target)));
 	}
-	note("  random targets: the ankles slipped up to %.6f h over 40 targets", worst_slip);
 	test::@check(worst_slip < 1.0e-3f, "an ankle slipped %.6f heights", worst_slip);
 }
 
@@ -1235,7 +1151,6 @@ fn void a_circling_hand_never_jumps() @test
 		}
 		behind = math::max(behind, b.off("wrist_L", target));
 	}
-	note("  circling hand: the most any joint moved in a step %.2f hand steps (%s), the hand fell up to %.5f h behind", worst, worst_joint, behind);
 	test::@check(worst < 5.0f, "%s jumped %.2f times the hand's step", worst_joint, worst);
 	test::@check(behind < 3.0e-3f, "the hand fell %.4f heights behind", behind);
 	b.check_limits("circle");
@@ -1261,7 +1176,6 @@ fn void a_frozen_joint_is_left_alone() @test
 	goals[2] = b.pin("ankle_R", true);
 	goals[0] = b.grab("spine", b.at("spine") - (Vec3){ 0, 0.1f * b.height, 0 });
 	b.solve(goals[..]);
-	note("  frozen neck: %s, the spine turned %.2f deg", b.pose.rotations[neck].v == kept.v ? "left as it was" : "TURNED", angle_of(b.pose.rotations[spine]));
 	test::@check(b.pose.rotations[neck].v == kept.v, "the frozen neck was turned");
 	test::@check(b.off("ankle_L", goals[1].target) < 1.0e-4f, "an ankle slipped");
 }
@@ -1296,7 +1210,6 @@ fn void nothing_asked_changes_nothing() @test
 	b.joints = kept;
 	same = true;
 	foreach (usz j, rotation : b.pose.rotations) same = same && rotation.v == before.rotations[j].v;
-	note("  nothing asked: an empty solve and a goal out of play both left the pose alone (miss %.4f h)", miss / b.height);
 	test::@check(same, "a goal on a joint out of play moved the body");
 	test::@check(math::abs(miss - 0.1f) < 1.0e-4f, "the miss was %.5f, not the 0.1 asked", miss);
 }

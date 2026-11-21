@@ -189,7 +189,7 @@ fn uint fitted_resolution(alloc::Allocator allocator, TriMesh geometry, MeshShel
 	// and it is where the vertices are that decides whether the grid is wrong.
 	float cell = longest / (float)VOXEL_RESOLUTION;
 	usz cramped = 0;
-	foreach (usz v, id : pieces.of)
+	foreach (id : pieces.of)
 	{
 		if (id < 0 || (usz)id >= pieces.count) continue;
 		Vec3 size = high[id] - low[id];

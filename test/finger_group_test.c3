@@ -7,6 +7,7 @@
 module crig_tests::finger_group;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::math;
@@ -23,12 +24,6 @@ struct Hand
 	uint[4] knuckles; // the _2 joint of each finger
 }
 
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
-
 fn bool Hand.open(&self)
 {
 	rig::TriMesh? loaded = rig::load_gltf(mem, HUMANOID);
@@ -39,8 +34,8 @@ fn bool Hand.open(&self)
 	String[4] fingers = { "index", "middle", "ring", "pinky" };
 	foreach (usz i, finger : fingers)
 	{
-		self.tips[i] = dot_named(&self.app, string::tformat("%s_4_L", finger));
-		self.knuckles[i] = dot_named(&self.app, string::tformat("%s_2_L", finger));
+		self.tips[i] = helpers::dot_named(&self.app, string::tformat("%s_4_L", finger));
+		self.knuckles[i] = helpers::dot_named(&self.app, string::tformat("%s_2_L", finger));
 		if (self.tips[i] == 0 || self.knuckles[i] == 0) return false;
 	}
 	crig::AnimRef clip = self.app.new_clip("hand", 1.0f, from_rest: true);

@@ -20,8 +20,8 @@ import std::math::quaternion;
 // ---------------------------------------------------------------------------
 // measure_clip as a quality gate
 //
-// What the zidane clips shipped with and nothing reported: a leftover leg key a
-// couple of milliseconds off a whole pose, a loop whose last frame jumps back to
+// What a downloaded rig's clips shipped with and nothing reported: a leftover leg
+// key a couple of milliseconds off a whole pose, a loop whose last frame jumps back to
 // its first, a knee the limits hold straight. Each is now named, with the call
 // that mends it, and a clip with none of them reads usable.
 
@@ -109,7 +109,7 @@ fn void measure_clip_finds_a_seam_snap() @test
 }
 
 <*
- A clean clip reads usable, and says so in apply_clip's own answer.
+ A clean clip reads usable with no issue, and says so in apply_clip's own answer.
 *>
 fn void a_clean_clip_reads_usable() @test
 {
@@ -125,14 +125,16 @@ fn void a_clean_clip_reads_usable() @test
 	Object*? metrics = authored.get("metrics");
 	if (catch metrics) { test::@check(false, "apply_clip answers with metrics"); return; }
 	test::@check((metrics.get_string("verdict") ?? "") == "usable", "a clean clip reads needs_work");
+	test::@check(metrics.get("issues")!!.get_len() == 0, "a clean clip names an issue");
 	test::@check(metrics.get("fixes")!!.get_len() == 0, "and is offered no fix");
 }
 
 <*
  get_pose shows the pose as it plays — a knee the limits lock stays straight —
- and lists the joint the limits changed, with how much.
+ and lists the joint the limits changed, with how much; measure_clip names the
+ joint and axis the clip fights.
 *>
-fn void get_pose_shows_what_the_limits_hold() @test
+fn void get_pose_and_measure_clip_show_what_the_limits_hold() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -174,6 +176,16 @@ fn void get_pose_shows_what_the_limits_hold() @test
 	if (limited.get_len() != 1) return;
 	test::@check((limited.get_at(0).get_string("name") ?? "") == "knee", "the knee");
 	test::@check(math::abs((float)(limited.get_at(0).get_float("removed") ?? 0.0) - 1.0f) < 0.01f, "by the radian keyed");
+
+	Object*? m = f.call_tool("measure_clip", `{"clip":"strain"}`);
+	if (catch m) { test::@check(false, "measure_clip answers"); return; }
+	defer m.free();
+	Object* hit = find_issue(m, "limit_saturation");
+	test::@check(hit != null, "the joint fighting its limit is reported");
+	if (hit == null) return;
+	test::@check(hit.get_string("joint")!! == "knee", "named to the joint");
+	test::@check(@ok(hit.get_string("axis")), "and the bone-local axis it was hit on");
+	test::@check((hit.get_float("magnitude") ?? 0.0) > 0.02, "with the radians past the limit");
 }
 
 <*
@@ -410,42 +422,28 @@ fn void get_weights_reads_vertex_rows() @test
 }
 
 <*
- fix_strays answers what it found and changed, and the strays left, in
- get_weights' words — on the cube, none of either.
+ fix_strays and fix_tears answer what they found and changed, and what is left,
+ in get_weights' words — on the welded cube, none of either.
 
- Re-introduce: leave `fix_strays` out of `install_tools`.
+ Re-introduce: leave `fix_strays` or `fix_tears` out of `install_tools`.
 *>
-fn void fix_strays_answers_what_it_did() @test
+fn void fix_strays_and_fix_tears_answer_what_they_did() @test
 {
 	Fixture fixture;
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
 
-	Object*? fixed = f.call_tool("fix_strays", `{}`);
-	if (catch fixed)
+	Object*? swept = f.call_tool("fix_strays", `{}`);
+	if (catch swept)
 	{
 		test::@check(false, "fix_strays answers");
 		return;
 	}
-	defer fixed.free();
-	test::@check((fixed.get_int("found") ?? -1) == 0, "the cube has strays");
-	test::@check((fixed.get_int("fixed") ?? -1) == 0, "fix_strays changed vertices on a clean cube");
-	test::@check(fixed.get("strays")!!.get_len() == 0, "fix_strays lists strays left on a clean cube");
-}
-
-<*
- get_weights lists tears and fix_tears answers what it found and changed, and
- the tears left — on the welded cube, none of either.
-
- Re-introduce: leave `fix_tears` out of `install_tools`.
-*>
-fn void fix_tears_answers_what_it_did() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
+	defer swept.free();
+	test::@check((swept.get_int("found") ?? -1) == 0, "the cube has strays");
+	test::@check((swept.get_int("fixed") ?? -1) == 0, "fix_strays changed vertices on a clean cube");
+	test::@check(swept.get("strays")!!.get_len() == 0, "fix_strays lists strays left on a clean cube");
 
 	Object*? found = f.call_tool("get_weights", `{"tears":true}`);
 	if (catch found)

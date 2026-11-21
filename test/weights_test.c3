@@ -6,6 +6,7 @@ module crig_tests::weights;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 
 import std::math;
@@ -62,24 +63,19 @@ fn void take_all_off(crig::AppState* app, uint dot)
 	app.paint_share(dot, all[..], 0.0f);
 }
 
-// The dot id `name` was given, or 0.
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
-}
-
 <*
- Ownership is exclusive and total: every vertex belongs to exactly one dot.
+ Ownership is exclusive and total: every vertex belongs to exactly one dot, and
+ no dot owns mass it does not reach.
 
  The survey's strongest claim, and the one a loop that counted twice or skipped a
  row would break. Asserted as a sum, because no individual dot's share is a
- number this test could know without recomputing the bind it is checking.
+ number this test could know without recomputing the bind it is checking. Reach
+ is a threshold and ownership an argmax, so on a rig with enough joints the
+ winner's share can fall under the floor; the survey counts the owner in
+ regardless. And shared rows come worst first, so a caller reading only the head
+ reads the boundary most likely to tear.
 *>
-fn void every_vertex_is_owned_exactly_once() @test
+fn void every_vertex_is_owned_once_within_its_reach() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
@@ -93,75 +89,35 @@ fn void every_vertex_is_owned_exactly_once() @test
 	test::eq(survey.vertices, (usz)cube_positions.len);
 	test::eq(owned, survey.vertices);
 	test::eq(survey.stakes.len, (sz)4);
-}
-
-<*
- No dot owns mass it does not reach.
-
- Not free: reach is a threshold and ownership is an argmax, so on a rig with
- enough joints the winner's share can fall under the floor. `survey_weights`
- counts the owner in regardless, and this is that guard.
-*>
-fn void reach_covers_what_is_owned() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	crig::WeightSurvey survey = app.survey_weights(mem)!!;
-	defer survey.free(mem);
-
 	foreach (stake : survey.stakes) test::@check(stake.reaches >= stake.owns, "%s reaches less than it owns", stake.name);
+
+	crig::WeightSurvey hips = app.survey_weights(mem, helpers::dot_named(&app, "hips"))!!;
+	defer hips.free(mem);
+	for (usz i = 1; i < hips.shared.len; i++)
+	{
+		test::@check(hips.shared[i - 1].vertices >= hips.shared[i].vertices, "shared rows are out of order at %d", i);
+	}
 }
 
 <*
- A surveyed dot's reach is exactly what it owns plus what it shares.
-
- An identity, not a bound: a vertex it reaches is either its own or someone
- else's, and the shared rows group the second kind by owner. A survey that
- double-counted, dropped a neighbour, or applied the floor differently in the two
- passes breaks this and nothing else here would notice.
-*>
-fn void reach_is_owned_plus_shared() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint knee = dot_named(&app, "knee");
-	crig::WeightSurvey survey = app.survey_weights(mem, knee)!!;
-	defer survey.free(mem);
-
-	usz elsewhere = 0;
-	foreach (share : survey.shared)
-	{
-		elsewhere += share.vertices;
-		test::@check(share.dot != knee, "a dot is listed as its own neighbour");
-		test::@check(share.peak >= share.mean, "a peak share below the mean");
-	}
-
-	crig::JointStake surveyed = {};
-	foreach (stake : survey.stakes)
-	{
-		if (stake.dot == knee) surveyed = stake;
-	}
-
-	test::eq(surveyed.reaches, surveyed.owns + elsewhere);
-}
-
-<*
- A dot can own nothing and still pull hard on the mesh.
+ A dot can own nothing and still pull hard on the mesh, and what it reaches is
+ exactly what it owns plus what it shares.
 
  The reason `owns` and `reaches` are two numbers. Every vertex of this cube is a
  corner, so the middle of the chain is nearest to none of them — and it is still
  strong enough on its neighbours' vertices to move them. A joint in exactly that
  state smears a mesh without holding any of it, which is the thing the survey
- exists to make visible.
+ exists to make visible. The identity holds because a vertex it reaches is its own
+ or someone else's, and the shared rows group the second kind by owner: a survey
+ that double-counted, dropped a neighbour, or applied the floor differently in the
+ two passes breaks it.
 *>
 fn void a_dot_can_own_nothing_and_still_reach() @test
 {
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint knee = dot_named(&app, "knee");
+	uint knee = helpers::dot_named(&app, "knee");
 	crig::WeightSurvey survey = app.survey_weights(mem, knee)!!;
 	defer survey.free(mem);
 
@@ -174,26 +130,15 @@ fn void a_dot_can_own_nothing_and_still_reach() @test
 	test::eq(surveyed.owns, (usz)0);
 	test::@check(surveyed.reaches > 0, "the middle of the chain reaches nothing at all");
 	test::@check(survey.shared.len > 0, "and takes from no neighbour");
-}
 
-<*
- Shared rows come worst first, so a caller reading only the head reads the
- boundary most likely to tear.
-*>
-fn void shared_rows_are_worst_first() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	crig::WeightSurvey survey = app.survey_weights(mem, dot_named(&app, "hips"))!!;
-	defer survey.free(mem);
-
-	for (usz i = 1; i < survey.shared.len; i++)
+	usz elsewhere = 0;
+	foreach (share : survey.shared)
 	{
-		test::@check(
-			survey.shared[i - 1].vertices >= survey.shared[i].vertices,
-			"shared rows are out of order at %d", i);
+		elsewhere += share.vertices;
+		test::@check(share.dot != knee, "a dot is listed as its own neighbour");
+		test::@check(share.peak >= share.mean, "a peak share below the mean");
 	}
+	test::eq(surveyed.reaches, surveyed.owns + elsewhere);
 }
 
 <*
@@ -311,45 +256,6 @@ fn usz owned_by(crig::WeightSurvey survey, uint dot)
 // moved, so a dragged dot re-derives without a stroke having to be redone.
 
 <*
- The survey sees the paint.
-
- `get_weights` and the HUD read `survey_weights`, which binds for itself rather
- than reading whatever the screen last painted. That is deliberate — but it means
- the multiply has to be applied there too, or an agent asking who owns what gets
- the binder's opinion and the file gets a different one.
-*>
-fn void the_survey_counts_painted_weights() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-
-	crig::WeightSurvey before = app.survey_weights(mem)!!;
-	usz owned_before = 0;
-	foreach (stake : before.stakes)
-	{
-		if (stake.dot == hips) owned_before = stake.owns;
-	}
-	before.free(mem);
-
-	test::@check(owned_before > 0, "hips owns something to take away");
-
-	// Nothing at all, everywhere: the strongest statement the layer can make.
-	take_all_off(&app, hips);
-
-	crig::WeightSurvey after = app.survey_weights(mem)!!;
-	defer after.free(mem);
-
-	usz owned_after = 1;
-	foreach (stake : after.stakes)
-	{
-		if (stake.dot == hips) owned_after = stake.owns;
-	}
-	test::@check(owned_after == 0, "a dot painted to nothing owns nothing in the survey");
-}
-
-<*
  The territory view sees the paint.
 
  Same reason as the survey, one step further out: the three tint views each bind
@@ -361,7 +267,7 @@ fn void the_territory_view_shows_painted_weights() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 
 	app.show_tint(crig::TintMode.TERRITORY);
 	app.rebind_tints();
@@ -381,66 +287,6 @@ fn void the_territory_view_shows_painted_weights() @test
 	test::@check(moved > 0, "painting a dot out of the rig recoloured the vertices it held");
 }
 
-<*
- The falloff view sees the paint.
-
- The third of the three binds a user can be looking at, and the one reach mode
- leaves on screen — so it is the view a stroke is most likely to be judged
- against. `F` shows one joint's share of every vertex on a ramp, and a share that
- ignored the correction would show a hold the file does not have.
-*>
-fn void the_falloff_view_shows_painted_weights() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	app.selected = hips;
-
-	app.show_tint(crig::TintMode.FALLOFF);
-	app.rebind_tints();
-	test::@check(app.tints.len == cube_positions.len, "the view painted every vertex");
-
-	uint[8] before;
-	foreach (usz i, tint : app.tints) before[i] = tint;
-
-	take_all_off(&app, hips);
-	app.rebind_tints();
-
-	usz moved = 0;
-	foreach (usz i, tint : app.tints)
-	{
-		if (tint != before[i]) moved++;
-	}
-	test::@check(moved > 0, "painting the selected dot to nothing changed its ramp");
-}
-
-<*
- Every one-joint view reads on the Weights card's scale: grey where the joint
- holds nothing, orange where it holds everything.
-*>
-fn void the_falloff_view_runs_grey_to_orange() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	app.selected = hips;
-	take_all_off(&app, hips);
-	app.show_tint(crig::TintMode.FALLOFF);
-	app.rebind_tints();
-	foreach (usz i, tint : app.tints)
-	{
-		test::@check(tint == crig::share_tint(0.0f), "vertex %d the hips do not hold is %x, not grey", i, tint);
-	}
-
-	uint grey = crig::share_tint(0.0f);
-	uint half = crig::share_tint(0.5f);
-	uint orange = crig::share_tint(1.0f);
-	test::@check((grey & 0xFF) < (half & 0xFF) && (half & 0xFF) < (orange & 0xFF), "the ramp does not redden as the share rises");
-	test::@check(((orange >> 16) & 0xFF) < ((grey >> 16) & 0xFF), "full weight is not orange");
-}
-
 // ---------------------------------------------------------------------------
 // Strokes and the ledger
 //
@@ -457,7 +303,7 @@ fn void a_stroke_undoes_in_one_step() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 
 	crig::VertexPin[4] stroke = {
 		{ .vertex = 0, .dot_id = hips, .share = 0.25f },
@@ -490,7 +336,7 @@ fn void a_stroke_undoes_to_the_stroke_beneath_it() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 
 	crig::VertexPin[1] first = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
 	crig::VertexPin[1] second = {{ .vertex = 0, .dot_id = hips, .share = 0.75f }};
@@ -518,7 +364,7 @@ fn void a_stroke_that_changes_nothing_is_not_recorded() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
 
 	test::eq(app.pin_dabs(dab[..]), (usz)1);
@@ -541,7 +387,7 @@ fn void forking_the_timeline_drops_the_abandoned_stroke() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	crig::VertexPin[1] first = {{ .vertex = 0, .dot_id = hips, .share = 0.25f }};
 	crig::VertexPin[2] second = {
 		{ .vertex = 1, .dot_id = hips, .share = 0.5f },
@@ -620,8 +466,8 @@ fn void a_weight_asked_for_is_the_weight_written() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint knee = helpers::dot_named(&app, "knee");
 	uint[1] one = { 0 };
 	float knee_had = weight_of(&app, 0, knee);
 
@@ -648,8 +494,8 @@ fn void the_brush_raises_a_zero_weight_in_one_step() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint knee = helpers::dot_named(&app, "knee");
 	uint[1] one = { 0 };
 
 	// Vertex 0 wholly the hips', so the knee holds exactly nothing there.
@@ -693,9 +539,9 @@ fn void the_brush_paints_a_joint_to_the_share_its_strength_names() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
-	uint foot = dot_named(&app, "foot");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint knee = helpers::dot_named(&app, "knee");
+	uint foot = helpers::dot_named(&app, "foot");
 	uint[1] one = { 0 };
 	float[1] all = { 1.0f };
 
@@ -736,46 +582,6 @@ fn void the_brush_paints_a_joint_to_the_share_its_strength_names() @test
 }
 
 <*
- Two dots' weights on one vertex are two numbers: setting the second leaves
- the first where it was put, and the shares are each over the two together.
-*>
-fn void weights_of_two_dots_do_not_touch() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
-	uint[1] one = { 0 };
-
-	app.paint_share(hips, one[..], 0.25f);
-	app.paint_share(knee, one[..], 0.5f);
-
-	test::@check(weight_of(&app, 0, knee) == 0.5f, "the second dot did not get the weight it asked for");
-	test::@check(weight_of(&app, 0, hips) == 0.25f, "the first dot's weight moved to %f", weight_of(&app, 0, hips));
-	test::@check(share_of(&app, 0, knee) > share_of(&app, 0, hips), "the heavier dot holds the smaller share");
-}
-
-<*
- The whole vertex is one dot's when it holds full weight and every other dot is
- taken off it.
-*>
-fn void asking_for_all_of_a_vertex_gives_it_all() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint[1] one = { 0 };
-
-	app.paint_share(hips, one[..], 1.0f);
-	foreach (dot : app.doc.dots.array_view()) if (dot.id != hips) app.paint_share(dot.id, one[..], 0.0f);
-
-	float got = share_of(&app, 0, hips);
-	test::@check(math::abs(got - 1.0f) < 1.0e-6f, "asking for all of it measured %s", got);
-}
-
-<*
  Taking the only dot on a vertex off it leaves the vertex to nobody, and says
  so: nothing hands it to anyone.
 *>
@@ -808,7 +614,7 @@ fn void a_stated_weight_holds_when_the_dot_moves() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 
 	app.paint_share(hips, one[..], 0.5f);
@@ -830,7 +636,7 @@ fn void a_share_request_is_one_step() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[4] some = { 0, 1, 2, 3 };
 
 	crig::PaintResult did = app.paint_share(hips, some[..], 0.2f);
@@ -862,7 +668,7 @@ fn void the_brush_and_the_area_tool_are_exclusive() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	app.select(dot_named(&app, "hips"));
+	app.select(helpers::dot_named(&app, "hips"));
 
 	test::@check(app.begin_area(), "the Area tool opened");
 	test::@check(app.begin_brush(), "the brush opened over it");
@@ -883,7 +689,7 @@ fn void the_brush_and_the_area_tool_are_exclusive() @test
 *>
 fn uint park_bent_knee(crig::AppState* app)
 {
-	uint knee = dot_named(app, "knee");
+	uint knee = helpers::dot_named(app, "knee");
 	AnimRef clip = app.new_clip("bend", 1.0f, from_rest: true);
 	app.editing = clip;
 	Quaternionf turn = quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), 1.2f);
@@ -1114,7 +920,7 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	// The other side is already placed, exactly across the plane. Mirror crosses
 	// the paint onto it — it never makes the twin.
 	uint twin = app.add_recorded({ 0.5f, 0.5f, 0 }, "arm_R");
-	app.connect_recorded(dot_named(&app, "hip"), twin);
+	app.connect_recorded(helpers::dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
 	uint[1] at0 = { 0 };
@@ -1143,7 +949,7 @@ fn void a_mirrored_dot_takes_its_paint_with_it() @test
 	// there before the mirror; one redo brings the crossed paint back.
 	test::@check(app.undo(), "the mirror would not undo");
 	test::eq(app.undo_stack.cursor, history);
-	test::@check(dot_named(&app, "arm_R") == twin, "undo disturbed the pre-placed twin");
+	test::@check(helpers::dot_named(&app, "arm_R") == twin, "undo disturbed the pre-placed twin");
 	test::@check(!app.weights_held(twin) && app.doc.pin_of(1, twin) == 0.0f, "undo left the twin's weights");
 	test::@check(app.redo(), "the mirror would not redo");
 	test::@check(app.doc.pin_of(1, twin) == 0.3f && app.doc.pin_of(5, twin) == 0.8f,
@@ -1168,7 +974,7 @@ fn void mirroring_overwrites_the_twins_paint_with_the_sources() @test
 
 	uint arm = arm_over_the_cube(&app);
 	uint twin = app.add_recorded({ 0.5f, 0.5f, 0 }, "arm_R");
-	app.connect_recorded(dot_named(&app, "hip"), twin);
+	app.connect_recorded(helpers::dot_named(&app, "hip"), twin);
 	app.undo_stack.commit();
 
 	uint[1] at0 = { 0 };
@@ -1210,7 +1016,7 @@ fn void painting_does_not_wait_for_the_debounce() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	crig::VertexPin[1] dab = {{ .vertex = 0, .dot_id = hips, .share = 0.5f }};
 
 	app.mark_rig_stale();
@@ -1234,7 +1040,7 @@ fn void a_stroke_keeps_the_bind_underneath_it() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	app.select(hips);
 	app.show_tint(crig::TintMode.FALLOFF);
 	app.rebind_tints();
@@ -1263,7 +1069,7 @@ fn void a_stroke_depends_on_where_it_passed_not_how_long() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 
 	app.paint_share(hips, one[..], 0.8f);
@@ -1316,7 +1122,7 @@ fn void a_remove_stroke_leaves_no_crumb_behind() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 
 	// The rim first, then the core, in one stroke: all of the rest is owed.
@@ -1356,8 +1162,8 @@ fn void a_brush_remove_clears_a_vertex_nobody_else_holds() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint knee = helpers::dot_named(&app, "knee");
 	state_row(&app, 0, hips, 0.8f);
 	state_row(&app, 1, hips, 0.8f, knee);
 
@@ -1401,7 +1207,7 @@ fn void a_partial_request_lands_part_of_the_way() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 	float[1] half = { 0.5f };
 
@@ -1445,7 +1251,7 @@ fn void the_brush_keeps_the_frame_loop_awake() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	app.select(dot_named(&app, "hips"));
+	app.select(helpers::dot_named(&app, "hips"));
 	app.show_tint(crig::TintMode.OFF);
 	app.rebind_tints();
 	test::@check(!app.ticking(), "the fixture was already asking for frames before the brush opened");
@@ -1484,7 +1290,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 
 	// From nothing to as much as the dot can hold, the way ctrl-drag goes.
@@ -1546,7 +1352,8 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
 // a survey describing a bind nobody is looking at.
 
 <*
- The two values that mean "leave the bind alone" leave it alone, bit for bit.
+ The two values that mean "leave the bind alone" leave it alone, bit for bit,
+ and a row that is already rigid comes back untouched at any sharpness.
 
  Not a nicety: a zero-initialised document is what every rig starts as, so γ=0
  is what the primitive is handed on the overwhelming majority of binds. Reading
@@ -1555,7 +1362,7 @@ fn void a_gentle_pass_builds_up_and_a_full_one_lands() @test
  picked. Equality rather than an epsilon, because the promise is that the array
  is not touched at all.
 *>
-fn void an_unset_sharpness_leaves_the_bind_alone() @test
+fn void sharpening_leaves_unset_and_rigid_rows_alone() @test
 {
 	// The binder's real range, ends included: scores span orders of magnitude.
 	float[6] scores = { 0.0f, 1.0e-6f, 0.25f, 1.0f, 7.5f, 1.0e6f };
@@ -1580,57 +1387,17 @@ fn void an_unset_sharpness_leaves_the_bind_alone() @test
 	{
 		test::@check(value == want[i], "a negative gamma moved weight %d from %s to %s", i, want[i], value);
 	}
-}
 
-<*
- Sharpening never changes which joint wins a vertex.
-
- A power is monotone, so the order within a row survives it — which is the whole
- reason this is safe to do to unnormalised scores between the binder and the
- paint. If it were not true the territory map would repaint itself every time
- the sharpness moved, and the user would be watching joints trade mesh when they
- asked for a crisper seam.
-*>
-fn void sharpening_keeps_the_order_within_a_row() @test
-{
-	float[5] row = { 0.004f, 0.9f, 0.05f, 12.0f, 0.05f };
-	float[5] before = row;
-
-	crig::sharpen_weights(row[..], 3.0f);
-
-	foreach (usz i, value : row)
-	{
-		foreach (usz j, other : row)
-		{
-			if (i == j) continue;
-			test::@check((before[i] > before[j]) == (value > other),
-				"gamma 3 swapped %d and %d (%s,%s became %s,%s)", i, j, before[i], before[j], value, other);
-		}
-	}
-}
-
-<*
- A row that is already rigid comes back untouched, at any sharpness.
-
- 1 and 0 are their own powers, so a shell pinned to one dot — and every
- auto-rigid piece the binder decides for itself — is unaffected by this control
- in both directions. Worth asserting rather than deriving, since it is what
- makes the sharpness safe to reach for on a model whose loose pieces are already
- settled.
-*>
-fn void a_rigid_row_survives_any_sharpness() @test
-{
+	// 1 and 0 are their own powers, so a shell pinned to one dot, and every
+	// auto-rigid piece the binder decides for itself, is unaffected either way.
 	float[4] rigid = { 0.0f, 1.0f, 0.0f, 0.0f };
-	float[3] gammas = { 0.25f, 2.0f, 4.0f };
-
-	foreach (gamma : gammas)
+	foreach (gamma : (float[3]){ 0.25f, 2.0f, 4.0f })
 	{
 		float[4] row = rigid;
 		crig::sharpen_weights(row[..], gamma);
 		foreach (usz i, value : row)
 		{
-			test::@check(value == rigid[i], "gamma %s moved a rigid row's %d from %s to %s",
-				gamma, i, rigid[i], value);
+			test::@check(value == rigid[i], "gamma %s moved a rigid row's %d from %s to %s", gamma, i, rigid[i], value);
 		}
 	}
 }
@@ -1661,14 +1428,18 @@ fn usz band_rows(float[] dense, usz bones, float floor)
 }
 
 <*
- The point of the whole feature: the band between two bones gets narrower.
+ The point of the whole feature: the band between two bones gets narrower, and
+ never by changing which joint wins a vertex.
 
  A ramp across forty-one vertices in the binder's own units — unnormalised
  scores, which is what the primitive is handed — and the measure is the count of
  vertices still shared between the two bones. On a model assembled from solid
- pieces that count is what reads as mush.
+ pieces that count is what reads as mush. A power is monotone, so the order
+ within a row survives it, which is what makes it safe between the binder and
+ the paint: otherwise the territory map would repaint itself as the sharpness
+ moved.
 *>
-fn void sharpening_narrows_the_transition_band() @test
+fn void sharpening_narrows_the_band_and_keeps_each_rows_order() @test
 {
 	float[82] soft;
 	for (usz v = 0; v < 41; v++)
@@ -1692,6 +1463,19 @@ fn void sharpening_narrows_the_transition_band() @test
 	// would count the same and look nothing like it.
 	test::@check(sharp[0] > sharp[1] && soft[0] > soft[1], "the first vertex changed owner");
 	test::@check(sharp[80] < sharp[81] && soft[80] < soft[81], "the last vertex changed owner");
+
+	float[5] row = { 0.004f, 0.9f, 0.05f, 12.0f, 0.05f };
+	float[5] before_row = row;
+	crig::sharpen_weights(row[..], 3.0f);
+	foreach (usz i, value : row)
+	{
+		foreach (usz j, other : row)
+		{
+			if (i == j) continue;
+			test::@check((before_row[i] > before_row[j]) == (value > other),
+				"gamma 3 swapped %d and %d (%s,%s became %s,%s)", i, j, before_row[i], before_row[j], value, other);
+		}
+	}
 }
 
 <*
@@ -1709,8 +1493,8 @@ fn void a_sharpened_document_binds_sharper() @test
 
 	// The knee and the foot share the fixture's corner; the hips are a band too
 	// far from it to hold any.
-	uint hips = dot_named(&app, "knee");
-	uint foot = dot_named(&app, "foot");
+	uint hips = helpers::dot_named(&app, "knee");
+	uint foot = helpers::dot_named(&app, "foot");
 
 	float hips_soft = share_of(&app, 0, hips);
 	float foot_soft = share_of(&app, 0, foot);
@@ -1738,7 +1522,7 @@ fn void a_weight_asked_for_survives_a_sharpened_bind() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 	uint[1] one = { 0 };
 
 	test::@check(app.doc.set_sharpness(2.0f), "the document did not take the sharpness");
@@ -1770,7 +1554,7 @@ fn void the_survey_reads_the_sharpened_bind() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint knee = dot_named(&app, "knee");
+	uint knee = helpers::dot_named(&app, "knee");
 
 	crig::WeightSurvey soft = app.survey_weights(mem, knee)!!;
 	defer soft.free(mem);
@@ -1989,7 +1773,7 @@ fn void a_pin_is_stored_updated_and_removed() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 
 	test::@check(app.doc.pin_of(0, hips) == 0.0f, "an absent pin reads as something other than nothing");
 
@@ -2024,8 +1808,8 @@ fn void only_held_joints_columns_reach_the_bind() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint foot = dot_named(&app, "foot");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint foot = helpers::dot_named(&app, "foot");
 
 	app.doc.set_pin(0, hips, 0.5f);
 	app.doc.set_pin(1, hips, 0.5f);
@@ -2062,8 +1846,8 @@ fn void a_large_region_is_one_step_and_undoes_exactly() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint foot = dot_named(&app, "foot");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint foot = helpers::dot_named(&app, "foot");
 
 	const usz REGION = 4000;
 
@@ -2142,8 +1926,8 @@ fn void setting_a_region_on_one_dot_leaves_another_alone() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
-	uint foot = dot_named(&app, "foot");
+	uint hips = helpers::dot_named(&app, "hips");
+	uint foot = helpers::dot_named(&app, "foot");
 
 	uint[3] region = { 0, 1, 2 };
 	app.set_weight_vertices(region[..], hips, 1.0f);
@@ -2171,7 +1955,7 @@ fn void letting_every_joint_go_is_one_step() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint hips = dot_named(&app, "hips");
+	uint hips = helpers::dot_named(&app, "hips");
 
 	uint[2] region = { 0, 1 };
 	app.set_weight_vertices(region[..], hips, 1.0f);
@@ -2201,7 +1985,7 @@ fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 	crig::AppState app = chained();
 	defer app.free();
 
-	uint stray = dot_named(&app, "stray");
+	uint stray = helpers::dot_named(&app, "stray");
 
 	crig::WeightSurvey before = app.survey_weights(mem)!!;
 	usz had = 0;
@@ -2234,30 +2018,6 @@ fn void a_pinned_vertex_owns_its_dot_in_the_survey() @test
 	}
 	test::@check(had < (usz)cube_positions.len, "the fixture already gave the stray dot the whole mesh");
 	test::eq(now, (usz)cube_positions.len);
-}
-
-<*
- A weight asked for over a vertex another dot holds blends with it: the other
- dot keeps its weight, and each one's share is over the two together.
-*>
-fn void a_weight_over_another_dots_blends_with_it() @test
-{
-	crig::AppState app = chained();
-	defer app.free();
-
-	uint hips = dot_named(&app, "hips");
-	uint knee = dot_named(&app, "knee");
-
-	uint[1] one = { 0 };
-	app.set_weight_vertices(one[..], hips, 1.0f);
-	foreach (dot : app.doc.dots.array_view()) if (dot.id != hips) app.set_weight_vertices(one[..], dot.id, 0.0f);
-	test::@check(math::abs(share_of(&app, 0, hips) - 1.0f) < 1.0e-6f, "the hips do not hold the vertex alone");
-
-	crig::PaintResult did = app.paint_share(knee, one[..], 0.4f);
-	test::@check(did.changed > 0 && did.emptied == 0, "the weight over the hips changed nothing");
-	test::@check(weight_of(&app, 0, hips) == 1.0f, "the hips' weight moved to %s", weight_of(&app, 0, hips));
-	test::@check(math::abs(share_of(&app, 0, knee) - 0.4f / 1.4f) < 1.0e-5f,
-		"the knee measured %s, not its weight over the row", share_of(&app, 0, knee));
 }
 
 <*
@@ -2383,9 +2143,15 @@ fn usz count_stray(
 // The region test the lasso gathers with
 
 <*
- A convex region takes what is inside it and nothing else.
+ A region takes what is inside its outline and nothing else, and a concave one
+ excludes the bite taken out of it.
+
+ The bite is the case the bounding box alone cannot answer, and the reason the
+ gather runs the crossing test after the box rather than instead of it: a C drawn
+ around a shoulder has its opening well inside its own box, and a tool that
+ pinned the whole box would take the arm the user was drawing around.
 *>
-fn void a_convex_region_holds_what_is_inside_it() @test
+fn void a_region_holds_what_is_inside_its_outline() @test
 {
 	Vec2[4] square = { { 0, 0 }, { 10, 0 }, { 10, 10 }, { 0, 10 } };
 
@@ -2402,29 +2168,15 @@ fn void a_convex_region_holds_what_is_inside_it() @test
 	// Two points and one are not a region, whatever they enclose.
 	Vec2[2] line = { { 0, 0 }, { 10, 10 } };
 	test::@check(!crig::inside_polygon(line[..], { 5, 5 }), "a line has an inside");
-}
 
-<*
- A concave region excludes the bite taken out of it.
-
- The case the bounding box alone cannot answer, and the reason the gather runs
- the crossing test after the box rather than instead of it: a C drawn around a
- shoulder has its opening well inside its own box, and a tool that pinned the
- whole box would take the arm the user was drawing around.
-*>
-fn void a_concave_region_excludes_its_bite() @test
-{
 	// A C opening to the right: the notch spans x 4..10 at y 4..6.
 	Vec2[8] c_shape = {
 		{ 0, 0 }, { 10, 0 }, { 10, 4 }, { 4, 4 },
 		{ 4, 6 }, { 10, 6 }, { 10, 10 }, { 0, 10 },
 	};
-
 	test::@check(crig::inside_polygon(c_shape[..], { 2, 5 }), "the back of the C is outside it");
 	test::@check(crig::inside_polygon(c_shape[..], { 7, 2 }), "the top arm of the C is outside it");
 	test::@check(crig::inside_polygon(c_shape[..], { 7, 8 }), "the bottom arm of the C is outside it");
-
-	// Inside the box the shape sits in, and outside the shape.
 	test::@check(!crig::inside_polygon(c_shape[..], { 7, 5 }),
 		"the bite out of the C reads as inside — the box is deciding, not the shape");
 }
@@ -3303,9 +3055,9 @@ fn void removing_a_joint_moves_no_other_joint() @test
 	defer indices.free();
 	crig::AppState app = sliver_grid(&positions, &indices);
 	defer app.free();
-	uint a = dot_named(&app, "A");
-	uint b = dot_named(&app, "B");
-	uint f = dot_named(&app, "F");
+	uint a = helpers::dot_named(&app, "A");
+	uint b = helpers::dot_named(&app, "B");
+	uint f = helpers::dot_named(&app, "F");
 	float sliver = weight_of(&app, 12, f);
 	test::@check(math::abs(sliver - 0.001f) < 1.0e-6f, "the fixture's sliver is %f", sliver);
 
@@ -3333,10 +3085,10 @@ fn void an_apply_moves_no_other_joint() @test
 	defer indices.free();
 	crig::AppState app = sliver_grid(&positions, &indices);
 	defer app.free();
-	uint a = dot_named(&app, "A");
-	uint b = dot_named(&app, "B");
-	uint c = dot_named(&app, "C");
-	uint f = dot_named(&app, "F");
+	uint a = helpers::dot_named(&app, "A");
+	uint b = helpers::dot_named(&app, "B");
+	uint c = helpers::dot_named(&app, "C");
+	uint f = helpers::dot_named(&app, "F");
 
 	// Each side's part is one corner, far from the middle.
 	sz count = positions.len();

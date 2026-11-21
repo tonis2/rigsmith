@@ -19,18 +19,12 @@ const String[2][*] PAINT_ORDER @local = {
 	{ crig::TUTORIAL_OVERLAY_ID, crig::WELCOME_DIALOG_ID },
 	{ crig::TUTORIAL_OVERLAY_ID, crig::TUTORIAL_DIALOG_ID },
 	{ crig::TUTORIAL_DIALOG_ID, "tooltip-host" },
+	// The Attachment panel floats, so a modal or a menu opened while it's up covers it.
+	{ crig::ATTACHMENT_DIALOG_ID, crig::EXPORT_DIALOG_ID },
+	{ crig::ATTACHMENT_DIALOG_ID, crig::MOVE_BY_DIALOG_ID },
+	{ crig::ATTACHMENT_DIALOG_ID, crig::VIEWPORT_CONTEXT_ID },
+	{ crig::ATTACHMENT_DIALOG_ID, crig::UNSAVED_DIALOG_ID },
 };
-
-// Where an element's branch sits among the root's children, or -1.
-fn sz paint_place(Ui* ui, Element* root, String id) @local
-{
-	Element*? found = ui.find_id(id);
-	if (catch found) return -1;
-	Element* at = found;
-	while (at && at.parent != root) at = at.parent;
-	foreach (usz i, child : root.children.array_view()) if (child == at) return (sz)i;
-	return -1;
-}
 
 fn void the_windows_paint_in_the_order_they_answer_each_other() @test
 {
@@ -44,8 +38,8 @@ fn void the_windows_paint_in_the_order_they_answer_each_other() @test
 	Element* root = fixture.ui.find(crig::AppRoot)!!;
 	foreach (pair : PAINT_ORDER)
 	{
-		sz under = paint_place(fixture.ui, root, pair[0]);
-		sz over = paint_place(fixture.ui, root, pair[1]);
+		sz under = root_place(fixture.ui, root, pair[0]);
+		sz over = root_place(fixture.ui, root, pair[1]);
 		test::@check(under >= 0 && over >= 0, "%s or %s is not in the tree", pair[0], pair[1]);
 		test::@check(under < over, "%s paints over %s", pair[0], pair[1]);
 	}

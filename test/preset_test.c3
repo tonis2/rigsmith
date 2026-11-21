@@ -245,22 +245,9 @@ fn crig::AnimPack fixture_pack(Vec3[2]* corners, uint[3]* face, Vec3[3]* joints,
 	return pack;
 }
 
-// A pack carrying both a plan tag and a body is one; a pack carrying only clips
-// is not, which is what keeps `plan_pack` from answering with the wrong file.
-fn void a_pack_with_a_plan_and_a_body_can_be_one() @test
-{
-	Vec3[2] corners;
-	uint[3] face;
-	Vec3[3] joints;
-	int[3] parents;
-	String[3] names;
-	crig::AnimPack pack = fixture_pack(&corners, &face, &joints, &parents, &names);
-
-	test::@check(pack.is_body_plan(), "a pack with a plan tag and a body is not read as one");
-}
-
-// Each dot is its joint's fraction of the body's box, per axis — carrying the
-// joint's own name and its parent, which the file already had in order.
+// A pack carrying a plan tag and a body is a body plan, and each dot of its plan
+// is its joint's fraction of the body's box, per axis, carrying the joint's own
+// name and its parent, which the file already had in order.
 fn void a_derived_dot_is_its_joints_fraction_of_the_box() @test
 {
 	Vec3[2] corners;
@@ -269,6 +256,7 @@ fn void a_derived_dot_is_its_joints_fraction_of_the_box() @test
 	int[3] parents;
 	String[3] names;
 	crig::AnimPack pack = fixture_pack(&corners, &face, &joints, &parents, &names);
+	test::@check(pack.is_body_plan(), "a pack with a plan tag and a body is not read as one");
 
 	Preset plan = pack.preset(mem);
 	defer crig::free_preset(mem, plan);
@@ -342,7 +330,7 @@ struct SideCase
 
 <*
  The conventions a rig can arrive wearing, and the ones that must not be read as
- sides at all.
+ sides at all; and each reading is its own inverse.
 
  This is not a formatting nicety. A rig is named after whichever body plan it
  matched, and a plan's words are its pack file's own joint names — so anything
@@ -352,18 +340,19 @@ struct SideCase
  skeleton on top of the one already there instead of squaring the two halves up.
 
  The refusals matter as much as the matches: a marker read out of the middle of
- a word would pair two joints that have nothing to do with each other, and a
- mirror that moves the wrong dot is worse than one that places a spare.
+ a word would pair two joints that have nothing to do with each other. And a twin
+ is looked up by the name this returns, so a convention that mirrors one way and
+ not back would find the partner from the left and lose it from the right.
 *>
-fn void a_side_is_read_from_every_convention_a_rig_arrives_in() @test
+fn void a_side_is_read_from_every_convention_and_back() @test
 {
 	SideCase[] cases = {
 		{ "thigh_L", "thigh_R", "crig's own suffix, which fit_preset writes" },
 		{ "thigh_R", "thigh_L", "and back the other way" },
-		{ "upperarm_l", "upperarm_r", "Unreal's lowercase suffix" },
-		{ "hand.L", "hand.R", "Blender's separator" },
+		{ "upperarm_l", "upperarm_r", "a lowercase suffix" },
+		{ "hand.L", "hand.R", "a dot before the side" },
 		{ "L_Upperarm", "R_Upperarm", "the letter on the front instead" },
-		{ "Bip01_L_Finger0", "Bip01_R_Finger0", "and in the middle, which 3ds Max writes" },
+		{ "Bone01_L_Finger0", "Bone01_R_Finger0", "and in the middle, after a numbered prefix" },
 		{ "leg_joint_R_1", "leg_joint_L_1", "a marker between two words, with a numbered joint after it" },
 		{ "armature:LeftHandThumb1", "armature:RightHandThumb1", "prefixed, camel-cased" },
 		{ "armature:RightToe_End", "armature:LeftToe_End", "and a marker that is not at either end" },
@@ -386,34 +375,11 @@ fn void a_side_is_read_from_every_convention_a_rig_arrives_in() @test
 
 		test::@check(got == probe.want,
 			"%s: \"%s\" mirrored to \"%s\", wanted \"%s\"", probe.about, probe.name, got, probe.want);
-	}
-}
+		if (probe.want.len == 0) continue;
 
-<*
- And the reading is its own inverse wherever it reads anything.
-
- A twin is looked up by the name this returns, so a convention that mirrors one
- way and not back would find the partner from the left and lose it from the
- right — a Mirror that behaves differently depending on which half you selected.
-*>
-fn void mirroring_a_name_twice_gives_the_name_back() @test
-{
-	String[] named = {
-		"thigh_L", "hand.R", "upperarm_l", "R_Upperarm", "Bip01_L_Finger0",
-		"armature:LeftHandThumb1", "upperarm_right", "LEFT_FOOT", "armLeft",
-	};
-
-	foreach (name : named)
-	{
-		String once = crig::mirror_name(mem, name);
-		defer if (once.len > 0) alloc::free(mem, once.ptr);
-		test::@check(once.len > 0, "%s came back with no side at all", name);
-		if (once.len == 0) continue;
-
-		String twice = crig::mirror_name(mem, once);
-		defer if (twice.len > 0) alloc::free(mem, twice.ptr);
-
-		test::@check(twice == name, "%s -> %s -> %s", name, once, twice);
+		String back = crig::mirror_name(mem, probe.want);
+		defer if (back.len > 0) alloc::free(mem, back.ptr);
+		test::@check(back == probe.name, "%s: %s -> %s -> %s", probe.about, probe.name, probe.want, back);
 	}
 }
 
@@ -421,9 +387,20 @@ fn void mirroring_a_name_twice_gives_the_name_back() @test
 // The shape of a fit: a tree, mirrored in pairs, inside the mesh
 // ---------------------------------------------------------------------------
 
-// The quadruped expands to a connected tree of the right size, entirely inside
-// the body it was fitted to.
-fn void the_quadruped_expands_to_a_connected_tree() @test
+<*
+ The quadruped fits a body as a connected tree of the right size, entirely
+ inside it, with each mirrored dot the reflection of its partner and each limb
+ boned to its own side.
+
+ A twin sits immediately after its primary, and that ordering is what
+ `fit_preset` remaps the parent indices against, so the pairs are walked against
+ the table rather than found by name: if they drift apart, `sym_x` means one
+ thing to the preset and another to the mirror key. A mirrored dot bones to the
+ parent on its own side wherever that parent has a side; get the remap wrong and
+ every limb bone crosses the body, a rig that still exports and deforms nothing
+ like an animal.
+*>
+fn void the_quadruped_fits_as_a_mirrored_tree_inside_the_body() @test
 {
 	rig::TriMesh geometry = body_mesh(mem);
 	defer geometry.free(mem);
@@ -442,24 +419,6 @@ fn void the_quadruped_expands_to_a_connected_tree() @test
 	test::@check(report.connected, "a dot is unreachable from the root");
 	test::@check(report.outside_bounds == 0, "%d dots escaped the mesh's bounds", report.outside_bounds);
 	test::@check(report.stranded == 0, "%d dots found no body in a solid one", report.stranded);
-}
-
-<*
- A mirrored dot is the reflection of its partner through the body's midline.
-
- Or the two sides drift apart and `sym_x` means something different to the
- preset than to the mirror key. Walked against the table rather than found by
- name: a twin always sits immediately after its primary, and that ordering is
- what `fit_preset` remaps the parent indices against, so it is the thing worth
- asserting.
-*>
-fn void mirrored_pairs_straddle_the_midline() @test
-{
-	rig::TriMesh geometry = body_mesh(mem);
-	defer geometry.free(mem);
-
-	rig::MeshVoxels voxels = rig::build_voxels(mem, geometry);
-	defer voxels.free(mem);
 
 	rig::Bounds box = geometry.bounds();
 	crig::FittedDot[] fitted = crig::fit_preset(mem, quadruped(), box, &voxels);
@@ -468,7 +427,6 @@ fn void mirrored_pairs_straddle_the_midline() @test
 	float midline = box.center().x;
 	float allowed = box.extent().x * 0.02f;
 	usz pairs = 0;
-
 	usz at = 0;
 	foreach (dot : make_anims::quadruped_dots)
 	{
@@ -485,36 +443,11 @@ fn void mirrored_pairs_straddle_the_midline() @test
 			"%s and its twin sit %.4f off the midline and %.4f apart, over the %.4f allowed",
 			dot.name, offset, drift, allowed);
 	}
-
 	test::@check(pairs == 6, "%d pairs came back mirrored, not 6", pairs);
-}
-
-<*
- A limb bones to its own side, not across the body.
-
- Two chains down the sides, not a ladder across the middle. A mirrored dot has
- to bone to the parent on *its own* side wherever that parent has a side — get
- the remap wrong and every limb bone crosses the body, which is a rig that still
- exports and deforms nothing like an animal.
-*>
-fn void a_limb_bones_to_its_own_side() @test
-{
-	rig::TriMesh geometry = body_mesh(mem);
-	defer geometry.free(mem);
-
-	rig::MeshVoxels voxels = rig::build_voxels(mem, geometry);
-	defer voxels.free(mem);
-
-	rig::Bounds box = geometry.bounds();
-	crig::FittedDot[] fitted = crig::fit_preset(mem, quadruped(), box, &voxels);
-	defer crig::free_fitted(mem, fitted);
-
-	float midline = box.center().x;
 
 	// Dots this close to the midline have no side to be on, so a bone touching
 	// one says nothing either way.
 	float aside = box.extent().x * 0.05f;
-
 	foreach (dot : fitted)
 	{
 		if (dot.parent < 0) continue;
@@ -589,28 +522,24 @@ fn void a_dot_with_nothing_in_reach_says_so() @test
 // Facing: which end the head goes at
 // ---------------------------------------------------------------------------
 
-// A bare box is symmetric front-to-back, so the fit ties and the table's own
-// orientation stands.
-fn void a_symmetric_body_keeps_the_tables_orientation() @test
-{
-	rig::TriMesh bare = body_mesh(mem);
-	defer bare.free(mem);
-	rig::MeshVoxels voxels = rig::build_voxels(mem, bare);
-	defer voxels.free(mem);
-
-	test::@check(!measure(quadruped(), bare, &voxels).reversed,
-		"a symmetric body turned the preset around, so the tie is being broken by noise");
-}
-
 <*
  A tail decides which end the head goes at.
 
  The preset's tail dots are the ones with somewhere to be, and they should find
  the bar wherever it is: at low Z the table already agrees, and at high Z the
- whole preset has to turn around.
+ whole preset has to turn around. A bare box is symmetric front-to-back, so the
+ fit ties and the table's own orientation stands.
 *>
 fn void a_tail_decides_which_way_the_body_faces() @test
 {
+	rig::TriMesh bare = body_mesh(mem);
+	defer bare.free(mem);
+	rig::MeshVoxels bare_voxels = rig::build_voxels(mem, bare);
+	defer bare_voxels.free(mem);
+
+	test::@check(!measure(quadruped(), bare, &bare_voxels).reversed,
+		"a symmetric body turned the preset around, so the tie is being broken by noise");
+
 	rig::TriMesh behind = body_mesh(mem, -1.0f);
 	defer behind.free(mem);
 	rig::MeshVoxels behind_voxels = rig::build_voxels(mem, behind);
@@ -662,7 +591,8 @@ fn rig::TriMesh standing_mesh(Allocator allocator, float toes)
 <*
  The feet say which way a figure faces: they reach out ahead of the shins. Read
  off the mesh's own vertices, so it holds on a figure the snap cost would read
- backward — a torso off the box's middle, boots open at the sole.
+ backward — a torso off the box's middle, boots open at the sole — and on the
+ repo's humanoid either way round.
 *>
 fn void the_feet_decide_which_way_a_figure_faces() @test
 {
@@ -686,22 +616,16 @@ fn void the_feet_decide_which_way_a_figure_faces() @test
 	rig::TriMesh bare = body_mesh(mem);
 	defer bare.free(mem);
 	test::@check(crig::feet_facing(bare, bare.bounds()) == 0, "a box with no feet read as facing somewhere");
-}
 
-<*
- The repo's humanoid faces +Z, and turned half round it faces -Z: its shoes are
- the clearest thing about it.
-*>
-fn void a_real_figures_feet_face_the_way_it_does() @test
-{
+	// The repo's humanoid faces +Z, and turned half round it faces -Z: its shoes
+	// are the clearest thing about it.
 	rig::TriMesh? loaded = rig::load_gltf(mem, REAL_MESH);
 	if (catch loaded) { test::@check(false, "could not load %s — run from the crig directory", REAL_MESH); return; }
-	rig::TriMesh geometry = loaded;
-	defer geometry.free(mem);
-
-	test::@check(crig::feet_facing(geometry, geometry.bounds()) == 1, "the humanoid's feet did not read as facing +Z");
-	foreach (&p : geometry.positions) *p = { -p.x, p.y, -p.z };
-	test::@check(crig::feet_facing(geometry, geometry.bounds()) == -1, "the turned humanoid's feet did not read as facing -Z");
+	rig::TriMesh humanoid = loaded;
+	defer humanoid.free(mem);
+	test::@check(crig::feet_facing(humanoid, humanoid.bounds()) == 1, "the humanoid's feet did not read as facing +Z");
+	foreach (&p : humanoid.positions) *p = { -p.x, p.y, -p.z };
+	test::@check(crig::feet_facing(humanoid, humanoid.bounds()) == -1, "the turned humanoid's feet did not read as facing -Z");
 }
 
 <*

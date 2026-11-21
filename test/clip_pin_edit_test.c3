@@ -11,6 +11,7 @@ module crig_tests::clip_pin_edit;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import rig;
 import std::collections::object;
 import std::core::test;
@@ -75,42 +76,13 @@ fn float Model.off(&self, String name, Vec3 was) => (self.at(name) - was).length
  A joint's world rotation as the figure stands now: the draft's while a gesture holds
  one open, the clip's own key at the playhead once `end_drag` has keyed it.
 *>
-fn Quaternionf Model.world(&self, String name)
-{
-	crig::RigView view = self.app.open_rig(mem)!!;
-	defer view.free(mem);
-	rig::Pose pose;
-	if (self.app.pose_edit_active)
-	{
-		pose = self.app.draft_pose(mem, &view);
-	}
-	else
-	{
-		crig::AnimTemplate* clip = self.app.clip(self.app.editing);
-		String[] names = self.app.names_for(&view, self.app.editing);
-		pose = clip.pose(mem, &view.skeleton, names, self.app.edit_time, false);
-	}
-	defer pose.free(mem);
-	Quaternionf[] world = pose.world_rotations(mem, &view.skeleton)!!;
-	defer alloc::free(mem, world);
-	return world[(usz)view.joint_of(self.id(name))];
-}
+fn Quaternionf Model.world(&self, String name) => helpers::world_rotation(&self.app, self.id(name));
 
 // How far a joint's world rotation is from `was`, in degrees.
-fn float Model.turned(&self, String name, Quaternionf was)
-{
-	Quaternionf q = self.world(name).mul(was.invert()).normalize();
-	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
-	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * 57.29578f;
-}
+fn float Model.turned(&self, String name, Quaternionf was) => helpers::angle_of(self.world(name).mul(was.invert()));
 
 // How far a joint's up has leaned from where `was` had it, in degrees.
-fn float Model.tilt(&self, String name, Quaternionf was)
-{
-	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
-	Vec3 after = self.world(name).rotate_vec3({ 0, 1, 0 });
-	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * 57.29578f;
-}
+fn float Model.tilt(&self, String name, Quaternionf was) => helpers::tilt_of(was, self.world(name));
 
 fn void Model.pull(&self, String name, Vec3 by)
 {
@@ -206,7 +178,7 @@ fn void the_gesture_pins_follow_the_playhead_through_the_window() @test
 	test::@check(app.park_clip(app.editing, 0.7f), "no park");
 	crig::AnimPin muted = m.clip().pins[0].copy(mem);
 	muted.mute = true;
-	app.land_clip(app.editing, crig::clip_with_pin(mem, *m.clip(), muted));
+	app.land_clip(app.editing, crig::clip_with_pin_at(mem, *m.clip(), -1, muted));
 	test::@check(app.position_locks.len == 0, "a muted pin steers a gesture");
 }
 
@@ -231,7 +203,6 @@ fn void a_grab_inside_the_window_holds_the_pin_and_moving_the_pinned_joint_moves
 	float off = m.off("ankle_L", held);
 	test::@check(off < 0.005f, "the pinned ankle moved %.4f heights in its window", off);
 	// A hand pull the arm can answer leaves the pinned foot flat and the body upright.
-	io::printfn("  pinned foot turned %.2f, hips tilt %.2f, chest tilt %.2f deg", m.turned("ankle_L", foot), m.tilt("hips", hips), m.tilt("chest", chest));
 	test::@check(m.turned("ankle_L", foot) < 3.0f, "the pinned foot turned %.2f degrees", m.turned("ankle_L", foot));
 	test::@check(m.tilt("hips", hips) < 10.0f && m.tilt("chest", chest) < 10.0f, "the body tilted: hips %.2f, chest %.2f degrees",
 		m.tilt("hips", hips), m.tilt("chest", chest));

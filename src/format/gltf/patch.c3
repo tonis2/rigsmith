@@ -45,7 +45,7 @@ module gltf_edit;
 
 import libc;
 
-faultdef SAVE_FAILED;
+excuse SAVE_FAILED;
 
 import std::collections::list;
 
@@ -62,7 +62,7 @@ import std::math::quaternion;
  an unterminated string, a member with no colon after it, a chunk that is not
  JSON at all.
 *>
-faultdef GLTF_PATCH_MALFORMED;
+excuse GLTF_PATCH_MALFORMED;
 
 <*
  Raised when the path names something the document does not have and cannot be
@@ -70,7 +70,7 @@ faultdef GLTF_PATCH_MALFORMED;
  object. A **missing member** is not this — the last step of a path is created
  when it is not there, and an object on the way to it is created empty.
 *>
-faultdef GLTF_PATCH_NO_SUCH_PATH;
+excuse GLTF_PATCH_NO_SUCH_PATH;
 
 <*
  One step down into a document: an object member by name, or an array element
@@ -735,7 +735,7 @@ const uint GLB_CHUNK_BIN  @private = 0x004E4942; // "BIN\0"
  Raised when a file begins with the glTF magic but is too short to hold the
  chunks its header claims.
 *>
-faultdef GLB_TRUNCATED;
+excuse GLB_TRUNCATED;
 
 <*
  Raised when the rewritten file could not be opened, written or closed.
@@ -743,14 +743,14 @@ faultdef GLB_TRUNCATED;
  Distinct from `gltf::WRITE_FAILED`, which is the writer's: that one means a file
  could not be built, this one means an existing file could not be replaced.
 *>
-faultdef GLB_WRITE_FAILED;
+excuse GLB_WRITE_FAILED;
 
 <*
  Raised when a binary glTF's first chunk is not the JSON one. The specification
  requires it, and a file that breaks the rule cannot be edited by a reader that
  has no idea what it is holding instead.
 *>
-faultdef GLB_NO_JSON_CHUNK;
+excuse GLB_NO_JSON_CHUNK;
 
 <*
  A glTF taken apart far enough to edit its JSON, and no further.

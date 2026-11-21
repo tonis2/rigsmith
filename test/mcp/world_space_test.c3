@@ -81,6 +81,8 @@ fn bool turns_nothing(float[<4>] turn) => math::abs(math::abs(turn[3]) - 1.0f) <
 const Vec3 FOOT_UNDER_A_LEVEL_KNEE = { 0, 0.5, -0.5 };
 const Vec3 FOOT_RIDING_THE_HIPS = { 0, 1, -1 };
 
+// The same identity entry, in world and in local space, on one rig: the two
+// frames must land the foot in two different places.
 fn void a_world_entry_states_where_the_joint_points() @test
 {
 	Fixture fixture;
@@ -88,15 +90,24 @@ fn void a_world_entry_states_where_the_joint_points() @test
 	defer fixture.close();
 	Fixture* f = &fixture;
 
-	String arguments = level_clip("level_world", "knee", "world");
-	defer alloc::free(mem, arguments);
-	Object*? applied = f.call_tool("apply_clip", arguments);
+	String world = level_clip("level_world", "knee", "world");
+	defer alloc::free(mem, world);
+	String local = level_clip("level_local", "knee", "local");
+	defer alloc::free(mem, local);
+	Object*? applied = f.call_tool("apply_clip", world);
 	if (catch applied)
 	{
 		test::@check(false, "a keyframe entry may ask for world space");
 		return;
 	}
 	applied.free();
+	Object*? applied_local = f.call_tool("apply_clip", local);
+	if (catch applied_local)
+	{
+		test::@check(false, "local is a space a keyframe entry may name");
+		return;
+	}
+	applied_local.free();
 
 	Object*? pose = f.call_tool("get_pose", `{"clip":"level_world","t":0}`);
 	if (catch pose)
@@ -109,49 +120,26 @@ fn void a_world_entry_states_where_the_joint_points() @test
 	float[<4>] knee = posed_turn(pose, "knee") ?? (float[<4>]){ 0, 0, 0, 0 };
 	Vec3 foot = posed_at(pose, "foot") ?? (Vec3){ 100, 100, 100 };
 
-	// The whole point of the frame: the hips turned and the knee did not, which
-	// is only expressible against the model's own axes.
+	// The hips turned and the knee did not, which only the model's own axes can say.
 	test::@check(turns_nothing(knee), "a world-space entry lands the joint at the orientation it asked for");
 	test::@check((foot - FOOT_UNDER_A_LEVEL_KNEE).length() < 0.001f,
 		"and everything below it follows that orientation, not the parent's — foot at (%.4f, %.4f, %.4f)",
 		foot.x, foot.y, foot.z);
-}
 
-fn void the_same_entry_in_local_space_means_something_else() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	String arguments = level_clip("level_local", "knee", "local");
-	defer alloc::free(mem, arguments);
-	Object*? applied = f.call_tool("apply_clip", arguments);
-	if (catch applied)
-	{
-		test::@check(false, "local is a space a keyframe entry may name");
-		return;
-	}
-	applied.free();
-
-	Object*? pose = f.call_tool("get_pose", `{"clip":"level_local","t":0}`);
-	if (catch pose)
+	Object*? local_pose = f.call_tool("get_pose", `{"clip":"level_local","t":0}`);
+	if (catch local_pose)
 	{
 		test::@check(false, "a local-space clip samples");
 		return;
 	}
-	defer pose.free();
+	defer local_pose.free();
 
-	Vec3 foot = posed_at(pose, "foot") ?? (Vec3){ 100, 100, 100 };
-	// Identity against the parent leaves the knee riding the hips, so the foot
-	// ends up somewhere else entirely. A conversion that quietly did nothing —
-	// or did the same thing in both frames — fails here rather than passing the
-	// check above by accident.
-	test::@check((foot - FOOT_RIDING_THE_HIPS).length() < 0.001f,
+	// Identity against the parent leaves the knee riding the hips. A conversion
+	// that did the same thing in both frames fails here.
+	Vec3 riding = posed_at(local_pose, "foot") ?? (Vec3){ 100, 100, 100 };
+	test::@check((riding - FOOT_RIDING_THE_HIPS).length() < 0.001f,
 		"the same entry read against the parent leaves the joint riding it — foot at (%.4f, %.4f, %.4f)",
-		foot.x, foot.y, foot.z);
-	test::@check((FOOT_UNDER_A_LEVEL_KNEE - FOOT_RIDING_THE_HIPS).length() > 0.1f,
-		"the two frames are asserted against genuinely different answers");
+		riding.x, riding.y, riding.z);
 }
 
 fn void a_joint_a_world_keyframe_skips_inherits_its_parent() @test
@@ -237,27 +225,6 @@ fn void a_world_key_samples_ancestor_tracks_at_other_times() @test
 	float[<4>] foot = posed_turn(pose, "foot") ?? (float[<4>]){};
 	test::@check(!turns_nothing(knee), "the hips ancestor track was not sampled between its own keys");
 	test::@check(turns_nothing(foot), "the world foot key did not compensate the sampled ancestor track");
-}
-
-fn void a_space_that_is_neither_is_refused() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? root = f.request(
-		`{"jsonrpc":"2.0","id":93,"method":"tools/call","params":{"name":"apply_clip","arguments":{"name":"sideways","duration":1,"keyframes":[{"time":0,"joints":[{"name":"knee","space":"sideways","rotation":[0,0,0]}]}]}}}`);
-	if (catch root)
-	{
-		test::@check(false, "an unknown space answers");
-		return;
-	}
-	defer root.free();
-	test::@check(error_message_contains(root, `space is "sideways"`)
-		&& error_message_contains(root, "local")
-		&& error_message_contains(root, "world"),
-		"a space that is neither names the value and both that would have been taken");
 }
 
 fn void the_three_rotation_forms_agree() @test
@@ -419,6 +386,38 @@ fn void a_clip_says_what_was_wrong_with_it() @test
 
 	test::@check(f.refuses(`{"name":"walk"}`, "keyframes"),
 		"a clip with no keyframes says which field is missing");
+
+	test::@check(f.refuses(
+			`{"name":"sideways","duration":1,"keyframes":[{"time":0,"joints":[{"name":"knee","space":"sideways","rotation":[0,0,0]}]}]}`,
+			`space is "sideways"`, "local", "world"),
+		"a space that is neither names the value and both that would have been taken");
+
+	// A ground spec is refused in the same voice. A phase given in seconds is the
+	// likely mistake: every other time on this surface is seconds.
+	test::@check(f.refuses(
+			`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"ground":{"feet":[{"joint":"heel","down":0,"up":0.4}]}}`,
+			"heel", "not a dot on this rig"),
+		"a foot naming no dot is refused and says so");
+
+	test::@check(f.refuses(
+			`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"ground":{"feet":[{"joint":"foot","down":0,"up":1.4}]}}`,
+			"cycle phase", "not seconds"),
+		"a window given in seconds is refused and says what a window is in");
+
+	test::@check(f.refuses(
+			`{"name":"Step","keyframes":[{"time":0,"joints":[{"name":"knee","rotation":[0.2,0,0]}]}],"duration":1,"blend":"cubic"}`,
+			"blend", "smooth"),
+		"a blend that is neither mode is refused and names the two that are");
+
+	Object*? scene = f.call_tool("get_scene", "{}");
+	if (catch scene)
+	{
+		test::@check(false, "get_scene answers after the refusals");
+		return;
+	}
+	defer scene.free();
+	test::@check(scene_clip_count(scene_pack(scene, "Authored")) == 4,
+		"the refused clips left the library exactly as it was");
 }
 
 <*
@@ -491,22 +490,4 @@ fn void rewriting_the_running_clip_restarts_it() @test
 		"rewriting the clip on screen leaves it playing, from the new keyframes");
 
 	f.app.stop_animation();
-}
-
-fn void a_refused_clip_changes_nothing() @test
-{
-	Fixture fixture;
-	fixture.open_authored();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? scene = f.call_tool("get_scene", "{}");
-	if (catch scene)
-	{
-		test::@check(false, "get_scene answers after the refusals");
-		return;
-	}
-	defer scene.free();
-
-	test::@check(scene_clip_count(scene_pack(scene, "Authored")) == 4,
-		"nine refused clips left the library exactly as it was");
 }

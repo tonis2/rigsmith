@@ -1026,7 +1026,7 @@ fn int shell_carrier(
         // limb: a buckle on one ankle drew a share from the other leg, both hands
         // and the spine, its own leg's subtree fell under the bar, and the piece
         // was strapped to the hips.
-        foreach (usz b, &d2 : row[:bones])
+        foreach (&d2 : row[:bones])
         {
             *d2 = *d2 <= CARRIER_NEAR * CARRIER_NEAR * nearest ? 1.0f / (*d2 + eps) : 0.0f;
             total += *d2;

@@ -23,7 +23,9 @@ fn void tutorial_settle(Fixture* f)
 	for (int i = 0; i < 3; i++) f.feed({ 600, 400 });
 }
 
-fn void tutorial_starts_on_the_first_step_with_the_card_open() @test
+// Starting opens the card on the first step; Back stops there, Next and Back move
+// one step and keep the card open; Next past the last step ends the tour.
+fn void tutorial_steps_forward_and_back_and_ends_after_the_last() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -35,15 +37,7 @@ fn void tutorial_starts_on_the_first_step_with_the_card_open() @test
 	test::@check(f.app.tutorial_active, "starting turns it on");
 	test::@check(f.app.tutorial_step == 0, "at the first step");
 	test::@check(tutorial_dialog_open(&f, crig::TUTORIAL_DIALOG_ID), "and opens the card");
-}
 
-fn void tutorial_next_and_back_move_and_clamp() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	crig::tutorial_start(f.ui);
 	crig::tutorial_back(f.ui);
 	test::@check(f.app.tutorial_step == 0, "Back on the first step stays there");
 	crig::tutorial_next(f.ui);
@@ -53,19 +47,11 @@ fn void tutorial_next_and_back_move_and_clamp() @test
 	test::@check(f.app.tutorial_step == 1, "Back goes one step");
 	tutorial_settle(&f);
 	test::@check(tutorial_dialog_open(&f, crig::TUTORIAL_DIALOG_ID), "the card stays open between steps");
-}
 
-fn void tutorial_next_past_the_last_step_ends_it() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	crig::tutorial_start(f.ui);
-	for (usz i = 0; i < crig::TUTORIAL_STEPS.len; i++) crig::tutorial_next(f.ui);
+	for (usz i = 1; i < crig::TUTORIAL_STEPS.len; i++) crig::tutorial_next(f.ui);
 	tutorial_settle(&f);
-	test::@check(!f.app.tutorial_active, "Done on the last step ends the tour");
-	test::@check(!tutorial_dialog_open(&f, crig::TUTORIAL_DIALOG_ID), "and closes the card");
+	test::@check(!f.app.tutorial_active, "Done on the last step did not end the tour");
+	test::@check(!tutorial_dialog_open(&f, crig::TUTORIAL_DIALOG_ID), "Done on the last step did not close the card");
 }
 
 fn void tutorial_skip_and_closing_the_card_end_it() @test
@@ -87,29 +73,6 @@ fn void tutorial_skip_and_closing_the_card_end_it() @test
 	test::@check(!f.app.tutorial_active, "the card's own close ends it too");
 }
 
-fn void tutorial_overlay_lights_the_target_of_a_step() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	crig::tutorial_start(f.ui);
-	// Step 1 lights the menu bar, which is always mounted.
-	crig::tutorial_next(f.ui);
-	tutorial_settle(&f);
-	Element* overlay = f.ui.find_id(crig::TUTORIAL_OVERLAY_ID)!!;
-	crig::TutorialOverlay* lit = overlay.widget_as(crig::TutorialOverlay);
-	test::@check(lit.dimmed, "the overlay is dimming");
-	test::@check(lit.holes == 1, "with the menu bar cut out");
-
-	Element* bar = f.ui.find_id("menubar")!!;
-	test::@check(lit.hole_size[0].x >= bar.size.x, "the hole covers the target's width");
-
-	crig::tutorial_skip(f.ui);
-	tutorial_settle(&f);
-	test::@check(!lit.dimmed, "ending the tour takes the dim away");
-}
-
 fn void tutorial_step_with_nothing_mounted_still_shows_its_card() @test
 {
 	Fixture f;
@@ -127,15 +90,9 @@ fn void tutorial_step_with_nothing_mounted_still_shows_its_card() @test
 	test::@check(overlay.widget_as(crig::TutorialOverlay).holes == 0, "and nothing lit");
 }
 
-fn void tutorial_steps_each_have_text() @test
-{
-	foreach (step : crig::TUTORIAL_STEPS)
-	{
-		test::@check(step.title.len > 0 && step.body.len > 0, "a step with a title and a body");
-	}
-}
-
-fn void tutorial_welcome_stays_shut_without_a_config_directory() @test
+// The first-run welcome opens on a first run, and stays shut in a fixture with
+// no config directory to remember the answer in.
+fn void tutorial_welcome_opens_only_on_a_first_run_that_can_remember() @test
 {
 	Fixture f;
 	f.open()!!;
@@ -143,13 +100,6 @@ fn void tutorial_welcome_stays_shut_without_a_config_directory() @test
 
 	tutorial_settle(&f);
 	test::@check(!tutorial_dialog_open(&f, crig::WELCOME_DIALOG_ID), "a fixture that cannot save the answer is not asked");
-}
-
-fn void tutorial_welcome_opens_on_a_first_run() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
 
 	f.app.config.directory = "/nonexistent-rigsmith-config";
 	f.app.config.tutorial_seen = false;

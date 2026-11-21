@@ -110,8 +110,39 @@ fn void a_turn_at_one_selected_key_lands_on_all_of_them() @test
 	}
 }
 
+// Only the playhead is keyed off the picked span, with one key or none picked,
+// and on This frame whatever is picked: the count of those picked is still there
+// for the dock to point at Selected keys.
 fn void off_the_selection_or_with_one_key_picked_only_the_playhead_is_keyed() @test
 {
+	{
+		SpreadFixture f;
+		AnimRef clip = f.open();
+		defer f.close();
+		test::eq(f.app.spread_key_count(clip, 0.5f), (usz)0);
+		f.turn_at(0.5f, 0.3f);
+		test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed");
+		AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
+		test::@check(hip_apart(keys, 0.5f, 0.8f) < 1.0e-5f, "the playhead key is not the turned pose");
+		test::@check(hip_apart(keys, 0.25f, 0.25f) < 1.0e-6f, "another key moved with nothing picked");
+	}
+	{
+		SpreadFixture f;
+		AnimRef clip = f.open();
+		defer f.close();
+		f.app.key_reach = FRAME;
+		test::eq(f.app.select_animation_keys_between(clip, 0.25f, 0.75f), (usz)3);
+		test::eq(f.app.spread_key_count(clip, 0.5f), (usz)0);
+		test::eq(f.app.picked_keys_around(clip, 0.5f), (usz)3);
+		f.turn_at(0.5f, 0.3f);
+		test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed on This frame");
+		AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
+		test::eq(keys.len, (sz)5);
+		test::@check(hip_apart(keys, 0.5f, 0.8f) < 1.0e-5f, "the playhead key is not the turned pose on This frame");
+		test::@check(hip_apart(keys, 0.25f, 0.25f) < 1.0e-6f && hip_apart(keys, 0.75f, 0.75f) < 1.0e-6f,
+			"a picked key moved on This frame");
+	}
+
 	SpreadFixture f;
 	AnimRef clip = f.open();
 	defer f.close();
@@ -188,59 +219,16 @@ fn void whole_clip_turns_every_key_without_a_selection() @test
 	{
 		test::@check(hip_apart(keys, time, time) < 1.0e-6f, "undo did not restore the key at %f", time);
 	}
-}
 
-// Between keys, the turn made there still lands on the keys, and no key is added.
-fn void whole_clip_from_between_keys_adds_no_key() @test
-{
-	SpreadFixture f;
-	f.open();
-	defer f.close();
-	f.app.key_reach = WHOLE_CLIP;
-
+	// From between keys, the turn made there still lands on the keys, and no key is added.
 	f.turn_at(0.6f, 0.3f);
-	test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed");
-	AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
+	test::@check(f.app.key_pose_edit(CHANGED), "the turn between keys was not keyed");
+	keys = f.app.clip(f.app.editing).keyframes;
 	test::eq(keys.len, (sz)5);
 	foreach (time : (float[5]){ 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
 	{
-		test::@check(hip_apart(keys, time, time + 0.3f) < 1.0e-5f, "the key at %f did not take the turn", time);
+		test::@check(hip_apart(keys, time, time + 0.3f) < 1.0e-5f, "from between keys the key at %f did not take the turn", time);
 	}
-}
-
-// This frame keys the playhead alone, keys picked or not; the count of those
-// picked is still there for the dock to point at Selected keys.
-fn void this_frame_keys_the_playhead_whatever_is_picked() @test
-{
-	SpreadFixture f;
-	AnimRef clip = f.open();
-	defer f.close();
-	f.app.key_reach = FRAME;
-	test::eq(f.app.select_animation_keys_between(clip, 0.25f, 0.75f), (usz)3);
-	test::eq(f.app.spread_key_count(clip, 0.5f), (usz)0);
-	test::eq(f.app.picked_keys_around(clip, 0.5f), (usz)3);
-
-	f.turn_at(0.5f, 0.3f);
-	test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed");
-	AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
-	test::eq(keys.len, (sz)5);
-	test::@check(hip_apart(keys, 0.5f, 0.8f) < 1.0e-5f, "the playhead key is not the turned pose");
-	test::@check(hip_apart(keys, 0.25f, 0.25f) < 1.0e-6f && hip_apart(keys, 0.75f, 0.75f) < 1.0e-6f,
-		"a picked key moved on This frame");
-}
-
-fn void selected_keys_with_nothing_picked_keys_the_playhead() @test
-{
-	SpreadFixture f;
-	AnimRef clip = f.open();
-	defer f.close();
-	test::eq(f.app.spread_key_count(clip, 0.5f), (usz)0);
-
-	f.turn_at(0.5f, 0.3f);
-	test::@check(f.app.key_pose_edit(CHANGED), "the turn was not keyed");
-	AnimKeyframe[] keys = f.app.clip(f.app.editing).keyframes;
-	test::@check(hip_apart(keys, 0.5f, 0.8f) < 1.0e-5f, "the playhead key is not the turned pose");
-	test::@check(hip_apart(keys, 0.25f, 0.25f) < 1.0e-6f, "another key moved with nothing picked");
 }
 
 fn void whole_clip_on_a_keyed_layer_turns_its_keys() @test

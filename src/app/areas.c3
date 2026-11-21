@@ -170,8 +170,6 @@ fn bool AppState.pick_area_island(&self, sz vertex, IslandPick how = TOGGLE)
 	return self.set_area_island(island, take);
 }
 
-fn bool AppState.toggle_area_island(&self, sz vertex) => self.pick_area_island(vertex, TOGGLE);
-
 // Every vertex of one island in or out of the part, marked as hand-made.
 fn bool AppState.set_area_island(&self, int island, bool take)
 {

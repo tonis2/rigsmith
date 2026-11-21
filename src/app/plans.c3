@@ -631,7 +631,7 @@ fn FittedDot* AppState.plan_target(&self, String name)
 	return null;
 }
 
-faultdef NO_PLAN_TARGET;
+excuse NO_PLAN_TARGET;
 
 <*
  Where the body plan wants the selected dot, when that is somewhere it is not.

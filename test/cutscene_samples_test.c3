@@ -11,6 +11,7 @@ module crig_tests::cutscene_samples;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import std::collections::list;
 import std::collections::object;
 import std::core::test;
@@ -55,14 +56,6 @@ fn bool import_clips(Fixture* f) @local
 	return true;
 }
 
-fn CutStrip play(float start, float end, String clip, bool loop) @local
-{
-	CutStrip s = crig::cut_strip(PLAY, start, end);
-	s.clip = clip.copy(mem);
-	s.loop = loop;
-	return s;
-}
-
 // Both samples' strips: the walker walks the road and turns to the watcher; the watcher rests, then turns to a point.
 fn bool lay_out(crig::AppState* app) @local
 {
@@ -77,8 +70,8 @@ fn bool lay_out(crig::AppState* app) @local
 	CutStrip toward = crig::cut_strip(TURN, arrived, arrived + 0.8f);
 	toward.target_row = "watcher".copy(mem);
 	if (app.add_cut_strip(0, toward) < 0) return false;
-	if (app.add_cut_strip(0, play(arrived, 14.0f, "Rest", true)) < 0) return false;
-	if (app.add_cut_strip(1, play(0.0f, 3.0f, "Rest", true)) < 0) return false;
+	if (app.add_cut_strip(0, helpers::play(arrived, 14.0f, "Rest", true)) < 0) return false;
+	if (app.add_cut_strip(1, helpers::play(0.0f, 3.0f, "Rest", true)) < 0) return false;
 	CutStrip aside = crig::cut_strip(TURN, 3.0f, 4.0f);
 	aside.target = { 1.5f, 0, 4 };
 	if (app.add_cut_strip(1, aside) < 0) return false;

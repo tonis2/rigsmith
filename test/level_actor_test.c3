@@ -10,6 +10,7 @@ module crig_tests::level_actor;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import gltf;
 import rig;
 import std::collections::object;
@@ -24,16 +25,6 @@ import std::math::quaternion;
 const String FOLDER @local = "build/level-actor";
 const Quaternionf YAW_90 @local = { .v = { 0, 0.70710678f, 0, 0.70710678f } };
 const Quaternionf ROLL_90 @local = { .v = { 0, 0, 0.70710678f, 0.70710678f } };
-
-fn bool near(float a, float b, float eps = 1e-3f) @local => math::abs(a - b) <= eps;
-fn bool near3(Vec3 a, Vec3 b, float eps = 1e-3f) @local => (a - b).length() <= eps;
-
-// The angle between two rotations, either sign of the quaternion.
-fn float turn_between(Quaternionf a, Quaternionf b) @local
-{
-	float d = math::min(math::abs(a.v.dot(b.v)), 1.0f);
-	return 2.0f * math::acos(d);
-}
 
 fn Quaternionf about(Vec3 axis, float degrees) @local
 {
@@ -174,9 +165,9 @@ fn void a_level_file_is_read_by_its_armature() @test
 
 	LevelRig hero = crig::read_level_rig(mem, &stream, "hero_rig")!!;
 	defer hero.free(mem);
-	test::@check(near3(hero.position, { 2, 1, -1 }) && near(hero.scale.y, 1.5f), "it stands at %s, scaled %f", hero.position, hero.scale.y);
-	test::@check(turn_between(hero.rotation, YAW_90) < 1e-3f, "it faces the node's way");
-	test::@check(near(hero.bounds.min.y, -0.9f) && near(hero.bounds.max.y, 0.6f), "its mesh rests from %f to %f", hero.bounds.min.y, hero.bounds.max.y);
+	test::@check(helpers::near3(hero.position, { 2, 1, -1 }, 1e-3f) && math::is_approx(hero.scale.y, 1.5f, 1e-3f), "it stands at %s, scaled %f", hero.position, hero.scale.y);
+	test::@check(helpers::turn_between(hero.rotation, YAW_90) < 1e-3f, "it faces the node's way");
+	test::@check(math::is_approx(hero.bounds.min.y, -0.9f, 1e-3f) && math::is_approx(hero.bounds.max.y, 0.6f, 1e-3f), "its mesh rests from %f to %f", hero.bounds.min.y, hero.bounds.max.y);
 	test::@check(hero.skeleton.len() == 3, "%d joints, not its own three", hero.skeleton.len());
 	if (hero.skeleton.len() != 3) return;
 	// In the armature's own space: unturned and unscaled by the level.
@@ -185,11 +176,11 @@ fn void a_level_file_is_read_by_its_armature() @test
 	foreach (usz j, w : want)
 	{
 		test::@check(hero.names[j] == names[j], "joint %d is %s", j, hero.names[j]);
-		test::@check(near3(hero.skeleton.joints[j], w), "%s rests at %s in the armature", names[j], hero.skeleton.joints[j]);
+		test::@check(helpers::near3(hero.skeleton.joints[j], w, 1e-3f), "%s rests at %s in the armature", names[j], hero.skeleton.joints[j]);
 	}
 	test::@check(hero.rest.len == 3 && hero.rest[0].name == "hips" && hero.rest[0].parent == "", "the skin's rest starts at the hips");
-	test::@check(turn_between(hero.rest[0].rotation, YAW_90) < 1e-3f && near(hero.rest[0].scale.y, 1.0f), "the hips rest turned, in the armature's space");
-	test::@check(hero.rest[2].parent == "spine" && turn_between(hero.rest[2].rotation, ROLL_90) < 1e-3f, "the arm rests on the spine, rolled");
+	test::@check(helpers::turn_between(hero.rest[0].rotation, YAW_90) < 1e-3f && math::is_approx(hero.rest[0].scale.y, 1.0f, 1e-3f), "the hips rest turned, in the armature's space");
+	test::@check(hero.rest[2].parent == "spine" && helpers::turn_between(hero.rest[2].rotation, ROLL_90) < 1e-3f, "the arm rests on the spine, rolled");
 	// The clips that drive its joints, by the file's own names.
 	test::@check(hero.clips.len == 2 && hero.clips[0].name == "wave" && hero.clips[1].name == "both", "the hero's clips");
 
@@ -227,18 +218,18 @@ fn void two_characters_are_read_from_one_level_and_stand_where_it_puts_them() @t
 		"the hero is read from the level, no file of its own, row %s", app.actor_row);
 	test::@check(app.doc.dots.len() == 3, "%d joints", app.doc.dots.len());
 	// Its feet on the model's floor: where the level puts the node, the origin 1.35 m below it.
-	test::@check(near(app.stage_scale, 1.5f) && near(app.stage_lift, 1.35f), "scale %f, lift %f", app.stage_scale, app.stage_lift);
-	test::@check(near3(app.doc.model_transform.location, { 2, -0.35f, -1 }), "it stands at %s", app.doc.model_transform.location);
-	test::@check(turn_between(app.doc.model_transform.orientation(), YAW_90) < 1e-3f, "it faces the node's way");
+	test::@check(math::is_approx(app.stage_scale, 1.5f, 1e-3f) && math::is_approx(app.stage_lift, 1.35f, 1e-3f), "scale %f, lift %f", app.stage_scale, app.stage_lift);
+	test::@check(helpers::near3(app.doc.model_transform.location, { 2, -0.35f, -1 }, 1e-3f), "it stands at %s", app.doc.model_transform.location);
+	test::@check(helpers::turn_between(app.doc.model_transform.orientation(), YAW_90) < 1e-3f, "it faces the node's way");
 	crig::Dot* hips = crig::dot_named(&app.doc, "hips");
-	test::@check(hips && near3(hips.position, { 0, 0.9f, 0 }), "the hips rest 0.9 over the feet");
+	test::@check(hips && helpers::near3(hips.position, { 0, 0.9f, 0 }, 1e-3f), "the hips rest 0.9 over the feet");
 	test::@check(has_clip(&app, "wave") && has_clip(&app, "both") && !has_clip(&app, "crouch"), "the hero's clips are the level's for it");
 	test::@check(app.level_joints.len == 3 && app.level_joints[0] >= 0 && app.level_joints[2] >= 0, "every skin joint follows a rig joint");
 
 	(void)app.focus_character((usz)guide_at);
 	test::@check(app.actor_row == "guide" && has_clip(&app, "crouch") && has_clip(&app, "both") && !has_clip(&app, "wave"),
 		"the guide is read with its own row and clips");
-	test::@check(near(app.stage_lift, 0.9f) && app.stage_scale == 0.0f, "the guide's lift %f, scale %f", app.stage_lift, app.stage_scale);
+	test::@check(math::is_approx(app.stage_lift, 0.9f, 1e-3f) && app.stage_scale == 0.0f, "the guide's lift %f, scale %f", app.stage_lift, app.stage_scale);
 
 	// The same node twice, and one the level lacks, are refused.
 	test::@check(!app.take_level_actor("hero_rig", row: "again"), "the hero was read twice");
@@ -290,7 +281,7 @@ fn void an_actor_read_from_the_level_is_read_only_but_its_one_offs_are_edited() 
 	test::@check(app.move_recorded(id, was, arm.position), "the move was not recorded");
 	app.undo_stack.commit();
 	test::@check(app.refuse_level_edits(), "the edit was kept");
-	test::@check(near3(app.doc.find(id).position, was) && app.undo_stack.edits.len() == 0, "the arm is not back, or the history kept it");
+	test::@check(helpers::near3(app.doc.find(id).position, was, 1e-3f) && app.undo_stack.edits.len() == 0, "the arm is not back, or the history kept it");
 	test::@check(app.notice().contains("read-only"), "the notice does not say why: %s", app.notice());
 
 	// A tool keying its level clip is refused, and the clip is as the level has it.
@@ -396,13 +387,13 @@ fn void a_level_actors_one_off_is_exported_in_its_armatures_own_frames() @test
 		Quaternionf written = { .v = { level_arm.values[i], level_arm.values[i + 1], level_arm.values[i + 2], level_arm.values[i + 3] } };
 		Quaternionf made = { .v = { own_channel.values[i], own_channel.values[i + 1], own_channel.values[i + 2], own_channel.values[i + 3] } };
 		Quaternionf moved = spine_rest.mul(written).mul(arm_rest.invert()).normalize();
-		worst = math::max(worst, turn_between(moved, made));
+		worst = math::max(worst, helpers::turn_between(moved, made));
 	}
 	test::@check(worst < 1e-3f, "the written turn moves the arm %f rad off Rigsmith's", worst);
 	// And they are the level's frames, not Rigsmith's unturned ones written as they were.
 	Quaternionf first = { .v = { level_arm.values[0], level_arm.values[1], level_arm.values[2], level_arm.values[3] } };
 	Quaternionf raw = { .v = { own_channel.values[0], own_channel.values[1], own_channel.values[2], own_channel.values[3] } };
-	test::@check(turn_between(first, raw) > 0.5f, "the arm's keys are written in Rigsmith's frames");
+	test::@check(helpers::turn_between(first, raw) > 0.5f, "the arm's keys are written in Rigsmith's frames");
 }
 
 fn void a_strip_playing_a_clip_the_level_lacks_for_the_armature_is_named() @test
@@ -446,7 +437,7 @@ fn void an_actor_read_from_the_level_walks_with_its_feet_on_the_path_and_exports
 	test::@check(app.set_cutscene_preview(true), "no preview");
 	app.show_cutscene_at((s.start + s.end) * 0.5f);
 	// Its origin is where its feet stand: on the road.
-	test::@check(app.staged && near(app.staged_place.location.y, 0.0f) && near(app.staged_place.location.z, 1.0f, 0.05f),
+	test::@check(app.staged && math::is_approx(app.staged_place.location.y, 0.0f, 1e-3f) && math::is_approx(app.staged_place.location.z, 1.0f, 0.05f),
 		"it stands at %s mid-walk", app.staged_place.location);
 	app.leave_cutscene_preview();
 
@@ -457,7 +448,7 @@ fn void an_actor_read_from_the_level_walks_with_its_feet_on_the_path_and_exports
 	defer back.free(mem);
 	test::@check(back.paths.len == 1 && back.paths[0].points.len >= 2, "the road is not written");
 	if (back.paths.len != 1) return;
-	foreach (p : back.paths[0].points) test::@check(near(p.y, 1.35f), "a point is lifted to %f, not by the node's 1.35", p.y);
+	foreach (p : back.paths[0].points) test::@check(math::is_approx(p.y, 1.35f, 1e-3f), "a point is lifted to %f, not by the node's 1.35", p.y);
 	test::@check(!back.actors[0].no_level_node, "an actor of the level is written a place");
 }
 
@@ -495,7 +486,7 @@ fn void a_scene_finds_an_actor_read_from_the_level_again_by_its_node() @test
 	if (hero < 0 || guide < 0) return;
 	crig::Character* h = app.character((usz)hero);
 	test::@check(h.level_read && h.level_node == "hero_rig" && h.doc.dots.len() == 3 && !h.stage_missing, "the hero is not read again");
-	test::@check(near3(h.doc.model_transform.location, { 2, -0.35f, -1 }) && near(h.stage_lift, 1.35f), "it does not stand where the level puts it");
+	test::@check(helpers::near3(h.doc.model_transform.location, { 2, -0.35f, -1 }, 1e-3f) && math::is_approx(h.stage_lift, 1.35f, 1e-3f), "it does not stand where the level puts it");
 	String[] problems = app.cutscene_problem_texts(mem);
 	foreach (p : problems) test::@check(!p.contains("'wave'"), "a problem: %s", p);
 	crig::free_names(mem, problems);

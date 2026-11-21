@@ -256,7 +256,20 @@ fn String HandedFigure.hand_name(&self, usz side, usz i)
 	return dot ? dot.name : "";
 }
 
-fn void a_hand_placed_biped_takes_the_plans_names() @test
+<*
+ The plan's words land on a hand-placed biped, every one of its 25 joints and no
+ optional one, and left is left.
+
+ The side is the failure that looks like a success everywhere else: every name
+ spelt right, the count whole, and the rig plays every clip mirrored. `fit_preset`
+ writes `_L` for the table's own x and `_R` for its reflection, and the biped table
+ puts its shoulder on the high side, so `_L` is +X.
+
+ `extra` is the regression `PresetDot.optional` exists to prevent: a plain rig
+ covers the plan's required dots, and no optional dot matched, since a plan dot
+ placed on a joint that is not there is a name a clip would drive into empty space.
+*>
+fn void a_hand_placed_biped_takes_the_plans_names_on_its_own_sides() @test
 {
 	Figure figure;
 	figure.open();
@@ -270,45 +283,22 @@ fn void a_hand_placed_biped_takes_the_plans_names() @test
 	test::eq(named.matched, (usz)25);
 	test::eq(named.total, (usz)25);
 	test::eq(named.unnamed, (usz)0);
+	test::eq(named.extra, (usz)0);
+	test::eq(named.renamed, (usz)25);
 
-	// The spine, which is what a rig that merely stands upright would also get
-	// right — checked so a failure further down is read as a limb problem rather
-	// than as nothing having happened at all.
+	// The spine, so a failure further down reads as a limb problem.
 	test::eq(figure.name_at(0), "hips");
 	test::eq(figure.name_at(3), "chest");
 	test::eq(figure.name_at(5), "head");
 
-	// The limbs, which are the part the arc-length matching is for: the A-pose
-	// puts this wrist a quarter of the figure below where the plan draws one.
+	// The limbs: the A-pose puts this wrist a quarter of the figure below where
+	// the plan draws one.
 	test::eq(figure.name_at(9), "elbow_L");
-	test::eq(figure.name_at(10), "wrist_L");
 	test::eq(figure.name_at(17), "ankle_L");
-}
-
-<*
- Left is left.
-
- The failure this catches looks like a success everywhere else: every name is
- spelt correctly, the count is seventeen of seventeen, and the rig plays every
- clip mirrored. Only which side each suffix landed on says so.
-
- `fit_preset` writes `_L` for the table's own x and `_R` for its reflection
- through the midline, and the biped table puts its shoulder at 0.58 across —
- the high side. So `_L` is +X, and a figure whose left arm came back `_R` has
- been matched back to front.
-*>
-fn void sides_are_not_swapped() @test
-{
-	Figure figure;
-	figure.open();
-	defer figure.close();
-
-	figure.app.auto_name();
 
 	test::eq(figure.name_at(7), "clavicle_L");
 	test::eq(figure.name_at(10), "wrist_L");
 	test::eq(figure.name_at(15), "thigh_L");
-
 	test::eq(figure.name_at(11), "clavicle_R");
 	test::eq(figure.name_at(14), "wrist_R");
 	test::eq(figure.name_at(20), "thigh_R");
@@ -428,34 +418,6 @@ fn void a_named_rig_plays() @test
 // Fingers.
 
 <*
- A rig with no fingers matches the plan exactly as it did before the plan had
- any.
-
- The regression `PresetDot.optional` exists to prevent, stated as a number: the
- biped plan carries fifty-nine joints and forty-two of them are optional, so what
- a plain rig has to cover is the seventeen every biped has — not the fifty-nine a
- handed one could fill, which it would miss by two thirds and fail.
-
- `extra` is the other half of it. Nothing optional matched, and it must not have:
- a plan dot placed on a joint that is not there is a name a clip would drive into
- empty space.
-*>
-fn void a_fingerless_rig_still_matches_biped() @test
-{
-	Figure figure;
-	figure.open();
-	defer figure.close();
-
-	crig::AutoNaming named = figure.app.auto_name();
-
-	test::eq(named.plan, "biped");
-	test::eq(named.matched, (usz)25);
-	test::eq(named.total, (usz)25);
-	test::eq(named.extra, (usz)0);
-	test::eq(named.renamed, (usz)25);
-}
-
-<*
  A rig that does have fingers gets them named.
 
  This is the whole of Phase B in one check. Everything the biped plan grew is
@@ -534,15 +496,17 @@ fn void a_handed_rig_gets_its_fingers_named() @test
 }
 
 <*
- The biped pack says which of its joints are optional, and says it in the file.
+ The biped pack says in the file which of its joints are optional, and the fit
+ names them but never places them.
 
  `AnimPack.preset` rebuilds a plan out of a pack's rest skeleton and its joint
- names, and nothing in either says that `index_2_L` is a finger while `elbow_L`
- is not. Only `PACK_KEY_OPTIONAL` does, so a round
- trip that drops it turns the handed plan back into a sixty-five-joint rig every
- plain biped fails to cover.
+ names, and only `PACK_KEY_OPTIONAL` says that `index_2_L` is a finger and
+ `elbow_L` is not, so a round trip that drops it turns the handed plan back into
+ a sixty-five-joint rig every plain biped fails to cover. And nothing in a
+ figure's proportions says where a knuckle goes, so a fit that placed them would
+ drop forty finger dots into the palm.
 *>
-fn void the_pack_remembers_which_joints_are_optional() @test
+fn void the_pack_marks_its_optional_joints_and_the_fit_leaves_them_out() @test
 {
 	crig::AnimPack[] packs = crig::scan_packs(mem, library::ready());
 	defer crig::free_packs(mem, packs);
@@ -553,6 +517,7 @@ fn void the_pack_remembers_which_joints_are_optional() @test
 		if (pack.plan == "biped") biped = pack;
 	}
 	test::@check(biped != null, "the fixture library holds no biped pack");
+	if (biped == null) return;
 
 	usz optional = 0;
 	foreach (flag : biped.joint_optional)
@@ -572,30 +537,6 @@ fn void the_pack_remembers_which_joints_are_optional() @test
 		if (dot.optional) spare++;
 	}
 	test::eq(spare, (usz)40);
-}
-
-<*
- The plan's optional dots are named, never placed.
-
- A body plan applied to a mesh has to come back with the seventeen dots it always
- came back with. There is nothing in a figure's proportions that says where a
- knuckle goes, so a fit that tried would drop thirty finger dots into the palm as
- a blob — worse than no fingers, because they would then have to be deleted.
-*>
-fn void optional_dots_are_not_placed() @test
-{
-	crig::AnimPack[] packs = crig::scan_packs(mem, library::ready());
-	defer crig::free_packs(mem, packs);
-
-	crig::AnimPack* biped = null;
-	foreach (&pack : packs)
-	{
-		if (pack.plan == "biped") biped = pack;
-	}
-	test::@check(biped != null, "the fixture library holds no biped pack");
-
-	crig::Preset plan = biped.preset(mem);
-	defer crig::free_preset(mem, plan);
 
 	rig::Bounds unit = { .min = { 0, 0, 0 }, .max = { 1, 1, 1 } };
 	crig::FittedDot[] fitted = crig::fit_preset(mem, plan, unit, null);
@@ -607,7 +548,6 @@ fn void optional_dots_are_not_placed() @test
 		test::@check(!dot.optional, "the fit placed the optional dot %s", dot.name);
 	}
 }
-
 
 <*
  Of two plans a rig fits equally, the one with a word for more of it wins.
@@ -980,21 +920,7 @@ fn void editing_a_clip_spelt_another_way_keeps_its_motion() @test
 	Figure figure;
 	figure.open();
 	defer figure.close();
-	crig::AnimRef found = { .pack = -1, .clip = -1 };
-	foreach (usz p, &pack : figure.app.packs)
-	{
-		if (!pack.is_body_plan() || pack.plan != "biped" || pack.clips.len == 0) continue;
-		found = { .pack = (int)p, .clip = 0 };
-		break;
-	}
-	test::@check(found.pack >= 0 && figure.app.ensure_clip_imported(found), "the fixture library holds no biped clip");
-	foreach (usz i, id : figure.id)
-	{
-		String own = string::format(mem, "bone_%d", i);
-		defer alloc::free(mem, own.ptr);
-		figure.app.rename_recorded(id, own);
-	}
-	figure.app.undo_stack.commit();
+	crig::AnimRef found = renamed_figure(&figure);
 
 	crig::RigView view = figure.app.open_rig(mem)!!;
 	defer view.free(mem);

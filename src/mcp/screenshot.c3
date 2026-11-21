@@ -26,7 +26,7 @@ import std::io::file;
 import std::io::path;
 import std::math;
 
-faultdef SCREENSHOT_UNAVAILABLE, SCREENSHOT_FAILED, SCREENSHOT_UNREADABLE;
+excuse SCREENSHOT_UNAVAILABLE, SCREENSHOT_FAILED, SCREENSHOT_UNREADABLE;
 
 <*
  The longest edge the answer is allowed to have, in pixels.

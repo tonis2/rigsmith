@@ -20,32 +20,12 @@ module crig_tests::secondary_surface;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::math;
 import std::math::vector;
 import std::math::matrix;
-
-const uint[36] BOX_FACES @local = {
-	4, 5, 6, 4, 6, 7,
-	0, 3, 2, 0, 2, 1,
-	1, 2, 6, 1, 6, 5,
-	0, 4, 7, 0, 7, 3,
-	3, 7, 6, 3, 6, 2,
-	0, 1, 5, 0, 5, 4,
-};
-
-fn void corners(Vec3[] into, Vec3 low, Vec3 high) @local
-{
-	into[0] = { low.x, low.y, low.z };
-	into[1] = { high.x, low.y, low.z };
-	into[2] = { high.x, high.y, low.z };
-	into[3] = { low.x, high.y, low.z };
-	into[4] = { low.x, low.y, high.z };
-	into[5] = { high.x, low.y, high.z };
-	into[6] = { high.x, high.y, high.z };
-	into[7] = { low.x, high.y, high.z };
-}
 
 // The body's top face, and how far the tail's axis stands above it.
 const float BODY_TOP = 0.5f;
@@ -72,9 +52,9 @@ struct Figure
 
 fn void Figure.open(&self)
 {
-	corners(self.positions[:8], { -1.0f, -0.5f, -1.0f }, { 1.0f, BODY_TOP, 1.0f });
-	corners(self.positions[8:8], { 0.2f, TAIL_HEIGHT - 0.1f, -0.1f }, { 1.4f, TAIL_HEIGHT + 0.1f, 0.1f });
-	foreach (usz i, corner : BOX_FACES)
+	helpers::corners(self.positions[:8], { -1.0f, -0.5f, -1.0f }, { 1.0f, BODY_TOP, 1.0f });
+	helpers::corners(self.positions[8:8], { 0.2f, TAIL_HEIGHT - 0.1f, -0.1f }, { 1.4f, TAIL_HEIGHT + 0.1f, 0.1f });
+	foreach (usz i, corner : helpers::BOX_FACES)
 	{
 		self.indices[i] = corner;
 		self.indices[i + 36] = corner + 8;

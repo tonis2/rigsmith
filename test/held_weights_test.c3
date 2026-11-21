@@ -4,6 +4,7 @@
 module crig_tests::held_weights;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io::file;
@@ -35,35 +36,14 @@ fn void close_held(crig::AppState* app, rig::TriMesh* mesh)
 	(void)file::delete(sidecar);
 }
 
-fn uint held_dot(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
-
-fn float[] held_matrix(crig::AppState* app, usz* bones)
-{
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	*bones = view.len();
-	return app.weights(mem, &view);
-}
-
-fn usz held_joint(crig::AppState* app, uint dot)
-{
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	return (usz)view.joint_of(dot);
-}
-
 // Up to four vertices the ankle holds most of, given to it wholly: its weight
 // full and every other joint off them.
 fn usz ankle_alone(crig::AppState* app, uint ankle, uint[] out)
 {
 	usz bones;
-	float[] shown = held_matrix(app, &bones);
+	float[] shown = helpers::shown_weights(app, &bones);
 	defer alloc::free(mem, shown);
-	usz a = held_joint(app, ankle);
+	usz a = helpers::joint_index(app, ankle);
 	usz found = 0;
 	for (usz v = 0; v < app.geometry.positions.len && found < out.len; v++)
 	{
@@ -96,10 +76,10 @@ fn void the_first_edit_holds_a_joint_and_moves_only_what_it_edits() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint knee = held_dot(&app, "knee_L");
-	usz k = held_joint(&app, knee);
+	uint knee = helpers::dot_named(&app, "knee_L");
+	usz k = helpers::joint_index(&app, knee);
 	usz bones;
-	float[] before = held_matrix(&app, &bones);
+	float[] before = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, before);
 	test::@check(!app.weights_held(knee), "the knee started held");
 
@@ -111,7 +91,7 @@ fn void the_first_edit_holds_a_joint_and_moves_only_what_it_edits() @test
 	app.set_weight_vertices(one[..], knee, 0.25f);
 	test::@check(app.weights_held(knee), "an edit did not hold the knee");
 
-	float[] after = held_matrix(&app, &bones);
+	float[] after = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, after);
 	test::@check(moved_outside(before, after, bones, k) == 0, "editing the knee moved another joint's weights");
 	// In the knee's column: the vertex edited, and the other copies of its point.
@@ -144,21 +124,21 @@ fn void an_edge_moves_no_neighbour() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint knee = held_dot(&app, "knee_L");
-	usz k = held_joint(&app, knee);
+	uint knee = helpers::dot_named(&app, "knee_L");
+	usz k = helpers::joint_index(&app, knee);
 	usz bones;
-	float[] before = held_matrix(&app, &bones);
+	float[] before = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, before);
 
 	app.select(knee);
 	test::@check(app.grow_joint(2), "the knee would not grow");
-	float[] grown = held_matrix(&app, &bones);
+	float[] grown = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, grown);
 	test::eq(moved_outside(before, grown, bones, k), (usz)0);
 
 	test::@check(app.soften_joint(1.5f), "the knee would not soften");
 	app.commit_soft_edge();
-	float[] softened = held_matrix(&app, &bones);
+	float[] softened = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, softened);
 	test::eq(moved_outside(before, softened, bones, k), (usz)0);
 	test::@check(moved_outside(grown, softened, bones, bones) > 0, "the soft edge changed nothing of the knee");
@@ -175,7 +155,7 @@ fn void a_grow_drag_is_one_undo_step() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint knee = held_dot(&app, "knee_L");
+	uint knee = helpers::dot_named(&app, "knee_L");
 	app.select(knee);
 	test::@check(app.begin_area(), "the Area tool would not open");
 	test::@check(app.begin_grow_drag(), "the grow drag would not start");
@@ -204,12 +184,12 @@ fn void a_new_joint_is_automatic_and_moves_no_held_one() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint knee = held_dot(&app, "knee_L");
+	uint knee = helpers::dot_named(&app, "knee_L");
 	app.select(knee);
 	test::@check(app.grow_joint(1), "the knee would not grow");
-	usz k = held_joint(&app, knee);
+	usz k = helpers::joint_index(&app, knee);
 	usz bones;
-	float[] before = held_matrix(&app, &bones);
+	float[] before = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, before);
 	usz count = app.geometry.positions.len;
 	float[] column = alloc::new_array(mem, float, (sz)count);
@@ -223,9 +203,9 @@ fn void a_new_joint_is_automatic_and_moves_no_held_one() @test
 	app.mark_rig_stale();
 	test::@check(!app.weights_held(added), "a new joint came in held");
 
-	float[] after = held_matrix(&app, &bones);
+	float[] after = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, after);
-	usz k_after = held_joint(&app, knee);
+	usz k_after = helpers::joint_index(&app, knee);
 	usz drifted = 0;
 	for (usz v = 0; v < count; v++) if (after[v * bones + k_after] != column[v]) drifted++;
 	test::@check(drifted == 0, "placing a joint moved %d of the held knee's weights", drifted);
@@ -242,7 +222,7 @@ fn void deleting_a_held_joint_leaves_its_vertices_unused_until_undo() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint ankle = held_dot(&app, "ankle_L");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
 	uint[4] some;
 	usz alone = ankle_alone(&app, ankle, some[..]);
 	test::@check(alone == 4 && app.weights_held(ankle), "the ankle could not be given vertices of its own");
@@ -273,7 +253,7 @@ fn void a_joint_brushed_off_alone_shows_magenta() @test
 	open_held(&app, &mesh);
 	defer close_held(&app, &mesh);
 
-	uint ankle = held_dot(&app, "ankle_L");
+	uint ankle = helpers::dot_named(&app, "ankle_L");
 	uint[4] some;
 	test::@check(ankle_alone(&app, ankle, some[..]) == 4, "the ankle could not be given vertices of its own");
 

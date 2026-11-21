@@ -10,7 +10,7 @@ import gltf;
 import std::math;
 import std::collections::list;
 
-faultdef LEVEL_RIG_NO_ARMATURE, LEVEL_RIG_NO_SKIN;
+excuse LEVEL_RIG_NO_ARMATURE, LEVEL_RIG_NO_SKIN;
 
 <* One rigged character of a level file, read by its armature. *>
 struct LevelRig

@@ -13,6 +13,7 @@ module crig_tests::aim_app;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::vector;
@@ -52,35 +53,14 @@ fn bool Figure.open(&self)
 
 fn void Figure.close(&self) => self.app.free();
 
-fn float Figure.height(&self)
-{
-	crig::RigView view = self.app.open_rig(mem)!!;
-	defer view.free(mem);
-	return view.skeleton.height();
-}
+fn float Figure.height(&self) => helpers::rig_height(&self.app);
 
 fn Vec3 Figure.at(&self, uint id) => self.app.dot_position(*self.app.doc.find(id));
 
 fn crig::AnimTemplate* Figure.clip(&self) => self.app.clip(self.app.editing);
 
-// 1 - cos of the angle between where the aimed head's axis points on screen and
-// the direction from the head to `target` (model units); 0 when it faces it.
-fn float Figure.facing_error(&self, Vec3 target)
-{
-	crig::AppState* app = &self.app;
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	rig::Pose pose = app.draft_pose(mem, &view);
-	defer pose.free(mem);
-	crig::AnimTemplate* clip = self.clip();
-	app.apply_clip_aims(&view, *clip, app.editing, app.edit_time, &pose);
-	Vec3 position;
-	Quaternionf world;
-	usz joint = (usz)view.joint_of(self.head);
-	if (!crig::aim_frame(&view, pose, joint, &position, &world)) return 1.0f;
-	Vec3 facing = world.rotate_vec3(clip.aims[0].forward).normalize();
-	return 1.0f - facing.dot((target - position).normalize());
-}
+// 0 when the aimed head faces `target`.
+fn float Figure.facing_error(&self, Vec3 target) => helpers::facing_error(&self.app, self.head, target);
 
 <*
  Adding a target turns nothing, keys itself at the edit time, and one undo takes
@@ -146,30 +126,6 @@ fn void dragging_the_handle_keys_one_step_and_turns_the_head() @test
 	test::@check(app.undo(), "the drag did not undo");
 	Vec3 back = fixture.clip().aim_targets[0].keys[0].at * fixture.height();
 	test::@check((back - start).length() < 1.0e-3f, "undo did not put the target back");
-}
-
-<*
- Escape mid-drag puts the target back and leaves the history, and the pending
- flag, alone.
-*>
-fn void escape_puts_the_target_back() @test
-{
-	Figure fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-	test::@check(app.add_aim(fixture.head), "the target was not added");
-	sz steps = app.undo_stack.cursor;
-	Vec3 start = app.posed_aims[0].at;
-
-	test::@check(app.begin_aim_drag(0, true), "the drag did not begin");
-	app.aim_target_toward(start + (Vec3){ 0.5f, 0.3f, 0.0f });
-	test::@check((app.posed_aims[0].at - start).length() > 0.1f, "the handle did not follow the drag");
-	test::@check(app.cancel_drag(), "Esc did not cancel");
-
-	test::@check(app.drag.dot == 0 && app.aim_draft.len == 0, "Esc left a draft");
-	test::@check((app.posed_aims[0].at - start).length() < 1.0e-4f, "Esc did not put the target back");
-	test::@check(app.undo_stack.cursor == steps && !app.pose_edit_pending, "Esc touched the history or the pending pose");
 }
 
 <*
@@ -439,5 +395,5 @@ fn void a_lockless_target_drags_and_escapes() @test
 	test::@check(app.cancel_drag(), "Esc did not cancel");
 	test::@check(app.drag.dot == 0 && app.aim_draft.len == 0, "Esc left a drag or draft");
 	test::@check((app.posed_aims[0].at - start).length() < 1.0e-4f, "Esc did not put the ring back");
-	test::@check(app.undo_stack.cursor == steps, "Esc touched the history");
+	test::@check(app.undo_stack.cursor == steps && !app.pose_edit_pending, "Esc touched the history or the pending pose");
 }

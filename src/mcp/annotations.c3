@@ -7,7 +7,7 @@ module crig;
 
 import std::collections::object;
 
-faultdef ANNOTATION_REFUSED;
+excuse ANNOTATION_REFUSED;
 
 const String GET_ANNOTATIONS_SCHEMA = `{"type":"object","properties":{
 	"clear":{"type":"boolean","description":"Delete every mark after reading them.","default":false},

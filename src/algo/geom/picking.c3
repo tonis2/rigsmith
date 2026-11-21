@@ -64,7 +64,7 @@ struct Span @local
 	float exit;
 }
 
-faultdef NO_SURFACE;
+excuse NO_SURFACE;
 
 struct Picker
 {

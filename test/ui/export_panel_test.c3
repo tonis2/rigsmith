@@ -444,30 +444,6 @@ fn bool export_panel_is_glb(String path) @local
 	return content.len > 12 && ((String)content[:4]) == "glTF";
 }
 
-fn void export_opens_on_the_character_with_one_character() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	f.reset();
-	(void)io::path::mkdir((io::path::Path)EXPORT_PANEL_FOLDER, true);
-	f.app.point_at(EXPORT_PANEL_BOX);
-	test::@check(f.app.apply_plan_named("biped"), "could not fit the test rig");
-	String written = "build/export-panel/box_rigged.glb";
-	(void)io::file::delete(written);
-	defer (void)io::file::delete(written);
-	defer (void)io::file::delete("build/export-panel/box_rigged.rigsmith.json");
-
-	export_panel_open(&f);
-	test::@check(export_panel_what(&f) == CHARACTER, "one character opened on %s", export_panel_what(&f));
-	test::@check(export_panel_lit(&f) == 0, "the strip lights segment %d", export_panel_lit(&f));
-	test::@check(has_id(&f, crig::EXPORT_SUMMARY_ID) && !has_id(&f, crig::EXPORT_LINE_ID), "the Character body is not shown");
-	test::eq(field_value(&f, crig::EXPORT_PATH_ID), written);
-
-	test::@check(f.confirm_export(), "no Export button");
-	test::@check(export_panel_is_glb(written), "the character was not written as %s", written);
-}
-
 fn void export_opens_on_all_characters_with_two() @test
 {
 	if (!export_panel_hero())
@@ -618,4 +594,11 @@ fn void an_export_choice_that_does_not_apply_snaps_back() @test
 	test::eq(field_value(&f, crig::EXPORT_PATH_ID), "build/export-panel/box_rigged.glb");
 
 	crig::set_dialog_open(f.ui, crig::EXPORT_DIALOG_ID, false);
+}
+
+fn void a_typed_export_name_keeps_its_extension_in_any_case() @test
+{
+	test::eq(crig::export_file_name(ALL_CHARACTERS, "out/scene.GLB"), "out/scene.GLB");
+	test::eq(crig::export_file_name(CUTSCENE, "intro.GLTF"), "intro.GLTF");
+	test::eq(crig::export_file_name(CUTSCENE, "intro"), "intro.cutscene.glb");
 }

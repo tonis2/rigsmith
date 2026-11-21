@@ -10,21 +10,6 @@ import cui::widgets;
 import std::core::test;
 import std::math;
 
-// The Animations dock in a pane under the model, showing the first cutscene, one frame later.
-fn void one_off_tab(Fixture* f) @local
-{
-	crig::show_pane_view(f.ui, crig::ANIMATION_VIEW, SplitAxis.VERTICAL, 0.5f);
-	(void)f.app.show_cutscene(0);
-	f.ui.flush();
-	f.feed(f.ui.input.mouse);
-}
-
-fn Vec2 one_off_centre(Fixture* f, String id) @local
-{
-	Element* elem = f.ui.find_id(id)!!;
-	return elem.absolute + elem.size * 0.5f;
-}
-
 fn Vec2 one_off_lane(Fixture* f, float t) @local
 {
 	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
@@ -40,8 +25,6 @@ fn CutStrip* first_strip(Fixture* f) @local
 	return &c.actors[0].strips[0];
 }
 
-fn bool about(float a, float b) @local => math::abs(a - b) <= 1e-4f;
-
 fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 {
 	Fixture f;
@@ -51,7 +34,7 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 	f.app.stop_animation();
 	test::@check(f.app.make_actor(f.app.active, "hero"), "the cube is no actor");
 	(void)f.app.add_cutscene();
-	one_off_tab(&f);
+	show_cutscene_tab(&f);
 	f.app.show_cutscene_at(1.0f);
 	f.click(one_off_lane(&f, 6.0f));
 	f.feed(f.ui.input.mouse);
@@ -68,7 +51,7 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 		test::@check(false, "no strip was added");
 		return;
 	}
-	test::@check(s.one_off && about(s.start, 1.0f) && about(s.end, 3.0f), "the strip is %s %f-%f", s.clip, s.start, s.end);
+	test::@check(s.one_off && math::is_approx(s.start, 1.0f, 1e-4f) && math::is_approx(s.end, 3.0f, 1e-4f), "the strip is %s %f-%f", s.clip, s.start, s.end);
 	test::@check(f.app.cut_selected == s.id, "the new strip is not picked");
 	test::eq((usz)f.app.cut_history.undo.len(), steps + 1);
 	test::@check(has_id(&f, crig::CUT_CARD_ONE_OFF_ID) && has_id(&f, crig::CUT_CARD_EDIT_ID) && has_id(&f, crig::CUT_CARD_DROP_ID),
@@ -95,7 +78,7 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 
 	// Back: the edit is over and the cutscene is where it was.
 	if (!has_id(&f, crig::ANIM_BACK_ID)) return;
-	f.click(one_off_centre(&f, crig::ANIM_BACK_ID));
+	f.click(id_centre(&f, crig::ANIM_BACK_ID));
 	f.feed(f.ui.input.mouse);
 	test::@check(!f.app.one_off_open(), "Back did not end the edit");
 	test::@check(!has_id(&f, crig::ANIM_BACK_ID), "the way back outlived the edit");
@@ -117,7 +100,7 @@ fn void a_one_off_is_made_and_edited_with_the_mouse() @test
 	f.feed(f.ui.input.mouse);
 	test::@check(has_id(&f, crig::CUT_CARD_DROP_ID), "no card for the picked one-off");
 	if (!has_id(&f, crig::CUT_CARD_DROP_ID)) return;
-	f.click(one_off_centre(&f, crig::CUT_CARD_DROP_ID));
+	f.click(id_centre(&f, crig::CUT_CARD_DROP_ID));
 	f.feed(f.ui.input.mouse);
 	test::@check(f.app.cutscene().one_offs.len == 0 && f.app.cutscene().actors[0].strips.len == 0, "the one-off or its strip is still there");
 	crig::menu_undo(f.ui);

@@ -38,7 +38,7 @@ const String SCENE_FORMAT = "rigsmith-scene";
 const uint SCENE_VERSION = 1;
 const String SCENE_SUFFIX = ".rigsmith-scene.json";
 
-faultdef SCENE_IO, SCENE_SHAPE;
+excuse SCENE_IO, SCENE_SHAPE;
 
 struct SceneCharacter
 {

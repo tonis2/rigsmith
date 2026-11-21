@@ -8,6 +8,7 @@
 module crig_tests::ui;
 
 import crig;
+import crig_tests::helpers;
 import std::collections::object;
 import std::core::test;
 import std::encoding::json;
@@ -123,12 +124,6 @@ fn void a_toe_that_cannot_bend_is_mended_by_trading_its_rows() @test
 	test::@check(refused_hinges(&f, found[..]) == 0, "the mended toe still cannot bend");
 }
 
-fn uint named_dot(Fixture* f, String name)
-{
-	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
-
 fn bool rig_edit(Fixture* f, String text)
 {
 	Object*? args = json::parse(mem, text);
@@ -160,8 +155,8 @@ fn void plan_limits_with_joints_leaves_the_rest_of_the_rig_alone() @test
 	defer f.close();
 	io::printn("plan_limits joints re-plans only the joints named");
 	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
-	uint neck = named_dot(&f, "neck");
-	uint knee = named_dot(&f, "knee_L");
+	uint neck = helpers::dot_named(&f.app, "neck");
+	uint knee = helpers::dot_named(&f.app, "knee_L");
 	test::@check(neck != 0 && knee != 0, "the biped has no neck or knee_L");
 	if (neck == 0 || knee == 0) return;
 	test::@check(f.app.doc.rotation_limits_of(neck).constrained, "the fitted neck has no limits to take off");

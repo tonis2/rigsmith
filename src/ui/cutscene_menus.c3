@@ -300,8 +300,6 @@ fn Element* build_cut_strip_menu(Ui* ui)
 <* Open the Add actor list at `at`: from a file, the level's free characters, and characters that are no actor here yet. *>
 fn void cut_open_actor_list(Ui* ui, Vec2 at) => cut_open_popup(ui, CUT_ADD_ACTOR_MENU_ID, at);
 
-fn void cut_add_actor_clicked(Ui* ui) => cut_open_actor_list(ui, ui.input.mouse);
-
 <* The Add actor list's rows and what each stands for. *>
 fn void CutChoiceList.actor_rows(&self, AppState* app, List{TreeRow}* rows)
 {

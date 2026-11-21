@@ -21,30 +21,20 @@ fn Vec2 sketch_strip_cell(Fixture* f, crig::SketchCell cell)
 	return strip.absolute + (Vec2){ crig::sketch_cell_x((usz)cell) + crig::TINT_CELL_W * 0.5f, crig::TINT_CELL_H * 0.5f };
 }
 
-fn void the_sketch_cell_opens_the_tool_and_its_strip() @test
+// The Sketch cell opens the tool and its strip, the strip picks a colour or the
+// eraser, and a click on the lit cell puts the tool away.
+fn void the_sketch_cell_and_strip_pick_the_tool_colour_and_eraser() @test
 {
 	Fixture f;
 	f.open()!!;
 	defer f.close();
 
 	test::@check(crig::tool_cells[SKETCH_CELL].glyph == crig::ToolGlyph.SKETCH_GLYPH, "the last tool cell is not Sketch");
-	Vec2 cell = tip_centre(tip_cell(&f, SKETCH_CELL));
+	Vec2 cell = centre_of(tip_cell(&f, SKETCH_CELL));
 	f.click(cell);
 	f.ui.flush();
 	test::@check(f.app.sketching, "the Sketch cell did not open the tool");
 	test::@check(f.ui.find_id("sketch-toolbar")!!.size.x > 0, "the colour strip did not show");
-
-	f.click(cell);
-	test::@check(!f.app.sketching, "clicking the lit Sketch cell did not put the tool away");
-}
-
-fn void the_strip_picks_a_colour_or_the_eraser() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	f.click(tip_centre(tip_cell(&f, SKETCH_CELL)));
-	f.ui.flush();
 
 	f.click(sketch_strip_cell(&f, crig::SketchCell.GREEN));
 	test::@check(f.app.sketch_ink == crig::SketchInk.GREEN && !f.app.sketch_erasing, "green was not picked");
@@ -52,6 +42,9 @@ fn void the_strip_picks_a_colour_or_the_eraser() @test
 	test::@check(f.app.sketch_erasing, "the eraser was not picked");
 	f.click(sketch_strip_cell(&f, crig::SketchCell.BLUE));
 	test::@check(f.app.sketch_ink == crig::SketchInk.BLUE && !f.app.sketch_erasing, "a colour did not put the eraser down");
+
+	f.click(cell);
+	test::@check(!f.app.sketching, "clicking the lit Sketch cell did not put the tool away");
 }
 
 fn void the_eraser_takes_off_the_marks_it_crosses() @test
@@ -59,7 +52,7 @@ fn void the_eraser_takes_off_the_marks_it_crosses() @test
 	Fixture f;
 	f.open()!!;
 	defer f.close();
-	f.click(tip_centre(tip_cell(&f, SKETCH_CELL)));
+	f.click(centre_of(tip_cell(&f, SKETCH_CELL)));
 
 	Vec2 c = VIEWPORT_CENTER;
 	f.drag(c + (Vec2){ -60, -40 }, c + (Vec2){ 60, -40 });

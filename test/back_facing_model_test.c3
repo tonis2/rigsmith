@@ -1,6 +1,7 @@
 module crig_tests::back_facing_model;
 
 import crig;
+import crig_tests::helpers;
 import gltf;
 import rig;
 import std::core::test;
@@ -36,9 +37,9 @@ fn void a_model_facing_back_turns_with_its_rig() @test
 	copy_file_bytes("assets/animations/humanoid.glb", humanoid);
 	defer
 	{
-		remove_with_sidecar(humanoid);
-		remove_with_sidecar(turned);
-		remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(humanoid);
+		helpers::remove_with_sidecar(turned);
+		helpers::remove_with_sidecar(exported);
 	}
 
 	// The humanoid as crig holds it: facing +Z, rig, weights and all.
@@ -139,12 +140,4 @@ fn void copy_file_bytes(String from, String to)
 	char[] bytes = file::load(mem, from)!!;
 	defer alloc::free(mem, bytes);
 	file::save(to, bytes)!!;
-}
-
-fn void remove_with_sidecar(String path)
-{
-	(void)file::delete(path);
-	String sidecar = crig::session_path(mem, path);
-	defer sidecar.free(mem);
-	(void)file::delete(sidecar);
 }

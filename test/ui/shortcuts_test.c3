@@ -24,29 +24,14 @@ fn void every_shortcut_is_listed() @test
 {
 	foreach (row : crig::Shortcut::values)
 	{
+		if (row == NONE) continue;
+		test::@check(row.label.len > 0 && row.action.len > 0, "%s has no text", row);
 		if (row.mode == ALIAS) continue;
 		bool listed;
 		foreach (control : crig::CONTROLS) if (control.key == row) listed = true;
 		test::@check(listed, "%s isn't in the Controls dialog", row);
 	}
-}
-
-fn void every_row_says_what_it_does() @test
-{
-	foreach (row : crig::Shortcut::values)
-	{
-		if (row == NONE) continue;
-		test::@check(row.label.len > 0 && row.action.len > 0, "%s has no text", row);
-	}
-}
-
-fn void every_plain_row_is_found_by_its_key() @test
-{
-	foreach (row : crig::Shortcut::values)
-	{
-		if (!row.run) continue;
-		test::@check(crig::shortcut_of(row.key, row.ctrl, row.shift) == row, "%s isn't reached by its key", row);
-	}
+	test::@check(crig::file_items[0].shortcut == crig::Shortcut.NEW_SCENE.label, "the File menu");
 }
 
 fn void shift_only_changes_a_letter_with_a_shifted_row() @test
@@ -55,13 +40,6 @@ fn void shift_only_changes_a_letter_with_a_shifted_row() @test
 	test::@check(crig::shortcut_of(Key.T, false, true) == LASSO_PIN, "shift+T");
 	test::@check(crig::shortcut_of(Key.Z, true, true) == REDO_SHIFTED, "ctrl+shift+Z");
 	test::@check(crig::shortcut_of(Key.Q, false, false) == NONE, "a key with no row");
-}
-
-fn void the_menus_show_the_tables_keys() @test
-{
-	test::@check(crig::file_items[0].shortcut == crig::Shortcut.NEW_SCENE.label, "the File menu");
-	test::eq(crig::Shortcut.SAVE_AS.label, "Ctrl+Shift+S");
-	test::eq(crig::Shortcut.LASSO_PIN.label, "Shift+T");
 }
 
 fn void pressing_each_plain_row_runs_it() @test

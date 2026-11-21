@@ -12,7 +12,7 @@ String[5] timing_speed_options = { "0.25x", "0.5x", "1x", "1.5x", "2x" };
 const int[3] TIMING_RATES = { 24, 30, 60 };
 const float[5] TIMING_SPEEDS = { 0.25f, 0.5f, 1, 1.5f, 2 };
 
-faultdef ANIM_TIME_UNREADABLE;
+excuse ANIM_TIME_UNREADABLE;
 
 fn void anim_timeline_view_changed(Ui* ui, float zoom, float start)
 {
@@ -81,8 +81,6 @@ fn void anim_zoom_set(Ui* ui, float zoom)
 	anim_timeline_view_changed(ui, zoom, start);
 }
 
-fn void anim_zoom_in(Ui* ui) => anim_zoom_set(ui, math::max(ui.inherit(AppState)!!.anim_timeline_zoom, 1.0f) * 2);
-fn void anim_zoom_out(Ui* ui) => anim_zoom_set(ui, math::max(ui.inherit(AppState)!!.anim_timeline_zoom, 1.0f) / 2);
 fn void anim_zoom_fit(Ui* ui) => anim_zoom_set(ui, 1);
 
 <*

@@ -15,6 +15,7 @@ module crig;
 import cui;
 import cui::widgets;
 import std::math;
+import std::hash::fnv32a;
 
 const String POSE_SECTION_ID = "pose-section";
 const String POSE_OPTIONS_SECTION_ID = "pose-options-section";
@@ -39,13 +40,15 @@ fn void refresh_pose_views(Ui* ui)
 // the padlocks, the viewport menu, MCP — without being told.
 fn uint lock_list_hash(AppState* app)
 {
-	uint hash = 2166136261u;
+	Fnv32a hash;
+	hash.init();
 	foreach (lock : app.position_locks)
 	{
-		hash = (hash ^ lock.dot_id) * 16777619u;
-		hash = (hash ^ (lock.position ? 1u : 0u) ^ (lock.rotation ? 2u : 0u)) * 16777619u;
+		hash.mix(lock.dot_id);
+		hash.mix(lock.position);
+		hash.mix(lock.rotation);
 	}
-	return hash;
+	return (uint)hash;
 }
 
 fn void pose_pin_chosen(Ui* ui, usz row)

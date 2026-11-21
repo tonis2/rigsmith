@@ -30,7 +30,7 @@ import std::collections::object;
 import std::encoding::json;
 import std::io;
 
-faultdef TOOL_NOT_FOUND, TOOL_REFUSED;
+excuse TOOL_NOT_FOUND, TOOL_REFUSED;
 
 // mcp's own tool record and handler signature: crig registers straight into an
 // `mcp::Server`, so there is nothing to convert between. The table stays crig's

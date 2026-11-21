@@ -54,7 +54,7 @@ import std::io::path;
 import std::math;
 import std::time;
 
-faultdef RENDER_STUDIO_REFUSED;
+excuse RENDER_STUDIO_REFUSED;
 
 const String RENDER_STUDIO_SCHEMA = `{"type":"object","properties":{
 	"out":{"type":"string","description":"The folder reference.png, studio.json and prompt.txt go in; made when missing."},

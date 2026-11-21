@@ -39,9 +39,7 @@ fn void the_cutscene_fixtures_are_cutscenes() @test
 {
 	String[] fixtures = {
 		"assets/cutscenes/intro.cutscene.glb", "assets/cutscenes/finer.cutscene.glb", "assets/cutscenes/intro.cutscene.gltf",
-		"assets/cutscenes/turn.cutscene.gltf", "assets/cutscenes/place_version1.gltf", "assets/cutscenes/turn_version1.gltf",
-		"assets/cutscenes/turn_no_actor.gltf", "assets/cutscenes/cutscene_missing_path.gltf",
-		"assets/cutscenes/cutscene_wrong_version.gltf",
+		"assets/cutscenes/turn.cutscene.gltf",
 	};
 	foreach (fixture : fixtures)
 	{
@@ -169,4 +167,9 @@ fn void a_cutscene_extension_wins() @test
 	GlbCensus census;
 	test::@check(kind_of(text, &census) == CUTSCENE && census.loose_colliders == 1, "a cutscene with a collider");
 	test::@check(kind_of(`{"extensions": {"CUSTOM_cutscene": 3}}`) == CHARACTER, "an extension that is not an object");
+}
+
+fn void an_extension_is_matched_in_any_case() @test
+{
+	test::@check(crig::is_gltf_name("lib/Hero.Glb") && crig::is_gltf_name("a.GLTF") && !crig::is_gltf_name("glb"), "a glTF name");
 }

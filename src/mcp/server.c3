@@ -50,7 +50,7 @@ import std::collections::list;
 
 import std::math;
 
-faultdef RIG_EMPTY, POSE_BAD_ARGS;
+excuse RIG_EMPTY, POSE_BAD_ARGS;
 
 <*
  apply_clip's argument shape, as the client sees it.
@@ -1462,10 +1462,7 @@ fn String? joints_json(AppState* app, RigView* view, rig::Pose pose, String clip
 		foreach (j, id : view.dot_ids)
 		{
 			if (j >= authored.rotations.len || j >= held.rotations.len) break;
-			Quaternionf a = authored.rotations[j];
-			Quaternionf b = held.rotations[j];
-			float dot = math::abs(a.v.x * b.v.x + a.v.y * b.v.y + a.v.z * b.v.z + a.v.w * b.v.w);
-			float removed = 2.0f * math::acos(math::min(dot, 1.0f));
+			float removed = turn_gap(authored.rotations[j], held.rotations[j]);
 			if (removed <= ISSUE_LIMIT_TOLERANCE) continue;
 			if (written++ > 0) out.append_char(',');
 			out.append_string(`{"name":"`);

@@ -12,6 +12,7 @@ module crig_tests::animation_workflow;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::math;
@@ -78,11 +79,6 @@ fn void animation_key_clipboard_preserves_sparse_channels_and_undo() @test
 	AnimKeyframe pasted = f.app.clip(f.app.editing).keyframes[1];
 	test::@check(pasted.time == 0.75f && pasted.dots.len == 1 && pasted.dots[0].channels == ROTATION,
 		"paste expanded a sparse key into a full pose");
-}
-
-fn bool same_rotation(Quaternionf a, Quaternionf b)
-{
-	return 1.0f - math::abs(a.v.dot(b.v)) < 1.0e-3f;
 }
 
 fn bool same_palette(Matrix4f[] a, Matrix4f[] b)
@@ -173,7 +169,7 @@ fn void turn_begins_from_the_sampled_time() @test
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.begin_turn(), "R did not begin on the parked animation");
 	test::@check(f.app.pose_edit_active, "the sampled pose was not marked transient");
-	test::@check(same_rotation(f.app.working_pose(f.joint).rotation, f.second),
+	test::@check(helpers::same_rotation(f.app.working_pose(f.joint).rotation, f.second, 1.0e-3f),
 		"R began from rest rather than the pose at 0.5 s");
 	test::@check(f.app.undo_stack.cursor == cursor, "sampling created undo history");
 	f.app.cancel_drag();
@@ -198,7 +194,7 @@ fn void stopped_preview_still_opens_the_selected_animation_for_posing() @test
 		"the selected animation was not poseable until playback was parked");
 	test::@check(f.app.begin_turn(), "R would not open the selected animation");
 	test::@check(f.app.pose_edit_active
-		&& same_rotation(f.app.working_pose(f.joint).rotation, f.second),
+		&& helpers::same_rotation(f.app.working_pose(f.joint).rotation, f.second, 1.0e-3f),
 		"R did not seed its draft from the selected animation's playhead");
 	f.app.cancel_drag();
 	f.app.discard_pose_edit();
@@ -243,7 +239,7 @@ fn void rest_dot_drag_preserves_a_manual_animation_draft() @test
 	f.app.end_drag();
 	test::@check(f.app.pose_edit_active && f.app.pose_edit_pending,
 		"rest placement closed the unsaved animation draft");
-	test::@check(same_rotation(f.app.working_pose(f.joint).rotation, pending),
+	test::@check(helpers::same_rotation(f.app.working_pose(f.joint).rotation, pending, 1.0e-3f),
 		"rest placement changed the pending animation rotation");
 	test::@check(f.app.pose_palette.len > 0,
 		"the pending animation was not redrawn against the edited rest rig");
@@ -291,7 +287,7 @@ fn void timeline_drafts_start_from_the_limit_aware_sample() @test
 		f.app.names_for(&view, f.clip), f.app.edit_time, false);
 	defer raw.free(mem);
 	sz at = view.joint_of(f.joint);
-	test::@check(at >= 0 && same_rotation(raw.rotations[(usz)at], f.second),
+	test::@check(at >= 0 && helpers::same_rotation(raw.rotations[(usz)at], f.second, 1.0e-3f),
 		"limit-aware editing rewrote the source animation key");
 	if (at < 0) return;
 
@@ -309,8 +305,8 @@ fn void timeline_drafts_start_from_the_limit_aware_sample() @test
 
 	test::@check(f.app.pose_from_clip(f.clip, f.app.edit_time),
 		"the constrained timeline sample would not open for editing");
-	test::@check(same_rotation(f.app.working_pose(f.joint).rotation,
-		quaternion::IDENTITY), "the draft bypassed the locked playback pose");
+	test::@check(helpers::same_rotation(f.app.working_pose(f.joint).rotation,
+		quaternion::IDENTITY, 1.0e-3f), "the draft bypassed the locked playback pose");
 	f.app.discard_pose_edit();
 }
 
@@ -411,7 +407,7 @@ fn void escape_restores_the_sample_and_commits_nothing() @test
 
 	test::@check(f.app.undo_stack.cursor == before, "escape moved the undo cursor");
 	test::@check(f.app.clip(f.clip).keyframes.len == keys, "escape changed the clip");
-	test::@check(same_rotation(f.app.working_pose(f.joint).rotation, f.second),
+	test::@check(helpers::same_rotation(f.app.working_pose(f.joint).rotation, f.second, 1.0e-3f),
 		"escape did not restore the pose sampled at the playhead");
 	f.app.discard_pose_edit();
 }
@@ -482,7 +478,7 @@ fn void manual_key_on_a_parked_frame_keys_the_sample() @test
 	test::@check(inserted != null, "manual Key did not land at the playhead");
 	if (inserted)
 	{
-		test::@check(same_rotation(inserted.rotation_of("thigh_L"), expected),
+		test::@check(helpers::same_rotation(inserted.rotation_of("thigh_L"), expected, 1.0e-3f),
 			"manual Key did not record the parked frame");
 	}
 }
@@ -675,7 +671,7 @@ fn void selected_keying_keeps_other_unkeyed_pose_changes() @test
 	f.app.pose_edit_pending = true;
 	test::@check(f.app.key_pose_edit(SELECTED), "selected key failed");
 	test::@check(f.app.pose_edit_active && f.app.pose_edit_pending, "selected key discarded the other leg's unkeyed change");
-	test::@check(same_rotation(f.app.working_pose(other).rotation, turn), "unselected draft changed");
+	test::@check(helpers::same_rotation(f.app.working_pose(other).rotation, turn, 1.0e-3f), "unselected draft changed");
 	test::@check(f.app.key_pose_edit(CHANGED), "remaining change could not be keyed");
 	test::@check(!f.app.pose_edit_active, "keying all remaining changes left a draft");
 }

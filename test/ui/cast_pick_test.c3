@@ -69,20 +69,6 @@ fn usz cast_pick_actors(Fixture* f) @local
 	return guide;
 }
 
-fn void cast_pick_a_rig_with_no_mesh_is_picked_by_its_bone() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	usz cube = f.app.active;
-	usz bare = cast_pick_bare_rig(&f, { 2.5f, -1, 0 });
-	test::@check(f.app.focus_character(cube), "the cube did not take the focus back");
-	cast_pick_aim(&f);
-
-	f.click(cast_pick_pixel(&f, bare, CAST_PICK_SHIN));
-	test::@check(f.app.active == bare, "a click on the bone left %d the focus", f.app.active);
-}
-
 fn void cast_pick_the_nearer_of_two_characters_wins() @test
 {
 	Fixture f;

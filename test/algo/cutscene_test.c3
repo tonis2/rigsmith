@@ -34,8 +34,6 @@ fn long facing(CutActorPose pose) @local
 
 fn double round2(double value) @local => math::round(value * 100.0) / 100.0;
 
-fn bool near(double a, double b, double eps = 1e-4) @local => math::abs(a - b) <= eps;
-
 fn CutStrip strip(CutStripKind kind, float start, float end, String clip = "") @local
 {
 	CutStrip s = crig::cut_strip(kind, start, end);
@@ -142,7 +140,7 @@ fn usz[] sorted_order(CutStrip[] strips) @local
 fn void check_same_strip(CutStrip* want, CutStrip* got, String where) @local
 {
 	test::@check(got.kind == want.kind, "%s: kind %s, not %s", where, got.kind, want.kind);
-	test::@check(near(got.start, want.start) && near(got.end, want.end), "%s: %s..%s, not %s..%s",
+	test::@check(math::is_approx(got.start, want.start, 1e-4) && math::is_approx(got.end, want.end, 1e-4), "%s: %s..%s, not %s..%s",
 		where, got.start, got.end, want.start, want.end);
 	switch (want.kind)
 	{
@@ -158,14 +156,14 @@ fn void check_same_strip(CutStrip* want, CutStrip* got, String where) @local
 	if (want.kind == TURN || want.clip.len == 0) return;
 	test::@check(got.clip == want.clip && got.loop == want.loop && got.animation == want.animation,
 		"%s: clip '%s' loop %s animation %d", where, got.clip, got.loop, got.animation);
-	test::@check(near(got.speed, want.speed) && near(got.fade, want.fade) && near(got.offset, want.offset),
+	test::@check(math::is_approx(got.speed, want.speed, 1e-4) && math::is_approx(got.fade, want.fade, 1e-4) && math::is_approx(got.offset, want.offset, 1e-4),
 		"%s: speed %s fade %s offset %s", where, got.speed, got.fade, got.offset);
 }
 
 // What the file keeps of `want`: everything but the knots, and the home of an actor the level places.
 fn void check_same(Cutscene* want, Cutscene* got, String label) @local
 {
-	test::@check(got.name == want.name && near(got.duration, want.duration) && near(got.fps, want.fps),
+	test::@check(got.name == want.name && math::is_approx(got.duration, want.duration, 1e-4) && math::is_approx(got.fps, want.fps, 1e-4),
 		"%s: '%s' %s s at %s fps", label, got.name, got.duration, got.fps);
 	test::@check(got.actors.len == want.actors.len, "%s: %d actors", label, got.actors.len);
 	if (got.actors.len != want.actors.len) return;
@@ -192,7 +190,7 @@ fn void check_same(Cutscene* want, Cutscene* got, String label) @local
 	foreach (usz i, &a : want.paths)
 	{
 		WalkPath* b = &got.paths[i];
-		test::@check(b.name == a.name && near(b.length, a.length) && b.points.len == a.points.len && b.knots.len == 0,
+		test::@check(b.name == a.name && math::is_approx(b.length, a.length, 1e-4) && b.points.len == a.points.len && b.knots.len == 0,
 			"%s: path %d '%s' %s m, %d points", label, i, b.name, b.length, b.points.len);
 		if (b.points.len != a.points.len) continue;
 		foreach (usz k, point : a.points)
@@ -395,10 +393,10 @@ fn void the_engines_intro_file_poses_as_the_engine_does() @test
 		double heading = crig::cut_heading_of(pose.rotation);
 		test::@check(round2(pose.position.x) == row[1] && round2(pose.position.z) == row[2] && round2(heading) == row[3],
 			"at %s s it stands at %s facing %s", row[0], pose.position, heading);
-		test::@check(pose.strip == (int)row[4] && near(round2(time), row[5], 1e-9), "at %s s strip %d plays at %s", row[0], pose.strip, time);
+		test::@check(pose.strip == (int)row[4] && math::is_approx(round2(time), row[5], 1e-9), "at %s s strip %d plays at %s", row[0], pose.strip, time);
 	}
 	test::@check(pose_of(&intro, 0, 4.0f).holding && !pose_of(&intro, 0, 3.25f).holding, "the wave holds after its end");
-	test::@check(near(pose_of(&intro, 0, 1.0f).fade, 0.2), "the walk fades in over 0.2 s");
+	test::@check(math::is_approx(pose_of(&intro, 0, 1.0f).fade, 0.2, 1e-4), "the walk fades in over 0.2 s");
 }
 
 fn void a_held_loop_stops_a_hair_before_its_end() @test
@@ -410,7 +408,7 @@ fn void a_held_loop_stops_a_hair_before_its_end() @test
 	foreach (row : expected)
 	{
 		CutActorPose pose = pose_of(&finer, 0, (float)row[0]);
-		test::@check(pose.strip == (int)row[1] && near(pose.clip_time, row[2], 1e-5), "at %s s strip %d at %s", row[0], pose.strip, pose.clip_time);
+		test::@check(pose.strip == (int)row[1] && math::is_approx(pose.clip_time, row[2], 1e-5), "at %s s strip %d at %s", row[0], pose.strip, pose.clip_time);
 	}
 	// The engine's test reads the held wave as 0.5: 0.999 wrapped by its 0.5 s.
 	test::@check(round2(pose_of(&finer, 0, 2.5f).clip_time % 0.5) == 0.5, "the held loop shows its last frame");
@@ -474,18 +472,56 @@ fn double[<3>] rotate(Quaternionf q, double[<3>] v) @local
 	return { v.x + w * tx + y * tz - z * ty, v.y + w * ty + z * tx - x * tz, v.z + w * tz + x * ty - y * tx };
 }
 
+// A hand-written cutscene file around one CUSTOM_cutscene body, and what else the document holds.
+fn String bad_cutscene(String body, String rest = "") @local
+{
+	return string::tformat(`{"asset":{"version":"2.0"},"nodes":[{"name":"hero"}],%s"extensions":{"CUSTOM_cutscene":%s}}`, rest, body);
+}
+
+fn fault read_refusal(String text, DString* why, char[] binary = {}) @local
+{
+	CutAnimation[] animations;
+	Cutscene? read = crig::parse_cutscene_text(mem, text, why, &animations, binary);
+	if (try read)
+	{
+		read.free(mem);
+		foreach (&a : animations) a.free(mem);
+		if (animations.len > 0) free(animations);
+		return {};
+	}
+	return @catch(read);
+}
+
 fn void bad_files_are_refused_with_the_reason() @test
 {
-	String[3][7] cases = {
-		{ "cutscene_wrong_version.gltf", "version", "CUSTOM_cutscene is version 3, and this reads versions 1 and 2" },
-		{ "cutscene_missing_path.gltf", "shape", "actors[0].strips[0].path is 3, and the file has 1 path" },
-		{ "turn_version1.gltf", "shape", "actors[0].strips[0].type 'turn' needs CUSTOM_cutscene version 2, and the file says version 1" },
-		{ "place_version1.gltf", "shape", "actors[0].place needs CUSTOM_cutscene version 2, and the file says version 1" },
-		{ "turn_no_actor.gltf", "shape", "actors[0].strips[0].actor is 'nobody', and this cutscene has no actor of that row" },
-		{ "nowhere.cutscene.glb", "io", "is not there" },
-		{ "../animations/quadruped.glb", "plain", "has no CUSTOM_cutscene extension" },
+	String hero = `{"row":"hero","node":0,`;
+	String[3][5] texts = {
+		{ bad_cutscene(`{"version":3,"name":"bad","duration":1}`), "version",
+			"CUSTOM_cutscene is version 3, and this reads versions 1 and 2" },
+		{ bad_cutscene(string::tformat(`{"version":1,"name":"bad","duration":2,"actors":[%s"strips":[{"type":"move","start":0,"end":2,"path":3}]}],"paths":[{"name":"p","length":1,"points":[[0,0,0],[1,0,0]]}]}`, hero)),
+			"shape", "actors[0].strips[0].path is 3, and the file has 1 path" },
+		{ bad_cutscene(string::tformat(`{"version":1,"name":"bad","duration":1,"actors":[%s"strips":[{"type":"turn","start":0,"end":1,"point":[0,0,1]}]}]}`, hero)),
+			"shape", "actors[0].strips[0].type 'turn' needs CUSTOM_cutscene version 2, and the file says version 1" },
+		{ bad_cutscene(string::tformat(`{"version":1,"name":"bad","duration":1,"actors":[%s"place":{"position":[0,0,0],"rotation":[0,0,0,1]},"strips":[]}]}`, hero)),
+			"shape", "actors[0].place needs CUSTOM_cutscene version 2, and the file says version 1" },
+		{ bad_cutscene(string::tformat(`{"version":2,"name":"bad","duration":1,"actors":[%s"strips":[{"type":"turn","start":0,"end":1,"actor":"nobody"}]}]}`, hero)),
+			"shape", "actors[0].strips[0].actor is 'nobody', and this cutscene has no actor of that row" },
 	};
-	foreach (row : cases)
+	foreach (i, row : texts)
+	{
+		DString why = dstring::new(mem);
+		defer why.free();
+		fault want = row[1] == "version" ? crig::CUTSCENE_UNKNOWN_VERSION : crig::CUTSCENE_MALFORMED;
+		fault kind = read_refusal(row[0], &why);
+		test::@check(kind == want && why.str_view().contains(row[2]), "case %d: %s, %s", i, kind, why);
+	}
+
+	String[3][2] files = {
+		{ "nowhere.cutscene.glb", "is not there", "" },
+		{ "../animations/quadruped.glb", "has no CUSTOM_cutscene extension", "" },
+	};
+	fault[2] wanted = { crig::CUTSCENE_UNREADABLE, crig::CUTSCENE_NOT_A_CUTSCENE };
+	foreach (i, row : files)
 	{
 		DString why = dstring::new(mem);
 		defer why.free();
@@ -496,16 +532,20 @@ fn void bad_files_are_refused_with_the_reason() @test
 			test::@check(false, "%s was read", row[0]);
 			continue;
 		}
-		fault kind = @catch(read);
-		fault want;
-		switch (row[1])
-		{
-			case "version": want = crig::CUTSCENE_UNKNOWN_VERSION;
-			case "shape": want = crig::CUTSCENE_MALFORMED;
-			case "io": want = crig::CUTSCENE_UNREADABLE;
-			default: want = crig::CUTSCENE_NOT_A_CUTSCENE;
-		}
-		test::@check(kind == want && why.str_view().contains(row[2]), "%s: %s, %s", row[0], kind, why);
+		test::@check(@catch(read) == wanted[i] && why.str_view().contains(row[1]), "%s: %s, %s", row[0], @catch(read), why);
+	}
+}
+
+fn void an_accessor_past_its_buffer_is_refused() @test
+{
+	char[32] binary;
+	String body = `{"version":2,"name":"bad","duration":1,"actors":[{"row":"hero","node":0,"strips":[]}]}`;
+	foreach (count : (String[]){ "-1", "4611686018427387904", "7" })
+	{
+		String rest = string::tformat(`"animations":[{"name":"a","channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}],"samplers":[{"input":0,"output":1}]}],"accessors":[{"componentType":5126,"type":"SCALAR","bufferView":0,"byteOffset":8,"count":%s},{"componentType":5126,"type":"VEC3","bufferView":0,"count":1}],"bufferViews":[{"buffer":0,"byteLength":32}],`, count);
+		DString why = dstring::new(mem);
+		defer why.free();
+		test::@check(read_refusal(bad_cutscene(body, rest), &why, &binary) == crig::CUTSCENE_MALFORMED, "a count of %s was read", count);
 	}
 }
 
@@ -647,10 +687,10 @@ fn void a_walk_path_is_sampled_evenly_with_exact_ends() @test
 	Vec3[4] line = { { 0, 0, 0 }, { 1, 0, 0 }, { 3, 0, 0 }, { 10, 0, 0 } };
 	WalkSamples straight = crig::sample_walk_path(mem, line[..]);
 	defer free(straight.points);
-	test::@check(near(straight.length, 10.0) && straight.points.len == 41, "10 m in 41 points: %s m, %d", straight.length, straight.points.len);
+	test::@check(math::is_approx(straight.length, 10.0, 1e-4) && straight.points.len == 41, "10 m in 41 points: %s m, %d", straight.length, straight.points.len);
 	foreach (usz i, p : straight.points)
 	{
-		test::@check(near(p.x, 0.25 * (double)i, 1e-4) && p.y == 0.0f && p.z == 0.0f, "point %d is %s", i, p);
+		test::@check(math::is_approx(p.x, 0.25 * (double)i, 1e-4) && p.y == 0.0f && p.z == 0.0f, "point %d is %s", i, p);
 	}
 	test::@check(straight.points[0] == line[0] && straight.points[^1] == line[^1], "the ends are the end knots");
 
@@ -658,7 +698,7 @@ fn void a_walk_path_is_sampled_evenly_with_exact_ends() @test
 	Vec3[2] longer = { { 0, 0, 0 }, { 0, 0, 10.1f } };
 	WalkSamples under = crig::sample_walk_path(mem, longer[..]);
 	defer free(under.points);
-	test::@check(under.points.len == 42 && near(under.points[1].z, 10.1 / 41.0), "42 points %s apart", under.points[1].z);
+	test::@check(under.points.len == 42 && math::is_approx(under.points[1].z, 10.1 / 41.0, 1e-4), "42 points %s apart", under.points[1].z);
 
 	// An L, with a height on its corner the curve carries.
 	Vec3[3] ell = { { 0, 0, 0 }, { 4, 1, 0 }, { 4, 0, 3 } };
@@ -692,7 +732,7 @@ fn void a_walk_path_is_sampled_evenly_with_exact_ends() @test
 		last = here;
 	}
 	double knots_polyline = math::sqrt(17.0) + math::sqrt(10.0);
-	test::@check(near(bent.length, measured, 1e-3) && bent.length >= knots_polyline && near(chords, measured, 5e-3),
+	test::@check(math::is_approx(bent.length, measured, 1e-3) && bent.length >= knots_polyline && math::is_approx(chords, measured, 5e-3),
 		"the L is %s m along the curve (measured %s, knots %s, chords %s)", bent.length, measured, knots_polyline, chords);
 	test::@check((double)bent.points.len == math::ceil(bent.length / 0.25) + 1, "%d points for %s m", bent.points.len, bent.length);
 
@@ -700,7 +740,7 @@ fn void a_walk_path_is_sampled_evenly_with_exact_ends() @test
 	Vec3[3] doubled = { { 0, 0, 0 }, { 0, 0, 0 }, { 2, 0, 0 } };
 	WalkSamples twice = crig::sample_walk_path(mem, doubled[..]);
 	defer free(twice.points);
-	test::@check(near(twice.length, 2.0) && twice.points.len == 9, "a repeated knot adds nothing: %s m", twice.length);
+	test::@check(math::is_approx(twice.length, 2.0, 1e-4) && twice.points.len == 9, "a repeated knot adds nothing: %s m", twice.length);
 	Vec3[1] alone = { { 1, 2, 3 } };
 	WalkSamples single = crig::sample_walk_path(mem, alone[..]);
 	defer free(single.points);

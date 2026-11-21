@@ -15,6 +15,7 @@ module crig_tests::pose_clipboard;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::math;
@@ -35,15 +36,6 @@ struct Figure
 	Quaternionf second;
 }
 
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
-}
-
 <*
  A biped with LeftUpLeg turned to `first` at 0 s and `second` at 0.5 s, every
  other joint keyed at rest at both, stopped and with the left leg selected.
@@ -52,9 +44,9 @@ fn bool Figure.open(&self)
 {
 	self.app = shared_app::open();
 	if (!self.app.apply_plan_named("biped")) return false;
-	self.left = dot_named(&self.app, LEFT);
-	self.right = dot_named(&self.app, RIGHT);
-	self.hips = dot_named(&self.app, HIPS);
+	self.left = helpers::dot_named(&self.app, LEFT);
+	self.right = helpers::dot_named(&self.app, RIGHT);
+	self.hips = helpers::dot_named(&self.app, HIPS);
 	if (self.left == 0 || self.right == 0 || self.hips == 0) return false;
 
 	// About Z rather than X: reflecting an X turn is the same turn, and a check
@@ -95,16 +87,6 @@ fn AnimKeyDot Figure.entry(&self, String joint, float time)
 	return self.app.clip(self.app.editing).entry_at(joint, time);
 }
 
-fn Vec3 turn_of(AnimKeyDot dot) => dot.axis.normalize() * dot.angle;
-
-fn Vec3 turn_of_quaternion(Quaternionf q)
-{
-	Vec3 axis;
-	float angle;
-	crig::axis_angle_of(q, &axis, &angle);
-	return axis * angle;
-}
-
 fn bool same_turn(Vec3 a, Vec3 b) => (a - b).length() < 1.0e-4f;
 
 fn bool has_key_at(crig::AppState* app, float time)
@@ -128,22 +110,22 @@ fn void a_selected_pose_pastes_the_same_joints_as_one_undo() @test
 	test::@check(f.app.anim_pose_clipboard.dots[0].joint_name == LEFT,
 		"the clipboard carries %s rather than the selected leg", f.app.anim_pose_clipboard.dots[0].joint_name);
 
-	Vec3 hips_before = turn_of(f.entry(HIPS, 0.5f));
+	Vec3 hips_before = helpers::turn_of(f.entry(HIPS, 0.5f));
 	f.app.edit_time = 0.5f;
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.paste_pose(), "the paste was refused");
 	test::@check(f.app.undo_stack.cursor == cursor + 1, "one paste was not one history entry");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.first)),
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), helpers::turn_of_quaternion(f.first)),
 		"the pasted leg does not hold the copied turn");
-	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), hips_before),
+	test::@check(same_turn(helpers::turn_of(f.entry(HIPS, 0.5f)), hips_before),
 		"pasting one leg rewrote the hips");
 	test::@check(f.app.animating && f.app.anim_paused,
 		"the pasted frame was not parked for viewing");
 
 	test::@check(f.app.undo(), "the paste would not undo");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.second)),
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), helpers::turn_of_quaternion(f.second)),
 		"undo did not restore the previous key");
-	test::@check(f.app.redo() && same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.first)),
+	test::@check(f.app.redo() && same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), helpers::turn_of_quaternion(f.first)),
 		"redo did not restore the paste");
 }
 
@@ -167,21 +149,6 @@ fn void a_paste_between_keys_makes_a_key_for_the_copied_joints_only() @test
 	test::@check(made.dots[0].channels == BOTH, "a pose entry keys both channels");
 }
 
-fn void nothing_selected_copies_the_whole_pose() @test
-{
-	Figure f;
-	bool opened = f.open();
-	defer f.close();
-	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
-	io::printn("an empty selection copies every named joint");
-
-	f.app.select(0);
-	usz named;
-	foreach (dot : f.app.doc.dots.array_view()) if (dot.name.len > 0) named++;
-	test::@check(f.app.copy_pose() == named, "%d joints copied of %d named",
-		f.app.anim_pose_clipboard.dots.len, named);
-}
-
 fn void a_mirrored_paste_lands_on_the_twin_reflected() @test
 {
 	Figure f;
@@ -203,21 +170,21 @@ fn void a_mirrored_paste_lands_on_the_twin_reflected() @test
 	f.app.edit_time = 0.0f;
 	test::@check(f.app.copy_pose() == 1, "copy failed");
 
-	Vec3 left_before = turn_of(f.entry(LEFT, 0.5f));
+	Vec3 left_before = helpers::turn_of(f.entry(LEFT, 0.5f));
 	f.app.edit_time = 0.5f;
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.paste_pose(flipped: true), "the mirrored paste was refused");
 	test::@check(f.app.undo_stack.cursor == cursor + 1, "one mirrored paste was not one history entry");
 
 	AnimKeyDot right = f.entry(RIGHT, 0.5f);
-	Vec3 want = turn_of_quaternion(f.first);
+	Vec3 want = helpers::turn_of_quaternion(f.first);
 	want = { want.x, -want.y, -want.z };
-	test::@check(same_turn(turn_of(right), want),
+	test::@check(same_turn(helpers::turn_of(right), want),
 		"the right leg turns (%.3f, %.3f, %.3f); the reflection asks for (%.3f, %.3f, %.3f)",
-		turn_of(right).x, turn_of(right).y, turn_of(right).z, want.x, want.y, want.z);
+		helpers::turn_of(right).x, helpers::turn_of(right).y, helpers::turn_of(right).z, want.x, want.y, want.z);
 	test::@check(math::abs(right.move.x + 0.1f) < 1.0e-4f && math::abs(right.move.y - 0.05f) < 1.0e-4f,
 		"the slide came through as (%.3f, %.3f, %.3f); x alone should flip", right.move.x, right.move.y, right.move.z);
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), left_before),
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), left_before),
 		"a mirrored paste of the left leg rewrote the left leg");
 }
 
@@ -240,9 +207,9 @@ fn void a_centre_joint_is_reflected_in_place() @test
 	test::@check(f.app.copy_pose() == 1, "copy failed");
 	f.app.edit_time = 0.5f;
 	test::@check(f.app.paste_pose(flipped: true), "the mirrored paste was refused");
-	Vec3 want = turn_of_quaternion(lean);
+	Vec3 want = helpers::turn_of_quaternion(lean);
 	want = { want.x, -want.y, -want.z };
-	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), want),
+	test::@check(same_turn(helpers::turn_of(f.entry(HIPS, 0.5f)), want),
 		"the hips did not lean the other way");
 }
 
@@ -267,16 +234,16 @@ fn void mirroring_both_sides_swaps_them_as_one_edit() @test
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.mirror_pose(), "the mirror was refused");
 	test::@check(f.app.undo_stack.cursor == cursor + 1, "one mirror was not one history entry");
-	Vec3 want_left = turn_of_quaternion(right_turn);
+	Vec3 want_left = helpers::turn_of_quaternion(right_turn);
 	want_left = { want_left.x, -want_left.y, -want_left.z };
-	Vec3 want_right = turn_of_quaternion(f.first);
+	Vec3 want_right = helpers::turn_of_quaternion(f.first);
 	want_right = { want_right.x, -want_right.y, -want_right.z };
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.0f)), want_left), "the left leg did not take the right's reflection");
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.0f)), want_right), "the right leg did not take the left's reflection");
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.0f)), want_left), "the left leg did not take the right's reflection");
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.0f)), want_right), "the right leg did not take the left's reflection");
 	test::@check(f.app.anim_pose_clipboard.dots.len == 0, "mirroring in place wrote the clipboard");
 
-	test::@check(f.app.undo() && same_turn(turn_of(f.entry(LEFT, 0.0f)), turn_of_quaternion(f.first))
-		&& same_turn(turn_of(f.entry(RIGHT, 0.0f)), turn_of_quaternion(right_turn)),
+	test::@check(f.app.undo() && same_turn(helpers::turn_of(f.entry(LEFT, 0.0f)), helpers::turn_of_quaternion(f.first))
+		&& same_turn(helpers::turn_of(f.entry(RIGHT, 0.0f)), helpers::turn_of_quaternion(right_turn)),
 		"one undo did not put both legs back");
 }
 
@@ -289,10 +256,10 @@ fn void mirroring_one_side_writes_only_its_twin() @test
 	io::printn("Mirror pose with the left leg selected writes the right and leaves the left");
 
 	test::@check(f.app.mirror_pose(), "the mirror was refused");
-	Vec3 want = turn_of_quaternion(f.first);
+	Vec3 want = helpers::turn_of_quaternion(f.first);
 	want = { want.x, -want.y, -want.z };
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.0f)), want), "the right leg did not take the reflection");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.0f)), turn_of_quaternion(f.first)), "the left leg was rewritten");
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.0f)), want), "the right leg did not take the reflection");
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.0f)), helpers::turn_of_quaternion(f.first)), "the left leg was rewritten");
 }
 
 fn void pasting_into_a_draft_keeps_its_other_pending_changes() @test
@@ -313,18 +280,18 @@ fn void pasting_into_a_draft_keeps_its_other_pending_changes() @test
 	test::@check(f.app.paste_pose(), "the paste was refused over a draft");
 	test::@check(f.app.pose_edit_active, "the paste closed the draft");
 	test::@check(f.app.pose_edit_pending, "the pending hips lean was forgotten");
-	test::@check(same_turn(turn_of_quaternion(f.app.working_pose(f.hips).rotation), turn_of_quaternion(lean)),
+	test::@check(same_turn(helpers::turn_of_quaternion(f.app.working_pose(f.hips).rotation), helpers::turn_of_quaternion(lean)),
 		"the draft's hips lean was overwritten");
-	test::@check(same_turn(turn_of_quaternion(f.app.working_pose(f.left).rotation), turn_of_quaternion(f.first)),
+	test::@check(same_turn(helpers::turn_of_quaternion(f.app.working_pose(f.left).rotation), helpers::turn_of_quaternion(f.first)),
 		"the draft does not show the pasted leg");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.first)),
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), helpers::turn_of_quaternion(f.first)),
 		"the clip did not take the pasted leg");
-	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), (Vec3){}),
+	test::@check(same_turn(helpers::turn_of(f.entry(HIPS, 0.5f)), (Vec3){}),
 		"the pending hips lean was keyed by the paste");
 
 	// The rest of the draft still keys as it would have.
 	test::@check(f.app.key_pose_edit(), "the draft would not key afterwards");
-	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), turn_of_quaternion(lean)),
+	test::@check(same_turn(helpers::turn_of(f.entry(HIPS, 0.5f)), helpers::turn_of_quaternion(lean)),
 		"Save pose lost the lean that was pending across the paste");
 }
 
@@ -340,8 +307,11 @@ fn void the_two_clipboards_do_not_disturb_each_other() @test
 	test::@check(f.app.copy_animation_key(f.clip, 0.5f), "the key copy failed");
 	test::@check(f.app.anim_pose_clipboard.dots.len == 1, "copying a key emptied the pose clipboard");
 	test::@check(f.app.anim_key_clipboard.keyframes.len == 1, "the key clipboard is empty");
+	// An empty selection copies every named joint.
 	f.app.select(0);
-	test::@check(f.app.copy_pose() > 1, "the whole-pose copy failed");
+	usz named;
+	foreach (dot : f.app.doc.dots.array_view()) if (dot.name.len > 0) named++;
+	test::@check(f.app.copy_pose() == named, "%d joints copied of %d named", f.app.anim_pose_clipboard.dots.len, named);
 	test::@check(f.app.anim_key_clipboard.keyframes.len == 1, "copying a pose emptied the key clipboard");
 }
 
@@ -358,9 +328,9 @@ fn void a_pose_crosses_into_another_clip() @test
 	f.app.editing = target;
 	f.app.edit_time = 0.0f;
 	test::@check(f.app.paste_pose(), "the paste into the other clip was refused");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.0f)), turn_of_quaternion(f.first)),
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.0f)), helpers::turn_of_quaternion(f.first)),
 		"the target clip did not take the pasted leg");
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.0f)), (Vec3){}),
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.0f)), (Vec3){}),
 		"the target's other leg left rest");
 }
 
@@ -425,7 +395,7 @@ fn void mirroring_an_aimed_side_reflects_what_is_shown() @test
 		for (int up = parent; up >= 0; up = view.skeleton.parents[up]) if ((usz)up == thigh) below = true;
 		if (!below) continue;
 		crig::Dot* dot = app.doc.find(view.dot_ids[joint]);
-		uint twin = dot_named(app, crig::mirror_name(tmem, dot.name));
+		uint twin = helpers::dot_named(app, crig::mirror_name(tmem, dot.name));
 		if (twin == 0) continue;
 		Vec3 left = app.dot_position(*dot) - left_root;
 		Vec3 right = app.dot_position(*app.doc.find(twin)) - right_root;
@@ -441,7 +411,7 @@ fn void mirroring_an_aimed_side_reflects_what_is_shown() @test
 // The turn each key gives the left leg, reflected: what the right should hold.
 fn Vec3 reflected_turn(Quaternionf turn)
 {
-	Vec3 got = turn_of_quaternion(turn);
+	Vec3 got = helpers::turn_of_quaternion(turn);
 	return { got.x, -got.y, -got.z };
 }
 
@@ -459,22 +429,22 @@ fn void whole_clip_mirrors_onto_the_twin_at_every_key() @test
 	io::printn("Mirror pose on Whole clip writes the right leg at both keys");
 
 	f.app.key_reach = WHOLE_CLIP;
-	Vec3 hips_before = turn_of(f.entry(HIPS, 0.5f));
-	Vec3 right_before = turn_of(f.entry(RIGHT, 0.5f));
+	Vec3 hips_before = helpers::turn_of(f.entry(HIPS, 0.5f));
+	Vec3 right_before = helpers::turn_of(f.entry(RIGHT, 0.5f));
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.mirror_pose(), "the mirror was refused");
 	test::@check(f.app.undo_stack.cursor == cursor + 1, "mirroring the clip was not one history entry");
 	Quaternionf[2] turns = { f.first, f.second };
 	foreach (usz i, time : (float[2]){ 0.0f, 0.5f })
 	{
-		test::@check(same_turn(turn_of(f.entry(LEFT, time)), turn_of_quaternion(turns[i])), "the left leg was rewritten at %f", time);
-		test::@check(same_turn(turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
+		test::@check(same_turn(helpers::turn_of(f.entry(LEFT, time)), helpers::turn_of_quaternion(turns[i])), "the left leg was rewritten at %f", time);
+		test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
 			"the right leg at %f is not the left's reflection", time);
 	}
-	test::@check(same_turn(turn_of(f.entry(HIPS, 0.5f)), hips_before), "mirroring a leg rewrote the hips");
+	test::@check(same_turn(helpers::turn_of(f.entry(HIPS, 0.5f)), hips_before), "mirroring a leg rewrote the hips");
 	test::@check(f.app.clip(f.app.editing).keyframes.len == 2, "the mirror added a key");
 
-	test::@check(f.app.undo() && same_turn(turn_of(f.entry(RIGHT, 0.5f)), right_before),
+	test::@check(f.app.undo() && same_turn(helpers::turn_of(f.entry(RIGHT, 0.5f)), right_before),
 		"one undo did not put the right leg back");
 }
 
@@ -498,12 +468,12 @@ fn void selected_keys_mirror_onto_those_keys_alone() @test
 	f.app.select(f.left);
 	f.app.key_reach = SELECTED_KEYS;
 	test::@check(f.app.select_animation_keys_between(f.app.editing, 0.0f, 0.5f) == 2, "the two keys were not picked");
-	Vec3 outside = turn_of(f.entry(RIGHT, 0.75f));
+	Vec3 outside = helpers::turn_of(f.entry(RIGHT, 0.75f));
 
 	test::@check(f.app.mirror_pose(), "the mirror was refused");
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.0f)), reflected_turn(f.first)), "the first picked key was not mirrored");
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.5f)), reflected_turn(f.second)), "the second picked key was not mirrored");
-	test::@check(same_turn(turn_of(f.entry(RIGHT, 0.75f)), outside), "a key outside the pick was mirrored");
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.0f)), reflected_turn(f.first)), "the first picked key was not mirrored");
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.5f)), reflected_turn(f.second)), "the second picked key was not mirrored");
+	test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, 0.75f)), outside), "a key outside the pick was mirrored");
 	test::@check(f.app.animation_key_selection_count(f.app.editing) == 2, "the pick did not stay");
 }
 
@@ -527,21 +497,21 @@ fn void an_unkeyed_turn_is_spread_before_it_is_mirrored() @test
 	f.app.edit_time = 0.0f;
 	test::@check(f.app.set_working_pose(f.left, f.first.mul(extra).normalize(), {}), "the left leg would not turn");
 	f.app.pose_edit_pending = true;
-	Vec3 right_before = turn_of(f.entry(RIGHT, 0.5f));
+	Vec3 right_before = helpers::turn_of(f.entry(RIGHT, 0.5f));
 
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.mirror_pose(), "the mirror was refused");
 	Quaternionf[2] turns = { f.first.mul(extra).normalize(), f.second.mul(extra).normalize() };
 	foreach (usz i, time : (float[2]){ 0.0f, 0.5f })
 	{
-		test::@check(same_turn(turn_of(f.entry(LEFT, time)), turn_of_quaternion(turns[i])), "the left leg at %f lacks the turn", time);
-		test::@check(same_turn(turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
+		test::@check(same_turn(helpers::turn_of(f.entry(LEFT, time)), helpers::turn_of_quaternion(turns[i])), "the left leg at %f lacks the turn", time);
+		test::@check(same_turn(helpers::turn_of(f.entry(RIGHT, time)), reflected_turn(turns[i])),
 			"the right leg at %f is not the turned left's reflection", time);
 	}
 	test::@check(!f.app.pose_edit_pending, "the keyed turn was left pending");
 
 	// The keying and the mirror are two edits chained into one step.
 	test::@check(f.app.undo() && f.app.undo_stack.cursor == cursor, "keying and mirroring were not one undo step");
-	test::@check(same_turn(turn_of(f.entry(LEFT, 0.5f)), turn_of_quaternion(f.second))
-		&& same_turn(turn_of(f.entry(RIGHT, 0.5f)), right_before), "one undo did not put both legs back");
+	test::@check(same_turn(helpers::turn_of(f.entry(LEFT, 0.5f)), helpers::turn_of_quaternion(f.second))
+		&& same_turn(helpers::turn_of(f.entry(RIGHT, 0.5f)), right_before), "one undo did not put both legs back");
 }

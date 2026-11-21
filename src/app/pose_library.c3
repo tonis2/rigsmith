@@ -41,21 +41,16 @@ fn void AppState.set_poses_recorded(&self, SavedPose[] next)
 fn sz AppState.store_pose(&self, SavedPose made)
 {
 	sz at = self.saved_pose_named(made.name);
-	SavedPose[] next;
+	SavedPose[] next = copy_saved_poses(mem, self.doc.poses);
 	if (at >= 0)
 	{
-		next = copy_saved_poses(mem, self.doc.poses);
 		next[at].free(mem);
 		next[at] = made;
 	}
 	else
 	{
-		at = (sz)self.doc.poses.len;
-		next = alloc::new_array(mem, SavedPose, self.doc.poses.len + 1);
-		SavedPose[] held = copy_saved_poses(mem, self.doc.poses);
-		foreach (usz i, entry : held) next[i] = entry;
-		if (held.len > 0) alloc::free(mem, held);
-		next[at] = made;
+		at = (sz)next.len;
+		slice_push(mem, &next, made);
 	}
 	self.set_poses_recorded(next);
 	return at;
@@ -135,17 +130,10 @@ fn bool AppState.rename_saved_pose(&self, usz index, String name)
 fn bool AppState.delete_saved_pose(&self, usz index)
 {
 	if (index >= self.doc.poses.len) return false;
-	SavedPose[] held = copy_saved_poses(mem, self.doc.poses);
-	SavedPose[] next;
-	if (held.len > 1)
-	{
-		next = alloc::new_array(mem, SavedPose, held.len - 1);
-		usz write;
-		foreach (usz i, entry : held) if (i != index) next[write++] = entry;
-	}
-	String gone = held[index].name.tcopy();
-	held[index].free(mem);
-	alloc::free(mem, held);
+	SavedPose[] next = copy_saved_poses(mem, self.doc.poses);
+	String gone = next[index].name.tcopy();
+	next[index].free(mem);
+	slice_remove_at(mem, &next, index);
 	self.set_poses_recorded(next);
 	if (self.pose_library_row >= self.doc.poses.len && self.pose_library_row > 0) self.pose_library_row--;
 	self.@notice("Deleted the pose \"%s\". Ctrl+Z brings it back.", gone);

@@ -145,7 +145,7 @@ fn bool[] rig_arm_wrists(Allocator allocator, rig::Skeleton* skeleton, String[] 
 		{
 			if (digit[j] || level.rests_low(skeleton, j)) continue;
 			String name = j < names.len ? names[j] : "";
-			if (digit_children[j] < 2 && !name_has(name, "hand") && !name_has(name, "wrist")) continue;
+			if (digit_children[j] < 2 && !contains_fold(name, "hand") && !contains_fold(name, "wrist")) continue;
 			if (arms > 0)
 			{
 				bool in_arm = false;

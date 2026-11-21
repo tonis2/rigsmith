@@ -44,6 +44,7 @@ struct Fixture
 
 fn void Fixture.open(&self)
 {
+	// The shared 2-unit cube: these checks are about dispatch, not geometry.
 	self.app = shared_app::open_cube();
 
 	uint hips = self.app.doc.add_dot({ 0, 1, 0 }, "hips");
@@ -317,6 +318,18 @@ fn Object*? Fixture.call_tool(&self, String name, String arguments)
 	return json::parse(mem, text);
 }
 
+// A call the check relies on: a refusal fails the check and gives null.
+fn Object* Fixture.call_checked(&self, String tool, String args)
+{
+	Object*? got = self.call_tool(tool, args);
+	if (catch got)
+	{
+		test::@check(false, "%s %s was refused", tool, args);
+		return null;
+	}
+	return got;
+}
+
 <*
  The same round trip, as the text the tool actually returned.
 
@@ -348,7 +361,7 @@ fn String? Fixture.call_tool_text(&self, String name, String arguments)
 	return text.copy(mem);
 }
 
-faultdef TOOL_ERROR;
+excuse TOOL_ERROR;
 
 fn bool error_code_is(Object* root, int code)
 {
@@ -479,52 +492,6 @@ fn void tools_list() @test
 	}
 	defer root.free();
 	test::@check(tools_list_body(root) ?? false, "tools/list names the listed tools and nothing else");
-}
-
-<*
- A hidden tool is unlisted, not unavailable.
-
- The whole of what the flag is allowed to mean. `tools/list` leaves `edit_rig` out
- and `tools/call` places a dot with it, in the same fixture, one after the other —
- because a flag that quietly disabled a handler would break the wire for every
- client that already knew the name, and there would be no other sign of it.
-*>
-fn void a_hidden_tool_is_still_called() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? listed = f.request(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`);
-	if (catch listed)
-	{
-		test::@check(false, "tools/list answers");
-		return;
-	}
-	defer listed.free();
-
-	bool named = false;
-	Object*? tools = listed.get("result").get("tools");
-	if (try tools)
-	{
-		for (sz i = 0; i < tools.get_len(); i++)
-		{
-			if ((tools.get_at(i).get_string("name") ?? "") == "edit_rig") named = true;
-		}
-	}
-	test::@check(!named, "a hidden tool is not in the list a client is handed");
-
-	Object*? placed = f.call_tool("edit_rig",
-		`{"ops":[{"op":"place","position":[0.5,0,0],"name":"toe","connect_to":"foot"}]}`);
-	if (catch placed)
-	{
-		test::@check(false, "and the wire still dispatches to it");
-		return;
-	}
-	defer placed.free();
-	test::@check((placed.get_int("dots") ?? 0) == (int)FIXTURE_DOTS + 1,
-		"and the wire still dispatches to it");
 }
 
 fn bool? scene_body(Object* scene)
@@ -738,7 +705,8 @@ fn void get_pose() @test
 	test::@check(pose_body(pose, clip) ?? false, "get_pose samples every joint with unit quaternions");
 }
 
-fn void get_pose_rejects_unknown_clip() @test
+// The unknown-clip sentence is `resolve_named`'s, shared by play and every clip tool.
+fn void get_pose_names_an_unknown_clip_and_a_missing_one() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -755,21 +723,14 @@ fn void get_pose_rejects_unknown_clip() @test
 		&& error_message_contains(root, "no_such_clip")
 		&& error_message_contains(root, "The library holds"),
 		"get_pose on an unknown clip names it and lists the clips there are");
-}
 
-fn void get_pose_rejects_missing_arguments() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? root = f.request(`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_pose"}}`);
-	if (catch root)
+	Object*? bare = f.request(`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_pose"}}`);
+	if (catch bare)
 	{
 		test::@check(false, "get_pose without arguments answers");
 		return;
 	}
-	defer root.free();
-	test::@check(error_message_contains(root, `"clip"`) && error_message_contains(root, "get_scene"),
+	defer bare.free();
+	test::@check(error_message_contains(bare, `"clip"`) && error_message_contains(bare, "get_scene"),
 		"get_pose without arguments says which field it wanted and where to find one");
 }

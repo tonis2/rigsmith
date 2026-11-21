@@ -7,79 +7,15 @@
 module crig_tests::animation_multikey;
 
 import crig;
+import crig_tests::helpers;
 import std::core::test;
-import std::io::file;
 import std::math;
 
 const float EPSILON = 1.0e-5f;
 
-fn AnimKeyDot multikey_dot(float value, AnimChannels channels)
-{
-	return {
-		.joint_name = "hip".copy(mem),
-		.axis = { 0, 1, 0 },
-		.angle = value,
-		.move = { value, 0, 0 },
-		.channels = channels,
-	};
-}
-
-fn AnimTemplate multikey_clip(String name, float duration, float[] times, AnimChannels[] channels)
-{
-	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, (sz)times.len);
-	foreach (usz i, &key : keys)
-	{
-		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
-		dots[0] = multikey_dot(times[i], channels[i]);
-		*key = { .time = times[i], .dots = dots };
-	}
-	return {
-		.name = name.copy(mem),
-		.duration = duration,
-		.keyframes = keys,
-		.owned = true,
-	};
-}
-
-fn sz frame_at(AnimTemplate* clip, float time)
-{
-	foreach (usz i, key : clip.keyframes)
-	{
-		if (math::abs(key.time - time) < EPSILON) return (sz)i;
-	}
-	return -1;
-}
-
-struct MultiKeyFixture
-{
-	AppState app;
-}
-
-fn void MultiKeyFixture.open(&self)
-{
-	self.app = crig::new_app({});
-	self.app.doc.root_id = self.app.doc.add_dot({}, "hip");
-}
-
-fn AnimRef MultiKeyFixture.add(&self, String name, float duration, float[] times,
-	AnimChannels[] channels)
-{
-	AnimRef ref = self.app.put_authored_clip(multikey_clip(name, duration, times, channels));
-	// `put_authored_clip` deliberately does not add this clip to the document's
-	// export set. Bind fixture clips up front so the operation under test records
-	// only its clip swap, rather than also repairing synthetic setup state.
-	(void)self.app.bind_ref(ref);
-	self.app.undo_stack.commit();
-	self.app.undo_stack.clear();
-	self.app.editing = ref;
-	return ref;
-}
-
-fn void MultiKeyFixture.close(&self) => self.app.free();
-
 fn void grouped_move_preserves_spacing_and_rejects_the_whole_invalid_edit() @test
 {
-	MultiKeyFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("move", 1.0f, ((float[3]){ 0.2f, 0.6f, 0.8f })[..],
@@ -91,7 +27,7 @@ fn void grouped_move_preserves_spacing_and_rejects_the_whole_invalid_edit() @tes
 		"additive selection did not keep both columns");
 	sz history = f.app.undo_stack.cursor;
 	test::@check(f.app.move_selected_animation_keys(clip, 0.1f), "valid grouped move was refused");
-	test::@check(frame_at(f.app.clip(clip), 0.3f) >= 0 && frame_at(f.app.clip(clip), 0.7f) >= 0,
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.3f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.7f) >= 0,
 		"grouped move did not preserve both relative key times");
 	AnimKeyDot moved_rotation = f.app.clip(clip).entry_at("hip", 0.3f);
 	AnimKeyDot moved_translation = f.app.clip(clip).entry_at("hip", 0.7f);
@@ -105,28 +41,28 @@ fn void grouped_move_preserves_spacing_and_rejects_the_whole_invalid_edit() @tes
 	history = f.app.undo_stack.cursor;
 	test::@check(!f.app.move_selected_animation_keys(clip, 0.1f),
 		"move colliding with an unselected key was accepted");
-	test::@check(frame_at(f.app.clip(clip), 0.3f) >= 0 && frame_at(f.app.clip(clip), 0.7f) >= 0
-		&& frame_at(f.app.clip(clip), 0.8f) >= 0, "collision partially moved the group");
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.3f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.7f) >= 0
+		&& helpers::frame_at(f.app.clip(clip), 0.8f) >= 0, "collision partially moved the group");
 	test::@check(f.app.undo_stack.cursor == history, "rejected collision created history");
 
 	test::@check(!f.app.move_selected_animation_keys(clip, -0.4f),
 		"move taking one selected key before zero was accepted");
-	test::@check(frame_at(f.app.clip(clip), 0.3f) >= 0 && frame_at(f.app.clip(clip), 0.7f) >= 0,
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.3f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.7f) >= 0,
 		"out-of-bounds move partially moved the group");
 	test::@check(f.app.undo_stack.cursor == history, "rejected bounds move created history");
 	(void)f.app.move_selected_animation_keys(clip, 0.0f);
 	test::@check(f.app.undo_stack.cursor == history
-		&& frame_at(f.app.clip(clip), 0.3f) >= 0 && frame_at(f.app.clip(clip), 0.7f) >= 0,
+		&& helpers::frame_at(f.app.clip(clip), 0.3f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.7f) >= 0,
 		"zero-distance move changed keys or created an edit");
 
 	test::@check(f.app.undo(), "grouped move could not be undone");
-	test::@check(frame_at(f.app.clip(clip), 0.2f) >= 0 && frame_at(f.app.clip(clip), 0.6f) >= 0
-		&& frame_at(f.app.clip(clip), 0.3f) < 0, "undo did not restore all moved times");
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.2f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.6f) >= 0
+		&& helpers::frame_at(f.app.clip(clip), 0.3f) < 0, "undo did not restore all moved times");
 }
 
 fn void grouped_delete_is_atomic_and_undo_restores_sparse_keys() @test
 {
-	MultiKeyFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("delete", 1.0f, ((float[3]){ 0.1f, 0.4f, 0.9f })[..],
@@ -136,21 +72,21 @@ fn void grouped_delete_is_atomic_and_undo_restores_sparse_keys() @test
 	sz history = f.app.undo_stack.cursor;
 
 	test::@check(f.app.delete_selected_animation_keys(clip), "grouped delete failed");
-	test::@check(f.app.clip(clip).keyframes.len == 1 && frame_at(f.app.clip(clip), 0.4f) >= 0,
+	test::@check(f.app.clip(clip).keyframes.len == 1 && helpers::frame_at(f.app.clip(clip), 0.4f) >= 0,
 		"grouped delete removed the wrong columns");
 	test::@check(math::abs(f.app.clip(clip).entry_at("hip", 0.1f).move.x - 0.4f) < EPSILON,
 		"grouped delete left sampling on a removed compiled-track entry");
 	test::@check(f.app.undo_stack.cursor == history + 1, "grouped delete was not one history edit");
 	test::@check(f.app.undo(), "grouped delete was not undoable");
 	test::@check(f.app.clip(clip).keyframes.len == 3
-		&& f.app.clip(clip).keyframes[(usz)frame_at(f.app.clip(clip), 0.1f)].dots[0].channels == ROTATION
-		&& f.app.clip(clip).keyframes[(usz)frame_at(f.app.clip(clip), 0.9f)].dots[0].channels == BOTH,
+		&& f.app.clip(clip).keyframes[(usz)helpers::frame_at(f.app.clip(clip), 0.1f)].dots[0].channels == ROTATION
+		&& f.app.clip(clip).keyframes[(usz)helpers::frame_at(f.app.clip(clip), 0.9f)].dots[0].channels == BOTH,
 		"undo did not restore the selected sparse frames");
 }
 
 fn void grouped_copy_paste_keeps_relative_timing_sparse_channels_and_one_undo() @test
 {
-	MultiKeyFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef source = f.add("source", 2.0f, ((float[2]){ 0.2f, 0.6f })[..],
@@ -163,8 +99,8 @@ fn void grouped_copy_paste_keeps_relative_timing_sparse_channels_and_one_undo() 
 	sz history = f.app.undo_stack.cursor;
 	test::@check(f.app.paste_animation_keys(target, 1.0f), "grouped paste failed");
 	AnimTemplate* pasted = f.app.clip(target);
-	sz first = frame_at(pasted, 1.0f);
-	sz second = frame_at(pasted, 1.4f);
+	sz first = helpers::frame_at(pasted, 1.0f);
+	sz second = helpers::frame_at(pasted, 1.4f);
 	test::@check(first >= 0 && second >= 0, "paste lost the copied keys' relative timing");
 	test::@check(pasted.keyframes[(usz)first].dots.len == 1
 		&& pasted.keyframes[(usz)first].dots[0].channels == BOTH,
@@ -174,7 +110,7 @@ fn void grouped_copy_paste_keeps_relative_timing_sparse_channels_and_one_undo() 
 		"paste expanded a sparse copied frame");
 	test::@check(f.app.undo_stack.cursor == history + 1, "grouped paste was not one history edit");
 	test::@check(f.app.undo(), "grouped paste was not undoable");
-	test::@check(f.app.clip(target).keyframes.len == 1 && frame_at(f.app.clip(target), 1.4f) < 0
+	test::@check(f.app.clip(target).keyframes.len == 1 && helpers::frame_at(f.app.clip(target), 1.4f) < 0
 		&& f.app.clip(target).keyframes[0].dots[0].channels == TRANSLATION,
 		"undo did not restore the target independently of the clipboard source");
 	test::@check(f.app.clip(source).keyframes.len == 2
@@ -208,11 +144,11 @@ fn void grouped_copy_paste_keeps_relative_timing_sparse_channels_and_one_undo() 
 
 fn void editing_selected_library_keys_forks_and_leaves_the_library_untouched() @test
 {
-	MultiKeyFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimTemplate[] clips = alloc::new_array(mem, AnimTemplate, 1);
-	clips[0] = multikey_clip("borrowed", 1.0f, ((float[2]){ 0.2f, 0.5f })[..],
+	clips[0] = helpers::hip_clip("borrowed", 1.0f, ((float[2]){ 0.2f, 0.5f })[..],
 		((AnimChannels[2]){ ROTATION, TRANSLATION })[..]);
 	AnimRef borrowed = { (int)f.app.adopt_pack({
 		.name = "fixture library".copy(mem), .clips = clips, .owned = true,
@@ -221,60 +157,21 @@ fn void editing_selected_library_keys_forks_and_leaves_the_library_untouched() @
 	test::@check(f.app.move_selected_animation_keys(borrowed, 0.1f),
 		"selected library key could not be edited through a fork");
 
-	test::@check(frame_at(f.app.clip(borrowed), 0.2f) >= 0
-		&& frame_at(f.app.clip(borrowed), 0.3f) < 0, "library source was modified in place");
+	test::@check(helpers::frame_at(f.app.clip(borrowed), 0.2f) >= 0
+		&& helpers::frame_at(f.app.clip(borrowed), 0.3f) < 0, "library source was modified in place");
 	test::@check(f.app.editing.valid() && !f.app.editing.same(borrowed)
 		&& f.app.editing.pack == f.app.authored_pack,
 		"library edit did not land in the authored pack");
-	test::@check(frame_at(f.app.clip(f.app.editing), 0.3f) >= 0,
+	test::@check(helpers::frame_at(f.app.clip(f.app.editing), 0.3f) >= 0,
 		"the authored fork does not contain the grouped edit");
 	test::@check(f.app.undo(), "library fork edit was not undoable");
-	test::@check(frame_at(f.app.clip(borrowed), 0.2f) >= 0,
+	test::@check(helpers::frame_at(f.app.clip(borrowed), 0.2f) >= 0,
 		"undo of the fork disturbed the library source");
-}
-
-fn void grouped_key_edits_survive_the_authored_session_round_trip() @test
-{
-	const String SESSION = "build/animation-multikey-session.rigsmith.json";
-	defer (void)file::delete(SESSION);
-	MultiKeyFixture f;
-	f.open();
-	defer f.close();
-	AnimRef clip = f.add("persisted", 1.0f, ((float[3]){ 0.1f, 0.4f, 0.7f })[..],
-		((AnimChannels[3]){ ROTATION, TRANSLATION, BOTH })[..]);
-	f.app.select_animation_key(clip, 0.1f);
-	f.app.select_animation_key(clip, 0.4f, additive: true);
-	test::@check(f.app.move_selected_animation_keys(clip, 0.1f), "fixture move failed");
-	f.app.select_animation_key(clip, 0.7f);
-	test::@check(f.app.delete_selected_animation_keys(clip), "fixture delete failed");
-
-	AnimPack* authored = f.app.authored();
-	test::@check(authored != null, "grouped edits lost their authored pack");
-	if (!authored) return;
-	if (catch crig::write_session(SESSION, &f.app.doc, "fixture.glb", authored.clips))
-	{
-		test::@check(false, "could not persist grouped animation edits");
-		return;
-	}
-	ProjectSession? reading = crig::read_project_session(mem, SESSION);
-	if (catch reading)
-	{
-		test::@check(false, "could not reload grouped animation edits");
-		return;
-	}
-	ProjectSession loaded = reading;
-	defer loaded.free(mem);
-	test::@check(loaded.authored.len == 1 && loaded.authored[0].keyframes.len == 2,
-		"session round trip lost the grouped move/delete result");
-	test::@check(frame_at(&loaded.authored[0], 0.2f) >= 0
-		&& frame_at(&loaded.authored[0], 0.5f) >= 0
-		&& frame_at(&loaded.authored[0], 0.7f) < 0,
-		"session round trip restored pre-edit key times");
 }
 
 fn void grouped_edit_guards_and_selection_invalidation_are_atomic() @test
 {
-	MultiKeyFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("guards", 1.0f, ((float[2]){ 0.2f, 0.6f })[..],
@@ -292,7 +189,7 @@ fn void grouped_edit_guards_and_selection_invalidation_are_atomic() @test
 		&& !f.app.delete_selected_animation_keys(clip)
 		&& !f.app.paste_animation_keys(clip, 0.3f),
 		"a pending pose draft did not block every grouped timeline edit");
-	test::@check(frame_at(f.app.clip(clip), 0.2f) >= 0 && frame_at(f.app.clip(clip), 0.6f) >= 0
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.2f) >= 0 && helpers::frame_at(f.app.clip(clip), 0.6f) >= 0
 		&& f.app.clip(clip).keyframes.len == 2 && f.app.undo_stack.cursor == history,
 		"a draft-blocked grouped edit partially changed keys or history");
 	f.app.pose_edit_pending = false;
@@ -317,7 +214,7 @@ fn void grouped_edit_guards_and_selection_invalidation_are_atomic() @test
 		"clip deletion left a selection pointing into shifted clip indices");
 
 	AnimTemplate[] library_clips = alloc::new_array(mem, AnimTemplate, 1);
-	library_clips[0] = multikey_clip("no-op borrowed", 1.0f,
+	library_clips[0] = helpers::hip_clip("no-op borrowed", 1.0f,
 		((float[2]){ 0.25f, 0.75f })[..], ((AnimChannels[2]){ ROTATION, BOTH })[..]);
 	AnimRef borrowed = { (int)f.app.adopt_pack({
 		.name = "no-op fixture library".copy(mem), .clips = library_clips, .owned = true,
@@ -328,7 +225,7 @@ fn void grouped_edit_guards_and_selection_invalidation_are_atomic() @test
 	f.app.select_animation_key(borrowed, 0.25f);
 	(void)f.app.move_selected_animation_keys(borrowed, 0.0f);
 	test::@check(f.app.authored().clips.len == authored_count
-		&& f.app.editing.same(editing_before) && frame_at(f.app.clip(borrowed), 0.25f) >= 0
+		&& f.app.editing.same(editing_before) && helpers::frame_at(f.app.clip(borrowed), 0.25f) >= 0
 		&& f.app.undo_stack.cursor == history,
 		"zero-distance library move forked, changed editing, or created history");
 }

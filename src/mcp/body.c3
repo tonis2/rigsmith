@@ -29,7 +29,7 @@ import rig;
 import std::collections::object;
 
 
-faultdef BODY_REFUSED;
+excuse BODY_REFUSED;
 
 <*
  How thick a bone is by default, as a fraction of rig height.

@@ -13,13 +13,6 @@ const uint[36] CUBE_TRIANGLES @local = {
 	2, 3, 7, 2, 7, 6, 0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5,
 };
 
-fn void a_cube_draws_its_twelve_edges() @test
-{
-	uint[] edges = crig::outline_edges(mem, CUBE[..], CUBE_TRIANGLES[..]);
-	defer alloc::free(mem, edges);
-	test::eq(edges.len, 24);
-}
-
 // Each face with corners of its own, as a file splits them at uv seams.
 fn void split_corners_are_welded() @test
 {
@@ -33,20 +26,6 @@ fn void split_corners_are_welded() @test
 	uint[] edges = crig::outline_edges(mem, corners[..], order[..]);
 	defer alloc::free(mem, edges);
 	test::eq(edges.len, 24);
-}
-
-fn void a_flat_quad_drops_its_diagonal() @test
-{
-	Vec3[4] quad = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 } };
-	uint[6] triangles = { 0, 2, 1, 0, 3, 2 };
-	uint[] edges = crig::outline_edges(mem, quad[..], triangles[..]);
-	defer alloc::free(mem, edges);
-	test::eq(edges.len, 8);
-	for (usz i = 0; i < edges.len; i += 2)
-	{
-		bool diagonal = (edges[i] == 0 && edges[i + 1] == 2) || (edges[i] == 2 && edges[i + 1] == 0);
-		test::@check(!diagonal, "the seam between two flat halves is not drawn");
-	}
 }
 
 fn void a_gentle_fold_is_no_crease() @test

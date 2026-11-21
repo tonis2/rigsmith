@@ -295,7 +295,7 @@ fn AnimTemplate clip_without_keys(Allocator allocator, AnimTemplate source, bool
 	return clip_with_frames(allocator, source, frames, source.duration);
 }
 
-faultdef STRIP_NOTHING_KEYED, STRIP_NOTHING_LEFT;
+excuse STRIP_NOTHING_KEYED, STRIP_NOTHING_LEFT;
 
 <*
  The clip with every key of `joints` gone, both channels, and every keyframe

@@ -45,8 +45,6 @@ fn AnimTemplate hip_clip(AnimInterpolation curve = LINEAR)
 	return clip;
 }
 
-fn bool near(float a, float b, float within = EPS) => math::abs(a - b) <= within;
-
 fn void an_ease_remaps_the_fraction_monotonically() @test
 {
 	AnimEase none = {};
@@ -58,7 +56,7 @@ fn void an_ease_remaps_the_fraction_monotonically() @test
 	AnimEase[3] eases = { { 1, 0 }, { 0, 1 }, { 1, 1 } };
 	foreach (ease : eases)
 	{
-		test::@check(ease.remap(0) == 0.0f && near(ease.remap(1), 1.0f), "an ease moved the ends");
+		test::@check(ease.remap(0) == 0.0f && math::is_approx(ease.remap(1), 1.0f, EPS), "an ease moved the ends");
 		float last = 0;
 		for (int i = 1; i <= 100; i++)
 		{
@@ -69,8 +67,8 @@ fn void an_ease_remaps_the_fraction_monotonically() @test
 	}
 	// Ease in starts flat and slow, ease out arrives flat, in-out is symmetric.
 	test::@check(eases[0].remap(0.01f) < 0.001f && eases[0].remap(0.25f) < 0.25f, "ease in did not start slow");
-	test::@check(near(eases[1].remap(0.99f), 1.0f, 0.001f) && eases[1].remap(0.75f) > 0.75f, "ease out did not arrive slow");
-	test::@check(near(eases[2].remap(0.5f), 0.5f), "ease in-out is not symmetric");
+	test::@check(math::is_approx(eases[1].remap(0.99f), 1.0f, 0.001f) && eases[1].remap(0.75f) > 0.75f, "ease out did not arrive slow");
+	test::@check(math::is_approx(eases[2].remap(0.5f), 0.5f, EPS), "ease in-out is not symmetric");
 	AnimEase odd = { 7.0f, -2.0f };
 	test::@check(odd.clamped().start == 1.0f && odd.clamped().end == 0.0f, "an ease was not clamped");
 }
@@ -95,7 +93,7 @@ fn void the_sampler_paces_a_segment_by_its_ease() @test
 		Quaternionf got = eased.rotation_at("hip", t);
 		test::@check(1.0f - math::abs(got.v.dot(expect.v)) < 1.0e-6f, "eased turn at %f", t);
 		Vec3 slide = eased.translation_at("hip", t);
-		test::@check(near(slide.x, 0.1f * (AnimEase){ 0, 1 }.remap(blend)), "eased slide at %f", t);
+		test::@check(math::is_approx(slide.x, 0.1f * (AnimEase){ 0, 1 }.remap(blend), EPS), "eased slide at %f", t);
 		// The same clip read without its ease is the plain one.
 		Quaternionf natural = eased.rotation_at("hip", t, eased: false);
 		test::@check(natural.v == plain.rotation_at("hip", t).v, "reading without ease was not plain");
@@ -118,7 +116,7 @@ fn void the_sampler_paces_a_segment_by_its_ease() @test
 	float early = smooth.translation_at("hip", 0.005f).x;
 	float plain_early = smooth.translation_at("hip", 0.005f, eased: false).x;
 	test::@check(math::abs(early) < math::abs(plain_early) * 0.1f, "a smooth segment did not ease in");
-	test::@check(near(smooth.translation_at("hip", 0.5f).x, 0.1f), "the eased segment missed its key");
+	test::@check(math::is_approx(smooth.translation_at("hip", 0.5f).x, 0.1f, EPS), "the eased segment missed its key");
 }
 
 fn void euler_degrees_round_trip() @test
@@ -137,11 +135,11 @@ fn void euler_degrees_round_trip() @test
 	}
 	// Single axes read as themselves.
 	Vec3 x = crig::euler_of(quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.5f), {});
-	test::@check(near(x.x, 0.5f * 180.0f / (float)math::PI, 1.0e-3f) && near(x.y, 0, 1.0e-3f) && near(x.z, 0, 1.0e-3f),
+	test::@check(math::is_approx(x.x, 0.5f * 180.0f / (float)math::PI, 1.0e-3f) && math::is_approx(x.y, 0, 1.0e-3f) && math::is_approx(x.z, 0, 1.0e-3f),
 		"a turn about X read as %s", x);
 	// Unwrapped toward a nearby value past ±180.
 	Vec3 wrapped = crig::euler_of(crig::quat_of_euler({ 0, 0, 190 }), { 0, 0, 185 });
-	test::@check(near(wrapped.z, 190.0f, 1.0e-2f), "a turn past 180 did not unwrap: %s", wrapped);
+	test::@check(math::is_approx(wrapped.z, 190.0f, 1.0e-2f), "a turn past 180 did not unwrap: %s", wrapped);
 }
 
 fn void an_ease_round_trips_through_the_sidecar_and_a_pack() @test
@@ -235,18 +233,18 @@ fn void the_graph_draws_the_selected_joints_channels() @test
 		"the curves are not the hip's X/Y/Z");
 	// The turn is about Z: the Z curve carries it in degrees, X and Y stay flat.
 	float deg = 180.0f / (float)math::PI;
-	test::@check(near(rotation.keys[5].value, 1.0f * deg, 1.0e-2f) && near(rotation.keys[3].value, 0, 1.0e-3f),
+	test::@check(math::is_approx(rotation.keys[5].value, 1.0f * deg, 1.0e-2f) && math::is_approx(rotation.keys[3].value, 0, 1.0e-3f),
 		"the middle key reads %f", rotation.keys[5].value);
 	test::@check(rotation.handles.len == 0, "handles were drawn for unselected keys");
 
 	Graph position = rotation;
 	test::@check(!position.curves[3].rotation && position.unit > 0, "no position curves");
-	test::@check(near(position.keys[12].value, 0.1f * position.unit, 1.0e-4f), "the slide key reads %f",
+	test::@check(math::is_approx(position.keys[12].value, 0.1f * position.unit, 1.0e-4f), "the slide key reads %f",
 		position.keys[12].value);
 	// A mixed curve reads -1..1 and converts back to its real value.
 	GraphCurve slide = position.curves[3];
-	test::@check(near(slide.real(slide.shown(0.7f)), 0.7f, 1.0e-6f)
-		&& near(slide.shown(slide.mid + slide.half), 1.0f), "the normalised range is not -1..1");
+	test::@check(math::is_approx(slide.real(slide.shown(0.7f)), 0.7f, 1.0e-6f)
+		&& math::is_approx(slide.shown(slide.mid + slide.half), 1.0f, EPS), "the normalised range is not -1..1");
 
 	// Nothing selected, nothing drawn.
 	f.app.select(0);
@@ -288,7 +286,7 @@ fn void hidden_curves_leave_the_graph() @test
 	graph = f.app.build_graph(f.app.editing);
 	test::@check(graph.curves.len == 3 && !graph.curves[0].rotation && !graph.mixed && graph.curves[0].half == 0.0f,
 		"soloing Position left %d curves, mixed %s", graph.curves.len, graph.mixed);
-	test::@check(near(graph.keys[1].value, 0.1f * graph.unit, 1.0e-4f), "an unmixed curve is not in real units");
+	test::@check(math::is_approx(graph.keys[1].value, 0.1f * graph.unit, 1.0e-4f), "an unmixed curve is not in real units");
 	graph.free();
 
 	// Add one rotation axis back, then toggle it off again.
@@ -326,8 +324,8 @@ fn void dragging_a_key_value_is_one_undo_step() @test
 	test::@check(f.app.undo_stack.cursor == history + 1, "a value edit was not one step");
 	AnimTemplate* clip = f.app.clip(f.app.editing);
 	Vec3 now = crig::euler_of(clip.keyframes[1].rotation_of("hip"), {});
-	test::@check(near(now.z, 30.0f, 1.0e-2f) && near(now.x, 0, 1.0e-2f), "the key now reads %s", now);
-	test::@check(near(clip.keyframes[1].offset_of("hip").x, 0.1f), "the value edit moved the slide");
+	test::@check(math::is_approx(now.z, 30.0f, 1.0e-2f) && math::is_approx(now.x, 0, 1.0e-2f), "the key now reads %s", now);
+	test::@check(math::is_approx(clip.keyframes[1].offset_of("hip").x, 0.1f, EPS), "the value edit moved the slide");
 
 	// Position in model units, and back.
 	Graph position = f.app.build_graph(f.app.editing);
@@ -335,12 +333,12 @@ fn void dragging_a_key_value_is_one_undo_step() @test
 	GraphKey slide = position.keys[12];
 	test::@check(f.app.set_graph_key_value(f.app.editing, "hip", false, slide.time, slide.shown, 1,
 		0.5f * position.unit, position.unit), "the slide edit was refused");
-	test::@check(near(f.app.clip(f.app.editing).keyframes[1].offset_of("hip").y, 0.5f),
+	test::@check(math::is_approx(f.app.clip(f.app.editing).keyframes[1].offset_of("hip").y, 0.5f, EPS),
 		"the slide landed at %f", f.app.clip(f.app.editing).keyframes[1].offset_of("hip").y);
 
 	test::@check(f.app.undo() && f.app.undo(), "the edits did not undo");
 	AnimTemplate* back = f.app.clip(f.app.editing);
-	test::@check(near(back.keyframes[1].dots[0].angle, 1.0f) && near(back.keyframes[1].offset_of("hip").y, 0),
+	test::@check(math::is_approx(back.keyframes[1].dots[0].angle, 1.0f, EPS) && math::is_approx(back.keyframes[1].offset_of("hip").y, 0, EPS),
 		"undo did not restore the key");
 }
 
@@ -398,12 +396,12 @@ fn void tangent_handles_sit_on_the_curves_own_slope() @test
 		GraphKey key = graph.keys[handle.key];
 		GraphCurve curve = graph.curves[key.curve];
 		float run = handle.incoming ? -0.5f / 3.0f : 0.5f / 3.0f;
-		test::@check(curve.rotation && near(key.time, 0.5f) && near(handle.length, 0.5f / 3.0f), "the handle is not at the key");
-		test::@check(near(handle.at.x, 0.5f + run), "the handle is at %f, not a third out", handle.at.x);
-		test::@check(near(handle.at.y, key.value + slope[curve.axis] * run, 0.05f),
+		test::@check(curve.rotation && math::is_approx(key.time, 0.5f, EPS) && math::is_approx(handle.length, 0.5f / 3.0f, EPS), "the handle is not at the key");
+		test::@check(math::is_approx(handle.at.x, 0.5f + run, EPS), "the handle is at %f, not a third out", handle.at.x);
+		test::@check(math::is_approx(handle.at.y, key.value + slope[curve.axis] * run, 0.05f),
 			"axis %d handle is at %f, the curve's slope puts it at %f", curve.axis, handle.at.y, key.value + slope[curve.axis] * run);
 		// Normalised, the plot sees the same point through the curve's own range.
-		test::@check(near(curve.real(curve.shown(handle.at.y)), handle.at.y, 1.0e-3f), "the handle did not round-trip");
+		test::@check(math::is_approx(curve.real(curve.shown(handle.at.y)), handle.at.y, 1.0e-3f), "the handle did not round-trip");
 	}
 
 	// The ends: the first key has only its outgoing handle, the last only its incoming one.
@@ -425,7 +423,7 @@ fn void tangent_handles_sit_on_the_curves_own_slope() @test
 		GraphKey key = moves.keys[handle.key];
 		GraphCurve curve = moves.curves[key.curve];
 		float run = handle.incoming ? -0.5f / 3.0f : 0.5f / 3.0f;
-		test::@check(!curve.rotation && near(handle.at.y, key.value + tangent[curve.axis] * run, 1.0e-4f),
+		test::@check(!curve.rotation && math::is_approx(handle.at.y, key.value + tangent[curve.axis] * run, 1.0e-4f),
 			"a position handle is at %f", handle.at.y);
 	}
 
@@ -476,10 +474,10 @@ fn void dragging_a_tangent_handle_frees_or_breaks_the_key() @test
 	clip = f.app.clip(f.app.editing);
 	AnimTangents own = clip.keyframes[1].dots[0].rotation_tangents;
 	test::@check(own.mode == FREE, "the key is %s, not free", own.mode);
-	test::@check(near(crig::euler_rate_of_angular_rate(key.shown, own.outgoing).z, slope.z + 60.0f, 0.05f),
+	test::@check(math::is_approx(crig::euler_rate_of_angular_rate(key.shown, own.outgoing).z, slope.z + 60.0f, 0.05f),
 		"the outgoing slope is %f", crig::euler_rate_of_angular_rate(key.shown, own.outgoing).z);
 	test::@check(own.incoming.length() > 0 && own.incoming.normalize().dot(own.outgoing.normalize()) > 0.9999f
-		&& near(own.incoming.length(), before_in.length(), 1.0e-4f), "the incoming side did not follow");
+		&& math::is_approx(own.incoming.length(), before_in.length(), 1.0e-4f), "the incoming side did not follow");
 	test::@check(crig::euler_of(clip.rotation_at("hip", 0.75f), {}).z > mid_before + 0.5f, "the segment did not rise");
 	test::@check(f.app.animation_channel_key_selected(f.app.editing, 0.5f, "hip", ROTATION), "the drag dropped the selection");
 
@@ -491,7 +489,7 @@ fn void dragging_a_tangent_handle_frees_or_breaks_the_key() @test
 	test::@check(f.app.undo_stack.cursor == history + 1, "a broken drag was not one step");
 	own = f.app.clip(f.app.editing).keyframes[1].dots[0].rotation_tangents;
 	test::@check(own.mode == BROKEN && (own.incoming - held_in).length() < 1.0e-6f, "the incoming side moved");
-	test::@check(near(crig::euler_rate_of_angular_rate(key.shown, own.outgoing).z, slope.z - 20.0f, 0.05f), "the outgoing slope is wrong");
+	test::@check(math::is_approx(crig::euler_rate_of_angular_rate(key.shown, own.outgoing).z, slope.z - 20.0f, 0.05f), "the outgoing slope is wrong");
 
 	// A fresh Auto key broken straight away leaves the other side on what it played.
 	test::@check(f.app.undo() && f.app.undo(), "the drags did not undo");
@@ -500,7 +498,7 @@ fn void dragging_a_tangent_handle_frees_or_breaks_the_key() @test
 	clip = f.app.clip(f.app.editing);
 	own = clip.keyframes[1].dots[0].rotation_tangents;
 	test::@check(own.mode == BROKEN && (own.outgoing - before_out).length() < 1.0e-4f, "the outgoing side moved");
-	test::@check(near(crig::euler_rate_of_angular_rate(key.shown, own.incoming).z, slope.z + 30.0f, 0.05f), "the incoming slope is wrong");
+	test::@check(math::is_approx(crig::euler_rate_of_angular_rate(key.shown, own.incoming).z, slope.z + 30.0f, 0.05f), "the incoming slope is wrong");
 }
 
 <*
@@ -527,7 +525,7 @@ fn void selected_keys_take_a_tangent_mode_without_jumping() @test
 	clip = f.app.clip(f.app.editing);
 	foreach (i, v : before)
 	{
-		test::@check(near(crig::euler_of(clip.rotation_at("hip", (float)i / 8.0f), {}).z, v, 0.05f), "Auto to Free moved the curve at %d", i);
+		test::@check(math::is_approx(crig::euler_of(clip.rotation_at("hip", (float)i / 8.0f), {}).z, v, 0.05f), "Auto to Free moved the curve at %d", i);
 	}
 	test::@check(f.app.animation_selection_tangent_mode(f.app.editing, &mode) && mode == FREE, "the keys do not read Free");
 	test::@check(clip.keyframes[0].dots[0].translation_tangents.mode == AUTO, "the position channel changed too");
@@ -584,14 +582,14 @@ fn void retiming_scales_stored_tangent_rates() @test
 	foreach (frame : f.app.clip(f.app.editing).keyframes)
 	{
 		AnimKeyDot dot;
-		if (near(frame.time, 0.6f) && frame.channel_dot("hip", true, &dot)) moved = dot.rotation_tangents;
+		if (math::is_approx(frame.time, 0.6f, EPS) && frame.channel_dot("hip", true, &dot)) moved = dot.rotation_tangents;
 	}
 	test::@check((moved.outgoing - original.outgoing).length() < 1.0e-6f, "a move changed the rates");
 	test::@check(f.app.undo(), "the move did not undo");
 	select_hip_keys(&f, { 0.5f });
 	test::@check(f.app.scale_graph_key_times(f.app.editing, 0.5f, 0.0f), "the scale was refused");
 	AnimTemplate* scaled = f.app.clip(f.app.editing);
-	test::@check(near(scaled.keyframes[1].time, 0.25f), "the key is at %f", scaled.keyframes[1].time);
+	test::@check(math::is_approx(scaled.keyframes[1].time, 0.25f, EPS), "the key is at %f", scaled.keyframes[1].time);
 	AnimTangents quick = scaled.keyframes[1].dots[0].rotation_tangents;
 	test::@check((quick.outgoing * 0.5f - original.outgoing).length() < 1.0e-5f, "a channel scale left the rates alone");
 	test::@check(f.app.undo(), "the scale did not undo");
@@ -647,15 +645,15 @@ fn void multi_key_edits_move_the_whole_selection() @test
 	test::@check(f.app.set_graph_keys_offset(f.app.editing, &graph, true, 2, 10.0f), "the offset was refused");
 	test::@check(f.app.undo_stack.cursor == history + 1, "an offset was not one step");
 	AnimTemplate* clip = f.app.clip(f.app.editing);
-	test::@check(near(crig::euler_of(clip.keyframes[0].rotation_of("hip"), {}).z, 0, 1.0e-2f), "an unselected key moved");
-	test::@check(near(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).z, 1.0f * deg + 10.0f, 1.0e-2f),
+	test::@check(math::is_approx(crig::euler_of(clip.keyframes[0].rotation_of("hip"), {}).z, 0, 1.0e-2f), "an unselected key moved");
+	test::@check(math::is_approx(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).z, 1.0f * deg + 10.0f, 1.0e-2f),
 		"the middle key reads %f", crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).z);
-	test::@check(near(crig::euler_of(clip.keyframes[2].rotation_of("hip"), {}).z, 0.5f * deg + 10.0f, 1.0e-2f),
+	test::@check(math::is_approx(crig::euler_of(clip.keyframes[2].rotation_of("hip"), {}).z, 0.5f * deg + 10.0f, 1.0e-2f),
 		"the last key reads %f", crig::euler_of(clip.keyframes[2].rotation_of("hip"), {}).z);
-	test::@check(near(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).x, 0, 1.0e-2f), "the offset leaked to X");
+	test::@check(math::is_approx(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).x, 0, 1.0e-2f), "the offset leaked to X");
 	test::@check(f.app.animation_channel_key_selection_count(f.app.editing) == 2, "the edit dropped the selection");
 	test::@check(f.app.undo(), "the offset did not undo");
-	test::@check(near(f.app.clip(f.app.editing).keyframes[1].dots[0].angle, 1.0f), "undo did not restore the key");
+	test::@check(math::is_approx(f.app.clip(f.app.editing).keyframes[1].dots[0].angle, 1.0f, EPS), "undo did not restore the key");
 
 	// X by 20°: one key holds a quaternion, but only the X angle changes.
 	select_hip_keys(&f, { 0.5f, 1.0f });
@@ -663,7 +661,7 @@ fn void multi_key_edits_move_the_whole_selection() @test
 	defer again.free();
 	test::@check(f.app.set_graph_keys_offset(f.app.editing, &again, true, 0, 20.0f), "the X offset was refused");
 	Vec3 now = crig::euler_of(f.app.clip(f.app.editing).keyframes[1].rotation_of("hip"), {});
-	test::@check(near(now.x, 20.0f, 1.0e-2f) && near(now.z, 1.0f * deg, 1.0e-2f), "the key now reads %s", now);
+	test::@check(math::is_approx(now.x, 20.0f, 1.0e-2f) && math::is_approx(now.z, 1.0f * deg, 1.0e-2f), "the key now reads %s", now);
 	test::@check(f.app.undo(), "the X offset did not undo");
 
 	// Scale about 0: the selected values double, the first key is not selected.
@@ -674,8 +672,8 @@ fn void multi_key_edits_move_the_whole_selection() @test
 	test::@check(f.app.scale_graph_keys(f.app.editing, &third, true, 2, 2.0f, 0.0f), "the scale was refused");
 	test::@check(f.app.undo_stack.cursor == history + 1, "a scale was not one step");
 	clip = f.app.clip(f.app.editing);
-	test::@check(near(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).z, 2.0f * deg, 1.0e-2f)
-		&& near(crig::euler_of(clip.keyframes[2].rotation_of("hip"), {}).z, 1.0f * deg, 1.0e-2f), "the scale missed");
+	test::@check(math::is_approx(crig::euler_of(clip.keyframes[1].rotation_of("hip"), {}).z, 2.0f * deg, 1.0e-2f)
+		&& math::is_approx(crig::euler_of(clip.keyframes[2].rotation_of("hip"), {}).z, 1.0f * deg, 1.0e-2f), "the scale missed");
 	test::@check(f.app.undo(), "the scale did not undo");
 
 	// Exact: both read the same, and the field's common value now agrees.
@@ -688,7 +686,7 @@ fn void multi_key_edits_move_the_whole_selection() @test
 	test::@check(f.app.set_graph_keys_exact(f.app.editing, &fourth, true, 2, 15.0f), "the exact value was refused");
 	Graph after = f.app.build_graph(f.app.editing);
 	defer after.free();
-	test::@check(after.selected_values(true, 2, &value, &mixed) == 2 && !mixed && near(value, 15.0f, 1.0e-2f),
+	test::@check(after.selected_values(true, 2, &value, &mixed) == 2 && !mixed && math::is_approx(value, 15.0f, 1.0e-2f),
 		"the keys do not share 15 (%f, mixed %s)", value, mixed);
 	test::@check(f.app.undo(), "the exact value did not undo");
 }

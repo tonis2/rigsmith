@@ -13,7 +13,7 @@ module crig;
 import std::collections::object;
 import gltf_edit;
 
-faultdef GENERATE_REFUSED;
+excuse GENERATE_REFUSED;
 
 const String GENERATE_MOTION_SCHEMA = `{"type":"object","properties":{
 	"prompt":{"type":"string","description":"What the character does, in plain words: one person, one action, a few seconds — \"a person jumps forward and lands\", \"walks in a circle, then sits down\". Omit to ask how the running or last generation stands."},

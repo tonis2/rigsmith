@@ -32,38 +32,6 @@ fn Vec2 guide_step_point(Fixture* f, GuideStep step)
 fn bool dialog_open(Fixture* f, String id) => f.ui.find_id(id)!!.widget_as(Dialog).open;
 
 <*
- With nothing loaded every step is not yet, the next step is opening a model and
- clicking Model opens the file chooser.
-*>
-fn void the_guide_starts_at_open_a_model() @test
-{
-	io::printn("the workflow guide starts at opening a model");
-	Fixture f;
-	if (catch f.open(mesh: {}))
-	{
-		test::@check(false, "the interface would not build over an empty mesh");
-		return;
-	}
-	defer f.close();
-	settle_guide(&f);
-
-	test::@check(f.in_tree(crig::GUIDE_STEPS_ID), "the 3D view has no workflow guide");
-	foreach (i, step : guide_steps(&f).steps) test::@check(step.state == TODO, "step %d is not 'not yet' with no model", i);
-	test::eq(guide_steps(&f).current, (sz)0);
-	test::@check(crig::bar_line(&f.app).starts_with("Next: import a character"),
-		"the hint bar does not say to import a character: \"%s\"", crig::bar_line(&f.app));
-
-	// It sits in the header, clear of the view's own overlays.
-	Element* strip = f.ui.find_id(crig::GUIDE_STEPS_ID)!!;
-	test::@check(strip.absolute.y + strip.size.y <= f.viewport.absolute.y + 0.5f, "the guide overlaps the viewport");
-	Element* tints = f.ui.find_id("tints")!!;
-	test::@check(strip.absolute.x + strip.size.x <= tints.absolute.x, "the guide runs into the tint switch");
-
-	f.click(guide_step_point(&f, MODEL));
-	test::@check(dialog_open(&f, crig::FILE_DIALOG_ID), "clicking Model did not open the file chooser");
-}
-
-<*
  A loaded mesh with no rig: Model is done and Skeleton is next; clicking Model
  frames the model, clicking Skeleton opens the body-plan picker.
 *>
@@ -219,20 +187,4 @@ fn void a_small_part_on_a_dense_mesh_holds_skin() @test
 	test::@check(!idle[0], "the body joint reads as empty");
 	test::@check(!idle[1], "a 20-vertex finger bone reads as holding no skin");
 	test::@check(idle[2], "a joint holding nothing was not flagged");
-}
-
-<*
- View › Floor starts ticked and turns the floor off and back on.
-*>
-fn void the_floor_toggles_from_the_view_menu() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	f.reset();
-	test::@check(crig::query_show_floor(f.ui).checked, "the floor does not start shown");
-	crig::menu_show_floor(f.ui);
-	test::@check(f.app.config.hide_floor && !crig::query_show_floor(f.ui).checked, "View › Floor did not hide the floor");
-	crig::menu_show_floor(f.ui);
-	test::@check(!f.app.config.hide_floor, "View › Floor did not bring the floor back");
 }

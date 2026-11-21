@@ -158,8 +158,6 @@ fn void a_look_at_handle_is_picked_before_a_joint() @test
 	test::@check(view.pick_aim(f.viewport, over!!) < 0, "handles are pickable while the rig is edited");
 }
 
-fn Vec2 centre_of(Element* elem) => elem.absolute + (Vec2){ elem.size.x * 0.5f, elem.size.y * 0.5f };
-
 <*
  A target is a lane under Poses with a mark per key; a selected key deletes as
  one undo step, and the lane goes with the last key.

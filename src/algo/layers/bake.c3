@@ -85,12 +85,12 @@ const float BAKE_GRID_EPSILON @local = 1.0e-3f;
 <*
  Raised when there is nothing dynamic to bake.
 *>
-faultdef BAKE_NOTHING_DYNAMIC;
+excuse BAKE_NOTHING_DYNAMIC;
 
 <*
  Raised when the source clip has no keyframes or no length.
 *>
-faultdef BAKE_EMPTY_CLIP;
+excuse BAKE_EMPTY_CLIP;
 
 <*
  Run `source` through `sim` and write what came out as an ordinary clip.

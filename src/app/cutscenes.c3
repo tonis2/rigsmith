@@ -605,16 +605,6 @@ fn RigMismatch AppState.cut_rig_mismatch(&self, usz character, Allocator allocat
 	return out;
 }
 
-fn void free_cut_cast(Allocator allocator, CutCast[] cast)
-{
-	foreach (c : cast)
-	{
-		if (c.clips.len > 0) alloc::free(allocator, c.clips);
-		if (c.grounds.len > 0) alloc::free(allocator, c.grounds);
-	}
-	if (cast.len > 0) alloc::free(allocator, cast);
-}
-
 <* The active cutscene's problems in words, none without one. The caller owns them; see free_names. *>
 fn String[] AppState.cutscene_problem_texts(&self, Allocator allocator)
 {
@@ -720,12 +710,7 @@ fn bool AppState.make_actor(&self, usz i, String row = "")
 	active = self.cutscene();
 	if (active && active.actor_by_row(made) < 0)
 	{
-		usz count = active.actors.len;
-		CutActor[] grown = alloc::new_array(mem, CutActor, (sz)count + 1);
-		foreach (usz k, a : active.actors) grown[k] = a;
-		grown[count] = { .row = made.copy(mem), .home_rotation = quaternion::IDENTITY };
-		if (count > 0) alloc::free(mem, active.actors);
-		active.actors = grown;
+		slice_push(mem, &active.actors, (CutActor){ .row = made.copy(mem), .home_rotation = quaternion::IDENTITY });
 	}
 	self.cutscenes_changed();
 	return true;
@@ -745,27 +730,37 @@ fn bool AppState.remove_actor(&self, usz i)
 	{
 		self.cut_checkpoint();
 		String gone = self.character(i).actor_row;
+		Cutscene* active = self.cutscene();
 		foreach (&cutscene : self.cutscenes)
 		{
 			int at = cutscene.actor_by_row(gone);
 			if (at < 0) continue;
+			if (cutscene == active) self.actor_left_sheet((usz)at);
 			// Its one-offs were made for it alone.
 			for (usz k = cutscene.one_offs.len; k > 0; k--)
 			{
 				if (cutscene.one_offs[k - 1].row == gone) cutscene.remove_one_off((sz)k - 1);
 			}
 			cutscene.actors[at].free(mem);
-			for (usz k = (usz)at; k + 1 < cutscene.actors.len; k++) cutscene.actors[k] = cutscene.actors[k + 1];
-			cutscene.actors = cutscene.actors[:cutscene.actors.len - 1];
-			if (cutscene.actors.len == 0)
-			{
-				alloc::free(mem, cutscene.actors.ptr);
-				cutscene.actors = {};
-			}
+			slice_remove_at(mem, &cutscene.actors, (usz)at);
 		}
 		self.cutscenes_changed();
 	}
 	return self.remove_character(i);
+}
+
+// The sheet's actor picks follow the actors after `at` down one place; a pick of `at` itself goes.
+fn void AppState.actor_left_sheet(&self, usz at)
+{
+	if (self.cut_lane_actor == at + 1) self.cut_lane_actor = 0;
+	if (self.cut_lane_actor > at + 1) self.cut_lane_actor--;
+	if (self.cut_pick != NEW_TURN) return;
+	if (self.cut_pick_actor == at)
+	{
+		self.cancel_cut_pick();
+		return;
+	}
+	if (self.cut_pick_actor > at) self.cut_pick_actor--;
 }
 
 <*

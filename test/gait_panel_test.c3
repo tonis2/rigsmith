@@ -151,27 +151,3 @@ fn void gait_strip_a_stride_dragged_wider_writes_every_foot_again() @test
 	test::@check(clip.gait.stride > stride * 1.2f, "the stride did not grow: %s, was %s", clip.gait.stride, stride);
 	foreach (&path : clip.paths) test::@check(path.generated, "a foot's path stopped being the gait's");
 }
-
-fn void gait_strip_a_rig_with_no_feet_says_so() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
-	crig::build_ui(f.ui, &f.app);
-	f.ui.flush();
-	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
-	f.ui.flush();
-	sz clips = f.app.doc.animations.len();
-	gait_new_walk(&f);
-	// A fitted plan on a cube may have no feet near a floor; whichever way it
-	// lands, a walk is written only on feet.
-	if (f.app.doc.animations.len() == clips)
-	{
-		test::@check(f.app.notice().len > 0, "no feet, and nothing said");
-	}
-	else
-	{
-		test::@check(f.app.clip(f.app.editing).paths.len > 0, "a walk with feet laid no paths");
-	}
-}

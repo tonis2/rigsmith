@@ -50,7 +50,7 @@ import image::mp4;
 import image::h264;
 import llm::pipeline;
 
-faultdef CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
+excuse CAPTURE_NO_MODEL_FILE, CAPTURE_NO_BACKBONE, CAPTURE_BUSY, CAPTURE_NO_GPU, CAPTURE_NO_SKELETON,
 	CAPTURE_NO_FINDER, CAPTURE_NO_REFERENCE, CAPTURE_NO_VIDEO, CAPTURE_NO_PLUGIN, CAPTURE_NOT_STARTED,
 	CAPTURE_BAD_SIZE, CAPTURE_NO_IMAGE, CAPTURE_WRONG_REFERENCE;
 
@@ -875,12 +875,14 @@ const uint MATCH_W = 48;
 const uint MATCH_H = 24;
 const uint MATCH_CELLS = MATCH_W * MATCH_H;
 
+// The videos capture decodes itself: H.264 in an mp4 or mov.
+fn bool is_video_name(String name) => has_extension(name, ".mp4") || has_extension(name, ".m4v") || has_extension(name, ".mov");
+
 // A picture or a video's first frame; png and jpeg by extension, mp4 and mov decoded.
 fn image::Image? load_picture(String file_name, Allocator allocator) @private
 {
-	String lower = file_name.to_lower_tcopy();
-	if (lower.ends_with(".png")) return png::load_file(file_name, allocator);
-	if (lower.ends_with(".mp4") || lower.ends_with(".m4v") || lower.ends_with(".mov"))
+	if (has_extension(file_name, ".png")) return png::load_file(file_name, allocator);
+	if (is_video_name(file_name))
 	{
 		mp4::Video v = mp4::open(file_name, allocator)!;
 		defer v.close();
@@ -996,8 +998,7 @@ fn String first_picture_in(String folder)
 	foreach (entry : listed)
 	{
 		String name = (String)entry;
-		String lower = name.to_lower_tcopy();
-		if (!lower.ends_with(".png") && !lower.ends_with(".jpg") && !lower.ends_with(".jpeg")) continue;
+		if (!has_extension(name, ".png") && !has_extension(name, ".jpg") && !has_extension(name, ".jpeg")) continue;
 		if (first.len == 0 || name.compare_to(first) < 0) first = name;
 	}
 	return first.len > 0 ? string::tformat("%s/%s", folder, first) : "";

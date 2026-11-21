@@ -59,7 +59,7 @@ import three;
 import llm::pipeline;
 import rig;
 
-faultdef
+excuse
 	MOTION_NO_GENERATOR,
 	MOTION_NO_GPU,
 	MOTION_BUSY,

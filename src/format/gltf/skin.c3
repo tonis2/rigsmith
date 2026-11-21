@@ -28,7 +28,7 @@ import std::math::vector;
 <*
  Raised when the file has no skin to read, or names one it does not hold.
 *>
-faultdef SKIN_ABSENT;
+excuse SKIN_ABSENT;
 
 <*
  Raised when the scene skins its vertices against more than one skin.
@@ -38,7 +38,7 @@ faultdef SKIN_ABSENT;
  one a given vertex belongs to is exactly the information the flattening threw
  away.
 *>
-faultdef SKIN_AMBIGUOUS;
+excuse SKIN_AMBIGUOUS;
 
 <*
  Raised when the walk reached a vertex no joint claims.
@@ -49,7 +49,7 @@ faultdef SKIN_AMBIGUOUS;
  would be a second binder running on part of the mesh, and a mesh bound two ways
  is the thing this whole module exists to avoid.
 *>
-faultdef SKIN_INCOMPLETE;
+excuse SKIN_INCOMPLETE;
 
 <*
  The weights a file carries, over the vertices `from_gltf` produces.
@@ -309,7 +309,7 @@ fn void? walk_primitive(
 <*
  Raised when a vertex names a joint the skin's joint list does not hold.
 *>
-faultdef SKIN_INDEX_OUT_OF_RANGE;
+excuse SKIN_INDEX_OUT_OF_RANGE;
 
 // glTF stores joint indices as unsigned bytes or unsigned shorts, never wider:
 // a skin is capped at 65535 joints by the format itself.

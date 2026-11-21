@@ -243,21 +243,11 @@ fn AnimTemplate AppState.with_aim_keys(&self, AnimTemplate built, float time)
 // Forget the draft of one target, if it has one.
 fn void AppState.forget_aim_draft(&self, String target)
 {
-	foreach (i, draft : self.aim_draft)
+	foreach (usz i, draft : self.aim_draft)
 	{
 		if (draft.target != target) continue;
 		alloc::free(mem, draft.target.ptr);
-		if (self.aim_draft.len == 1)
-		{
-			alloc::free(mem, self.aim_draft);
-			self.aim_draft = {};
-			return;
-		}
-		AimDraft[] next = alloc::new_array(mem, AimDraft, self.aim_draft.len - 1);
-		usz out;
-		foreach (j, kept : self.aim_draft) if (j != i) next[out++] = kept;
-		alloc::free(mem, self.aim_draft);
-		self.aim_draft = next;
+		slice_remove_at(mem, &self.aim_draft, i);
 		return;
 	}
 }
@@ -271,11 +261,7 @@ fn void AppState.set_aim_draft(&self, String target, Vec3 at)
 		draft.at = at;
 		return;
 	}
-	AimDraft[] next = alloc::new_array(mem, AimDraft, self.aim_draft.len + 1);
-	foreach (i, kept : self.aim_draft) next[i] = kept;
-	next[self.aim_draft.len] = { .target = target.copy(mem), .at = at };
-	if (self.aim_draft.len > 0) alloc::free(mem, self.aim_draft);
-	self.aim_draft = next;
+	slice_push(mem, &self.aim_draft, (AimDraft){ .target = target.copy(mem), .at = at });
 }
 
 // Where target `name` stands in the editing clip now, a fraction of rig height:
@@ -340,7 +326,6 @@ fn bool AppState.land_locks(&self, uint[] dots, String existing)
 	// The pose as it is shown, floor and the other targets included.
 	rig::Pose pose = self.draft_pose(mem, &view);
 	defer pose.free(mem);
-	String[] names = self.names_for(&view, ref);
 	self.finish_shown(&view, *clip, ref, self.edit_time, &pose);
 
 	usz count;

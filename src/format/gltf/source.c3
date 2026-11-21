@@ -26,7 +26,7 @@ import std::math;
 import std::math::matrix;
 import std::math::vector;
 
-faultdef NO_TRIANGLES, UNSUPPORTED_INDEX_TYPE, SCENE_NOT_FOUND;
+excuse NO_TRIANGLES, UNSUPPORTED_INDEX_TYPE, SCENE_NOT_FOUND;
 
 alias Vec3List = List{Vec3};
 alias UintList = List{uint};

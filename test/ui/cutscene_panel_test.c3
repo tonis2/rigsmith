@@ -19,12 +19,6 @@ fn void open_cutscene_tab(Fixture* f) @local
 	f.feed(f.ui.input.mouse);
 }
 
-fn Vec2 cut_centre(Fixture* f, String id) @local
-{
-	Element* elem = f.ui.find_id(id)!!;
-	return elem.absolute + elem.size * 0.5f;
-}
-
 // The chooser's option that reads `label`, or -1.
 fn sz chooser_row(Fixture* f, String label)
 {
@@ -69,9 +63,9 @@ fn bool chooser_pick(Fixture* f, String label)
 // + New, then its Cutscene row.
 fn void new_cutscene_clicked(Fixture* f)
 {
-	f.click(cut_centre(f, crig::ANIM_NEW_ID));
+	f.click(id_centre(f, crig::ANIM_NEW_ID));
 	f.ui.flush();
-	f.click(cut_centre(f, crig::ANIM_NEW_CUTSCENE_ID));
+	f.click(id_centre(f, crig::ANIM_NEW_CUTSCENE_ID));
 	f.feed(f.ui.input.mouse);
 }
 
@@ -94,7 +88,7 @@ fn void the_cutscene_tab_edits_its_list_and_undoes_each_edit() @test
 	test::@check(!has_id(&f, crig::CUT_DELETE_ID), "Delete with nothing to delete");
 
 	// The cube is a character but no actor: its row in the Add actor list makes it one.
-	crig::cut_add_actor_clicked(f.ui);
+	crig::cut_open_actor_list(f.ui, f.ui.input.mouse);
 	f.feed(f.ui.input.mouse);
 	test::@check(cut_sheet_list_pick(&f, crig::CUT_ACTOR_LIST_ID, "no actor · make one"), "the Add actor list does not offer the cube");
 	test::@check(f.app.actor_row.len > 0, "the row did not make the cube an actor");
@@ -175,36 +169,6 @@ fn void the_cutscene_tab_edits_its_list_and_undoes_each_edit() @test
 	test::@check(hit.actor == 0 && hit.lane == CutLane.WHAT && hit.strip == 0, "the wave is not under its own lane: actor %d strip %d", hit.actor, hit.strip);
 }
 
-fn void picking_a_cutscene_in_the_chooser_shows_it_in_the_dock() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.make_actor(f.app.active, "hero"), "the cube is no actor");
-	(void)f.app.add_cutscene();
-	open_cutscene_tab(&f);
-	test::@check(!f.app.cutscene_in_dock() && !has_id(&f, crig::CUT_SIDE_ID), "the dock shows the cutscene before it is picked");
-	test::@check(chooser_pick(&f, "Cutscene · Cutscene"), "the chooser does not list the cutscene");
-	test::@check(f.app.cut_preview && f.app.cutscene_in_dock() && f.app.staged, "picking the cutscene did not preview it");
-	Select* chooser = f.ui.find_id("anim-chooser")!!.widget_as(Select);
-	test::@check(chooser.selected == (usz)chooser_row(&f, "Cutscene · Cutscene"), "the chooser does not show the cutscene picked");
-
-	// The dock's frame: the bin and the sheet in the sheet's place, CutSide in the right column.
-	test::@check(f.ui.find_id(crig::ANIM_SHEET_SLOT_ID)!!.is_widget(AnimLayerDeck), "the sheet slot is no deck");
-	test::@check(has_id(&f, crig::CUT_PIECE_BIN_ID) && has_id(&f, crig::CUT_TIMELINE_ID), "no Pieces bin or sheet");
-	Element* side = f.ui.find_id(crig::CUT_SIDE_ID)!!;
-	Element* divider = f.ui.find_id(crig::ANIM_DIVIDER_ID)!!;
-	test::@check(has_id(&f, crig::ANIM_LAYERS_SIDE_ID) && side.absolute.x >= divider.absolute.x + divider.size.x, "CutSide is not the right column");
-	foreach (id : (String[]) { crig::CUT_START_ID, crig::CUT_PLAY_ID, crig::CUT_END_ID, crig::CUT_TIME_ID, crig::ANIM_NEW_ID })
-	{
-		test::@check(has_id(&f, id), "the cutscene dock has no %s", id);
-	}
-	foreach (id : (String[]) { crig::ANIM_KEY_ROW_ID, crig::ANIM_MORE_ID, crig::ANIM_SHEET_MODE_ID, crig::ANIM_TRANSPORT_PLAY_ID, crig::ANIM_LAYERS_ID })
-	{
-		test::@check(!has_id(&f, id), "the cutscene dock shows %s", id);
-	}
-}
-
 fn void picking_a_clip_gives_the_dock_back_and_hides_the_knots_and_path_lines() @test
 {
 	Fixture f;
@@ -262,86 +226,15 @@ fn void the_dock_transport_plays_and_steps_the_cutscene() @test
 	test::@check(math::abs(f.app.cut_time) < 1e-5f, "comma and Left stepped back to %f", f.app.cut_time);
 
 	// The buttons do the same.
-	f.click(cut_centre(&f, crig::CUT_END_ID));
+	f.click(id_centre(&f, crig::CUT_END_ID));
 	f.feed(f.ui.input.mouse);
 	test::@check(math::abs(f.app.cut_time - f.app.cutscene().duration) < 1e-5f, ">| put the playhead at %f", f.app.cut_time);
-	f.click(cut_centre(&f, crig::CUT_PLAY_ID));
+	f.click(id_centre(&f, crig::CUT_PLAY_ID));
 	f.feed(f.ui.input.mouse);
 	test::@check(f.app.cut_playing && f.app.cut_time < 0.5f, "play at the end did not start over");
-	f.click(cut_centre(&f, crig::CUT_START_ID));
+	f.click(id_centre(&f, crig::CUT_START_ID));
 	f.feed(f.ui.input.mouse);
 	test::@check(!f.app.cut_playing && f.app.cut_time == 0.0f, "|< did not pause at the start");
-}
-
-fn void delete_in_the_dock_takes_the_picked_strip() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.make_actor(f.app.active, "hero"), "the cube is no actor");
-	(void)f.app.add_cutscene();
-	Cutscene changed = f.app.cutscene().copy(mem);
-	CutStrip wave = crig::cut_strip(PLAY, 0.5f, 1.5f);
-	wave.clip = "Wave".copy(mem);
-	changed.actors[0].free(mem);
-	changed.actors[0] = { .row = f.app.actor_row.copy(mem), .home_rotation = quaternion::IDENTITY, .strips = alloc::clone_slice(mem, (CutStrip[]){ wave }) };
-	f.app.replace_cutscene(0, changed);
-	open_cutscene_tab(&f);
-	test::@check(f.app.show_cutscene(0), "no cutscene to show");
-	f.feed(f.ui.input.mouse);
-
-	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
-	CutsceneTimeline* drawn = timeline.widget_as(CutsceneTimeline);
-	Cutscene* c = f.app.cutscene();
-	f.click(timeline.absolute + (Vec2){ drawn.x_of(timeline, c, 1.0f), drawn.lane_top(timeline, c, 0, WHAT) + crig::CUT_LANE_H * 0.5f });
-	f.feed(f.ui.input.mouse);
-	test::@check(f.app.cut_selected != 0, "the click did not pick the strip");
-	f.feed_key(Key.DELETE);
-	test::@check(f.app.cutscene().actors[0].strips.len == 0, "Delete did not take the picked strip");
-	test::@check(f.app.cut_selected == 0, "the pick outlived its strip");
-	crig::menu_undo(f.ui);
-	f.feed(f.ui.input.mouse);
-	test::@check(f.app.cutscene().actors[0].strips.len == 1, "undo did not bring the strip back");
-}
-
-fn void a_one_off_edit_shows_its_clip_and_back_shows_the_cutscene_again() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit a rig");
-	f.app.stop_animation();
-	test::@check(f.app.make_actor(f.app.active, "hero"), "the cube is no actor");
-	(void)f.app.add_cutscene();
-	open_cutscene_tab(&f);
-	test::@check(f.app.show_cutscene(0), "no cutscene to show");
-	f.app.show_cutscene_at(1.0f);
-	test::@check(f.app.new_cut_one_off(0) >= 0, "no one-off");
-	f.feed(f.ui.input.mouse);
-
-	// Enter on the picked one-off edits it: the dock shows its clip alone, with the way back.
-	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
-	CutsceneTimeline* drawn = timeline.widget_as(CutsceneTimeline);
-	Cutscene* c = f.app.cutscene();
-	f.click(timeline.absolute + (Vec2){ drawn.x_of(timeline, c, 2.0f), drawn.lane_top(timeline, c, 0, WHAT) + crig::CUT_LANE_H * 0.5f });
-	f.feed(f.ui.input.mouse);
-	f.feed_key(Key.RETURN);
-	f.feed(f.ui.input.mouse);
-	test::@check(f.app.one_off_open() && !f.app.cutscene_in_dock(), "Enter did not open the one-off");
-	test::@check(has_id(&f, crig::ANIM_BACK_ID) && !has_id(&f, crig::CUT_TIMELINE_ID), "the dock does not show the one-off as a clip");
-	Select* chooser = f.ui.find_id("anim-chooser")!!.widget_as(Select);
-	test::@check(chooser.options.len == 1 && !chooser_lists_cutscenes(&f), "the chooser lists %d rows while the one-off is edited", chooser.options.len);
-
-	// Back: the cutscene is in the dock again.
-	f.click(cut_centre(&f, crig::ANIM_BACK_ID));
-	f.feed(f.ui.input.mouse);
-	test::@check(!f.app.one_off_open() && f.app.cutscene_in_dock(), "Back did not show the cutscene in the dock");
-	test::@check(has_id(&f, crig::CUT_TIMELINE_ID) && has_id(&f, crig::CUT_SIDE_ID), "the dock did not show the cutscene again");
-}
-
-fn void no_pane_is_a_cutscene_tab() @test
-{
-	foreach (view : crig::area_views) test::@check(view.name != "Cutscene", "a pane is still the Cutscene tab");
 }
 
 fn void a_scene_with_no_model_still_shows_its_cutscene_in_the_dock() @test

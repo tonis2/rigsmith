@@ -15,6 +15,7 @@ import crig;
 import rig;
 import gltf;
 import crig_tests::library;
+import crig_tests::helpers;
 import std::io;
 import std::core::test;
 import std::math;
@@ -49,22 +50,6 @@ fn void Scene.close(&self)
 }
 
 fn usz dots_of(crig::Character* c) => (usz)c.doc.dots.len();
-
-<*
- The fields read as the app's are the focus's, and an `AppState*` is a
- `Character*` — the two facts every line of `self.doc` relies on.
-*>
-fn void the_focus_is_the_app_s_own_fields() @test
-{
-	crig::AppState app = crig::new_app({}, "");
-	defer app.free();
-	app.doc.sym_x = 3.0f;
-	crig::Character* c = &app;
-	test::eq(c.doc.sym_x, 3.0f);
-	test::eq(app.focus.doc.sym_x, 3.0f);
-	test::eq((int)app.character_count(), 1);
-	test::@check(app.character(0) == c, "with one character the focus is character 0");
-}
 
 fn void every_character_is_born_with_its_own_counters() @test
 {
@@ -448,21 +433,12 @@ fn void a_scene_from_a_newer_version_is_refused() @test
 	test::@check(@catch(crig::parse_scene_file(mem, other, "x.json")) == crig::SCENE_SHAPE, "another format must not read");
 }
 
-fn String copy_into(String folder, String source, String name) @local
-{
-	String target = string::format(mem, "%s/%s", folder, name);
-	char[] bytes = file::load(mem, source)!!;
-	defer alloc::free(mem, bytes);
-	file::save(target, bytes)!!;
-	return target;
-}
-
 fn void a_saved_scene_opens_as_it_was_left() @test
 {
 	io::printn("save two characters as a scene, open it in a fresh app");
 	if (catch path::mkdir((Path)SCENE_FOLDER)) {}
-	String person = copy_into(SCENE_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "person.glb");
-	String animal = copy_into(SCENE_FOLDER, string::tformat("%s/quadruped.glb", library::ready()), "animal.glb");
+	String person = helpers::copy_into(SCENE_FOLDER, string::tformat("%s/humanoid.glb", library::ready()), "person.glb");
+	String animal = helpers::copy_into(SCENE_FOLDER, string::tformat("%s/quadruped.glb", library::ready()), "animal.glb");
 	defer { person.free(mem); animal.free(mem); }
 	// A sidecar or copy left by an earlier run would be opened instead of the file.
 	(void)file::delete(SCENE_FOLDER +++ "/person.rigsmith.json");

@@ -58,7 +58,7 @@ import std::core::string;
  Raised when a file carries neither a convertible clip nor a named joint. There
  is nothing in it a pack could be made of.
 *>
-faultdef PACK_EMPTY;
+excuse PACK_EMPTY;
 
 const float PACK_SPARSE_TIME_EPSILON = 1.0e-5f;
 

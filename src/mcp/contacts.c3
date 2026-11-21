@@ -10,7 +10,7 @@ module crig;
 
 import std::collections::object;
 
-faultdef CONTACTS_REFUSED;
+excuse CONTACTS_REFUSED;
 
 const String FIND_CONTACTS_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."}

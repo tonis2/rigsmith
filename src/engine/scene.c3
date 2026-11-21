@@ -66,6 +66,7 @@ import cui;
 import rig;
 import std::math;
 import std::sort;
+import std::hash::fnv32a;
 import gltf;
 
 <*
@@ -1248,7 +1249,7 @@ fn void place_model(AppState* app, ModelSlot* s, Character* c) @local
  The aspect is deliberately not sent: it is the pane's, and three works it out
  from the rect below.
 *>
-fn three::Camera scene_camera(OrbitCamera* from) @local
+fn three::Camera scene_camera(OrbitCamera* from)
 {
 	three::Camera camera = {
 		.target = { from.target[0], from.target[1], from.target[2] },
@@ -1357,7 +1358,7 @@ three::NodeId floor_node @local = three::NO_NODE;
 bool floor_built @local = false;
 // What the floor was built under: a hash of every character's mesh, turn and
 // footprint on the ground, so any of them changing builds it again.
-ulong floor_key @local = 0;
+uint floor_key @local = 0;
 uint floor_serial @local = 0;
 
 // The fill and the lines, before three's lighting.
@@ -1382,7 +1383,7 @@ fn void sync_floor(AppState* app) @local
 	bool wanted = !app.config.hide_floor && drawn && !level_in_view();
 	if (wanted)
 	{
-		ulong key = floor_key_of(app);
+		uint key = floor_key_of(app);
 		if (!floor_built || floor_key != key) build_floor(app, key);
 	}
 	if (floor_node.is_set()) stage.set_visible(floor_node, wanted && pane_on_screen);
@@ -1420,23 +1421,23 @@ fn void floor_quad(three::GeometryBuilder* shape, float x0, float z0, float x1, 
  Everything the floor is measured from, folded into one number: each shown
  character's mesh generation, its turn, and where it stands on the ground.
 *>
-fn ulong floor_key_of(AppState* app) @local
+fn uint floor_key_of(AppState* app) @local
 {
-	ulong key = 14695981039346656037ul;
+	Fnv32a key;
+	key.init();
 	for (usz i = 0; i < app.character_count(); i++)
 	{
 		Character* c = app.character(i);
 		if (!c.has_mesh() || c.hidden) continue;
-		Quaternionf turn = c.doc.model_transform.orientation();
-		float[6] parts = { turn.v[0], turn.v[1], turn.v[2], turn.v[3],
-			c.doc.model_transform.location.x, c.doc.model_transform.location.z };
-		key = (key ^ c.geometry_generation) * 1099511628211ul;
-		foreach (part : parts) key = (key ^ bitcast(part, uint)) * 1099511628211ul;
+		key.mix(c.geometry_generation);
+		key.mix(c.doc.model_transform.orientation());
+		key.mix(c.doc.model_transform.location.x);
+		key.mix(c.doc.model_transform.location.z);
 	}
-	return key;
+	return (uint)key;
 }
 
-fn void build_floor(AppState* app, ulong measured) @local
+fn void build_floor(AppState* app, uint measured) @local
 {
 	floor_built = true;
 	floor_key = measured;

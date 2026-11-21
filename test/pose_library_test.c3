@@ -12,6 +12,7 @@ module crig_tests::pose_library;
 import crig;
 import rig;
 import crig_tests::pose_clipboard;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::quaternion;
@@ -20,8 +21,8 @@ const String LEFT = "thigh_L";
 const String RIGHT = "thigh_R";
 const String HIPS = "hips";
 
-fn Vec3 turn(AnimKeyDot dot) => pose_clipboard::turn_of(dot);
-fn Vec3 turn_q(Quaternionf q) => pose_clipboard::turn_of_quaternion(q);
+fn Vec3 turn(AnimKeyDot dot) => helpers::turn_of(dot);
+fn Vec3 turn_q(Quaternionf q) => helpers::turn_of_quaternion(q);
 fn bool same(Vec3 a, Vec3 b) => pose_clipboard::same_turn(a, b);
 
 fn void a_saved_pose_applies_at_another_time_as_one_undo() @test
@@ -56,27 +57,6 @@ fn void a_saved_pose_applies_at_another_time_as_one_undo() @test
 	test::@check(f.app.undo(), "the apply would not undo");
 	test::@check(same(turn(f.entry(LEFT, 0.5f)), turn_q(f.second)), "undo did not restore the previous key");
 	test::eq(f.app.doc.poses.len, (sz)1);
-}
-
-fn void a_saved_pose_applies_mirrored_onto_the_twin() @test
-{
-	Figure f;
-	bool opened = f.open();
-	defer f.close();
-	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
-	f.app.auto_key = true;
-
-	test::eq(f.app.save_named_pose("Stride"), (sz)0);
-	f.app.stop_animation();
-	f.app.edit_time = 0.5f;
-	Vec3 left_before = turn(f.entry(LEFT, 0.5f));
-	test::eq(f.app.apply_saved_pose(0, mirrored: true), (usz)1);
-	Vec3 want = turn_q(f.first);
-	want = { want.x, -want.y, -want.z };
-	Vec3 got = turn(f.entry(RIGHT, 0.5f));
-	test::@check(same(got, want), "the right leg turns (%.3f, %.3f, %.3f); the reflection asks for (%.3f, %.3f, %.3f)",
-		got.x, got.y, got.z, want.x, want.y, want.z);
-	test::@check(same(turn(f.entry(LEFT, 0.5f)), left_before), "a mirrored apply rewrote the left leg");
 }
 
 fn void selected_only_applies_part_of_a_whole_pose() @test

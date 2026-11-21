@@ -5,6 +5,7 @@
 module crig_tests::constraint_rig;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import std::core::test;
@@ -13,8 +14,6 @@ import std::io::file;
 import std::core::string;
 import std::collections::list;
 
-fn bool near(float a, float b) => math::abs(a - b) < 1.0e-5f;
-fn bool near_vec(Vec3 a, Vec3 b) => (a - b).length() < 1.0e-4f;
 fn bool near_quat(Quaternionf a, Quaternionf b)
 {
 	float same = (a.v - b.v).dot(a.v - b.v);
@@ -108,15 +107,15 @@ fn void constraints_are_dense_owned_and_not_jiggle_physics() @test
 	test::@check(constraints.joints[(usz)foot].status == crig::JointConstraintStatus.FREE,
 		"a jiggle-only foot became an anatomical constraint");
 	test::@check(constraints.joints[(usz)foot].axes[0].allowed
-		&& near(constraints.joints[(usz)foot].axes[0].minimum, -(float)math::PI)
-		&& near(constraints.joints[(usz)foot].axes[0].maximum, (float)math::PI),
+		&& math::is_approx(constraints.joints[(usz)foot].axes[0].minimum, -(float)math::PI, 1e-5f)
+		&& math::is_approx(constraints.joints[(usz)foot].axes[0].maximum, (float)math::PI, 1e-5f),
 		"a free row carries locked-looking axis defaults");
 
 	// The result owns a copy rather than borrowing the document's editable row.
 	limits.axes[0].maximum = 0.5f;
 	test::@check(fixture.doc.set_rotation_limits(fixture.knee, limits),
 		"the source constraint could not be edited after conversion");
-	test::@check(near(carried.axes[0].maximum, 2.4f),
+	test::@check(math::is_approx(carried.axes[0].maximum, 2.4f, 1e-5f),
 		"editing the document mutated the already-built constraint rig");
 }
 
@@ -294,7 +293,7 @@ fn void inspect_constraint_file(
 			? authored.axes[axis].minimum : authored.axes[axis].locked;
 		float expected_max = authored.axes[axis].allowed
 			? authored.axes[axis].maximum : authored.axes[axis].locked;
-		test::@check(near(limit.min, expected_min) && near(limit.max, expected_max),
+		test::@check(math::is_approx(limit.min, expected_min, 1e-5f) && math::is_approx(limit.max, expected_max, 1e-5f),
 			"axis %d came back [%.4f, %.4f], expected [%.4f, %.4f]",
 			axis, limit.min, limit.max, expected_min, expected_max);
 	}
@@ -320,7 +319,7 @@ fn void inspect_constraint_file(
 	test::@check(a.joint < 0, "the KHR joint was duplicated on both attachments");
 
 	Vec3 pivot = skeleton.joints[knee];
-	test::@check(near_vec(a.world_position(), pivot) && near_vec(b.world_position(), pivot),
+	test::@check(helpers::near3(a.world_position(), pivot, 1e-4f) && helpers::near3(b.world_position(), pivot, 1e-4f),
 		"the attachment frames are not coincident at the skeleton joint");
 	test::@check(near_quat(a.world_rotation(), b.world_rotation()),
 		"the coincident attachments disagree about their angular frame");
@@ -620,7 +619,7 @@ fn void foreign_cones_and_drives_are_reported_and_passed_through() @test
 			&& settings.angular_limits[0].axes.z == 1,
 			"the foreign cone was split or changed");
 		test::@check(settings.drives.len() == 1
-			&& near(settings.drives[0].stiffness, 42.0f),
+			&& math::is_approx(settings.drives[0].stiffness, 42.0f, 1e-5f),
 			"the foreign drive was discarded or changed");
 	}
 }
@@ -948,9 +947,9 @@ fn void target_hulls_are_small_weighted_and_form_a_complete_available_graph() @t
 	test::@check(branch_x < 0.30f,
 		"the fork hull reached %.3f into child geometry instead of using its own weighted region",
 		branch_x);
-	test::@check(near(root.mass, root.volume * crig::PHYSICAL_BODY_DENSITY)
-		&& near(branch.mass, branch.volume * crig::PHYSICAL_BODY_DENSITY)
-		&& near(terminal.mass, terminal.volume * crig::PHYSICAL_BODY_DENSITY),
+	test::@check(math::is_approx(root.mass, root.volume * crig::PHYSICAL_BODY_DENSITY, 1e-5f)
+		&& math::is_approx(branch.mass, branch.volume * crig::PHYSICAL_BODY_DENSITY, 1e-5f)
+		&& math::is_approx(terminal.mass, terminal.volume * crig::PHYSICAL_BODY_DENSITY, 1e-5f),
 		"target body mass was not derived from final hull volume");
 	test::@check(bodies.payload_bytes < 6 * 1024,
 		"three small collision hulls claim %.2f KiB of raw geometry",
@@ -1084,10 +1083,10 @@ fn void target_hulls_are_small_weighted_and_form_a_complete_available_graph() @t
 	{
 		crig::JiggleJoint held = coexist.physics.joints[0];
 		test::@check(held.joint == 1
-			&& near(held.params.stiffness, jiggle_params.stiffness)
-			&& near(held.params.damping, jiggle_params.damping)
-			&& near(held.params.gravity, jiggle_params.gravity)
-			&& near(held.params.radius, jiggle_params.radius),
+			&& math::is_approx(held.params.stiffness, jiggle_params.stiffness, 1e-5f)
+			&& math::is_approx(held.params.damping, jiggle_params.damping, 1e-5f)
+			&& math::is_approx(held.params.gravity, jiggle_params.gravity, 1e-5f)
+			&& math::is_approx(held.params.radius, jiggle_params.radius, 1e-5f),
 			"the existing branch jiggle body changed while P5 hulls were added");
 	}
 }
@@ -1315,8 +1314,8 @@ fn void p6_check_constraint_graph(
 		|| child_frame.joint >= (int)stream.gltf.physics_joints.len()) return;
 
 	Vec3 pivot = skeleton.joints[joint];
-	test::@check(near_vec(parent_frame.world_position(), pivot)
-		&& near_vec(child_frame.world_position(), pivot),
+	test::@check(helpers::near3(parent_frame.world_position(), pivot, 1e-4f)
+		&& helpers::near3(child_frame.world_position(), pivot, 1e-4f),
 		"%s attachment pair does not replay at the target pivot", names[joint]);
 	JointConstraint expected = constraints.joints[joint];
 	JointLimitFrame base = crig::joint_limit_frame_by_index(skeleton, joint,
@@ -1331,9 +1330,9 @@ fn void p6_check_constraint_graph(
 
 	gltf::PhysicsJoint settings = stream.gltf.physics_joints[(uint)child_frame.joint];
 	test::@check(settings.linear_limits.len() == 1
-		&& near_vec(settings.linear_limits[0].axes, { 1, 1, 1 })
-		&& near(settings.linear_limits[0].min, 0.0f)
-		&& near(settings.linear_limits[0].max, 0.0f),
+		&& helpers::near3(settings.linear_limits[0].axes, { 1, 1, 1 }, 1e-4f)
+		&& math::is_approx(settings.linear_limits[0].min, 0.0f, 1e-5f)
+		&& math::is_approx(settings.linear_limits[0].max, 0.0f, 1e-5f),
 		"%s does not carry one zero-range XYZ translation weld", names[joint]);
 	test::@check(settings.angular_limits.len() == 3,
 		"%s carries %d angular rows rather than three independent axes",
@@ -1349,7 +1348,7 @@ fn void p6_check_constraint_graph(
 		JointAxisLimit wanted = expected.axes[(usz)axis];
 		float minimum = wanted.allowed ? wanted.minimum : wanted.locked;
 		float maximum = wanted.allowed ? wanted.maximum : wanted.locked;
-		test::@check(near(limit.min, minimum) && near(limit.max, maximum),
+		test::@check(math::is_approx(limit.min, minimum, 1e-5f) && math::is_approx(limit.max, maximum, 1e-5f),
 			"%s axis %d changed from [%.3f, %.3f] to [%.3f, %.3f]",
 			names[joint], axis, minimum, maximum, limit.min, limit.max);
 	}

@@ -8,7 +8,7 @@ import std::collections::object;
 import std::math;
 import std::math::quaternion;
 
-faultdef PROP_REFUSED;
+excuse PROP_REFUSED;
 
 const String SET_PROP_SCHEMA = `{"type":"object","properties":{
 	"joint":{"type":"string","description":"The hand, by joint name: the prop rides it in every clip of this character."},

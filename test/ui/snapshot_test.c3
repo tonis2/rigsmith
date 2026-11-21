@@ -21,8 +21,9 @@ struct SnapshotFields @local
 	SnapshotTint tint;
 }
 
-// Each change to one field is a difference, whatever the field's type.
-fn void every_field_of_a_snapshot_counts() @test
+// Each change to one field is a difference, whatever the field's type, and the
+// same text in other memory is not, or a snapshot would rebuild each frame.
+fn void a_snapshot_differs_by_every_field_and_by_text_not_memory() @test
 {
 	char[1] bytes;
 	SnapshotFields base = { .name = "walk", .source = &bytes[0] };
@@ -49,14 +50,10 @@ fn void every_field_of_a_snapshot_counts() @test
 	other = base;
 	other.tint = BLUE;
 	test::@check(crig::fields_differ(base, other), "an enum");
-}
 
-// The same text in other memory is no change, or a snapshot would rebuild each frame.
-fn void a_string_is_compared_by_its_text() @test
-{
 	String copy = "walk".copy(mem);
 	defer copy.free(mem);
-	SnapshotFields a = { .name = "walk" };
-	SnapshotFields b = { .name = copy };
-	test::@check(!crig::fields_differ(a, b), "the same text counted as a change");
+	other = base;
+	other.name = copy;
+	test::@check(!crig::fields_differ(base, other), "the same text counted as a change");
 }

@@ -350,12 +350,8 @@ fn void current_file_group_lists_the_model_animations() @test
 	test::eq((sz)current_cat.count, file_clips);
 }
 
-<*
- Deleting a Current file animation un-binds it and re-saves the model in place, so
- the clip is gone from the glb on disk — the asset-view delete end to end.
-*>
 // A material extension names textures, never an accessor or a view, so a file
-// using one still compacts — a Tripo export (KHR_materials_specular, …) grew by a
+// using one still compacts — a generated model's export (KHR_materials_specular, …) grew by a
 // whole skin and every old clip on each save before this.
 fn void material_extensions_do_not_stop_cleanup() @test
 {
@@ -386,6 +382,10 @@ fn void material_extensions_do_not_stop_cleanup() @test
 	test::@check(((String)again.json).contains("KHR_materials_specular"), "the material lost its extension");
 }
 
+<*
+ Deleting a Current file animation un-binds it and re-saves the model in place, so
+ the clip is gone from the glb on disk — the asset-view delete end to end.
+*>
 fn void delete_model_animation_removes_it_from_the_file() @test
 {
 	io::printn("deleting a Current file animation re-saves the model without it");

@@ -11,6 +11,7 @@
 module crig_tests::hand_axes;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io;
@@ -110,18 +111,6 @@ fn Hand add_hand(crig::RigDocument* doc, float side, Quaternionf turn, uint ches
 	return hand;
 }
 
-fn crig::JointLimitFrame frame_of(crig::RigDocument* doc, uint id)
-{
-	uint[] ids;
-	rig::Skeleton skeleton = crig::build_skeleton(doc, mem, &ids)!!;
-	defer
-	{
-		skeleton.free(mem);
-		alloc::free(mem, ids);
-	}
-	return crig::joint_limit_frame(&skeleton, ids, doc.rotation_limits_of(id));
-}
-
 // The knuckle line laid across a bone: the X the hand rule aims for.
 fn Vec3 across_the_bone(crig::JointLimitFrame frame, Vec3 line)
 {
@@ -141,7 +130,7 @@ fn void check_hand_curls_about_x(crig::RigDocument* doc, Hand* hand, String shap
 	{
 		for (usz k = 0; k < 3; k++)
 		{
-			crig::JointLimitFrame frame = frame_of(doc, hand.digits[d][k]);
+			crig::JointLimitFrame frame = helpers::frame_of(doc, hand.digits[d][k]);
 			test::@check(frame.usable(), "%s_%d has no frame", DIGIT_NAMES[d], k + 1);
 			float along = frame.axis(X).dot(across_the_bone(frame, line));
 			if (sign == 0.0f) sign = along < 0.0f ? -1.0f : 1.0f;
@@ -217,7 +206,7 @@ fn void a_leaning_hand_still_curls_toward_its_palm() @test
 				{
 					// A turn of a about X takes the bone's Y toward Z * sin(a), so the
 					// plan's curl moves the tip along Z * -side; the palm is below.
-					crig::JointLimitFrame frame = frame_of(&app.doc, hand.digits[d][k]);
+					crig::JointLimitFrame frame = helpers::frame_of(&app.doc, hand.digits[d][k]);
 					float down = -frame.axis(Z).y * -hand.side;
 					test::@check(down > 0.5f, "%s hand leaning %.0f degrees forward: %s_%d curls %s, not toward the palm",
 						hand.side > 0.0f ? "the left" : "the right", degrees, DIGIT_NAMES[d], k + 1,
@@ -244,7 +233,7 @@ fn void a_finger_the_world_axis_already_suits_keeps_it_exactly() @test
 	defer app.free();
 	Hand hand = add_hand(&app.doc, 1.0f,
 		quaternion::from_axis_angle{float}({ 1, 0, 0 }, 6.0f * (float)math::PI / 180.0f));
-	crig::JointLimitFrame frame = frame_of(&app.doc, hand.digits[2][0]);
+	crig::JointLimitFrame frame = helpers::frame_of(&app.doc, hand.digits[2][0]);
 	// Held out along world X, its X comes from world Z.
 	Vec3 along = frame.axis(Y);
 	Vec3 world = ((Vec3){ 0, 0, 1 } - along * along.z).normalize();
@@ -356,7 +345,7 @@ fn void using_the_bones_axes_keeps_what_the_table_allows() @test
 	table.axes[0] = { .allowed = true, .minimum = -1.2f, .maximum = 0.2f };
 	table.axes[1] = { .allowed = false, .locked = 0.1f };
 	table.axes[2] = { .allowed = true, .minimum = -0.3f, .maximum = 0.4f };
-	crig::JointLimitFrame derived = frame_of(&app.doc, joint);
+	crig::JointLimitFrame derived = helpers::frame_of(&app.doc, joint);
 
 	JointAxisLimit[3] quarter;
 	foreach (usz q, degrees : (float[]){ 90.0f, 180.0f, 270.0f, 100.0f })
@@ -367,13 +356,13 @@ fn void using_the_bones_axes_keeps_what_the_table_allows() @test
 			degrees * (float)math::PI / 180.0f)).normalize();
 		test::@check(app.set_rotation_limits_recorded(joint, saved), "the saved table did not land");
 		app.undo_stack.commit();
-		crig::JointLimitFrame was = frame_of(&app.doc, joint);
+		crig::JointLimitFrame was = helpers::frame_of(&app.doc, joint);
 
 		test::@check(app.use_bone_axes_recorded(joint), "Use bone axes did nothing at %.0f degrees", degrees);
 		app.undo_stack.commit();
 		crig::JointRotationLimits after = app.doc.rotation_limits_of(joint);
 		test::@check(!after.has_saved_frame, "the frame stayed saved at %.0f degrees", degrees);
-		crig::JointLimitFrame now = frame_of(&app.doc, joint);
+		crig::JointLimitFrame now = helpers::frame_of(&app.doc, joint);
 		test::@check(math::abs(now.rotation.v.dot(derived.rotation.v)) > 0.99999f,
 			"the table is not on the bone's axes at %.0f degrees", degrees);
 		test::@check(after.axes[1].same(table.axes[1]), "the twist row moved at %.0f degrees", degrees);
@@ -445,7 +434,7 @@ fn void the_humanoids_thumbs_bend_about_their_hands_x() @test
 				crig::JointRotationLimits table = app.doc.rotation_limits_of(dot.id);
 				test::@check(table.constrained, "%s carries no table", name);
 				test::@check(!table.has_saved_frame, "%s opened pinned to a frame of its own", name);
-				crig::JointLimitFrame frame = frame_of(&app.doc, dot.id);
+				crig::JointLimitFrame frame = helpers::frame_of(&app.doc, dot.id);
 				float along = frame.axis(X).dot(across_the_bone(frame, line));
 				if (sign == 0.0f) sign = along < 0.0f ? -1.0f : 1.0f;
 				test::@check(along * sign >= ALONG_THE_HAND, "%s's X is %s, %.1f degrees off its hand's knuckle line",

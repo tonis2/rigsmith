@@ -218,14 +218,10 @@ fn sz AppState.put_cut_strip(&self, usz actor, CutStrip strip)
 	CutTie[] ties = cut_ties(mem, who.strips, c.paths);
 	defer free(ties);
 	usz count = who.strips.len;
-	CutStrip[] grown = alloc::new_array(mem, CutStrip, (sz)count + 1);
-	foreach (usz k, s : who.strips) grown[k] = s;
 	// An id of its own now, so it is found again after the lanes settle.
 	strip.id = next_generation();
 	uint id = strip.id;
-	grown[count] = strip;
-	if (count > 0) alloc::free(mem, who.strips);
-	who.strips = grown;
+	slice_push(mem, &who.strips, strip);
 	usz at = cut_settle_strips(mem, &who.strips, count);
 	(void)cut_carry_ties(mem, &who.strips, ties);
 	foreach (usz k, &s : who.strips) if (s.id == id) at = k;
@@ -249,13 +245,7 @@ fn bool AppState.delete_cut_strip(&self, usz actor, usz strip)
 	bool[] played = self.cutscene().played_one_offs();
 	CutActor* who = &self.cutscene().actors[actor];
 	who.strips[strip].free(mem);
-	for (usz k = strip; k + 1 < who.strips.len; k++) who.strips[k] = who.strips[k + 1];
-	who.strips = who.strips[:who.strips.len - 1];
-	if (who.strips.len == 0)
-	{
-		alloc::free(mem, who.strips.ptr);
-		who.strips = {};
-	}
+	slice_remove_at(mem, &who.strips, strip);
 	// A one-off goes with the last strip that plays it, in this same step.
 	self.cutscene().drop_unplayed(played);
 	// A walk over a move that went may walk with another one now.

@@ -23,7 +23,7 @@ module crig;
 import rig;
 import std::collections::object;
 
-faultdef SAVE_REFUSED;
+excuse SAVE_REFUSED;
 
 <*
  save_pack: the authored clips, written into the library as a pack file.

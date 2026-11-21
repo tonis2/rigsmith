@@ -1139,7 +1139,7 @@ fn void Timeline.paint_bars(&self, Element* elem, Painter* painter)
 	if (self.duration <= 0.0f) return;
 	TimelineStyle s = self.style.resolved();
 	float end = self.view_start + self.visible_duration();
-	foreach (usz i, unused : self.bars)
+	for (usz i = 0; i < self.bars.len; i++)
 	{
 		TimelineBar bar = self.shown_bar(i);
 		if (bar.lane >= self.lanes.len) continue;

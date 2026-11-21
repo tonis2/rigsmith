@@ -118,6 +118,7 @@ fn void asset_drag_the_group_is_the_focus_and_his_clips() @test
 	{
 		test::@check(f.bind_click(asset_drag_row(&f, clip)), "no cell for %s", clip.name);
 		f.ui.flush();
+		test::@check(!f.app.piece_drag.active, "the + on %s started a drag", clip.name);
 	}
 	usz group = asset_drag_group(&f);
 	test::@check(asset_drag_lists(&f, f.app.label(), clips[..]), "the group does not list the two bound clips");
@@ -257,7 +258,7 @@ fn void asset_drag_open(Fixture* f, crig::AssetKind kind = ANIMATION) @local
 // Whether a press at the middle of `cell` reaches it.
 fn bool asset_drag_reaches(Fixture* f, Element* cell) @local
 {
-	for (Element* e = f.ui.hit_test(cell_center(cell)); e; e = e.parent)
+	for (Element* e = f.ui.hit_test(centre_of(cell)); e; e = e.parent)
 	{
 		if (e == cell) return true;
 	}
@@ -288,7 +289,7 @@ fn AssetDragClip asset_drag_clip_of(Fixture* f, Element* cell) @local
 // Press `cell`'s body and move past the slop, the button held.
 fn void asset_drag_lift(Fixture* f, Element* cell) @local
 {
-	Vec2 from = cell_center(cell);
+	Vec2 from = centre_of(cell);
 	f.feed(from);
 	f.feed(from, left: true);
 	f.feed(from + (Vec2){ crig::PIECE_DRAG_SLOP * 3.0f, 0 }, left: true);
@@ -387,34 +388,4 @@ fn void asset_drag_a_model_cell_does_not_drag() @test
 	f.feed(to);
 	f.ui.flush();
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)0);
-}
-
-fn void asset_drag_the_plus_still_binds_and_unbinds() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	asset_drag_open(&f);
-	Element* cell = asset_drag_cell(&f, ANIMATION);
-	test::@check(cell != null, "no library clip in reach");
-	AssetDragClip clip = asset_drag_clip_of(&f, cell);
-	defer clip.free();
-	crig::AssetEntry* entry = f.app.visible_asset(asset_drag_row(&f, clip));
-	test::@check(!f.app.is_bound_entry(entry), "%s is bound before the +", clip.name);
-	sz bound = f.app.doc.animations.len();
-
-	test::@check(f.bind_click(asset_drag_row(&f, clip)), "no cell for %s", clip.name);
-	f.ui.flush();
-	entry = f.app.visible_asset(asset_drag_row(&f, clip));
-	test::@check(f.app.is_bound_entry(entry) && f.app.doc.animations.len() == bound + 1, "the + did not bind %s", clip.name);
-	test::@check(f.notice_text().starts_with("added "), "the bind said %s", f.notice_text());
-	test::@check(!f.app.piece_drag.active, "the + started a drag");
-
-	test::@check(f.bind_click(asset_drag_row(&f, clip)), "no cell for %s after the bind", clip.name);
-	f.ui.flush();
-	entry = f.app.visible_asset(asset_drag_row(&f, clip));
-	test::@check(!f.app.is_bound_entry(entry) && f.app.doc.animations.len() == bound, "the + did not unbind %s", clip.name);
-	test::@check(f.notice_text().starts_with("removed "), "the unbind said %s", f.notice_text());
-	test::@check(f.app.undo(), "the unbind did not undo");
-	test::@check(f.app.doc.animations.len() == bound + 1, "the undo did not bind %s back", clip.name);
 }

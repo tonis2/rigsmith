@@ -5,6 +5,7 @@
 module crig_tests::weights_card;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io;
@@ -33,26 +34,17 @@ fn void close_card_fixture(crig::AppState* app, rig::TriMesh* mesh)
 	(void)file::delete(sidecar);
 }
 
-fn uint card_dot(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
-}
-
 // The finger beside the one under test already corrected, so the rows the card
 // draws hold pins as well as the binder's weights; then the Weights card on the
 // second joint.
 fn uint open_card_on_a_finger(crig::AppState* app)
 {
-	uint first = card_dot(app, "index_1_L");
+	uint first = helpers::dot_named(app, "index_1_L");
 	bool[] part = app.area_part_mask(mem, first, OWN);
 	defer alloc::free(mem, part);
 	test::@check(app.apply_area(first, part, app.area_scale(first) * 0.25f) > 0, "the first finger's part wrote nothing");
 
-	uint finger = card_dot(app, "index_2_L");
+	uint finger = helpers::dot_named(app, "index_2_L");
 	app.select(finger);
 	app.show_joint_panel = true;
 	app.joint_panel_tab = WEIGHTS;
@@ -291,8 +283,8 @@ fn void a_fingers_own_part_is_its_band_whatever_the_pins_say() @test
 	open_card_fixture(&app, &mesh);
 	defer close_card_fixture(&app, &mesh);
 
-	uint first = card_dot(&app, "index_1_L");
-	uint second = card_dot(&app, "index_2_L");
+	uint first = helpers::dot_named(&app, "index_1_L");
+	uint second = helpers::dot_named(&app, "index_2_L");
 	bool[] own = app.area_part_mask(mem, first, OWN);
 	defer alloc::free(mem, own);
 	sz inside = -1;
@@ -329,9 +321,9 @@ fn void a_fingers_parts_tile_it() @test
 	String[4] names = { "index_1_L", "index_2_L", "index_3_L", "index_4_L" };
 	usz count = app.geometry.positions.len;
 	bool[][4] own;
-	foreach (i, name : names) own[i] = app.area_part_mask(mem, card_dot(&app, name), OWN);
+	foreach (i, name : names) own[i] = app.area_part_mask(mem, helpers::dot_named(&app, name), OWN);
 	defer foreach (part : own) if (part.len > 0) alloc::free(mem, part);
-	bool[] beyond = app.area_part_mask(mem, card_dot(&app, "index_2_L"), WITH_CHILDREN);
+	bool[] beyond = app.area_part_mask(mem, helpers::dot_named(&app, "index_2_L"), WITH_CHILDREN);
 	defer if (beyond.len > 0) alloc::free(mem, beyond);
 
 	// The tip marks where the finger ends and may hold no skin of its own; the

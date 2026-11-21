@@ -25,7 +25,7 @@ import std::math::quaternion;
 
 // Every refusal in this file. Declared here rather than beside the registry,
 // because every one of them is raised by the parsing below and by nothing else.
-faultdef CLIP_INVALID;
+excuse CLIP_INVALID;
 
 <*
  Read apply_clip's argument object as a template.

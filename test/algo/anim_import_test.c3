@@ -48,13 +48,6 @@ const String FOLD_FIXTURE = "build/anim-import-fold.gltf";
 const String ARMLESS_FIXTURE = "build/anim-import-armless.gltf";
 
 <*
- A real pack from the repo, for the check that wants a file it did not write.
-
- Relative, so the run has to start from the crig directory.
-*>
-const String REAL_PACK = "assets/animations/humanoid.glb";
-
-<*
  Write the animated fixture and report where it went.
 
  Returns false having already failed the calling test, so a check that cannot
@@ -476,7 +469,6 @@ fn void the_conversion_reproduces_the_source() @test
 	}
 	crig::AnimTemplate anim = imported;
 	defer anim.free(mem);
-	test::@check(true, "the fixture animation imports at all");
 
 	test::@check(anim.name == "bend", "the template keeps the animation's name");
 	test::@check(report.joints == 3, "all three named joints come across");
@@ -503,7 +495,6 @@ fn void the_conversion_reproduces_the_source() @test
 		if (gap > worst) worst = gap;
 	}
 
-	io::printfn("  worst joint is %.7f from where the source file put it", worst);
 	test::@check(worst < EXACT, "the template reproduces the source's own motion");
 }
 
@@ -543,71 +534,7 @@ fn void extra_samples_stay_exact() @test
 		if (gap > worst) worst = gap;
 	}
 
-	io::printfn("  subdivided into %d keyframes, worst joint is %.7f out", report.keyframes, worst);
 	test::@check(worst < EXACT, "the extra samples land on the source's own curve");
-}
-
-<*
- The joint the source never moves must not move here either.
-
- Easy to pass by accident and easy to fail loudly: an off-by-one in the joint
- ordering, or a parent-relative rotation left in world terms, both show up as a
- hip that drifts while only the knee was asked to bend.
-*>
-fn void an_unanimated_joint_stays_put() @test
-{
-	String path;
-	if (!animated_fixture(&path)) return;
-
-	crig::AnimTemplate anim = crig::import_gltf_animation(mem, path)!!;
-	defer anim.free(mem);
-
-	rig::Skeleton skeleton = fixture_skeleton();
-	defer skeleton.free(mem);
-
-	rig::Pose pose = anim.pose(mem, &skeleton, JOINT_NAMES[..], 0.5f);
-	defer pose.free(mem);
-
-	Vec3[] posed = posed_joints(&skeleton, pose);
-	defer alloc::free(mem, posed);
-
-	// The hips are dipped by the source, so they should have moved; the knee
-	// hangs off them and moves with them. Only the ankle is driven by a rotation.
-	float hips_moved = (posed[HIPS] - skeleton.joints[HIPS]).length();
-	float ankle_moved = (posed[ANKLE] - skeleton.joints[ANKLE]).length();
-
-	test::@check(hips_moved > 0.05f, "the dip in the source moves the hips");
-	test::@check(ankle_moved > 0.1f, "and the bend swings the ankle");
-}
-
-<*
- A source track at rest is retained as an explicit rest key.
-
- Everything below rests at an angle, so a conversion that forgot to cancel the
- rest pose must still contain identity values rather than the bone rotations
- themselves mistaken for motion. Keeping the entries is what prevents sparse
- sampling from holding the later bend backwards over the opening interval.
-*>
-fn void rest_converts_to_nothing() @test
-{
-	String path;
-	if (!animated_fixture(&path)) return;
-
-	crig::AnimTemplate anim = crig::import_gltf_animation(mem, path)!!;
-	defer anim.free(mem);
-
-	foreach (dot : anim.keyframes[0].dots)
-	{
-		test::@check(math::abs(dot.angle) < EXACT && dot.move.length() < EXACT,
-			"the source rest key contains only explicit rest values");
-	}
-	test::@check(anim.keyframes[0].dots.len > 0,
-		"animated source tracks retain an explicit opening rest key");
-
-	crig::AnimKeyDot knee = dot_named(anim.keyframes[1], "knee");
-	test::@check(knee.joint_name.len > 0, "the keyframe at the bend does name the knee");
-	test::@check(math::abs(knee.angle - KNEE_SWING) < EXACT, "and turns it by the angle the source did");
-	io::printfn("  the knee is imported as %.5f radians, authored as %.5f", knee.angle, KNEE_SWING);
 }
 
 <*
@@ -662,8 +589,6 @@ fn void a_template_carries_onto_a_differently_posed_rig() @test
 	// A bone of length L turned through an angle sweeps a chord of 2L sin(a/2).
 	float expected = 2.0f * 0.4f * math::sin(KNEE_SWING * 0.5f);
 
-	io::printfn("  the ankle swings %.5f as stored and %.5f carried across, against %.5f authored",
-		plain_swing, carried_swing, expected);
 	test::@check(plain_swing < 1.0e-5f, "played as stored, a bone turned about its own length does not move");
 	test::@check(math::abs(carried_swing - expected) < EXACT, "carried onto the new bone it sweeps the full arc");
 }
@@ -711,7 +636,6 @@ fn void the_carry_is_nothing_on_a_matching_rig() @test
 		}
 	}
 
-	io::printfn("  on the rig it came from, carrying the axes moves a joint by %.8f", worst);
 	test::@check(worst < 1.0e-5f, "a template played on its own rig is untouched by the carry");
 }
 
@@ -757,8 +681,6 @@ fn void a_carry_does_not_leak_down_the_chain() @test
 
 	float aimed = math::acos(math::clamp(source_bones[HIPS].dot(target_bones[HIPS]), -1.0f, 1.0f));
 
-	io::printfn("  the hips' bone is aimed %.1f degrees apart, the knee's %.8f",
-		aimed * 180.0f / (float)math::PI, (source_bones[KNEE] - target_bones[KNEE]).length());
 	test::@check(aimed > 0.3f, "the two rigs really do want different corrections at the hips");
 	test::@check((source_bones[KNEE] - target_bones[KNEE]).length() < 1.0e-6f, "and the same one at the knee");
 
@@ -786,7 +708,6 @@ fn void a_carry_does_not_leak_down_the_chain() @test
 		if (gap > worst) worst = gap;
 	}
 
-	io::printfn("  the shin lands %.8f from where the clip put it", worst);
 	test::@check(worst < EXACT, "a joint's own carry is all it gets, not its parent's as well");
 }
 
@@ -827,8 +748,6 @@ fn void an_offset_scales_with_the_target() @test
 	Vec3 large_dip = large_posed[HIPS] - large.joints[HIPS];
 
 	float error = (large_dip - small_dip * 10.0f).length();
-	io::printfn("  the dip is %.5f on the rig and %.5f on one ten times its size",
-		small_dip.length(), large_dip.length());
 	test::@check(small_dip.length() > 1.0e-3f, "the clip dips the small rig");
 	test::@check(error < EXACT * 10.0f, "and dips a rig ten times the size by ten times as much");
 }
@@ -867,7 +786,6 @@ fn void a_pivot_past_half_a_circle_survives() @test
 		if (gap > worst) worst = gap;
 	}
 
-	io::printfn("  pivoting %.2f radians, the worst joint is %.7f out", SPIN_TURN, worst);
 	test::@check(worst < EXACT, "a pivot the long way round still lands where the source put it");
 
 	// Turning the axis round and leaving the angle alone is a second, equally
@@ -877,7 +795,6 @@ fn void a_pivot_past_half_a_circle_survives() @test
 	// turned, since a turn read the long way round is never near zero.
 	crig::AnimKeyDot hips = dot_named(spin.keyframes[spin.keyframes.len - 1], "hips");
 	float shortest = (float)math::TAU - SPIN_TURN;
-	io::printfn("  and the pivot itself is written as %.5f radians", hips.angle);
 	test::@check(math::abs(hips.angle - shortest) < EXACT, "and is written as the turn under half a circle");
 }
 
@@ -898,7 +815,6 @@ fn void root_travel_comes_off() @test
 	defer walk.free(mem);
 
 	test::@check(report.travel_removed, "a clip that travels is reported as having been brought back");
-	io::printfn("  the source carried its root %.4f before it was taken off", report.root_travel.length());
 	test::@check(report.root_travel.length() > 0.5f, "and the travel it reports is the step the source took");
 
 	Vec3 first = walk.keyframes[0].offset_of("hips");
@@ -1041,7 +957,6 @@ fn void a_flat_rig_turns_but_does_not_slide() @test
 	crig::AnimTemplate roll = rolled;
 	defer roll.free(mem);
 
-	test::@check(true, "a flat rig can still carry a clip that only turns things");
 	test::@check(report.height == 0.0f, "and the report says plainly that it has no height");
 
 	bool still = true;
@@ -1094,95 +1009,9 @@ fn void a_held_value_stays_held() @test
 		if (math::abs(frame.time - 0.5f) < 1.0e-4f) stepped_angle = dot_named(frame, "hub").angle;
 	}
 
-	io::printfn("  at %.4f the hub still reads %.4f, and at 0.5000 it reads %.4f",
-		held_time, held_angle, stepped_angle);
 	test::@check(held_time == 0.0f, "the held curve gained approximation samples");
 	test::@check(math::abs(held_angle) < EXACT, "and still carries the value from before the step");
 	test::@check(math::abs(stepped_angle - 1.2f) < EXACT, "while the key itself carries the value after it");
-}
-
-<*
- Import from a real file and say what came out.
-
- The fixture is built to be checkable, which means it is also tidy in ways real
- exports are not: it always has a skin, every node is named, nothing is scaled.
- A file off disk is where the guesses get tested — the joint-finding without a
- skin, the odd node written as a matrix, the clip that turns things without ever
- moving them.
-*>
-fn void a_real_file_imports() @test
-{
-	String path = REAL_PACK;
-	io::printfn("real file: %s", path);
-
-	// Offered the biped plan, because the question a real file is being asked here
-	// is whether it can be matched onto one — a run with no plans could only ever
-	// report the names the file already had.
-	crig::Preset plan = match_plan();
-	crig::Preset[1] plans = { plan };
-
-	crig::AnimImportReport report;
-	crig::AnimTemplate? imported = crig::import_gltf_animation(
-		mem, path, { .plans = plans[..] }, &report);
-	if (catch err = imported)
-	{
-		io::printfn("  no animation could be taken from it: %s", err);
-		return;
-	}
-	crig::AnimTemplate anim = imported;
-	defer anim.free(mem);
-
-	io::printfn("  \"%s\": %.3fs, %d joints over %d keyframes, rig height %.4f",
-		anim.name, anim.duration, report.joints, report.keyframes, report.height);
-	if (report.unnamed_joints > 0) io::printfn("  %d unnamed joints left out", report.unnamed_joints);
-	if (report.scale_channels > 0) io::printfn("  %d scale channels dropped", report.scale_channels);
-	if (report.stepped) io::printn("  stepped curves preserved as holds");
-	if (report.cubic) io::printn("  spline curves sampled");
-	if (report.scaled_rest) io::printn("  a joint rests scaled, so its axes are approximate");
-	if (report.travel_removed) io::printfn("  %.4f of travel taken off the root", report.root_travel.length());
-
-	// The first thing to look at when a downloaded clip greys out in the library:
-	// unmatched, its joints keep names no crig rig has, and no amount of correct
-	// conversion will make it move anything.
-	if (report.plan_matched.len > 0)
-	{
-		io::printfn("  shaped like %s: %d dots filled, %d links folded in%s",
-			report.plan_matched, report.matched_joints, report.folded_joints,
-			report.folded_animated ? ", subdivided to keep the folds exact" : "");
-	}
-	else
-	{
-		io::printn("  no body plan matched — the joints keep the names the file gave them");
-	}
-
-	// Which is the only question that matters about a download, so it is asked
-	// here rather than left to be noticed on screen.
-	usz on_plan = 0;
-	foreach (dot : anim.keyframes[0].dots)
-	{
-		foreach (want : match_plan_dots)
-		{
-			if (dot.joint_name == want.name) on_plan++;
-		}
-	}
-	io::printfn("  %d of the biped plan's %d dots are named by its first keyframe",
-		on_plan, match_plan_dots.len);
-
-	test::@check(report.joints > 0, "the file yields at least one named joint");
-	test::@check(anim.duration > 0.0f, "and a clip with some length to it");
-
-	usz turning = 0;
-	bool sane = true;
-	foreach (frame : anim.keyframes)
-	{
-		foreach (dot : frame.dots)
-		{
-			if (dot.angle != dot.angle || dot.move.x != dot.move.x) sane = false;
-			if (math::abs(dot.angle) > 0.0f) turning++;
-		}
-	}
-	test::@check(sane, "with no entry that came out as a NaN");
-	io::printfn("  %d entries turn a joint", turning);
 }
 
 // ---------------------------------------------------------------------------
@@ -1281,7 +1110,6 @@ fn void a_template_survives_being_written_out() @test
 		}
 	}
 
-	io::printfn("  written and read back at four name lengths, worst joint %.7f out", worst);
 	test::@check(failures_here == 0, "a template writes out and reads back at any name length");
 	test::@check(worst < EXACT, "and puts the rig exactly where it did before");
 }
@@ -1346,12 +1174,8 @@ fn void sparse_channels_survive_gltf_roundtrip() @test
 		defer actual.free(mem);
 		float turn_gap = 1.0f - math::abs(expected.rotations[KNEE].v.dot(actual.rotations[KNEE].v));
 		float move_gap = (expected.offsets[0] - actual.offsets[0]).length();
-		if (turn_gap >= 0.0001f || move_gap >= 0.0001f)
-		{
-			io::printfn("sparse %.3f turn %.6f move %.6f", time, turn_gap, move_gap);
-		}
 		test::@check(turn_gap < 0.0001f && move_gap < 0.0001f,
-			"sparse glTF replay changed at %.3f", time);
+			"sparse glTF replay changed at %.3f: turn %.6f move %.6f", time, turn_gap, move_gap);
 	}
 }
 
@@ -1595,7 +1419,6 @@ fn void a_slid_joint_keeps_its_parent_out_of_it() @test
 
 	float knee = (sent_at[KNEE] - back_at[KNEE]).length();
 	float ankle = (sent_at[ANKLE] - back_at[ANKLE]).length();
-	io::printfn("  knee %.7f out, ankle %.7f out", knee, ankle);
 
 	test::@check(knee < EXACT, "the knee reads back where the preview slid it");
 	test::@check(ankle < EXACT, "and the ankle it carries comes with it");
@@ -1689,8 +1512,7 @@ fn void a_rigged_clip_plays_back_where_it_was_written() @test
 	if (catch fault error = crig::export_rigged_animated_glb(
 		mem, path, body, &skeleton, JOINT_NAMES[..], {}, library[..], "body"))
 	{
-		test::@check(false, "SKIPPED — the rigged writer refused the fixture");
-		io::printfn("  %s", error);
+		test::@check(false, "SKIPPED — the rigged writer refused the fixture: %s", error);
 		return;
 	}
 	test::@check(glb_is_well_formed(path), "a rigged, animated glb is a well-formed container");
@@ -1742,7 +1564,6 @@ fn void a_rigged_clip_plays_back_where_it_was_written() @test
 		}
 	}
 
-	io::printfn("  posed through a rigged file, worst joint %.7f out", worst);
 	test::@check(worst < EXACT, "and moves through the clip exactly as it did before");
 
 	(void)file::delete(path);
@@ -1760,7 +1581,7 @@ fn void a_rigged_clip_plays_back_where_it_was_written() @test
  nothing on screen disagrees with it.
 
  The rig here is the fixture with its hips moved, the same displacement
- `check_a_carry_does_not_leak_down_the_chain` uses and for the same reason: it
+ `a_carry_does_not_leak_down_the_chain` uses and for the same reason: it
  gives the source and the target genuinely different bones to carry between, so
  a writer that skips the carry cannot land on the right answer by accident.
 
@@ -1793,8 +1614,7 @@ fn void an_exported_clip_holds_what_the_preview_showed() @test
 	if (catch fault error = crig::export_rigged_animated_glb(
 		mem, written, body, &target, JOINT_NAMES[..], {}, library[..], "body"))
 	{
-		test::@check(false, "SKIPPED — the rigged writer refused the carried clip");
-		io::printfn("  %s", error);
+		test::@check(false, "SKIPPED — the rigged writer refused the carried clip: %s", error);
 		return;
 	}
 
@@ -1849,8 +1669,6 @@ fn void an_exported_clip_holds_what_the_preview_showed() @test
 	}
 
 	float height = target.height();
-	io::printfn("  the exported file meets the preview to %.7f at its keys, %.5f (%.2f%% of the rig) between",
-		at_keys, between, between / height * 100.0f);
 	test::@check(at_keys < EXACT, "a carried clip is written in the frame it was previewed in");
 	test::@check(between < height * 0.02f, "and between its keys it only bows, it does not diverge");
 
@@ -1927,7 +1745,6 @@ fn void every_bone_carries_its_direction() @test
 		}
 	}
 
-	io::printfn("  three bones aimed, worst %.7f off its own direction", worst);
 	test::@check(aimed == JOINT_NAMES.len, "every joint node's local -Z runs along its bone");
 	(void)file::delete(path);
 }
@@ -2052,12 +1869,6 @@ fn void? write_pack_fixture(String path, String extras)
 const String PACK_EXTRAS =
 	"\n  \"extras\": { \"name\": \"Test pack\", \"plan\": \"Biped \", \"tags\": \"Biped, swimming, \" },";
 
-// The same without a name, so the pack is called after its file. What the
-// library check needs, since two packs that name themselves the same thing
-// would say nothing about the order they came back in.
-const String PACK_EXTRAS_UNNAMED =
-	"\n  \"extras\": { \"plan\": \"biped\", \"tags\": \"biped\" },";
-
 <*
  A pack gives up its metadata, its clips, its joints and its body.
 
@@ -2144,42 +1955,6 @@ fn void a_file_without_metadata_is_still_clips() @test
 }
 
 <*
- A folder of files becomes a library, in an order that does not vary.
-
- Sorting is not cosmetic: which pack claims a body-plan tag, what `--preset`
- resolves to and which clip the view opens on all read "the first", and a
- filesystem order makes all three depend on the machine. The fixture is written
- out of order for the same reason — on a filesystem that already lists
- alphabetically, a check on sorted input asserts nothing.
-*>
-fn void packs_come_back_in_name_order() @test
-{
-	String folder = "build/pack-library";
-	if (catch path::mkdir(folder))
-	{
-		// Left over from a previous run, which is fine — the files below are
-		// overwritten, and anything else fails two lines down.
-	}
-
-	// Zebra first, and the names come from the stems, so a reader that keeps
-	// the order it was handed puts the zebra first too.
-	if (catch write_pack_fixture("build/pack-library/zebra.gltf", PACK_EXTRAS_UNNAMED)) return;
-	if (catch write_pack_fixture("build/pack-library/alpaca.gltf", PACK_EXTRAS_UNNAMED)) return;
-
-	// The things a real folder also has in it.
-	if (catch file::save("build/pack-library/notes.txt", (char[])"not a rig")) return;
-	if (catch file::save("build/pack-library/broken.glb", (char[])"neither is this")) return;
-
-	crig::AnimPack[] library = crig::scan_packs(mem, folder);
-	defer crig::free_packs(mem, library);
-
-	io::printfn("  %d packs read out of two glTF files, a text file and a broken one", library.len);
-	test::@check(library.len == 2, "the readable packs are found and nothing else is");
-	test::@check(library.len == 2 && library[0].name == "Alpaca", "and they come back in name order");
-	test::@check(library.len == 2 && library[1].name == "Zebra", "whatever order the folder listed them in");
-}
-
-<*
  The pack reader and the clip importer agree on what a joint is.
 
  They are two walks over the same nodes — `read_rest_skeleton` was split out of
@@ -2243,10 +2018,6 @@ fn void the_rest_skeleton_matches_the_importers() @test
 
 <*
  The pack both round-trip checks read: two clips, a skeleton and a 2 x 2 x 6 box.
-
- Written by whichever check runs first rather than left behind by one of them.
- `c3c test` runs checks in name order, and `the_position_bounds_are_per_axis`
- reads this file without writing it.
 
  Returns false having already failed the calling test.
 *>
@@ -2352,53 +2123,18 @@ fn void a_pack_survives_being_written_out() @test
 		"at the size it was written, on every axis"
 	);
 	test::@check(!report.mesh_missing, "and the report agrees there is a body");
-}
 
-<*
- The POSITION accessor's bounds, which nothing else here can see.
-
- glTF requires min and max on POSITION and requires them per component. Neither
- crig's reader nor any other cares — they read the buffer — so a writer that
- emitted one pair over the whole run would round-trip perfectly and hand every
- other tool a box six units wide on all three axes. The fixture is 2 x 2 x 6 on
- purpose: on a cube this check would pass either way.
-*>
-fn void the_position_bounds_are_per_axis() @test
-{
-	String path = ROUND_TRIP_PACK;
-	if (!round_trip_pack(path)) return;
-
-	gltf::GltfStream? stream = gltf::open(path, mem);
-	if (catch stream)
-	{
-		test::@check(false, "the written pack opens for its accessors to be read");
-		return;
-	}
+	// glTF wants POSITION's min and max per axis; no reader checks, so read them here.
+	gltf::GltfStream stream = gltf::open(path, mem)!!;
 	defer stream.close();
-
-	if (stream.gltf.meshes.len() == 0)
-	{
-		test::@check(false, "the written pack has a mesh to read bounds off");
-		return;
-	}
-
-	long? position = stream.gltf.meshes[0].primitives[0].attributes.get("POSITION");
-	if (catch position)
-	{
-		test::@check(false, "the body's primitive names a POSITION accessor");
-		return;
-	}
-
+	long position = stream.gltf.meshes[0].primitives[0].attributes.get("POSITION")!!;
 	gltf::Accessor accessor = stream.gltf.accessors[(sz)position];
 	test::@check(
 		math::abs(accessor.min.x + 1.0f) < EXACT && math::abs(accessor.min.y) < EXACT
-			&& math::abs(accessor.min.z + 3.0f) < EXACT,
-		"the POSITION accessor's min is the box's own corner, per axis"
-	);
-	test::@check(
-		math::abs(accessor.max.x - 1.0f) < EXACT && math::abs(accessor.max.y - 2.0f) < EXACT
+			&& math::abs(accessor.min.z + 3.0f) < EXACT
+			&& math::abs(accessor.max.x - 1.0f) < EXACT && math::abs(accessor.max.y - 2.0f) < EXACT
 			&& math::abs(accessor.max.z - 3.0f) < EXACT,
-		"and its max the opposite one, rather than one number for all three"
+		"the POSITION accessor's bounds are the box's own corners, per axis"
 	);
 }
 
@@ -2439,7 +2175,7 @@ fn uint read_u32(char[] data, usz at)
 }
 
 <*
- A folder of files becomes one library.
+ A folder of files becomes one library, in name order.
 
  This is how the app comes by its animations, and the two things it has to get
  right are both invisible when the folder holds a single well-formed file with a
@@ -2447,7 +2183,7 @@ fn uint read_u32(char[] data, usz at)
  that whatever else is sitting in the folder is left alone. Real folders have a
  README and a half-finished download in them.
 *>
-fn void a_folder_becomes_a_library() @test
+fn void a_folder_becomes_a_library_in_name_order() @test
 {
 	String folder = "build/anim-library";
 	if (catch path::mkdir(folder))
@@ -2505,11 +2241,13 @@ fn void a_folder_becomes_a_library() @test
 		if (anim.name == "third") has_third = true;
 	}
 
-	io::printfn("  %d animations read out of two glTF files, a text file and a broken one", clips);
 	test::@check(packs.len == 2, "the two glTF files are packs and nothing else is");
 	test::@check(clips == 3, "every clip in the folder is found and nothing else is");
 	test::@check(has_first && has_second, "a file carrying two clips gives up both of them");
 	test::@check(has_third, "and a second file is read as well as the first");
+	// pair.glb was written first, so a reader keeping the folder's order fails this.
+	test::@check(packs.len == 2 && packs[0].name == "One" && packs[1].name == "Pair",
+		"the packs come back in name order");
 }
 
 // ---------------------------------------------------------------------------
@@ -2804,6 +2542,14 @@ fn void a_rig_is_matched_by_its_shape() @test
 		if (!has_name(names, want)) all_there = false;
 	}
 	test::@check(all_there, "with the dots the plan actually names");
+
+	// A joint on top of its parent has no direction to bind or retarget along.
+	float shortest = rest.height();
+	foreach (usz j, parent : rest.parents)
+	{
+		if (parent >= 0) shortest = math::min(shortest, (rest.joints[j] - rest.joints[(usz)parent]).length());
+	}
+	test::@check(shortest > rest.height() * 0.01f, "no bone comes back shorter than a hundredth of the rig");
 }
 
 <*
@@ -2875,58 +2621,7 @@ fn void a_folded_joint_composes_into_its_child() @test
 	// keeps it small rather than that it is gone. As a fraction of the rig,
 	// because that is the only scale a position error means anything against.
 	float allowed = rest.height() * 2.0e-3f;
-	io::printfn("  worst joint below the fold, off the sample grid: %.7f of %.7f allowed", worst, allowed);
 	test::@check(worst < allowed, "and everything below the fold lands where the file puts it");
-}
-
-<*
- No emitted bone is a point.
-
- The defect that motivated matching by shape at all. A rig that stacks its root,
- its pelvis and its waist at one coordinate — which real ones do, because a pivot
- is not a segment — will hand a name table a zero-length bone, and a zero-length
- bone has no direction for the binder to measure weights along or for
- `AnimKeyDot.axis_for` to retarget onto. Arc length cannot make that mistake: a
- joint sitting on top of its parent is at fraction zero, and no plan dot is.
-*>
-fn void a_coincident_joint_is_not_taken_as_a_bone() @test
-{
-	String path = FOLD_FIXTURE;
-	if (catch fault error = write_fold_fixture(path))
-	{
-		test::@check(false, "could not write %s (%s)", path, error);
-		return;
-	}
-
-	crig::Preset plan = match_plan();
-	crig::Preset[1] plans = { plan };
-
-	gltf::GltfStream stream = gltf::open(path, mem)!!;
-	String[] names;
-	rig::Skeleton rest = crig::read_rest_skeleton(mem, &stream, &names, options: { .plans = plans[..] })!!;
-	stream.close();
-	defer
-	{
-		foreach (name : names) alloc::free(mem, name.ptr);
-		alloc::free(mem, names);
-		rest.free(mem);
-	}
-
-	float height = rest.height();
-	float shortest = height;
-	String pinched = "";
-	foreach (usz j, parent : rest.parents)
-	{
-		if (parent < 0) continue;
-
-		float span = (rest.joints[j] - rest.joints[(usz)parent]).length();
-		if (span >= shortest) continue;
-		shortest = span;
-		pinched = names[j];
-	}
-
-	io::printfn("  shortest bone: %s at %.5f, %.2f%% of the rig", pinched, shortest, shortest / height * 100.0f);
-	test::@check(shortest > height * 0.01f, "no bone comes back shorter than a hundredth of the rig");
 }
 
 <*

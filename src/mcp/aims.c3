@@ -28,7 +28,7 @@ import std::math;
 import std::math::vector;
 import std::math::quaternion;
 
-faultdef AIM_REFUSED;
+excuse AIM_REFUSED;
 
 const String GET_AIMS_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip whose look-at targets and locks to read."}

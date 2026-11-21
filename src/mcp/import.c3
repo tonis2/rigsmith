@@ -14,7 +14,7 @@ module crig;
 import std::collections::object;
 import std::io::file;
 
-faultdef IMPORT_REFUSED;
+excuse IMPORT_REFUSED;
 
 const String IMPORT_CLIP_SCHEMA = `{"type":"object","properties":{
 	"path":{"type":"string","description":"The .glb (or self-contained .gltf) file: an absolute path, or one relative to where Rigsmith was started. Its skeleton may be any other rig's; it is matched onto this one by shape, as a library clip is."},
@@ -29,8 +29,7 @@ fn String? tool_import_clip(Object* args, void* user_data, DString* detail) @pri
 	if (!takes_object(args, detail, `import_clip takes an object: {"path": file, "clip": name, "name": name, "dense": bool}`)) return IMPORT_REFUSED~;
 	String path;
 	if (!required_string(args, "path", &path, detail, `import_clip needs "path": the .glb file to take the animation from.`)) return IMPORT_REFUSED~;
-	String lower = path.to_lower_tcopy();
-	if (!lower.ends_with(".glb") && !lower.ends_with(".gltf"))
+	if (!is_gltf_name(path))
 	{
 		detail.appendf(`"%s" is not a .glb or .gltf file, the animation files Rigsmith reads.`, path);
 		return IMPORT_REFUSED~;

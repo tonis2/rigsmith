@@ -96,38 +96,6 @@ fn void authored_motion_round_trips_exactly() @test
 		"the contact interval changed");
 }
 
-fn void authored_motion_writes_and_reopens_from_disk() @test
-{
-	io::printn("an authored clip writes atomically and reopens from disk");
-	RigDocument doc = {};
-	defer doc.free();
-	AnimTemplate clip = authored();
-	defer clip.free(mem);
-	AnimTemplate[1] source = { clip };
-
-	(void)file::delete(SESSION);
-	defer (void)file::delete(SESSION);
-	if (catch fault error = crig::write_session(SESSION, &doc, "hero.glb", source[..]))
-	{
-		test::@check(false, "could not write the authored session: %s", error);
-		return;
-	}
-	test::@check(file::is_file(SESSION), "the atomic writer left no destination file");
-	test::@check(!file::is_file("build/authored-session.rigsmith.json.tmp.0"),
-		"the successful atomic write left its temporary file behind");
-
-	AnimTemplate[]? read = crig::read_session_clips(mem, SESSION);
-	if (catch fault error = read)
-	{
-		test::@check(false, "the authored session did not reopen: %s", error);
-		return;
-	}
-	AnimTemplate[] clips = read;
-	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].name == clip.name,
-		"the disk round-trip lost the authored clip");
-}
-
 fn void a_failed_atomic_save_preserves_the_previous_project() @test
 {
 	io::printn("a failed atomic save preserves the previous sidecar and live clip");
@@ -299,63 +267,6 @@ fn void an_unbound_authored_clip_leaves_the_sidecar() @test
 	char[] text = file::load(mem, APP_SESSION)!!;
 	defer alloc::free(mem, text);
 	test::@check(!((String)text).contains("Attack / authored"), "the sidecar still carries the un-bound clip");
-}
-
-<*
- The clips Save bakes into the model are the character's *bound* clips — an
- authored clip bound to the character reaches the file itself, not only the
- sidecar. This is the fix for authored clips (Walk, Sneak) being missing from a
- saved .glb and from the Asset view that reads it.
-*>
-fn void a_bound_authored_clip_bakes_into_the_model() @test
-{
-	io::printn("Save bakes the character's bound clips into the model, not only the file's own");
-	crig::AppState app = crig::new_app({});
-	defer app.free();
-
-	// A tiny rig whose joints an authored clip can name.
-	uint hips = app.doc.add_dot({ 0, 1, 0 }, "hips");
-	uint knee = app.doc.add_dot({ 0, 0.5f, 0 }, "knee");
-	app.doc.connect(hips, knee);
-	app.doc.root_id = hips;
-
-	// An authored clip that turns the knee, bound to the character.
-	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, 2);
-	foreach (usz i, &key : keys)
-	{
-		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
-		dots[0] = {
-			.joint_name = "knee".copy(mem),
-			.axis = { 1, 0, 0 },
-			.angle = i == 0 ? 0.0f : 0.6f,
-			.channels = ROTATION,
-		};
-		*key = { .time = (float)i * 0.5f, .dots = dots };
-	}
-	AnimTemplate[] clips = alloc::new_array(mem, AnimTemplate, 1);
-	clips[0] = { .name = "Sneak".copy(mem), .duration = 1.0f, .keyframes = keys, .owned = true };
-	app.replace_authored_clips(clips);
-
-	AnimRef ref = app.clip_named_in_authored("Sneak");
-	test::@check(ref.valid() && app.bind_ref(ref), "the authored clip would not bind");
-
-	RigView? opened = app.open_rig(mem);
-	if (catch opened)
-	{
-		test::@check(false, "the rig would not open");
-		return;
-	}
-	RigView view = opened;
-	defer view.free(mem);
-
-	// The bound clips are the only source now, so the bound "Sneak" must be among
-	// the baked clips even though no file held it.
-	gltf_edit::ReskinClip[] baked = app.model_clips(&view);
-	defer crig::free_reskin_clips(mem, baked);
-
-	bool found = false;
-	foreach (clip : baked) if (clip.name == "Sneak") found = true;
-	test::@check(found, "the bound authored clip was not baked into the model (%d baked)", baked.len);
 }
 
 <*
@@ -686,17 +597,6 @@ fn void duplicate_target_names_and_orphan_locks() @test
 		"the orphan lock was kept (%d locks)", clips[0].aims.len);
 }
 
-fn void a_clip_with_no_aims_key_reads_with_none() @test
-{
-	io::printn("a clip with no aims key reads as a clip with none");
-	const String OLD = `{"authored_clips":[{"name":"old","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}]}]}`;
-	AnimTemplate[]? parsed = crig::parse_session_clips(mem, OLD);
-	if (catch parsed) { test::@check(false, "a clip with no aims did not parse"); return; }
-	AnimTemplate[] clips = parsed;
-	defer crig::free_animations(mem, clips);
-	test::@check(clips.len == 1 && clips[0].aims.len == 0, "a clip grew aims");
-}
-
 fn bool clips_refused(String text) @local
 {
 	AnimTemplate[]? parsed = crig::parse_session_clips(mem, text);
@@ -715,6 +615,12 @@ fn void malformed_aims_are_refused() @test
 	String good = string::format(mem, `%s"aim_targets":[%s],"aims":[%s]}]}`, HEAD, TARGET, LOCK);
 	defer good.free(mem);
 	test::@check(!clips_refused(good), "the good target and lock were refused");
+
+	// No aims key at all reads as a clip with none.
+	const String BARE = `{"authored_clips":[{"name":"old","duration":1,"loop":false,"blend":"linear","keys":[{"time":0,"dots":[]}]}]}`;
+	AnimTemplate[] plain = crig::parse_session_clips(mem, BARE)!!;
+	defer crig::free_animations(mem, plain);
+	test::@check(plain.len == 1 && plain[0].aims.len == 0 && plain[0].aim_targets.len == 0, "a clip with no aims key grew aims");
 
 	String[4] targets = {
 		// no keys

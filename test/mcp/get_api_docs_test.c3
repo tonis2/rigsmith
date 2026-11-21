@@ -159,88 +159,23 @@ fn void a_topic_is_served_on_its_own() @test
 }
 
 <*
- A section that does not exist is refused by naming the ones that do.
-
- The failure mode a sectioned document invents: a caller that guessed "weight"
- for "weights" and has no way to find out. The refusal is the index in one
- sentence, so a wrong guess costs one retry rather than a fishing trip.
+ A topic or tool the docs do not have, or both at once, is refused with what to
+ ask for instead: a wrong guess costs one retry rather than a fishing trip.
 *>
-fn void an_unknown_topic_names_the_real_ones() @test
+fn void the_docs_refuse_what_they_cannot_answer() @test
 {
 	Fixture fixture;
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
 
-	Object*? root = f.request(
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_api_docs","arguments":{"topic":"weight"}}}`);
-	if (catch root)
-	{
-		test::@check(false, "a bad topic answers");
-		return;
-	}
-	defer root.free();
-
-	test::@check(error_message_contains(root, "there is no topic called weight"),
-		"the refusal says what was asked for");
-	test::@check(error_message_contains(root, "weights"),
-		"and names the section that was meant");
-	test::@check(error_message_contains(root, "physics"),
-		"and every other one");
-	test::@check(error_message_contains(root, `"all"`),
-		"and the way to ask for the lot");
-}
-
-<*
- A topic and a tool at once is refused rather than half-answered.
-
- They are different questions — a convention every tool follows against one
- tool's own arguments — and there is no reply that is both. Picking one silently
- would hand back an answer to a question the caller did not ask and give it no
- way to notice.
-*>
-fn void the_docs_refuse_a_topic_and_a_tool_together() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? root = f.request(
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_api_docs","arguments":{"topic":"ground","tool":"apply_clip"}}}`);
-	if (catch root)
-	{
-		test::@check(false, "asking for both answers");
-		return;
-	}
-	defer root.free();
-
-	test::@check(error_message_contains(root, "not both"), "and is refused in so many words");
-	test::@check(error_message_contains(root, "ground") && error_message_contains(root, "apply_clip"),
-		"naming both of the things it was asked for");
-}
-
-<*
- A tool name that is not a tool is refused by pointing at the index.
-*>
-fn void the_docs_refuse_a_name_that_is_not_a_tool() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? root = f.request(
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_api_docs","arguments":{"tool":"apply_clips"}}}`);
-	if (catch root)
-	{
-		test::@check(false, "a bad tool name answers");
-		return;
-	}
-	defer root.free();
-
-	test::@check(error_message_contains(root, "there is no tool called apply_clips"),
-		"the refusal says what was asked for");
-	test::@check(error_message_contains(root, "no arguments"),
-		"and where the list of them is");
+	test::@check(f.refuses_tool("get_api_docs", `{"topic":"weight"}`,
+		"there is no topic called weight", "weights", "physics", `"all"`),
+		"an unknown topic is refused naming every real one and the way to ask for the lot");
+	test::@check(f.refuses_tool("get_api_docs", `{"topic":"ground","tool":"apply_clip"}`,
+		"not both", "ground", "apply_clip"),
+		"a topic and a tool at once is refused, naming both");
+	test::@check(f.refuses_tool("get_api_docs", `{"tool":"apply_clips"}`,
+		"there is no tool called apply_clips", "no arguments"),
+		"an unknown tool is refused by pointing at the index");
 }

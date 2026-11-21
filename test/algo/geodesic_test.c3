@@ -593,32 +593,9 @@ fn void a_seed_does_not_reach_across_a_gap() @test
 // The binder, on the shape the whole milestone is about
 // ---------------------------------------------------------------------------
 
-// Before any comparison means anything: the slab has an inside, the binder
-// answers in numbers, and it leaves no vertex unheld.
-fn void the_slab_binds_to_finite_weights() @test
-{
-	Slab fixture = slab();
-	defer fixture.free();
-
-	test::@check(fixture.voxels.usable(), "the slab has no inside to measure through");
-
-	float[] through = rig::bind_geodesic(
-		mem, &fixture.voxels, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);
-	defer alloc::free(mem, through);
-
-	test::@check(all_finite(through), "the binder produced a weight that is not a number");
-
-	usz bones = fixture.skeleton.len();
-	for (usz v = 0; v < fixture.mesh.positions.len; v++)
-	{
-		float total = 0.0f;
-		for (usz b = 0; b < bones; b++) total += through[v * bones + b];
-		test::@check(total > 0.0f, "vertex %d is left with nothing to hold it", v);
-	}
-}
-
 <*
- Measuring through the body removes most of the leg-to-leg bleed.
+ Measuring through the body removes most of the leg-to-leg bleed, and so the
+ still leg stops following the swung one.
 
  Both numbers are in the failure message. The assertion is on the improvement
  rather than on an absolute, because a threshold picked to pass today is a
@@ -646,28 +623,11 @@ fn void measuring_through_the_body_removes_the_bleed() @test
 		before * 100.0f);
 	test::@check(after < before * 0.25f, "bleed %.1f%% straight-line against %.1f%% through the body",
 		before * 100.0f, after * 100.0f);
-}
 
-// The same thing again, seen as motion rather than as a number — a leg that
-// holds none of its neighbour's weight does not follow it.
-fn void the_still_leg_stops_following_the_swung_one() @test
-{
-	Slab fixture = slab();
-	defer fixture.free();
-
-	float[] straight = rig::bind_geometric(
-		mem, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);
-	defer alloc::free(mem, straight);
-
-	float[] through = rig::bind_geodesic(
-		mem, &fixture.voxels, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);
-	defer alloc::free(mem, through);
-
-	float before = swing_travel(fixture.mesh.positions, &fixture.skeleton, straight, HIP_L, 1);
-	float after = swing_travel(fixture.mesh.positions, &fixture.skeleton, through, HIP_L, 1);
-
-	test::@check(after < before * 0.25f, "the still leg travels %.4f straight-line, %.4f through the body",
-		before, after);
+	float dragged = swing_travel(fixture.mesh.positions, &fixture.skeleton, straight, HIP_L, 1);
+	float kept = swing_travel(fixture.mesh.positions, &fixture.skeleton, through, HIP_L, 1);
+	test::@check(kept < dragged * 0.25f, "the still leg travels %.4f straight-line, %.4f through the body",
+		dragged, kept);
 }
 
 <*
@@ -1127,43 +1087,6 @@ fn void with_no_grid_it_falls_back_to_straight_lines() @test
 // ---------------------------------------------------------------------------
 
 <*
- Four influences blend most of the slab.
-
- Not for its own sake: it is what makes `one_influence_leaves_every_vertex_on_its_strongest_bone`
- non-vacuous. On a mesh where nothing blends anyway, a broken limit would pass
- unnoticed.
-*>
-fn void four_influences_blend_most_of_the_slab() @test
-{
-	Slab fixture = slab();
-	defer fixture.free();
-
-	gltf::SkinBinding? bound = rig::bind_skin(
-		mem, fixture.mesh.positions, &fixture.skeleton, &fixture.voxels);
-	if (catch fault error = bound)
-	{
-		test::@check(false, "the slab does not bind at four influences (%s)", error);
-		return;
-	}
-	gltf::SkinBinding soft = bound;
-	defer soft.free(mem);
-
-	usz blended = 0;
-	for (usz v = 0; v < fixture.mesh.positions.len; v++)
-	{
-		usz held = 0;
-		for (usz s = 0; s < soft.slots; s++)
-		{
-			if (soft.weights[v * soft.slots + s] > 0.0f) held++;
-		}
-		if (held > 1) blended++;
-	}
-
-	test::@check(blended > fixture.mesh.positions.len / 10, "only %d of %d vertices blend at four influences",
-		blended, fixture.mesh.positions.len);
-}
-
-<*
  At one influence every vertex rides a single bone, at full weight, and it is
  the bone the dense matrix ranks highest.
 
@@ -1176,6 +1099,19 @@ fn void one_influence_leaves_every_vertex_on_its_strongest_bone() @test
 {
 	Slab fixture = slab();
 	defer fixture.free();
+
+	// The premise: at four influences most of the slab blends, so a broken limit shows.
+	gltf::SkinBinding soft = rig::bind_skin(mem, fixture.mesh.positions, &fixture.skeleton, &fixture.voxels)!!;
+	defer soft.free(mem);
+	usz blended = 0;
+	for (usz v = 0; v < fixture.mesh.positions.len; v++)
+	{
+		usz held = 0;
+		for (usz s = 0; s < soft.slots; s++) if (soft.weights[v * soft.slots + s] > 0.0f) held++;
+		if (held > 1) blended++;
+	}
+	test::@check(blended > fixture.mesh.positions.len / 10, "only %d of %d vertices blend at four influences",
+		blended, fixture.mesh.positions.len);
 
 	float[] dense = rig::bind_geodesic(
 		mem, &fixture.voxels, fixture.mesh.positions, fixture.skeleton.joints, fixture.skeleton.parents);
@@ -1489,15 +1425,18 @@ fn void row_chain(Vec3[]* joints, int[]* parents)
 }
 
 <*
- A piece that lies wholly alongside one bone is bound to it and nothing else.
+ A piece that lies wholly alongside one bone is bound to it and nothing else,
+ and a piece the joint runs through keeps its falloff, so the hinge still bends.
 
  The whole of hard-surface rigging: a solid hinged at its ends does not stretch,
  so every gram of a neighbouring bone's influence on it is a gram of wrong. This
  is also what makes a machine's hand read as fingers rather than as a smear — the
  shipped downloaded character is ninety-five pieces bound almost exactly this way in
- the weights it arrives with.
+ the weights it arrives with. A box over both sides of a knuckle bound rigidly
+ is a finger that cannot close, and generators size boxes to the shape, not the
+ skeleton fitted later.
 *>
-fn void a_piece_wholly_one_bones_rides_it_rigidly() @test
+fn void a_piece_rides_its_bone_rigidly_unless_a_joint_runs_through_it() @test
 {
 	rig::TriMesh row = boxes_in_a_row();
 	defer row.free(mem);
@@ -1536,44 +1475,8 @@ fn void a_piece_wholly_one_bones_rides_it_rigidly() @test
 			"vertex %d at x %.2f holds (%.3f, %.3f, %.3f) rather than all of its own bone",
 			v, position.x, bound[v * 3], bound[v * 3 + 1], bound[v * 3 + 2]);
 	}
-}
-
-<*
- A piece the joint runs through keeps its falloff, so the hinge still bends.
-
- The failure this guards is not subtle and not recoverable by hand: a box covering
- both sides of a knuckle, bound rigidly, is a finger that cannot close. It is also
- the common case rather than the exotic one — a generator sizes its boxes to the
- shape it is drawing and not to the skeleton somebody will fit later.
-*>
-fn void a_piece_that_spans_a_joint_keeps_its_blend() @test
-{
-	rig::TriMesh row = boxes_in_a_row();
-	defer row.free(mem);
-
-	rig::MeshVoxels voxels = rig::build_voxels(mem, row);
-	defer voxels.free(mem);
-	rig::MeshShells shells = rig::build_shells(mem, row);
-	defer shells.free(mem);
-
-	Vec3[] joints;
-	int[] parents;
-	row_chain(&joints, &parents);
-	defer
-	{
-		alloc::free(mem, joints);
-		alloc::free(mem, parents);
-	}
-
-	int[] riders = alloc::new_array(mem, int, (sz)shells.count);
-	defer alloc::free(mem, riders);
-
-	float[] bound = rig::bind_geodesic(
-		mem, &voxels, row.positions, joints, parents, &shells, {}, riders);
-	defer alloc::free(mem, bound);
 
 	test::@check(riders[1] < 0, "the box the joint runs through was frozen onto joint %d", riders[1]);
-
 	usz blended = 0;
 	usz members = 0;
 	foreach (usz v, id : shells.of)
@@ -1584,7 +1487,6 @@ fn void a_piece_that_spans_a_joint_keeps_its_blend() @test
 		for (usz b = 0; b < 3; b++) if (bound[v * 3 + b] > 0.0f) holding++;
 		if (holding > 1) blended++;
 	}
-
 	test::@check(blended > members / 2, "only %d of %d vertices of the hinged box blend across their bones",
 		blended, members);
 }
@@ -1666,79 +1568,16 @@ fn void a_mesh_in_one_piece_is_never_frozen() @test
 // A loose piece beside a body: the sword case
 // ---------------------------------------------------------------------------
 
-// The prop is a shell of its own — everything below is a claim about that shell,
-// so a mesh that came back as one piece would make all of them vacuous.
-fn void a_loose_prop_is_a_shell_of_its_own() @test
-{
-	usz body_vertices;
-	rig::TriMesh mesh = body_with_prop(&body_vertices);
-	defer mesh.free(mem);
-
-	rig::MeshShells shells = rig::build_shells(mem, mesh);
-	defer shells.free(mem);
-
-	test::@check(shells.count == 2, "the body and the prop came back as %d shells", shells.count);
-	test::@check(shells.of[0] == 0, "the first body vertex landed in shell %d", shells.of[0]);
-	test::@check(shells.of[mesh.positions.len - 1] == 1, "the last prop vertex landed in shell %d", shells.of[mesh.positions.len - 1]);
-}
-
 <*
- Every vertex of the prop holds the same weights, and one joint holds all of
- each — which is what "rigid" means under linear blend skinning.
-
- Nothing reaches the prop — that is what the gap means — so the binder has no
- distance through the body to weight it by, and the straight-line repair would
- hand the near end to one joint and the far end to another. A prop held at two
- ends by two bones is a prop that bends, and a box strapped to a back does not
- bend.
-*>
-fn void a_loose_prop_rides_one_bone_rigidly() @test
-{
-	usz body_vertices;
-	rig::TriMesh mesh = body_with_prop(&body_vertices);
-	defer mesh.free(mem);
-
-	rig::MeshVoxels voxels = rig::build_voxels(mem, mesh);
-	defer voxels.free(mem);
-	rig::MeshShells shells = rig::build_shells(mem, mesh);
-	defer shells.free(mem);
-
-	Vec3[] joints;
-	int[] parents;
-	spine_chain(&joints, &parents);
-	defer
-	{
-		alloc::free(mem, joints);
-		alloc::free(mem, parents);
-	}
-
-	float[] bound = rig::bind_geodesic(mem, &voxels, mesh.positions, joints, parents, &shells);
-	defer alloc::free(mem, bound);
-
-	// Rigid is a statement about the rows, not about any one of them: identical
-	// rows are what collapse to a single transform under linear blend skinning.
-	usz first = body_vertices;
-	for (usz v = body_vertices; v < mesh.positions.len; v++)
-	{
-		usz holding = 0;
-		for (usz b = 0; b < 3; b++)
-		{
-			test::@check(bound[v * 3 + b] == bound[first * 3 + b],
-				"prop vertex %d holds %.6f of joint %d where the first holds %.6f",
-				v, bound[v * 3 + b], b, bound[first * 3 + b]);
-			if (bound[v * 3 + b] > 0.0f) holding++;
-		}
-		test::@check(holding == 1, "prop vertex %d is held by %d joints, so the piece bends", v, holding);
-	}
-}
-
-<*
- The prop rides the bone carrying the whole piece, not the one it sits nearest.
+ The prop rides the bone carrying the whole piece, not the one it sits nearest,
+ and rides it rigidly; the body beside it still blends.
 
  The whole reason the rule sums over subtrees rather than measuring distance. A
  piece spanning two bones is held by neither of them: hang it off the nearer one
  and it swings when that one does, which on a figure is a sword strapped to a
- shoulder instead of to the back it lies across.
+ shoulder instead of to the back it lies across. Nothing reaches the prop, so the
+ straight-line repair would hand its ends to two joints and it would bend; and a
+ rule that froze the body it measured would pass every prop check.
 *>
 fn void a_loose_prop_rides_the_bone_that_carries_it() @test
 {
@@ -1750,6 +1589,9 @@ fn void a_loose_prop_rides_the_bone_that_carries_it() @test
 	defer voxels.free(mem);
 	rig::MeshShells shells = rig::build_shells(mem, mesh);
 	defer shells.free(mem);
+	// The premise: the prop is a shell of its own.
+	test::@check(shells.count == 2 && shells.of[0] == 0 && shells.of[mesh.positions.len - 1] == 1,
+		"the body and the prop came back as %d shells", shells.count);
 
 	Vec3[] joints;
 	int[] parents;
@@ -1762,6 +1604,30 @@ fn void a_loose_prop_rides_the_bone_that_carries_it() @test
 
 	float[] bound = rig::bind_geodesic(mem, &voxels, mesh.positions, joints, parents, &shells);
 	defer alloc::free(mem, bound);
+
+	// Rigid is a statement about the rows: identical rows collapse to one transform.
+	for (usz v = body_vertices; v < mesh.positions.len; v++)
+	{
+		usz holding = 0;
+		for (usz b = 0; b < 3; b++)
+		{
+			test::@check(bound[v * 3 + b] == bound[body_vertices * 3 + b],
+				"prop vertex %d holds %.6f of joint %d where the first holds %.6f",
+				v, bound[v * 3 + b], b, bound[body_vertices * 3 + b]);
+			if (bound[v * 3 + b] > 0.0f) holding++;
+		}
+		test::@check(holding == 1, "prop vertex %d is held by %d joints, so the piece bends", v, holding);
+	}
+
+	usz blended = 0;
+	for (usz v = 0; v < body_vertices; v++)
+	{
+		usz holding = 0;
+		for (usz b = 0; b < 3; b++) if (bound[v * 3 + b] > 0.0f) holding++;
+		if (holding > 1) blended++;
+	}
+	test::@check(blended > body_vertices / 2, "only %d of %d body vertices blend across their own joints",
+		blended, body_vertices);
 
 	int rides = -1;
 	for (usz b = 0; b < 3; b++)
@@ -1789,43 +1655,6 @@ fn void a_loose_prop_rides_the_bone_that_carries_it() @test
 
 	test::@check(nearest == 2, "the prop sits nearest joint %d, so this fixture no longer poses the question", nearest);
 	test::@check(rides == 1, "the prop rides joint %d rather than joint 1, the bone carrying the whole piece", rides);
-}
-
-// The body is not a prop and must come out untouched: a rule that froze the
-// mesh it was measuring would pass every check above.
-fn void the_body_beside_a_prop_still_blends() @test
-{
-	usz body_vertices;
-	rig::TriMesh mesh = body_with_prop(&body_vertices);
-	defer mesh.free(mem);
-
-	rig::MeshVoxels voxels = rig::build_voxels(mem, mesh);
-	defer voxels.free(mem);
-	rig::MeshShells shells = rig::build_shells(mem, mesh);
-	defer shells.free(mem);
-
-	Vec3[] joints;
-	int[] parents;
-	spine_chain(&joints, &parents);
-	defer
-	{
-		alloc::free(mem, joints);
-		alloc::free(mem, parents);
-	}
-
-	float[] bound = rig::bind_geodesic(mem, &voxels, mesh.positions, joints, parents, &shells);
-	defer alloc::free(mem, bound);
-
-	usz blended = 0;
-	for (usz v = 0; v < body_vertices; v++)
-	{
-		usz holding = 0;
-		for (usz b = 0; b < 3; b++) if (bound[v * 3 + b] > 0.0f) holding++;
-		if (holding > 1) blended++;
-	}
-
-	test::@check(blended > body_vertices / 2, "only %d of %d body vertices blend across their own joints",
-		blended, body_vertices);
 }
 
 <*

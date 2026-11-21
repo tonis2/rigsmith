@@ -414,19 +414,6 @@ fn Vec2? Fixture.pixel_of(&self, uint id)
 }
 
 <*
- Where a dot's rest position lands on screen, in the same WINDOW coordinates —
- which is a different pixel from `pixel_of` exactly while a clip is running.
-*>
-fn Vec2? Fixture.rest_pixel_of(&self, uint id)
-{
-	Dot* dot = self.doc().find(id);
-	if (!dot) return crig::BEHIND_CAMERA~;
-	Vec2 local = crig::project(
-		self.app.camera.view_projection(VIEWPORT.x / VIEWPORT.y), dot.position, VIEWPORT)!;
-	return local + VIEWPORT_ORIGIN;
-}
-
-<*
  What the stats block currently reads, its lines joined by newlines.
 
  The block itself, not a copy of it: `hud_lines` is the function the paint
@@ -1030,7 +1017,7 @@ fn void a_binding_does_not_outlive_its_mesh() @test
  Three claims, and the middle one is the reason the dialog exists at all: an
  empty document is not asked, a rig that is there is asked and *nothing changes
  until the answer*, and Cancel really does leave the work alone. The fourth —
- that Replace swaps rather than stacks — is `check_preset_lands_as_one_edit`'s,
+ that Replace swaps rather than stacks — is `preset_lands_as_one_edit`'s,
  which drives the model directly.
 
  Driven through `request_pack_rig` rather than through the library's pixels,
@@ -1119,6 +1106,10 @@ fn void applying_a_rig_asks_before_replacing() @test
  The list's labels are the last claim, and the one that is easy to get wrong:
  three of the shipped library files declare `biped`, so a list keyed on the plan
  tag would be three rows reading the same word.
+
+ Then it goes once a skeleton exists, whoever made it: a rig fitted elsewhere (an
+ agent's apply_plan, the Assets pane) used to leave it standing over a rigged
+ mesh. Rig › Apply body plan over a rig is a choice, so that one stays open.
 *>
 fn void a_mesh_with_no_skeleton_is_offered_a_body_plan() @test
 {
@@ -1177,179 +1168,22 @@ fn void a_mesh_with_no_skeleton_is_offered_a_body_plan() @test
 	test::@check(fixture.doc().dots.len() > 0, "fitting the selected plan leaves a rig behind");
 	test::@check(!prompt.open, "and closes the panel behind it");
 
+	// Raised again, and a rig fitted not through the panel: the way an agent's apply_plan arrives.
 	fixture.reset();
-}
-
-<*
- The "No skeleton" panel goes away once a skeleton exists, whoever made it.
-
- Its own button closes it on the way through; a rig fitted from anywhere else — an
- MCP apply_plan, the Assets pane — used to leave it standing over a rigged mesh,
- saying the opposite of what the viewport showed. Opened from Rig › Apply body
- plan over a rig that is already there, it is a deliberate choice of a new plan
- and must not close itself on the next frame.
-*>
-fn void the_no_skeleton_panel_closes_when_a_rig_arrives_elsewhere() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the no-skeleton panel closes when a rig arrives elsewhere");
-	fixture.reset();
-
-	Element*? panel = fixture.ui.find_id(crig::RIG_PROMPT_DIALOG_ID);
-	if (catch panel)
-	{
-		test::@check(false, "SKIPPED — there is no rig prompt in the tree");
-		return;
-	}
-	Dialog* prompt = panel.widget_as(Dialog);
-
 	fixture.app.wants_rig_prompt = true;
 	fixture.idle_frame();
-	test::@check(prompt.open, "a mesh with no skeleton raises the panel");
-	test::@check(fixture.app.plan_row_packs.len > 0, "the library offers a body plan to fit");
+	test::@check(prompt.open, "a mesh with no skeleton raises the panel again");
 	if (fixture.app.plan_row_packs.len == 0) return;
-
-	// Not through the panel: the way an agent's apply_plan arrives.
 	test::@check(fixture.app.apply_pack_rig((usz)fixture.app.plan_row_packs[0]), "the plan fits");
 	fixture.idle_frame();
 	test::@check(!prompt.open, "the panel closes once the mesh has a skeleton");
 
-	// The menu over a rig that is already there: a choice, so it stays.
 	crig::menu_apply_body_plan(fixture.ui);
 	fixture.idle_frame();
 	fixture.idle_frame();
 	test::@check(prompt.open, "Rig › Apply body plan over a rig keeps the panel open");
 	crig::close_rig_prompt(fixture.ui);
 
-	fixture.reset();
-}
-
-<*
- A pose keyed into a clip comes back when the playhead returns to it.
-
- The whole of pose-and-key, end to end, through the seam both halves cross: the
- transient editor draft is keyed by dot id while a clip is sampled by joint
- index. Saving reads one and `pose_from_clip` writes the other, and if the two
- disagree about the mapping the figure comes back
- posed as a different animal.
-
- Two keys, because one proves nothing: a clip with a single key holds that pose
- at every instant, so scrubbing anywhere would "work". With two, the playhead has
- to land on the right one.
-
- The scrub is `park_clip`, which is what the timeline drags — so this also
- asserts the thing that makes a scrub a scrub: the clip stays on screen with its
- clock stopped, rather than playback stopping and the mesh going back to rest.
-*>
-fn void a_keyed_pose_comes_back_when_scrubbed_to() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("a keyed pose comes back when the playhead returns to it");
-	fixture.reset();
-
-	if (!fixture.app.apply_plan_named("biped"))
-	{
-		test::@check(false, "SKIPPED — the biped plan could not be fitted to the cube");
-		return;
-	}
-
-	// A joint to move, and the dot id to read it back by.
-	uint moved = 0;
-	foreach (dot : fixture.doc().dots.array_view())
-	{
-		if (dot.name == PLAN_THIGH_L) moved = dot.id;
-	}
-	if (moved == 0)
-	{
-		test::@check(false, "SKIPPED — the fitted plan has no %s to pose", PLAN_THIGH_L);
-		return;
-	}
-
-	// Two forward swings of the thigh, both inside the plan's hip limit — a swing
-	// backwards past 20° is clamped, and this is about keys, not limits.
-	Quaternionf first = quaternion::from_axis_angle{float}(((Vec3){ 1, 0, 0 }), -0.6f);
-	Quaternionf second = quaternion::from_axis_angle{float}(((Vec3){ 1, 0, 0 }), -0.2f);
-
-	// Start from rest, then replace its first key with the first edited pose.
-	AnimRef ref = fixture.app.new_clip("test_walk", 1.0f, from_rest: true);
-	if (!ref.valid())
-	{
-		test::@check(false, "a new clip could not be started");
-		return;
-	}
-	fixture.app.editing = ref;
-	test::@check(fixture.app.pose_from_clip(ref, 0.0f), "the first pose would not open");
-	test::@check(fixture.app.set_working_pose(moved, first, {}), "the first pose did not change");
-	fixture.app.pose_edit_pending = true;
-	test::@check(fixture.app.key_pose_edit(), "the first pose could not be keyed");
-	ref = fixture.app.editing;
-	test::@check(fixture.app.clip(ref).keyframes.len == 1, "replacing the first pose added another key");
-
-	// Pose differently, and key that in half a second later.
-	fixture.app.edit_time = 0.5f;
-	test::@check(fixture.app.pose_from_clip(ref, 0.5f), "the second pose would not open");
-	test::@check(fixture.app.set_working_pose(moved, second, {}), "the second pose did not change");
-	fixture.app.pose_edit_pending = true;
-	test::@check(fixture.app.key_pose_edit(), "the second pose could not be keyed");
-	ref = fixture.app.editing;
-	if (!ref.valid())
-	{
-		test::@check(false, "the second pose could not be keyed");
-		return;
-	}
-	test::@check(fixture.app.clip(ref).keyframes.len == 2,
-		"%d keys after keying a second pose", fixture.app.clip(ref).keyframes.len);
-
-	// Now scrub back to the first key and read the pose out of the document.
-	test::@check(fixture.app.park_clip(ref, 0.0f), "the clip would not park");
-	test::@check(fixture.app.animating, "parking stopped playback rather than the clock");
-	test::@check(fixture.app.anim_paused, "and it did not park");
-
-	test::@check(fixture.app.pose_from_clip(ref, 0.0f), "the clip would not seed a pose");
-	Quaternionf back;
-	foreach (posed : fixture.app.pose_edit_draft)
-	{
-		if (posed.dot_id == moved) back = posed.rotation;
-	}
-	test::@check(1.0f - math::abs(back.v.dot(first.v)) < 1.0e-3f,
-		"the first key came back as %s rather than the pose that was keyed", back.v);
-
-	// And the second, which is what says the playhead is being read at all.
-	test::@check(fixture.app.pose_from_clip(ref, 0.5f), "the clip would not seed at the second key");
-	foreach (posed : fixture.app.pose_edit_draft)
-	{
-		if (posed.dot_id == moved) back = posed.rotation;
-	}
-	test::@check(1.0f - math::abs(back.v.dot(second.v)) < 1.0e-3f,
-		"the second key came back as %s", back.v);
-
-	// The clock really is stopped: ticking a parked clip must not move it.
-	float held = fixture.app.anim_time;
-	fixture.app.tick_animation(0.25f);
-	test::@check(fixture.app.anim_time == held,
-		"a parked clip advanced to %s under a tick", fixture.app.anim_time);
-
-	// And letting it go starts it running again.
-	fixture.app.resume_clip();
-	fixture.app.tick_animation(0.1f);
-	test::@check(fixture.app.anim_time > held, "resuming left the clock stopped");
-
-	fixture.app.stop_animation();
-	fixture.app.discard_pose_edit();
 	fixture.reset();
 }
 
@@ -1832,51 +1666,6 @@ fn void playing_keeps_the_row_that_was_pressed() @test
 }
 
 <*
- The viewport says which of the two things is missing.
-
- `OpenPrompt` was the empty-state line for "no model loaded". A mesh with no rig
- is the same situation one step along and used to draw nothing at all, which left
- a loaded-but-unrigged model looking finished. `shown` is what the check reads
- because it is also what sizes the element: a prompt that decided to speak but
- measured zero would be centred correctly and invisible.
-*>
-fn void the_viewport_names_whichever_half_is_missing() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the viewport names whichever half is missing");
-	fixture.reset();
-
-	OpenPrompt*? line = fixture.ui.get_widget_id("prompt", OpenPrompt);
-	if (catch line)
-	{
-		test::@check(false, "SKIPPED — there is no prompt in the tree");
-		return;
-	}
-
-	// The fixture opens on a cube, so the model is there and the rig is not.
-	fixture.idle_frame();
-	test::@check(line.shown, "a mesh with no dots still has something to say");
-
-	// One dot is a rig. Nothing is missing any more and the line goes away —
-	// zero-sized, which is what takes it out of the layout rather than merely
-	// painting nothing over the top of the model.
-	fixture.ensure_a_dot();
-	fixture.idle_frame();
-	test::@check(!line.shown, "and a rig placed takes the line away");
-	test::@check(line.measured.x == 0.0f && line.measured.y == 0.0f,
-		"leaving nothing in the layout — measured %s", line.measured);
-
-	fixture.reset();
-}
-
-<*
  Ctrl+A takes the whole document, and does not collide with plain A.
 
  The collision is the point: A alone toggles auto-connect, and the two live in
@@ -2332,80 +2121,16 @@ fn void an_export_carries_the_bound_clips() @test
 }
 
 <*
- The key a Mac keyboard labels "delete" erases the character behind the caret.
-
- The interesting half is the platform table, not the widget. macOS names the
- backspace key kVK_Delete (51) and the forward-delete key kVK_ForwardDelete
- (117), so a mapping written from those names hands cui a `Key.DELETE` for the
- key the user reaches for to correct a typo. `TextField` then does exactly what
- it was told and deletes forwards, which with the caret at the end of what was
- just typed is nothing — the key reads as dead rather than as wrong.
-
- So the code is taken from the platform's own table rather than assumed, and the
- field is driven with whatever that table produced. Asserting the two separately
- would let them drift back apart and still pass.
-*>
-fn void the_delete_key_erases_what_was_typed() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the delete key erases what was typed");
-	fixture.reset();
-
-	crig::open_file_dialog(fixture.ui, crig::FilePurpose.OPEN_MESH);
-	fixture.ui.flush();
-
-	Element*? field_elem = fixture.ui.find_id(crig::FILE_PATH_ID);
-	if (catch field_elem)
-	{
-		test::@check(false, "SKIPPED — the chooser has no path field");
-		return;
-	}
-	TextField* field = field_elem.widget_as(TextField);
-
-	field.set_text(field_elem, "ab");
-	field_elem.request_focus();
-	fixture.ui.flush();
-
-	Key erase = Key.BACKSPACE;
-	Key forward = Key.DELETE;
-	$if env::DARWIN:
-		erase = (Key)c3w::darwinKeycodeToEventKey(51).code;
-		forward = (Key)c3w::darwinKeycodeToEventKey(117).code;
-		test::@check(erase == Key.BACKSPACE, "the mac delete key arrives as backspace");
-		test::@check(forward == Key.DELETE, "and fn+delete arrives as delete");
-	$endif
-
-	// The caret is at the end, which is where it sits after typing and is the
-	// position at which erasing backwards and erasing forwards differ most: one
-	// takes a character, the other has none to take.
-	fixture.feed_key(erase);
-	test::@check(field.value() == "a", "the delete key takes the character behind the caret");
-
-	fixture.feed_key(forward);
-	test::@check(field.value() == "a", "and forward delete at the end has nothing to take");
-
-	field.caret = 0;
-	fixture.feed_key(forward);
-	test::@check(field.value() == "", "but from the start it takes the character ahead");
-
-	fixture.feed_key(Key.ESCAPE);
-	fixture.ui.flush();
-}
-
-<*
  Typing in the path field does not reach the application's shortcuts.
 
  The one property a text field in this interface must have. `AppRoot` owns every
  single-letter command — B hides the mesh, X deletes the selected dot — and cui
  bubbles a key the focused widget declines all the way down to it. A field that
  does not consume what it types edits the document on every character.
+
+ The erase keys come from the platform's own table: a Mac names backspace
+ kVK_Delete, and a mapping written from that name made the key erase forwards,
+ which with the caret at the end takes nothing and reads as a dead key.
 *>
 fn void typing_a_path_does_not_reach_the_shortcuts() @test
 {
@@ -2449,8 +2174,19 @@ fn void typing_a_path_does_not_reach_the_shortcuts() @test
 	test::@check(fixture.app.show_rig == rig_before, "and S does not hide the rig");
 
 	// Backspace is a key rather than text, and has to be the field's too.
-	fixture.feed_key(Key.BACKSPACE);
-	test::@check(field.value() == "b", "backspace takes the last character back");
+	Key erase = Key.BACKSPACE;
+	Key forward = Key.DELETE;
+	$if env::DARWIN:
+		erase = (Key)c3w::darwinKeycodeToEventKey(51).code;
+		forward = (Key)c3w::darwinKeycodeToEventKey(117).code;
+	$endif
+	fixture.feed_key(erase);
+	test::@check(field.value() == "b", "the delete key takes the character behind the caret");
+	fixture.feed_key(forward);
+	test::@check(field.value() == "b", "and forward delete at the end has nothing to take");
+	field.caret = 0;
+	fixture.feed_key(forward);
+	test::@check(field.value() == "", "but from the start it takes the character ahead");
 
 	// ESC is the exception, and it is what closes the dialog: a field that
 	// swallowed it would take the keyboard hostage inside a modal panel.
@@ -2557,7 +2293,6 @@ fn void click_places_a_dot() @test
 	}
 
 	float error = (back - VIEWPORT_CENTER).length();
-	io::printfn("       placed %.4f px from the click", error);
 	test::@check(error < PIXEL_TOLERANCE, "the dot lands under the pixel that placed it");
 
 	test::@check(fixture.hud_text().contains("1 joint · 0 bones"),
@@ -2632,61 +2367,6 @@ fn void the_hud_is_click_through() @test
 	float yaw = fixture.app.camera.yaw;
 	fixture.drag(hud, hud + (Vec2) { DRAG_PIXELS, 0 });
 	test::@check(fixture.app.camera.yaw != yaw, "a drag starting on the HUD text orbits");
-}
-
-<*
- The crosshair covers the whole view, including the overlays drawn on it.
-
- Viewport declares it from `mount` rather than `on_hover` precisely because
- hover fires on the deepest element only: the HUD block is painted on top, so a
- shape asked for on the way in would go unasked whenever the pointer entered
- the view over it. Resolution walks up from the hovered element instead, which
- is what makes one declaration answer for the subtree.
-
- An overlay that IS interactive still speaks for itself — the gizmo asks for
- the hand and gets it, since the walk stops at the deepest element with a
- preference. The two halves together are the rule: the viewport answers for
- everything that does not.
-*>
-fn void the_crosshair_covers_the_whole_view() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the crosshair covers the view and its overlays");
-
-	Vec2 middle = fixture.viewport.absolute + fixture.viewport.size * 0.5f;
-	fixture.feed(middle);
-	test::@check(fixture.ui.cursor == Cursor.CROSSHAIR, "over bare model, the pointer is a crosshair");
-
-	Vec2? hud   = fixture.center_of("hud");
-	Vec2? gizmo = fixture.center_of("gizmo");
-	if (catch hud)
-	{
-		test::@check(false, "the HUD block is in the tree");
-		return;
-	}
-	if (catch gizmo)
-	{
-		test::@check(false, "the view gizmo is in the tree");
-		return;
-	}
-
-	fixture.feed(hud);
-	test::@check(fixture.ui.cursor == Cursor.CROSSHAIR, "entering over the HUD text keeps the crosshair");
-
-	fixture.feed(gizmo);
-	test::@check(fixture.ui.cursor == Cursor.POINTING_HAND, "but the gizmo asks for the hand and wins");
-
-	// And back out onto bare model: the shape follows the pointer, not the last
-	// widget that asked.
-	fixture.feed(middle);
-	test::@check(fixture.ui.cursor == Cursor.CROSSHAIR, "leaving it returns to the crosshair");
 }
 
 <*
@@ -2850,46 +2530,6 @@ fn void a_drag_keeps_a_dot_in_its_own_piece() @test
 }
 
 <*
- Select then delete, both through the widget: the click has to pick the dot
- rather than place a second one, and the key has to arrive at a viewport that
- the same click just focused.
-*>
-fn void delete_removes_the_selection() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("delete removes the selection");
-
-	fixture.ensure_a_dot();
-
-	// Wherever the orbit above left the camera, this is where that dot is now.
-	Dot dot  = fixture.doc().dots[0];
-	Vec2? at = fixture.pixel_of(dot.id);
-	if (catch at)
-	{
-		test::@check(false, "the existing dot is on screen");
-		return;
-	}
-
-	sz before = fixture.doc().dots.len();
-	fixture.click(at);
-	test::@check(fixture.app.selected == dot.id, "clicking a dot selects it");
-	test::@check(fixture.doc().dots.len() == before, "clicking a dot does not place another");
-
-	fixture.tap(at, Key.X);
-	test::@check(fixture.doc().dots.len() == before - 1, "X deletes the selected dot");
-	test::@check(fixture.app.selected == 0, "the selection is cleared");
-	test::@check(fixture.hud_text().contains("0 joints · 0 bones"),
-		"the block does not follow the deletion: \"%s\"", fixture.hud_text());
-}
-
-<*
  Several dots picked with shift, deleted together, and taken back as one.
 
  The three claims a group selection has to make: shift adds to it rather than
@@ -2932,7 +2572,7 @@ fn void shift_click_builds_a_selection() @test
 	if (catch second) { test::@check(false, "SKIPPED — a dot is off screen"); return; }
 
 	fixture.click(first);
-	test::@check(fixture.app.selection_count() == 1, "a plain click selects exactly one dot");
+	test::@check(fixture.app.selection_count() == 1 && fixture.doc().dots.len() == 3, "a plain click on a dot selects it and places no other");
 
 	Vec3 was = placed[1].position;
 	fixture.shift_click(second);

@@ -319,7 +319,7 @@ fn bool AppState.export_scene(&self, String path, float fps = 30.0f)
 	defer
 	{
 		foreach (usz i, &view : views) if (cast[i].skeleton) view.free(mem);
-		foreach (usz i, c : cast) if (c.skin.len > 0) alloc::free(mem, c.skin);
+		foreach (c : cast) if (c.skin.len > 0) alloc::free(mem, c.skin);
 		foreach (name : names) if (name.len > 0) name.free(mem);
 		alloc::free(mem, cast);
 		alloc::free(mem, views);

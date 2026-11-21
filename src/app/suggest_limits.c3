@@ -284,8 +284,8 @@ fn bool AppState.sweep_pair_counts(&self, SweepTest* test, DeformedTrianglePair 
 {
 	uint ra = self.deformed_surface.region_for_triangle(pair.a);
 	uint rb = self.deformed_surface.region_for_triangle(pair.b);
-	bool a_turns = is_moving(test.moving, ra);
-	bool b_turns = is_moving(test.moving, rb);
+	bool a_turns = array::contains(test.moving, ra);
+	bool b_turns = array::contains(test.moving, rb);
 	if (!(a_turns && (usz)rb == test.parent) && !(b_turns && (usz)ra == test.parent)) return false;
 	foreach (triangle : (uint[2]){ pair.a, pair.b })
 	{
@@ -295,12 +295,6 @@ fn bool AppState.sweep_pair_counts(&self, SweepTest* test, DeformedTrianglePair 
 		}
 	}
 	return true;
-}
-
-fn bool is_moving(uint[] moving, uint region) @local
-{
-	foreach (m : moving) if (m == region) return true;
-	return false;
 }
 
 <*

@@ -20,7 +20,7 @@ module crig;
 import std::collections::object;
 import std::math;
 
-faultdef REWRITE_REFUSED;
+excuse REWRITE_REFUSED;
 
 const String TRIM_CLIP_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip, or \"Pack/Clip\". Default: the clip open in the timeline."},

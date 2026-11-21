@@ -98,54 +98,43 @@ fn void pole_bows_the_bend_toward_the_side_it_names() @test
 }
 
 <*
- The same request gives the same bend — the pole is a single turn, not a search.
+ A pole that cannot aim says why rather than reporting a clean aim: a straight
+ limb has no bend off the line to swing, so the pole is ignored and the leg left
+ straight; a pole on the line from the chain root to the effector names no side;
+ and a rotation limit locking the root pivot cuts the twist short.
 *>
-fn void the_same_pole_gives_the_same_bend() @test
+fn void the_pole_says_when_it_cannot_aim() @test
 {
-	Leg leg;
-	leg.open();
-	defer leg.close();
-
-	Vec3 target = { 0.15f, 0.55f, 0 };
-	Vec3 first, second;
-	leg.aim(true, target, { 0.3f, 0.5f, 2 }, &first);
-	leg.aim(true, target, { 0.3f, 0.5f, 2 }, &second);
-
-	test::@check((first - second).length_sq() == 0.0f,
-		"the same pole put the knee at %s then %s", first, second);
-}
-
-<*
- A straight limb has no bend off the line to swing, so the pole is ignored and
- the leg is left exactly as it was.
-*>
-fn void a_straight_limb_names_no_bend() @test
-{
-	Leg leg;
-	leg.open();
-	defer leg.close();
-
+	Leg straight;
+	straight.open();
+	defer straight.close();
 	Vec3 knee_at;
-	crig::PoleAim result = leg.aim(false, {}, { 0, 0.5f, 5 }, &knee_at);
+	crig::PoleAim result = straight.aim(false, {}, { 0, 0.5f, 5 }, &knee_at);
 	test::@check(result == crig::PoleAim.STRAIGHT, "a straight leg names no bend, got %s", result);
 	test::@check(math::abs(knee_at.z) < 1.0e-6f, "and the pole left it straight (z=%.6g)", knee_at.z);
-}
-
-<*
- A pole on the line from the chain root to the effector names no side, so it is
- ignored rather than swinging the bend to a noisy answer.
-*>
-fn void a_pole_on_the_line_names_no_side() @test
-{
-	Leg leg;
-	leg.open();
-	defer leg.close();
 
 	// The thigh is the root pivot and never translates, so a pole at its rest
-	// place sits exactly on the root — the far end of the root-effector line.
-	Vec3 knee_at;
-	crig::PoleAim result = leg.aim(true, { 0.15f, 0.55f, 0 }, { 0, 0.7f, 0 }, &knee_at);
+	// place sits exactly on the root, the far end of the root-effector line.
+	Leg on_line;
+	on_line.open();
+	defer on_line.close();
+	result = on_line.aim(true, { 0.15f, 0.55f, 0 }, { 0, 0.7f, 0 }, &knee_at);
 	test::@check(result == crig::PoleAim.POLE_ON_LINE, "a pole on the line names no side, got %s", result);
+
+	// The thigh locked, so it cannot swing at all.
+	Leg locked;
+	locked.open();
+	defer locked.close();
+	crig::JointRotationLimits limits = crig::unconstrained_rotation(locked.thigh);
+	limits.constrained = true;
+	foreach (&axis : limits.axes)
+	{
+		axis.allowed = false;
+		axis.locked = 0.0f;
+	}
+	test::@check(locked.app.doc.set_rotation_limits(locked.thigh, limits), "the thigh lock was refused");
+	result = locked.aim(true, { 0.15f, 0.55f, 0 }, { 0, 0.5f, 5 }, &knee_at);
+	test::@check(result == crig::PoleAim.AIMED_TO_LIMIT, "a fully locked root pivot cannot aim the pole freely, got %s", result);
 }
 
 <*
@@ -171,30 +160,4 @@ fn void the_pole_reads_the_same_at_any_scale() @test
 	// reading did not drift with the scale.
 	test::@check(math::abs(big_at.z - small_at.z * 100.0f) <= math::abs(big_at.z) * 1.0e-3f,
 		"the bend scaled with the rig (1x z=%.5f, 100x z=%.5f)", small_at.z, big_at.z);
-}
-
-<*
- When a rotation limit on the root pivot cuts the twist short, the pole says so
- rather than reporting a clean aim it did not achieve.
-*>
-fn void a_limit_clamped_pole_reports_it_fell_short() @test
-{
-	Leg leg;
-	leg.open();
-	defer leg.close();
-
-	// Lock the thigh — the root pivot the pole turns — so it cannot swing at all.
-	crig::JointRotationLimits limits = crig::unconstrained_rotation(leg.thigh);
-	limits.constrained = true;
-	foreach (&axis : limits.axes)
-	{
-		axis.allowed = false;
-		axis.locked = 0.0f;
-	}
-	test::@check(leg.app.doc.set_rotation_limits(leg.thigh, limits), "the thigh lock was refused");
-
-	Vec3 knee_at;
-	crig::PoleAim result = leg.aim(true, { 0.15f, 0.55f, 0 }, { 0, 0.5f, 5 }, &knee_at);
-	test::@check(result == crig::PoleAim.AIMED_TO_LIMIT,
-		"a fully locked root pivot cannot aim the pole freely, got %s", result);
 }

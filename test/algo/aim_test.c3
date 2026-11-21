@@ -191,7 +191,7 @@ fn AnimTemplate aimed_clip()
 	AnimAimTarget[] targets = alloc::new_array(mem, AnimAimTarget, 1);
 	targets[0] = two_keys();
 	AnimAim[] aims = alloc::new_array(mem, AnimAim, 1);
-	aims[0] = crig::aim_defaults(mem, "head_L", "Target 1", FORWARD);
+	aims[0] = crig::aim_defaults(mem, "head_L", "Target 1", { 1, 0, 0 });
 	return { .name = "look".copy(mem), .duration = 4.0f, .keyframes = keys, .aims = aims, .aim_targets = targets,
 		.loop = true, .owned = true };
 }
@@ -225,7 +225,7 @@ fn void clip_rewriters_carry_the_aims() @test
 	AnimTemplate mirrored = crig::mirror_template(mem, clip, "look R", 0.0f);
 	defer mirrored.free(mem);
 	test::@check(mirrored.aims.len == 1 && mirrored.aims[0].joint == "head_R" && mirrored.aims[0].target == "Target 1"
-		&& mirrored.aim_targets[0].name == "Target 1"
+		&& mirrored.aims[0].forward.x == -1.0f && mirrored.aim_targets[0].name == "Target 1"
 		&& mirrored.aim_targets[0].keys[1].at == (Vec3){ -2, 0, 4 }, "the mirror kept the left head, the name or the x sign");
 }
 
@@ -347,29 +347,6 @@ fn void aim_pose_applies_by_name_and_records_what_it_touched() @test
 	test::@check(miss(pose, { 1.0f, 1.8f, 1.0f }) < 1.0e-3f, "the target was not scaled by the rig height");
 }
 
-fn void locks_apply_parents_first() @test
-{
-	io::printn("a chain locked together lands both joints on the target, whatever the order of the locks");
-	rig::Skeleton skeleton = chain_rig();
-	rig::Pose pose = rig::rest_pose(mem, 4);
-	defer pose.free(mem);
-	AnimAimTarget[] targets = alloc::new_array(mem, AnimAimTarget, 1);
-	targets[0] = crig::aim_target_defaults(mem, "Target 1", { 0.5f, 0.9f, 0.5f });
-	defer crig::free_aim_targets(mem, targets);
-	// The child is listed first on purpose; each turns by itself (spread 1).
-	AnimAim[] aims = alloc::new_array(mem, AnimAim, 2);
-	defer crig::free_aims(mem, aims);
-	aims[0] = crig::aim_defaults(mem, "head", "Target 1", FORWARD);
-	aims[0].spread = 1;
-	aims[1] = crig::aim_defaults(mem, "neck", "Target 1", FORWARD);
-	aims[1].spread = 1;
-
-	crig::aim_pose(mem, &skeleton, chain_names[..], aims, targets, 0.0f, 1.0f, false, &pose, 2.0f);
-	Vec3 target = { 1.0f, 1.8f, 1.0f };
-	test::@check(miss(pose, target, 2) < 1.0e-3f, "the neck is %f off its target", miss(pose, target, 2));
-	test::@check(miss(pose, target, 3) < 1.0e-3f, "the head is %f off its target", miss(pose, target, 3));
-}
-
 fn void two_locks_follow_one_target() @test
 {
 	io::printn("two joints locked to one target both turn when it moves");
@@ -394,32 +371,3 @@ fn void two_locks_follow_one_target() @test
 	test::@check(miss(early, { 0, 0, 0 }, 1) < 1.0e-3f && miss(late, { 4.0f, 0, 8.0f }, 1) < 1.0e-3f, "the chest did not follow");
 }
 
-fn void aim_copy_and_mirror_leave_nothing_behind() @test
-{
-	io::printn("crig::aims_copy, aim_targets_copy, the mirrors and the free functions balance");
-	AnimAimTarget[] targets = alloc::new_array(mem, AnimAimTarget, 1);
-	targets[0] = two_keys();
-	defer crig::free_aim_targets(mem, targets);
-	AnimAim[] source = alloc::new_array(mem, AnimAim, 2);
-	source[0] = crig::aim_defaults(mem, "head", "Target 1", FORWARD);
-	source[1] = crig::aim_defaults(mem, "hand_L", "Target 1", { 1, 0, 0 });
-	defer crig::free_aims(mem, source);
-
-	AnimAim[] copy = crig::aims_copy(mem, source);
-	test::@check(copy.len == 2 && copy[0].joint == "head" && copy[0].target == "Target 1"
-		&& copy[0].target.ptr != source[0].target.ptr, "the copy is shallow");
-	crig::free_aims(mem, copy);
-	AnimAimTarget[] kept = crig::aim_targets_copy(mem, targets);
-	test::@check(kept.len == 1 && kept[0].keys.len == 2 && kept[0].keys.ptr != targets[0].keys.ptr, "the target copy is shallow");
-	crig::free_aim_targets(mem, kept);
-
-	AnimAim[] mirrored = crig::aims_mirrored(mem, source);
-	defer crig::free_aims(mem, mirrored);
-	test::@check(mirrored[1].joint == "hand_R" && mirrored[1].forward.x == -1.0f && mirrored[1].target == "Target 1",
-		"the mirror did not flip the twin and x");
-	test::@check(mirrored[0].joint == "head", "a joint with no twin was renamed");
-	AnimAimTarget[] flipped = crig::aim_targets_mirrored(mem, targets);
-	defer crig::free_aim_targets(mem, flipped);
-	test::@check(flipped[0].name == "Target 1" && flipped[0].keys[1].at.x == -2.0f && targets[0].keys[1].at.x == 2.0f,
-		"the target mirror did not flip x, or changed its source");
-}

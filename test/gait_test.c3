@@ -84,8 +84,6 @@ fn void check_cycle(Rigged* f, String arguments, float duration)
 	Object* metrics = answer.get("metrics")!!;
 	float slide = number(metrics, "foot_slide");
 	float sink = number(metrics, "floor_penetration");
-	io::printfn("  slide %.4f sink %.4f speed %.3f drop %.3f stride %.3f keys %d", slide, sink,
-		number(answer, "ground_speed"), number(answer, "pelvis_drop"), number(answer, "stride"), (int)number(answer, "keys"));
 	test::@check(slide < 0.01f, "foot slide %.4f rig heights", slide);
 	test::@check(sink < 0.005f, "floor penetration %.4f rig heights", sink);
 	test::@check(number(answer, "ground_speed") > 0.0f, "no treadmill speed reported");
@@ -509,7 +507,6 @@ fn void pelvis_drop_and_arms_shape_the_walk() @test
 	float hips_swing;
 	float reach_swing;
 	walk_shape(&f, `{"name":"Shape Swing","duration":1.0,"pin_feet":false,"arms":{"swing":2.0}}`, &hips_swing, &reach_swing);
-	io::printfn("  hips %.4f -> %.4f, wrist reach %.4f -> %.4f", hips_default, hips_tall, reach_default, reach_swing);
 	test::@check(hips_tall > hips_default + 0.002f, "pelvis_drop 0 did not stand the hips taller (%f vs %f)", hips_tall, hips_default);
 	test::@check(reach_swing > reach_default * 1.3f, "arms swing 2 did not swing the wrist further (%f vs %f)", reach_swing, reach_default);
 }

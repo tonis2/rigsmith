@@ -18,8 +18,6 @@ import std::math::quaternion;
 const float EPS = 1.0e-5f;
 const float STEP = 1.0e-3f;
 
-fn bool near(float a, float b, float within = EPS) => math::abs(a - b) <= within;
-
 // Four keys on "hip" at uneven times, a turn about a different axis at each and
 // a slide along a different line, so no component is trivially flat.
 fn AnimTemplate wander_clip(AnimBlend blend = SMOOTH)
@@ -86,7 +84,7 @@ fn void default_keys_play_the_catmull_rom_they_always_did() @test
 		Vec3 moved = clip.translation_at("hip", at);
 		for (usz c = 0; c < 3; c++)
 		{
-			test::@check(near(moved[c], reference(t[..], slide[c * 4:4], at)), "slide %d off the Catmull-Rom at %f", (int)c, at);
+			test::@check(math::is_approx(moved[c], reference(t[..], slide[c * 4:4], at), EPS), "slide %d off the Catmull-Rom at %f", (int)c, at);
 		}
 		Quaternionf expect = { .v = {
 			reference(t[..], q[0:4], at), reference(t[..], q[4:4], at), reference(t[..], q[8:4], at), reference(t[..], q[12:4], at) } };
@@ -101,11 +99,7 @@ fn bool same_playback(AnimTemplate a, AnimTemplate b, float within = 1.0e-4f, bo
 		float at = a.duration * (float)i / 48.0f;
 		float turned = turn_between(a.rotation_at("hip", at), b.rotation_at("hip", at));
 		float slid = slides ? (a.translation_at("hip", at) - b.translation_at("hip", at)).length() : 0.0f;
-		if (turned > within || slid > within)
-		{
-			io::printfn("playback differs at %f: turn %f slide %f", at, turned, slid);
-			return false;
-		}
+		if (turned > within || slid > within) return false;
 	}
 	return true;
 }
@@ -197,7 +191,7 @@ fn void a_free_rotation_tangent_is_the_angular_velocity_through_the_key() @test
 	test::@check(crig::set_tangent_rate(&clip, 1, "hip", true, true, turned), "free tangent refused");
 	AnimTangents free = clip.keyframes[1].dots[0].rotation_tangents;
 	test::@check((free.incoming - turned).length() < EPS && (free.outgoing.normalize() - turned.normalize()).length() < 1.0e-4f
-		&& near(free.outgoing.length(), rate.length(), 1.0e-3f), "the free key's ends are not aligned");
+		&& math::is_approx(free.outgoing.length(), rate.length(), 1.0e-3f), "the free key's ends are not aligned");
 }
 
 fn void a_free_translation_tangent_bends_the_segment_the_way_it_points() @test
@@ -210,13 +204,13 @@ fn void a_free_translation_tangent_bends_the_segment_the_way_it_points() @test
 	Vec3 seeded = clip.keyframes[0].dots[0].translation_tangents.outgoing;
 	test::@check(crig::set_tangent_rate(&clip, 0, "hip", false, false, seeded + (Vec3){ 0, 0, 3.0f }), "rate refused");
 	Vec3 after = clip.translation_at("hip", 0.2f);
-	test::@check(near(after.z - before.z, 3.0f * 0.4f * 0.125f, 1.0e-4f) && near(after.x, before.x, 1.0e-4f)
-		&& near(after.y, before.y, 1.0e-4f), "the midpoint moved by %s", after - before);
+	test::@check(math::is_approx(after.z - before.z, 3.0f * 0.4f * 0.125f, 1.0e-4f) && math::is_approx(after.x, before.x, 1.0e-4f)
+		&& math::is_approx(after.y, before.y, 1.0e-4f), "the midpoint moved by %s", after - before);
 	// The key's own value is where it was, and the next key's too.
 	test::@check((clip.translation_at("hip", 0.0f) - (Vec3){}).length() < EPS
 		&& (clip.translation_at("hip", 0.4f) - (Vec3){ 0.2f, 0.1f, 0 }).length() < EPS, "a tangent moved a key");
 	// The segment past the next key is untouched but for the arrival at it.
-	test::@check(near(clip.translation_at("hip", 1.0f).y, wander_clip_value_y(1.0f), 1.0e-5f), "a tangent reached a far segment");
+	test::@check(math::is_approx(clip.translation_at("hip", 1.0f).y, wander_clip_value_y(1.0f), 1.0e-5f), "a tangent reached a far segment");
 }
 
 fn float wander_clip_value_y(float at)

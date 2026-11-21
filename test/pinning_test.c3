@@ -12,6 +12,7 @@ module crig_tests::pinning;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import rig;
 import std::io;
 import std::math;
@@ -83,16 +84,7 @@ fn bool Model.open(&self, String path, bool grounded)
  Gives the clip on show a ground spec with both named joints planted for the whole
  cycle — a figure standing on them — and puts it back on show.
 *>
-fn void Model.stand_on(&self, String left, String right)
-{
-	crig::AnimTemplate* clip = self.app.clip(self.app.editing);
-	clip.ground.free(mem);
-	crig::AnimFoot[] feet = alloc::new_array(mem, crig::AnimFoot, 2);
-	feet[0] = { .joint = left.copy(mem), .down = 0.0f, .up = 1.0f };
-	feet[1] = { .joint = right.copy(mem), .down = 0.0f, .up = 1.0f };
-	clip.ground = { .feet = feet };
-	test::@check(self.app.park_clip(self.app.editing, 0.0f), "the standing clip would not park");
-}
+fn void Model.stand_on(&self, String left, String right) => helpers::stand_on(&self.app, left, right);
 
 fn void Model.close(&self)
 {
@@ -138,16 +130,7 @@ fn float Model.off(&self, String name, Vec3 was) => (self.at(name) - was).length
  One viewport turn: R on `name`, the pointer sweeping `angle` about `axis` in a
  few moves, and let go.
 *>
-fn void Model.turn(&self, String name, Vec3 axis, float angle)
-{
-	self.app.select(self.id(name));
-	test::@check(self.app.begin_turn(true), "the turn on %s did not begin", name);
-	for (int step = 1; step <= 8; step++)
-	{
-		self.app.turn_joint(axis, angle * ((float)step / 8.0f));
-	}
-	self.app.end_drag();
-}
+fn void Model.turn(&self, String name, Vec3 axis, float angle) => helpers::turn_gesture(&self.app, self.id(name), name, axis, angle);
 
 // Every listed joint still within 0.5% of the rig's height of where it was.
 fn void Model.check_held(&self, String[] names, Vec3[] was, String what)
@@ -165,26 +148,7 @@ fn void Model.check_held(&self, String[] names, Vec3[] was, String what)
  closes the draft (`dot_world_rotation` reads the draft, so after a release it says
  nothing about the pose that was just made).
 *>
-fn Quaternionf Model.world(&self, String name)
-{
-	crig::RigView view = self.app.open_rig(mem)!!;
-	defer view.free(mem);
-	rig::Pose pose;
-	if (self.app.pose_edit_active)
-	{
-		pose = self.app.draft_pose(mem, &view);
-	}
-	else
-	{
-		crig::AnimTemplate* clip = self.app.clip(self.app.editing);
-		String[] names = self.app.names_for(&view, self.app.editing);
-		pose = clip.pose(mem, &view.skeleton, names, self.app.edit_time, false);
-	}
-	defer pose.free(mem);
-	Quaternionf[] world = pose.world_rotations(mem, &view.skeleton)!!;
-	defer alloc::free(mem, world);
-	return world[(usz)view.joint_of(self.id(name))];
-}
+fn Quaternionf Model.world(&self, String name) => helpers::world_rotation(&self.app, self.id(name));
 
 <*
  What a figure stood like as a gesture began: the world rotations a sit is judged by.
@@ -204,16 +168,8 @@ fn Stance Model.stance(&self) => {
 	.foot_r = self.world("ankle_R"),
 };
 
-// The angle of a rotation, in degrees, 0 to 180.
-fn float angle_of(Quaternionf q)
-{
-	q = q.normalize();
-	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
-	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * 57.29578f;
-}
-
 // How far a joint has turned in the world since `was`, in degrees.
-fn float Model.turned(&self, String name, Quaternionf was) => angle_of(self.world(name).mul(was.invert()));
+fn float Model.turned(&self, String name, Quaternionf was) => helpers::angle_of(self.world(name).mul(was.invert()));
 
 // A joint's rotation against its parent's, in the world: what turns with the limb.
 fn Quaternionf Model.to_parent(&self, String name)
@@ -226,12 +182,7 @@ fn Quaternionf Model.to_parent(&self, String name)
 }
 
 // How far a joint's up has leaned from where `was` had it, in degrees: a yaw is not a tilt.
-fn float Model.tilt(&self, String name, Quaternionf was)
-{
-	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
-	Vec3 after = self.world(name).rotate_vec3({ 0, 1, 0 });
-	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * 57.29578f;
-}
+fn float Model.tilt(&self, String name, Quaternionf was) => helpers::tilt_of(was, self.world(name));
 
 // The sit thresholds `puppet_test` judges by: the hips and the chest tilt less than
 // `UPRIGHT` degrees, a position-pinned foot turns less than `FOOT_FLAT`.
@@ -249,7 +200,6 @@ fn void Model.check_stance(&self, Stance* was, float feet, String what)
 	float chest = self.tilt("chest", was.chest);
 	float foot_l = self.turned("ankle_L", was.foot_l);
 	float foot_r = self.turned("ankle_R", was.foot_r);
-	io::printfn("  %s: hips tilt %.2f, chest tilt %.2f, feet turned %.2f %.2f deg", what, hips, chest, foot_l, foot_r);
 	test::@check(hips < UPRIGHT, "%s: the hips tilted %.2f degrees", what, hips);
 	test::@check(chest < UPRIGHT, "%s: the chest tilted %.2f degrees", what, chest);
 	if (feet <= 0.0f) return;
@@ -259,7 +209,7 @@ fn void Model.check_stance(&self, Stance* was, float feet, String what)
 // ---------------------------------------------------------------------------
 // The dog: pelvis down with the hind paws pinned
 
-fn void check_pulled_down(Model* m, bool balance, DragAxis lock) @local
+fn void check_pulled_down(Model* m, bool balance, DragAxis lock, String what) @local
 {
 	m.app.balance_off = !balance;
 	Vec3 paw_l = m.at("hind_hoof_L");
@@ -270,47 +220,31 @@ fn void check_pulled_down(Model* m, bool balance, DragAxis lock) @local
 	m.pull("pelvis", { 0, -0.2f, 0 }, lock);
 
 	Vec3 after = m.at("pelvis");
-	io::printfn("  balance=%s pelvis %.3f,%.3f,%.3f -> %.3f,%.3f,%.3f  paw_L off %.4f  paw_R off %.4f",
-		balance, pelvis.x, pelvis.y, pelvis.z, after.x, after.y, after.z,
-		m.off("hind_hoof_L", paw_l), m.off("hind_hoof_R", paw_r));
-	test::@check(after.y <= pelvis.y + 1.0e-4f, "the pelvis went UP: %.3f -> %.3f", pelvis.y, after.y);
-	test::@check(pelvis.y - after.y > 0.1f, "the pelvis only dropped %.3f of the 0.2 pulled", pelvis.y - after.y);
-	m.check_held({ "hind_hoof_L", "hind_hoof_R" }, { paw_l, paw_r }, "pelvis down");
+	test::@check(after.y <= pelvis.y + 1.0e-4f, "%s: the pelvis went UP: %.3f -> %.3f", what, pelvis.y, after.y);
+	test::@check(pelvis.y - after.y > 0.1f, "%s: the pelvis only dropped %.3f of the 0.2 pulled", what, pelvis.y - after.y);
+	m.check_held({ "hind_hoof_L", "hind_hoof_R" }, { paw_l, paw_r }, what);
 }
 
-fn void the_dog_sits_on_pinned_hind_paws_at_rest() @test
+<*
+ The dog's pelvis pulled down with both hind paws pinned, on a rest clip and in a
+ grounded Walk, free and by the Move tool's arrow held to Y, Balance on and off:
+ the pelvis drops and the paws hold.
+*>
+fn void the_dog_sits_on_pinned_hind_paws() @test
 {
-	io::printn("dog, rest clip: pelvis down with both hind paws pinned");
-	foreach (bool balance : { true, false })
+	io::printn("dog: pelvis down with both hind paws pinned");
+	foreach (usz row, bool grounded : (bool[3]){ false, true, true })
 	{
-		Model m;
-		if (!m.open(DOG, false)) return;
-		defer m.close();
-		check_pulled_down(&m, balance, FREE);
-	}
-}
-
-fn void the_dog_sits_on_pinned_hind_paws_in_a_grounded_walk() @test
-{
-	io::printn("dog, grounded Walk: pelvis down with both hind paws pinned");
-	foreach (bool balance : { true, false })
-	{
-		Model m;
-		if (!m.open(DOG, true)) return;
-		defer m.close();
-		check_pulled_down(&m, balance, FREE);
-	}
-}
-
-fn void the_move_tools_arrow_sits_the_dog_the_same_way() @test
-{
-	io::printn("dog, grounded Walk: the Move arrow held to Y");
-	foreach (bool balance : { true, false })
-	{
-		Model m;
-		if (!m.open(DOG, true)) return;
-		defer m.close();
-		check_pulled_down(&m, balance, Y);
+		DragAxis lock = row == 2 ? DragAxis.Y : DragAxis.FREE;
+		foreach (bool balance : { true, false })
+		{
+			Model m;
+			if (!m.open(DOG, grounded)) return;
+			defer m.close();
+			String what = string::tformat("%s, %s, balance %s", grounded ? "grounded Walk" : "rest clip",
+				lock == FREE ? "free" : "Move arrow on Y", balance ? "on" : "off");
+			check_pulled_down(&m, balance, lock, what);
+		}
 	}
 }
 
@@ -384,7 +318,6 @@ fn void the_humanoid_squats_on_pinned_feet() @test
 		float drop = m.height * 0.10f;
 		m.pull("hips", { 0, -drop, 0 });
 		Vec3 after = m.at("hips");
-		io::printfn("  grounded=%s hips %.3f -> %.3f (asked %.3f lower)", grounded, hips.y, after.y, drop);
 		test::@check(after.y <= hips.y + 1.0e-4f, "the hips went UP: %.3f -> %.3f", hips.y, after.y);
 		test::@check(hips.y - after.y > m.height * 0.06f, "the hips only dropped %.3f of %.3f", hips.y - after.y, drop);
 		m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "squat");
@@ -432,24 +365,12 @@ fn void check_spine_pulled_down(bool grounded, Vec3 by_fraction, bool walking = 
 	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
 	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
 	float came = (spine.y - m.at("spine").y) / m.height;
-	io::printfn("  grounded=%s ankle_L off %.4f ankle_R off %.4f knees %.1f %.1f spine down %.4f of %.4f", grounded,
-		m.off("ankle_L", foot_l), m.off("ankle_R", foot_r), fold_l, fold_r, came, -by_fraction.y);
 	m.check_held({ "ankle_L", "ankle_R" }, { foot_l, foot_r }, "spine pulled down");
 	if (grounded) m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "spine pulled down, toes planted");
 	test::@check(fold_l > folded, "the left knee only folded %.1f degrees", fold_l);
 	test::@check(fold_r > folded, "the right knee only folded %.1f degrees", fold_r);
 	test::@check(came > dropped, "the spine came down only %.4f heights", came);
 	m.check_stance(&stance, judge_feet ? FOOT_FLAT : 0.0f, "spine pulled down");
-}
-
-fn void pulling_the_spine_down_folds_both_knees_on_pinned_ankles() @test
-{
-	io::printn("humanoid: spine down with both ankles pinned");
-	// Flat feet bend the ankles only so far, and the body stops short of the pull
-	// (the spine comes down 0.12 of the 0.18 asked, 0.095 of the 0.15 grounded).
-	check_spine_pulled_down(false, { 0, -0.18f, 0 }, folded: 60.0f, dropped: 0.10f);
-	// The grounded body is also standing on its toes, so it sits only as deep as flat feet allow.
-	check_spine_pulled_down(true, { 0, -0.15f, 0 }, folded: 60.0f, dropped: 0.08f);
 }
 
 fn void pulling_the_spine_down_in_a_grounded_walk_keeps_both_feet() @test
@@ -490,49 +411,23 @@ fn void the_spine_moves_the_body_with_nothing_pinned() @test
 	Vec3 foot = m.at("ankle_L");
 	Vec3 by = (Vec3){ 0.05f, -0.1f, 0.02f } * m.height;
 	m.pull("spine", by);
-	io::printfn("  spine off %.4f, hips off %.4f, ankle off %.4f", m.off("spine", spine + by), m.off("hips", hips + by), m.off("ankle_L", foot + by));
 	test::@check(m.off("spine", spine + by) < 0.005f, "the spine missed the pointer by %.4f heights", m.off("spine", spine + by));
 	test::@check(m.off("hips", hips + by) < 0.02f, "the hips did not carry the body");
 	test::@check(m.off("ankle_L", foot + by) < 0.05f, "the legs did not come along");
 }
 
 <*
- Nothing pinned on a clip shown grounded: the feet it has planted hold, so pulling
- `spine` down folds the knees instead of the floor lifting the body straight back.
- The body stays upright. The feet stay flat as far as the ankle lets them (see
- `planted_feet_stay_flat_as_the_spine_comes_down`).
+ Nothing pinned, the toes planted: the spine pulled down by `depth` heights
+ leaves each foot as it stood, to within `FOOT_FLAT` degrees, and the toes hold.
+ The toes and the ankles fix the line between them, and a foot is free to roll
+ about that line unless the planted ankle keeps its angle softly, as a pinned one
+ does: without the hold the feet rolled 3.7, 14 and 20 degrees at 0.05, 0.08 and
+ 0.12. Flat feet go on being allowed well past the last depth here (0.8 degrees
+ at 0.25); the ankle's dorsiflexion, the -25 degree side of its X, is what ends
+ them. At 0.12 the feet held by the ground fold the knees rather than the floor
+ lifting the body straight back, and the body stays upright.
 *>
-fn void the_spine_sits_a_grounded_body_on_its_planted_feet() @test
-{
-	Model m;
-	if (!m.open(PERSON, false)) return;
-	defer m.close();
-	m.stand_on("toe_L", "toe_R");
-	Vec3 spine = m.at("spine");
-	Vec3 toe_l = m.at("toe_L");
-	Vec3 toe_r = m.at("toe_R");
-	Stance stance = m.stance();
-	Vec3 by = { 0, -0.12f * m.height, 0 };
-	m.pull("spine", by);
-	float dropped = (spine.y - m.at("spine").y) / m.height;
-	test::@check(dropped > 0.08f, "the spine came down only %.4f heights", dropped);
-	m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "grounded spine pull");
-	float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
-	float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
-	test::@check(fold_l > 60.0f && fold_r > 60.0f, "the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
-	m.check_stance(&stance, 0.0f, "grounded spine pull");
-}
-
-<*
- Nothing pinned, the toes planted: the spine pulled down by `depth` heights leaves
- each foot as it stood, to within `FOOT_FLAT` degrees. The toes and the ankles hold in
- place and fix the line between them, and a foot is free to roll about that line unless
- the planted ankle keeps its angle softly, as a pinned one does: without the hold the
- feet rolled 3.7, 14 and 20 degrees at 0.05, 0.08 and 0.12. Flat feet go on being allowed
- well past the last depth here (0.8 degrees at 0.25); the ankle's dorsiflexion, the -25
- degree side of its X, is what ends them.
-*>
-fn void planted_feet_stay_flat_as_the_spine_comes_down() @test
+fn void planted_feet_sit_a_grounded_body_flat() @test
 {
 	foreach (float depth : (float[]){ 0.05f, 0.08f, 0.12f, 0.2f })
 	{
@@ -540,15 +435,22 @@ fn void planted_feet_stay_flat_as_the_spine_comes_down() @test
 		if (!m.open(PERSON, false)) return;
 		defer m.close();
 		m.stand_on("toe_L", "toe_R");
+		Vec3 spine = m.at("spine");
 		Vec3 toe_l = m.at("toe_L");
 		Vec3 toe_r = m.at("toe_R");
 		Stance stance = m.stance();
 		m.pull("spine", { 0, -depth * m.height, 0 });
 		float foot_l = m.turned("ankle_L", stance.foot_l);
 		float foot_r = m.turned("ankle_R", stance.foot_r);
-		io::printfn("  spine down %.2f: feet turned %.2f %.2f deg", depth, foot_l, foot_r);
 		m.check_held({ "toe_L", "toe_R" }, { toe_l, toe_r }, "planted feet");
 		test::@check(foot_l < FOOT_FLAT && foot_r < FOOT_FLAT, "spine down %.2f: a foot turned %.2f / %.2f degrees (limit %.1f)", depth, foot_l, foot_r, FOOT_FLAT);
+		if (depth != 0.12f) continue;
+		float dropped = (spine.y - m.at("spine").y) / m.height;
+		test::@check(dropped > 0.08f, "spine down 0.12: the spine came down only %.4f heights", dropped);
+		float fold_l = m.fold("thigh_L", "knee_L", "ankle_L");
+		float fold_r = m.fold("thigh_R", "knee_R", "ankle_R");
+		test::@check(fold_l > 60.0f && fold_r > 60.0f, "spine down 0.12: the knees folded only %.1f and %.1f degrees", fold_l, fold_r);
+		m.check_stance(&stance, 0.0f, "grounded spine pull");
 	}
 }
 
@@ -565,7 +467,6 @@ fn void the_thigh_moves_the_body() @test
 	Vec3 hips = m.at("hips");
 	Vec3 by = { 0.03f * m.height, -0.05f * m.height, 0.02f * m.height };
 	m.pull("thigh_L", by);
-	io::printfn("  thigh off %.4f, hips moved %.4f", m.off("thigh_L", thigh + by), m.off("hips", hips));
 	test::@check(m.off("thigh_L", thigh + by) < 0.005f, "the thigh missed the pointer by %.4f heights", m.off("thigh_L", thigh + by));
 	test::@check(m.off("hips", hips) > 0.03f, "the hips stayed where they were");
 }
@@ -605,7 +506,6 @@ fn void a_pinned_hand_holds_while_the_chest_moves() @test
 		Vec3 chest = m.at("upper_spine");
 		m.pin("wrist_L");
 		m.pull("upper_spine", { 0, 0, m.height * 0.05f });
-		io::printfn("  grounded=%s chest moved %.3f of %.3f", grounded, (m.at("upper_spine") - chest).length(), m.height * 0.05f);
 		test::@check((m.at("upper_spine") - chest).length() > m.height * 0.02f, "the chest did not follow the pull");
 		m.check_held({ "wrist_L" }, { hand }, "chest pulled");
 	}
@@ -634,9 +534,7 @@ fn void a_dragged_wrist_turns_the_hand_with_its_forearm() @test
 		Vec3 by = { 0, 0.12f * m.height, 0.04f * m.height };
 		m.pull("wrist_L", by, flip_angle: flip);
 		float turned = m.turned("wrist_L", world);
-		float bent = angle_of(m.to_parent("wrist_L").mul(local.invert()));
-		io::printfn("  alt=%s hand turned %.2f deg in the world, %.2f against the forearm, missed by %.4f",
-			flip, turned, bent, m.off("wrist_L", hand + by));
+		float bent = helpers::angle_of(m.to_parent("wrist_L").mul(local.invert()));
 		test::@check(m.off("wrist_L", hand + by) < 0.005f, "the wrist missed the pointer by %.4f heights", m.off("wrist_L", hand + by));
 		if (flip)
 		{
@@ -655,8 +553,7 @@ fn void a_dragged_wrist_turns_the_hand_with_its_forearm() @test
 	defer m.close();
 	Quaternionf local = m.to_parent("wrist_L");
 	m.pull("elbow_L", { 0, 0.08f * m.height, 0.06f * m.height });
-	float bent = angle_of(m.to_parent("wrist_L").mul(local.invert()));
-	io::printfn("  elbow pulled: hand turned %.2f deg against the forearm", bent);
+	float bent = helpers::angle_of(m.to_parent("wrist_L").mul(local.invert()));
 	test::@check(bent < 0.5f, "an elbow pull turned the hand %.2f degrees against its forearm", bent);
 }
 
@@ -679,9 +576,7 @@ fn void a_dragged_ankle_keeps_the_foot_flat() @test
 		Vec3 by = { 0.08f * m.height, 0.05f * m.height, 0 };
 		m.pull("ankle_L", by, flip_angle: flip);
 		float turned = m.turned("ankle_L", world);
-		float bent = angle_of(m.to_parent("ankle_L").mul(local.invert()));
-		io::printfn("  alt=%s foot turned %.2f deg in the world, %.2f against the shin, missed by %.4f",
-			flip, turned, bent, m.off("ankle_L", foot + by));
+		float bent = helpers::angle_of(m.to_parent("ankle_L").mul(local.invert()));
 		test::@check(m.off("ankle_L", foot + by) < 0.005f, "the ankle missed the pointer by %.4f heights", m.off("ankle_L", foot + by));
 		if (flip)
 		{
@@ -721,15 +616,13 @@ fn void the_keep_angle_cell_swaps_a_joints_own_way() @test
 		Quaternionf shin_hand = m.to_parent("wrist_L");
 		m.pull("wrist_L", { 0, 0.12f * m.height, 0.04f * m.height }, flip_angle: alt);
 		float hand_turned = m.turned("wrist_L", hand);
-		float hand_bent = angle_of(m.to_parent("wrist_L").mul(shin_hand.invert()));
+		float hand_bent = helpers::angle_of(m.to_parent("wrist_L").mul(shin_hand.invert()));
 
 		Quaternionf foot = m.world("ankle_L");
 		Quaternionf shin_foot = m.to_parent("ankle_L");
 		m.pull("ankle_L", { 0.08f * m.height, 0.05f * m.height, 0 }, flip_angle: alt);
 		float foot_turned = m.turned("ankle_L", foot);
-		float foot_bent = angle_of(m.to_parent("ankle_L").mul(shin_foot.invert()));
-		io::printfn("  alt=%s hand turned %.2f (%.2f to the forearm), foot turned %.2f (%.2f to the shin)",
-			alt, hand_turned, hand_bent, foot_turned, foot_bent);
+		float foot_bent = helpers::angle_of(m.to_parent("ankle_L").mul(shin_foot.invert()));
 		if (alt)
 		{
 			test::@check(hand_bent < 0.5f, "with the cell and Alt the hand turned %.2f against its forearm", hand_bent);
@@ -760,7 +653,6 @@ fn void a_pin_that_cannot_hold_reports_its_true_miss() @test
 	m.pull("hips", { 0, -m.height * 0.25f, 0 });
 	float actual = (m.at("ankle_L") - foot_l).length();
 	float said = m.app.lock_position_residual(m.id("ankle_L"));
-	io::printfn("  ankle_L is %.4f off its pin, the readout says %.4f", actual, said);
 	test::@check(math::abs(actual - said) < m.height * 0.003f, "the readout says %.4f and the ankle is %.4f off", said, actual);
 }
 
@@ -814,7 +706,6 @@ fn void the_mcp_tools_sit_the_dog_on_its_pinned_paws() @test
 
 	Vec3 pelvis_now = f.app.dot_position(*f.app.doc.find(pelvis));
 	Vec3 paw_now = f.app.dot_position(*f.app.doc.find(paw));
-	io::printfn("  pelvis %.3f -> %.3f, paw moved %.4f", pelvis_was.y, pelvis_now.y, (paw_now - paw_was).length());
 	test::@check(pelvis_was.y - pelvis_now.y > 0.15f, "the pelvis only dropped %.3f", pelvis_was.y - pelvis_now.y);
 	test::@check((paw_now - paw_was).length() < 0.003f, "the paw left its pin by %.4f", (paw_now - paw_was).length());
 
@@ -914,9 +805,8 @@ fn void pose_joint_keep_angle_says_which_angle_a_limb_keeps() @test
 		Object*? posed = f.call_tool("pose_joint", call.str_view());
 		if (catch posed) { test::@check(false, "pose_joint refused"); return; }
 		posed.free();
-		turned[i] = angle_of(f.app.dot_world_rotation(paw).mul(was.invert()));
+		turned[i] = helpers::angle_of(f.app.dot_world_rotation(paw).mul(was.invert()));
 	}
-	io::printfn("  paw turned %.2f degrees left out, %.2f with false, %.2f with true", turned[0], turned[1], turned[2]);
 	test::@check(turned[0] < 3.0f, "left out the paw turned %.2f degrees", turned[0]);
 	test::@check(turned[1] < 3.0f, "with keep_angle false the paw turned %.2f degrees", turned[1]);
 	test::@check(turned[2] > turned[1] + 5.0f, "with keep_angle true the paw did not turn with its leg (%.2f against %.2f)", turned[2], turned[1]);
@@ -963,15 +853,6 @@ fn void pose_joint_keys_its_time_alone_whatever_apply_to_says() @test
 
 fn Vec3 at_in(crig::AppState* app, String name) => app.dot_position(*app.doc.find(app.dot_named(name).id));
 
-fn void dump_dog(crig::AppState* app, String tag) @local
-{
-	foreach (String n : (String[]){ "pelvis", "spine", "chest", "shoulder_L", "fore_knee_L", "fore_hoof_L", "fore_hoof_R", "hind_hoof_L" })
-	{
-		Vec3 p = at_in(app, n);
-		io::printfn("  %s %-10s %.3f %.3f %.3f", tag, n, p.x, p.y, p.z);
-	}
-}
-
 <*
  All four hooves pinned at rest and the pelvis pulled down: the crouch stays on the
  midline and every hoof holds. The quadruped faces −X, so its midline is z = 0;
@@ -998,7 +879,6 @@ fn void four_pinned_hooves_crouch_on_the_midline() @test
 	Object*? posed = f.call_tool("pose_joint", `{"joint":"pelvis","move":[0,-0.15,0]}`);
 	if (catch posed) { test::@check(false, "pose_joint refused"); return; }
 	posed.free();
-	dump_dog(app, "crouch");
 	test::@check(pelvis_was.y - at_in(app, "pelvis").y > 0.1f, "the pelvis only dropped %.3f", pelvis_was.y - at_in(app, "pelvis").y);
 	foreach (String n : (String[]){ "spine", "chest", "pelvis" })
 	{

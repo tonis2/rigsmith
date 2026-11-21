@@ -25,6 +25,7 @@ import rig;
 import gltf;
 import crig_tests::shared_app;
 import crig_tests::gltf_replay;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::io::file;
@@ -37,12 +38,6 @@ const String LEFT = "thigh_L";
 const String RIGHT = "thigh_R";
 const String HIPS = "hips";
 const usz SAMPLES = 25;
-
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
 
 fn Quaternionf turn_z(float angle) => quaternion::from_axis_angle{float}(((Vec3){ 0, 0, 1 }), angle);
 
@@ -60,9 +55,9 @@ fn void a_clip_made_edited_saved_and_exported_replays_as_shown() @test
 	crig::AppState app = shared_app::open();
 	defer app.free();
 	if (!app.apply_plan_named("biped")) { test::@check(false, "the biped would not fit the cube"); return; }
-	uint left = dot_named(&app, LEFT);
-	uint right = dot_named(&app, RIGHT);
-	uint hips = dot_named(&app, HIPS);
+	uint left = helpers::dot_named(&app, LEFT);
+	uint right = helpers::dot_named(&app, RIGHT);
+	uint hips = helpers::dot_named(&app, HIPS);
 	if (left == 0 || right == 0 || hips == 0) { test::@check(false, "the fitted plan lacks a leg or the hips"); return; }
 	io::printn("a clip made, edited, saved, reopened and exported replays where the editor showed it");
 
@@ -245,7 +240,6 @@ fn void a_clip_made_edited_saved_and_exported_replays_as_shown() @test
 			worst_vertex = math::max(worst_vertex, (at - here[v]).length());
 		}
 	}
-	io::printfn("  replayed as glTF over %d samples: joints %.7f out, vertices %.7f out", samples, worst_joint, worst_vertex);
 	float tolerance = gltf_replay::EXACT * height;
 	test::@check(worst_joint < tolerance, "an outside reader puts the joints where the editor showed them (%.6f off)", worst_joint);
 	// A vertex gets a further half on the joints' own error: the file round trip

@@ -277,13 +277,6 @@ fn AnimTemplate clip_with_pin_at(Allocator allocator, AnimTemplate source, sz at
 	return clip_with_pins(allocator, source, kept);
 }
 
-<*
- The clip with `pin` added, replacing the pins on its joint whose window it
- overlaps. `pin` is taken over.
-*>
-fn AnimTemplate clip_with_pin(Allocator allocator, AnimTemplate source, AnimPin pin)
-	=> clip_with_pin_at(allocator, source, -1, pin);
-
 // The clip without the pin at `at`; a plain copy when there is none.
 fn AnimTemplate clip_without_pin_at(Allocator allocator, AnimTemplate source, sz at)
 {

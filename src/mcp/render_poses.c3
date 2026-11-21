@@ -74,7 +74,7 @@ import std::math;
 import std::math::quaternion;
 import std::time;
 
-faultdef RENDER_POSES_REFUSED;
+excuse RENDER_POSES_REFUSED;
 
 const String RENDER_POSES_SCHEMA = `{"type":"object","properties":{
 	"out":{"type":"string","description":"The folder the pictures and poses_<first>.json go in; made when missing."},
@@ -566,24 +566,6 @@ fn Vec3 posed_centre(AppState* app, Vec3[] at) @local
 }
 
 <*
- Three's camera for an OrbitCamera, as `scene_camera` makes it for the panes.
-*>
-fn three::Camera pose_scene_camera(OrbitCamera* from)
-{
-	three::Camera camera = {
-		.target = { from.target[0], from.target[1], from.target[2] },
-		.distance = from.distance,
-		.yaw = from.yaw,
-		.pitch = from.pitch,
-		.fov = from.fov,
-		.near_plane = from.near_plane,
-		.far_plane = from.far_plane,
-	};
-	camera.clamp_angles();
-	return camera;
-}
-
-<*
  One frame of `pose` from `camera`, over `clear`, with nothing but the scene in
  it: the pose put in the palette, the scene brought up to date, then the view
  set to the whole (square) target and the interface left out of the capture.
@@ -611,7 +593,7 @@ fn image::Image? pose_frame(AppState* app, RigView* view, rig::Pose pose, OrbitC
 	three::SceneView[] none = { };
 	pass.set_extra_views(none);
 	pass.follow = {};
-	pass.camera = pose_scene_camera(camera);
+	pass.camera = scene_camera(camera);
 	pass.view_rect = { 0, 0, 1, 1 };
 
 	three::Renderer* renderer = stage_renderer();

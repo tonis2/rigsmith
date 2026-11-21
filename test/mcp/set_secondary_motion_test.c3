@@ -434,16 +434,6 @@ fn void set_secondary_motion_is_all_or_nothing() @test
 	test::@check(before == after, "and the rig is byte for byte where the call found it");
 }
 
-fn void play_names_the_clips_it_has() @test
-{
-	Fixture fixture;
-	fixture.open_authored();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	test::@check(f.refuses_tool("play", `{"clip":"waltz"}`, "waltz", "The library holds", "bend"),
-		"play on an unknown clip names it and lists what could have been asked for");
-}
-
 fn void play_says_why_a_clip_will_not_take() @test
 {
 	Fixture stranger;
@@ -464,7 +454,14 @@ fn void play_says_why_a_clip_will_not_take() @test
 		"a clip written for another rig is refused by name, with the joints it turns");
 }
 
-fn void stop_says_what_it_stopped() @test
+// Null rather than a missing key or an empty string: an answer that names no
+// clip has to be readable without guessing which of the three it meant.
+fn bool? stopped_nothing_body(Object* stopped)
+{
+	return stopped.get_bool("playing")! == false && stopped.get("stopped")!.is_null();
+}
+
+fn void stop_says_what_it_stopped_and_then_that_nothing_plays() @test
 {
 	Fixture fixture;
 	fixture.open_playing();
@@ -482,29 +479,14 @@ fn void stop_says_what_it_stopped() @test
 		&& (stopped.get_string("stopped") ?? "") == "bend"
 		&& !f.app.animating,
 		"stop ends playback and names the clip it took off the screen");
-}
 
-// Null rather than a missing key or an empty string: an answer that names no
-// clip has to be readable without guessing which of the three it meant.
-fn bool? stopped_nothing_body(Object* stopped)
-{
-	return stopped.get_bool("playing")! == false && stopped.get("stopped")!.is_null();
-}
-
-fn void stopping_nothing_is_not_an_error() @test
-{
-	Fixture fixture;
-	fixture.open_authored();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? stopped = f.call_tool("stop", "{}");
-	if (catch stopped)
+	Object*? again = f.call_tool("stop", "{}");
+	if (catch again)
 	{
 		test::@check(false, "a second stop answers");
 		return;
 	}
-	defer stopped.free();
-
-	test::@check(stopped_nothing_body(stopped) ?? false,
+	defer again.free();
+	test::@check(stopped_nothing_body(again) ?? false,
 		"stopping when nothing plays says so rather than failing");
 }

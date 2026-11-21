@@ -79,7 +79,7 @@ import std::math::vector;
  Raised when the input does not describe a rig: no joints, no primitives, a
  weight matrix that is not `vertices * joints`, or a parent index naming nothing.
 *>
-faultdef RESKIN_SHAPE;
+excuse RESKIN_SHAPE;
 
 <*
  Raised when the file cannot take a skin written this way — a `.gltf` whose
@@ -88,7 +88,7 @@ faultdef RESKIN_SHAPE;
  Both are real files and neither is wrong; they just cannot be grown in place by
  something that only knows how to append to a chunk it can see.
 *>
-faultdef RESKIN_NO_BINARY;
+excuse RESKIN_NO_BINARY;
 
 <*
  One joint of the new skeleton.

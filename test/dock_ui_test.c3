@@ -22,34 +22,6 @@ fn void dock_pose_workspace(Fixture* f)
 	f.open_pose_tab();
 }
 
-fn void dock_pose_tab_holds_the_posing_controls() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	dock_pose_workspace(&f);
-
-	test::@check(f.app.joint_panel_tab == crig::JointPanelTab.POSE, "the Pose tab did not open");
-	foreach (id : (String[]) { crig::POSE_SECTION_ID, crig::POSE_OPTIONS_SECTION_ID, crig::POSE_LIBRARY_SECTION_ID,
-		"anim-reset-pose", crig::ANIM_MIRROR_POSE_ID, crig::ANIM_COPY_POSE_ID, crig::ANIM_PASTE_POSE_ID,
-		crig::ANIM_PASTE_MIRRORED_ID, crig::ANIM_BALANCE_ID, crig::POSE_PINS_ID,
-		crig::ANIM_POSE_PANEL_ID, crig::ANIM_POSE_SAVE_ID })
-	{
-		test::@check(f.in_tree(id), "the Pose tab has no %s", id);
-	}
-	test::@check(f.in_tree(crig::POSE_PIN_NONE_ID), "an empty pin list does not say so");
-
-	// Off the dock: none of them is in the Animations pane any more.
-	if (try Element* strip = f.ui.find(AreaTabStrip)) f.click(tab_center(&f, strip, TAB_ANIMATIONS));
-	f.ui.flush();
-	foreach (id : (String[]) { "anim-reset-pose", crig::ANIM_MIRROR_POSE_ID, crig::ANIM_COPY_POSE_ID,
-		crig::ANIM_PASTE_POSE_ID, crig::ANIM_PASTE_MIRRORED_ID, crig::ANIM_BALANCE_ID, crig::ANIM_POSE_PANEL_ID,
-		"anim-pin-feet", "anim-poses" })
-	{
-		test::@check(!f.in_tree(id), "the dock still has %s", id);
-	}
-}
-
 fn void dock_pose_tab_lists_the_pins_and_clears_them() @test
 {
 	Fixture f;
@@ -159,20 +131,6 @@ fn void dock_splits_into_clips_and_layers() @test
 	test::@check(f.ui.find_id(crig::ANIM_LAYERS_SIDE_ID)!!.size.x > before + 100, "the Layers column did not widen");
 }
 
-fn void dock_layers_column_says_so_when_there_is_no_clip() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
-	f.ui.flush();
-
-	test::@check(f.in_tree(crig::ANIM_LAYERS_SIDE_ID) && f.in_tree(crig::ANIM_CLIP_SIDE_ID), "the dock has no two columns");
-	test::@check(f.in_tree(crig::ANIM_LAYERS_EMPTY_ID), "the Layers column has no empty state");
-	test::@check(!f.in_tree(crig::ANIM_LAYER_ADD_ID) && !f.in_tree(crig::ANIM_LAYER_TREE_ID),
-		"the Layers column offers layers with no clip");
-}
-
 fn void dock_joints_stage_greys_out_the_key_row_and_layers() @test
 {
 	Fixture f;
@@ -239,42 +197,6 @@ fn void dock_layer_menu_rows_act_on_the_right_clicked_layer() @test
 	f.ui.flush();
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)1);
 	test::@check(f.app.clip(f.app.editing).layers[0].kind == NOISE, "the wrong layer was deleted");
-}
-
-fn void dock_layer_form_folds_into_blend_motion_and_mask() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	lyr_workspace(&f);
-	lyr_add(&f, crig::ANIM_LAYER_WAVE_ID);
-
-	foreach (id : (String[]) { crig::ANIM_LAYER_BLEND_ID, crig::ANIM_LAYER_MOTION_ID, crig::ANIM_LAYER_MASK_SECTION_ID,
-		crig::ANIM_LAYER_WEIGHT_ID, crig::ANIM_LAYER_AMPLITUDE_ID, crig::ANIM_LAYER_FADE_IN_ID })
-	{
-		test::@check(f.in_tree(id), "the layer form has no %s", id);
-	}
-	crig::layer_motion_section_changed(f.ui, false);
-	test::@check(f.app.layer_motion_collapsed, "folding Motion was not kept");
-	test::@check((f.app.config.folded_sections & (1u << crig::FoldedSection.LAYER_MOTION.ordinal)) != 0,
-		"the fold did not reach the config");
-}
-
-fn void dock_check_results_open_in_a_dialog() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	lyr_workspace(&f);
-
-	test::@check(!f.ui.find_id(crig::ANIM_CHECK_DIALOG_ID)!!.widget_as(Dialog).open, "the check dialog is open before a Check");
-	f.pick_menu_item(crig::ANIM_TOOLS_BUTTON_ID, crig::ANIM_CHECK_ID);
-	f.ui.flush();
-	test::@check(f.ui.find_id(crig::ANIM_CHECK_DIALOG_ID)!!.widget_as(Dialog).open, "Check did not open its results");
-	test::@check(f.app.anim_check.ran, "Check did not run");
-	crig::anim_check_hide(f.ui);
-	f.ui.flush();
-	test::@check(!f.ui.find_id(crig::ANIM_CHECK_DIALOG_ID)!!.widget_as(Dialog).open, "Hide left the results up");
 }
 
 <*

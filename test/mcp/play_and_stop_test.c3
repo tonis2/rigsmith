@@ -60,36 +60,15 @@ fn void play_starts_what_the_user_would_see() @test
 }
 
 <*
- The loop override, and the half of it that is easy to get wrong.
+ The loop override wraps a time past the end, as playback does, and lasts for
+ this run only.
 
  `current_anim` is a copy of the template, so overriding the copy's flag is what
  keeps the override to this run. Writing it through to the library instead would
  change a clip nobody asked to edit — and, for a clip read off disk, silently
  disagree with the file it came from.
 *>
-fn void play_loops_only_this_run() @test
-{
-	Fixture fixture;
-	fixture.open_played();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? played = f.call_tool("play", `{"clip":"bend","loop":true}`);
-	if (catch played)
-	{
-		test::@check(false, "play accepts a loop override");
-		return;
-	}
-	defer played.free();
-
-	crig::AnimRef ref = crig::resolve_clip(&f.app, "bend") ?? crig::NO_ANIM;
-	crig::AnimTemplate* stored = f.app.clip(ref);
-	test::@check((played.get_bool("loop") ?? false) == true
-		&& f.app.current_anim.loop == true
-		&& stored != null && stored.loop == false,
-		"loop:true wraps the run without editing the clip it played");
-}
-
-fn void play_wraps_a_looping_time() @test
+fn void play_loops_and_wraps_only_this_run() @test
 {
 	Fixture fixture;
 	fixture.open_played();
@@ -99,13 +78,17 @@ fn void play_wraps_a_looping_time() @test
 	Object*? played = f.call_tool("play", `{"clip":"bend","t":7.5,"loop":true}`);
 	if (catch played)
 	{
-		test::@check(false, "play accepts a time past the end of a looping clip");
+		test::@check(false, "play accepts a loop override and a time past the end");
 		return;
 	}
 	defer played.free();
 
 	test::@check((playing_body(played, "bend", 1.5, 3.0, true) ?? false) && f.app.anim_time == 1.5f,
 		"a time past the end of a looping clip wraps, as playback does");
+	crig::AnimRef ref = crig::resolve_clip(&f.app, "bend") ?? crig::NO_ANIM;
+	crig::AnimTemplate* stored = f.app.clip(ref);
+	test::@check(f.app.current_anim.loop == true && stored != null && stored.loop == false,
+		"loop:true wraps the run without editing the clip it played");
 }
 
 <*

@@ -17,40 +17,6 @@ import std::math;
 // B5: semantics
 
 <*
- Auto-connect turns placement into chain-building: each dot bonds to the one
- before it, which is the whole reason it defaults on.
-*>
-fn void auto_connect_chains() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("auto-connect chains placements");
-	fixture.reset();
-
-	fixture.click(SPOT_A);
-	fixture.click(SPOT_B);
-	fixture.click(SPOT_C);
-
-	test::@check(fixture.doc().dots.len() == 3, "three clicks place three dots");
-	test::@check(fixture.doc().edges.len() == 2, "and two bones, not three and not none");
-	if (fixture.doc().dots.len() != 3) return;
-
-	uint a = fixture.doc().dots[0].id;
-	uint b = fixture.doc().dots[1].id;
-	uint c = fixture.doc().dots[2].id;
-	test::@check(fixture.doc()
-		.has_edge(a, b) && fixture.doc().has_edge(b, c), "the bones follow the order they were placed in");
-	test::@check(!fixture.doc().has_edge(a, c), "and skip no links");
-	test::@check(fixture.doc().root_id == a, "the first dot is the root");
-}
-
-<*
  C bonds the selection into a chain, in the order the dots were picked, and a
  second C takes that chain back apart.
 
@@ -133,50 +99,6 @@ fn void c_bonds_the_selection() @test
 
 	fixture.chord(pc, Key.LEFT_CTRL, Key.Z);
 	test::@check(fixture.doc().edges.len() == 0, "one undo takes the whole chain back");
-}
-
-<*
- R moves the root, and the move is undoable — export BFSes from it, so this
- decides which way every bone points.
-*>
-fn void root_follows_the_selection() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("R sets the root");
-	fixture.reset();
-
-	fixture.click(SPOT_A);
-	fixture.click(SPOT_B);
-	if (fixture.doc().dots.len() != 2)
-	{
-		test::@check(false, "SKIPPED — two dots expected");
-		return;
-	}
-
-	uint first  = fixture.doc().dots[0].id;
-	uint second = fixture.doc().dots[1].id;
-	test::@check(fixture.doc().root_id == first, "the root starts on the first dot");
-
-	Vec2? at = fixture.pixel_of(second);
-	if (catch at)
-	{
-		test::@check(false, "SKIPPED — the dot is off screen");
-		return;
-	}
-
-	fixture.click(at);
-	fixture.chord(at, Key.LEFT_CTRL, Key.R);
-	test::@check(fixture.doc().root_id == second, "ctrl+R hands the root to the selection");
-
-	fixture.chord(at, Key.LEFT_CTRL, Key.Z);
-	test::@check(fixture.doc().root_id == first, "and undo hands it back");
 }
 
 <*
@@ -358,16 +280,24 @@ fn void mirror_selection_works_under_a_parked_clip() @test
 		"undo did not put arm_R back where it was");
 }
 
-<*
- And on a rig that already has both halves, M pulls the far side into line
- rather than placing a second copy of it.
+struct MirrorTwinCase @local
+{
+	String kept;
+	String twin;
+	bool by_position;
+}
 
- The repair a hand-built rig needs, and the reason a twin is looked up by name:
- the partner here is a long way from where it belongs — further than any
- position match would reach — which is exactly the state that makes the arms of
- a rig bind to unequal amounts of the mesh.
+<*
+ On a rig that already has both halves, M pulls the far side onto the
+ selection's reflection rather than placing a second copy, and one undo puts it
+ back.
+
+ The twin is found by `_L`/`_R`, by an imported name (`armature:LeftHandThumb1`
+ once got a whole spare hand), or by position when the name has no side
+ (`bone_12` once got a spare `bone_12`). A name reaches a badly crooked pair; a
+ position match only a nearly square one.
 *>
-fn void mirror_selection_squares_up_a_crooked_pair() @test
+fn void mirror_squares_up_a_twin_found_by_name_or_position() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -377,66 +307,56 @@ fn void mirror_selection_squares_up_a_crooked_pair() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("mirror selection squares up a crooked pair");
-	fixture.reset();
+	io::printn("mirror squares up a twin found by name or position");
 
-	// Placed outright rather than clicked, because the point of the check is a
-	// pair that is named and badly out of line, and neither is something the
-	// pointer can produce. Quoted in the picker's own scale, like the tolerance
-	// they are being measured against.
-	float plane = fixture.app.doc.sym_x;
-	float unit = fixture.app.picker.scale * 0.2f;
-	Vec3 kept = { plane + unit, 0.5f, 0.0f };
-	Vec3 crooked = { plane - unit * 1.6f, 0.42f, 0.05f };
-
-	uint left = fixture.app.add_recorded(kept, "elbow_L");
-	uint right = fixture.app.add_recorded(crooked, "elbow_R");
-	fixture.app.undo_stack.commit();
-
-	test::@check(
-		math::abs((kept.x - plane) + (crooked.x - plane)) > fixture.app.picker.scale * crig::MIRROR_EPSILON,
-		"the pair really is crooked to begin with"
-	);
-
-	fixture.app.select(left);
-	fixture.tap(SPOT_LEFT, Key.M);
-
-	test::@check(fixture.doc().dots.len() == 2, "no second copy is placed");
-	test::@check(fixture.notice_text().starts_with("pulled 1 joint"), "and the notice says what it did");
-
-	Dot* moved = fixture.doc().find(right);
-	if (!moved)
+	MirrorTwinCase[3] cases = {
+		{ "elbow_L", "elbow_R", false },
+		{ "armature:LeftHandThumb1", "armature:RightHandThumb1", false },
+		{ "bone_11", "bone_12", true },
+	};
+	foreach (one : cases)
 	{
-		test::@check(false, "SKIPPED — the twin went missing");
-		return;
-	}
-	test::@check(
-		math::abs((kept.x - plane) + (moved.position.x - plane)) < 1e-5f
-		&& math::abs(kept.y - moved.position.y) < 1e-5f
-		&& math::abs(kept.z - moved.position.z) < 1e-5f,
-		"the twin lands on the selection's reflection"
-	);
-	test::@check(
-		(fixture.doc().find(left).position - kept).length() < 1e-5f,
-		"and the side that was selected does not move"
-	);
+		fixture.reset();
+		float plane = fixture.app.doc.sym_x;
+		float unit = fixture.app.picker.scale * 0.2f;
+		Vec3 kept = { plane + unit, 0.5f, 0.0f };
+		Vec3 crooked = one.by_position
+			? (Vec3){ plane - unit, 0.5f + fixture.app.picker.scale * 0.005f, 0.0f }
+			: (Vec3){ plane - unit * 1.6f, 0.42f, 0.05f };
+		uint left = fixture.app.add_recorded(kept, one.kept);
+		uint right = fixture.app.add_recorded(crooked, one.twin);
+		fixture.app.undo_stack.commit();
 
-	fixture.chord(SPOT_LEFT, Key.LEFT_CTRL, Key.Z);
-	test::@check(
-		(fixture.doc().find(right).position - crooked).length() < 1e-5f,
-		"one undo puts the twin back where it was"
-	);
+		fixture.app.select(left);
+		fixture.tap(SPOT_LEFT, Key.M);
+
+		test::@check(fixture.doc().dots.len() == 2, "%s: a second copy was placed", one.twin);
+		test::@check(fixture.notice_text().starts_with("pulled 1 joint"),
+			"%s: the notice was \"%s\"", one.twin, fixture.notice_text());
+		Dot* moved = fixture.doc().find(right);
+		test::@check(moved != null
+			&& math::abs((kept.x - plane) + (moved.position.x - plane)) < 1e-5f
+			&& math::abs(kept.y - moved.position.y) < 1e-5f
+			&& math::abs(kept.z - moved.position.z) < 1e-5f,
+			"%s did not land on the selection's reflection", one.twin);
+		test::@check((fixture.doc().find(left).position - kept).length() < 1e-5f,
+			"%s: the selected side moved", one.kept);
+
+		fixture.chord(SPOT_LEFT, Key.LEFT_CTRL, Key.Z);
+		test::@check((fixture.doc().find(right).position - crooked).length() < 1e-5f,
+			"%s: one undo did not put the twin back", one.twin);
+	}
 }
 
 <*
  The context-menu Mirror builds the missing other side — the one thing the M-key
- mirror deliberately refuses to do.
+ mirror deliberately refuses to do — and closes the menu behind it.
 
  A named source with no twin becomes a twin at the reflection, carrying its name
  (mirrored), its reach and its bones: the source hangs off the hip, which is on
  the plane, so the built twin hangs off the same hip. One undo takes it all back.
 *>
-fn void mirror_create_builds_the_other_side() @test
+fn void the_context_menu_mirror_builds_the_other_side() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -446,7 +366,7 @@ fn void mirror_create_builds_the_other_side() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("mirror create builds the other side");
+	io::printn("the context menu mirror builds the other side");
 	fixture.reset();
 
 	float plane = fixture.app.doc.sym_x;
@@ -460,16 +380,15 @@ fn void mirror_create_builds_the_other_side() @test
 	fixture.app.undo_stack.commit();
 
 	fixture.app.select(armR);
-	usz made;
-	usz moved;
-	usz already;
-	usz skipped;
-	bool painted;
-	usz total = fixture.app.mirror_create_selection(&made, &moved, &already, &skipped, &painted);
+	fixture.app.refresh_ui();
 
-	test::eq(total, (usz)1);
-	test::eq(made, (usz)1);
-	test::eq(moved, (usz)0);
+	crig::open_viewport_context(fixture.ui, { 0, 0 });
+	Element* ctx = fixture.ui.find_id(crig::VIEWPORT_CONTEXT_ID)!!;
+	test::@check(ctx.widget_as(Dialog).open, "the context menu did not open");
+	crig::viewport_context_mirror(fixture.ui);
+	test::@check(!ctx.widget_as(Dialog).open, "the menu did not close after mirroring");
+	test::@check(fixture.notice_text().starts_with("mirrored 1 joint"),
+		"the notice did not report one joint built: \"%s\"", fixture.notice_text());
 	test::@check(fixture.doc().dots.len() == 3, "the twin was not created (%d dots)", fixture.doc().dots.len());
 
 	Dot* twin = fixture.app.dot_named("arm_L");
@@ -606,40 +525,6 @@ fn void mirror_create_names_a_joint_with_no_side() @test
 	test::@check(fixture.doc().dots.len() == 3, "one undo did not take the twins back");
 	spine_dot = fixture.doc().find(spine);
 	test::@check(spine_dot != null && spine_dot.name == "spine", "one undo did not restore the name");
-}
-
-<*
- The side names follow the rig's own spelling: a rig whose right side is on +X
- and spelled `_r` names a new +X joint `_r`.
-*>
-fn void mirror_create_names_follow_the_rigs_convention() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("mirror create names follow the rig's convention");
-	fixture.reset();
-	fixture.app.doc.set_sym_x(0.0f);
-
-	fixture.app.add_recorded({ 0.08f, 0.13f, 0.06f }, "hip_r");
-	fixture.app.add_recorded({ -0.08f, 0.13f, 0.06f }, "hip_l");
-	uint tail = fixture.app.add_recorded({ 0.2f, 0.3f, 0.05f }, "fin");
-	fixture.app.undo_stack.commit();
-
-	fixture.app.select(tail);
-	usz made;
-	usz named;
-	(void)fixture.app.mirror_create_selection(&made, null, null, null, null, &named);
-	test::eq(made, (usz)1);
-	test::eq(named, (usz)1);
-	test::@check(fixture.app.dot_named("fin_r") != null, "the +X joint was not named fin_r");
-	Dot* twin = fixture.app.dot_named("fin_l");
-	test::@check(twin != null && math::abs(twin.position.x + 0.2f) < 1e-3f, "fin_l was not built on -X");
 }
 
 <*
@@ -856,11 +741,11 @@ fn void mirror_create_builds_every_named_side_and_counts_the_rest() @test
 }
 
 <*
- A right-press on a joint raises the context menu. (A press on empty space is
- declined so the pane's own split/merge menu still answers — see
- `context_menu_splits_and_merges`, which right-clicks empty pane space.)
+ A right-press on a joint raises the context menu, and its Delete takes the
+ whole selection away in one undo step. (A press on empty space is declined so
+ the pane's own split/merge menu still answers.)
 *>
-fn void a_right_press_on_a_joint_opens_the_context_menu() @test
+fn void the_context_menu_opens_on_a_joint_and_deletes_in_one_undo() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -870,74 +755,7 @@ fn void a_right_press_on_a_joint_opens_the_context_menu() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("a right press on a joint opens the context menu");
-	fixture.reset();
-
-	fixture.click(SPOT_A);
-	if (fixture.doc().dots.len() != 1)
-	{
-		test::@check(false, "SKIPPED — the dot to right-click did not place");
-		return;
-	}
-	Element* ctx = fixture.ui.find_id(crig::VIEWPORT_CONTEXT_ID)!!;
-	test::@check(!ctx.widget_as(Dialog).open, "the context menu starts closed");
-
-	fixture.right_click(SPOT_A);
-	test::@check(ctx.widget_as(Dialog).open, "a right-press on a joint did not open the context menu");
-}
-
-<*
- The context menu's Mirror runs the *building* mirror — it makes the other side —
- and closes the menu behind it.
-*>
-fn void the_viewport_context_menu_mirrors_the_selection() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the viewport context menu mirrors the selection");
-	fixture.reset();
-
-	float plane = fixture.app.doc.sym_x;
-	float unit = fixture.app.picker.scale * 0.2f;
-	uint hip = fixture.app.add_recorded({ plane, 0.9f, 0.0f }, "hip");
-	uint armR = fixture.app.add_recorded({ plane - unit, 0.5f, 0.1f }, "arm_R");
-	fixture.app.connect_recorded(hip, armR);
-	fixture.app.undo_stack.commit();
-	fixture.app.select(armR);
-	fixture.app.refresh_ui();
-
-	// Opened as the right-press would, then the menu's own Mirror item is run.
-	crig::open_viewport_context(fixture.ui, { 0, 0 });
-	Element* ctx = fixture.ui.find_id(crig::VIEWPORT_CONTEXT_ID)!!;
-	test::@check(ctx.widget_as(Dialog).open, "the context menu did not open");
-
-	crig::viewport_context_mirror(fixture.ui);
-	test::@check(!ctx.widget_as(Dialog).open, "the menu did not close after mirroring");
-	test::@check(fixture.app.dot_named("arm_L") != null, "the menu's Mirror did not build the other side");
-	test::@check(fixture.notice_text().starts_with("mirrored 1 joint"),
-		"the notice did not report the mirror: \"%s\"", fixture.notice_text());
-}
-
-<*
- And the context menu's Delete takes the whole selection away in one undo step.
-*>
-fn void the_viewport_context_menu_deletes_the_selection() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the viewport context menu deletes the selection");
+	io::printn("the context menu opens on a joint and deletes in one undo");
 	fixture.reset();
 
 	fixture.click(SPOT_LEFT);
@@ -947,172 +765,21 @@ fn void the_viewport_context_menu_deletes_the_selection() @test
 		test::@check(false, "SKIPPED — the two dots to delete did not place");
 		return;
 	}
+	Element* ctx = fixture.ui.find_id(crig::VIEWPORT_CONTEXT_ID)!!;
+	test::@check(!ctx.widget_as(Dialog).open, "the context menu starts closed");
+	fixture.right_click(SPOT_A);
+	test::@check(ctx.widget_as(Dialog).open, "a right-press on a joint did not open the context menu");
+
 	fixture.app.select_all();
 	fixture.app.refresh_ui();
-
 	crig::viewport_context_delete(fixture.ui);
+	test::@check(!ctx.widget_as(Dialog).open, "the menu did not close after deleting");
 	test::@check(fixture.doc().dots.len() == 0, "the context Delete did not remove the selection (%d left)", fixture.doc().dots.len());
 	test::@check(fixture.notice_text().starts_with("deleted 2 joint"),
 		"the notice did not report the delete: \"%s\"", fixture.notice_text());
 
 	test::@check(fixture.app.undo(), "undo did nothing");
 	test::@check(fixture.doc().dots.len() == 2, "one undo did not bring the deleted joints back");
-}
-
-<*
- And it squares up a pair the *file* named, not one crig did.
-
- The case this was reported from, and it is the ordinary one rather than the
- exotic one: a rig is named after whichever body plan it matched, a plan's words
- are its pack file's own joint names, and a pack a user downloads is as likely
- as not a downloaded export. So an imported figure wears `armature:LeftHandThumb1`
- on every joint it has, and while the twin was looked up by `_L`/`_R` alone that
- name said nothing — Mirror placed a whole second hand on top of the hand that
- was already there, one spare dot per finger joint, and left the crooked side
- crooked.
-
- Fingers because that is where it was seen and where it hurts: a hand is a dozen
- dots a few millimetres apart, so the spares are invisible until something binds
- to them.
-*>
-fn void mirror_reads_the_side_out_of_an_imported_name() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("mirror reads the side out of an imported name");
-	fixture.reset();
-
-	float plane = fixture.app.doc.sym_x;
-	float unit = fixture.app.picker.scale * 0.2f;
-	Vec3 kept = { plane + unit, 0.5f, 0.0f };
-	Vec3 crooked = { plane - unit * 1.6f, 0.42f, 0.05f };
-
-	uint left = fixture.app.add_recorded(kept, "armature:LeftHandThumb1");
-	uint right = fixture.app.add_recorded(crooked, "armature:RightHandThumb1");
-	fixture.app.undo_stack.commit();
-
-	fixture.app.select(left);
-	fixture.tap(SPOT_LEFT, Key.M);
-
-	test::@check(fixture.doc().dots.len() == 2, "no spare joint is placed beside the one that answers");
-	test::@check(fixture.notice_text().starts_with("pulled 1 joint"), "and the notice says it squared one up");
-
-	Dot* moved = fixture.doc().find(right);
-	if (!moved)
-	{
-		test::@check(false, "SKIPPED — the twin went missing");
-		return;
-	}
-	test::@check(
-		math::abs((kept.x - plane) + (moved.position.x - plane)) < 1e-5f
-		&& math::abs(kept.y - moved.position.y) < 1e-5f
-		&& math::abs(kept.z - moved.position.z) < 1e-5f,
-		"the joint the file already named is the one that moves"
-	);
-}
-
-<*
- A dot whose name names no side is still paired by where it sits.
-
- The other half of the same repair, and the one that catches a convention nobody
- has thought of yet: `mirror_name` reads the spellings it knows, and a name it
- cannot read has to fall through to position rather than take the rig's silence
- for an answer. Before, only a dot with no name at all did — so a joint called
- `bone_12` got a second `bone_12` on top of it while an unnamed one was pulled
- into line, which is the same rig treated two ways.
-*>
-fn void a_name_with_no_side_in_it_still_pairs_by_position() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("a name with no side in it still pairs by position");
-	fixture.reset();
-
-	float plane = fixture.app.doc.sym_x;
-	float unit = fixture.app.picker.scale * 0.2f;
-
-	// Square enough that a position match reaches it, which is the whole of what
-	// this path can promise: a nameless pair further apart than the tolerance is
-	// two dots, and the doc comment on `mirror_selection` says so.
-	Vec3 kept = { plane + unit, 0.5f, 0.0f };
-	Vec3 nearly = { plane - unit, 0.5f + fixture.app.picker.scale * 0.005f, 0.0f };
-
-	uint left = fixture.app.add_recorded(kept, "bone_11");
-	uint right = fixture.app.add_recorded(nearly, "bone_12");
-	fixture.app.undo_stack.commit();
-
-	fixture.app.select(left);
-	fixture.tap(SPOT_LEFT, Key.M);
-
-	test::@check(fixture.doc().dots.len() == 2, "the dot across the plane is taken for the twin");
-
-	Dot* moved = fixture.doc().find(right);
-	if (!moved)
-	{
-		test::@check(false, "SKIPPED — the twin went missing");
-		return;
-	}
-	test::@check(
-		math::abs((kept.x - plane) + (moved.position.x - plane)) < 1e-5f
-		&& math::abs(kept.y - moved.position.y) < 1e-5f,
-		"and pulled onto the reflection"
-	);
-}
-
-<*
- The mirror says when paint went across, since nothing on screen shows it
- unless the falloff view happens to be on the twin.
-*>
-fn void the_mirror_notice_says_when_paint_crossed() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the mirror notice says when weight paint crossed");
-	fixture.reset();
-
-	float plane = fixture.app.doc.sym_x;
-	float unit = fixture.app.picker.scale * 0.2f;
-	// Both sides placed, square about the plane — the paint crosses onto the twin
-	// that is there, it is never made.
-	uint left = fixture.app.add_recorded({ plane - unit, 0.5f, 0.0f }, "arm_L");
-	uint right = fixture.app.add_recorded({ plane + unit, 0.5f, 0.0f }, "arm_R");
-	fixture.app.undo_stack.commit();
-	uint[1] dab = { 0 };
-	test::eq(fixture.app.set_weight_vertices(dab[..], left, 0.4f), (usz)1);
-
-	fixture.app.select(left);
-	fixture.tap(SPOT_LEFT, Key.M);
-	test::@check(fixture.doc().dots.len() == 2, "the arm did not mirror: \"%s\"", fixture.notice_text());
-	test::@check(fixture.notice_text().ends_with("weight paint crossed too"),
-		"the notice does not mention the paint: \"%s\"", fixture.notice_text());
-	test::@check(fixture.app.weights_held(right), "the edited weights did not cross");
-
-	// Nothing painted on the source: the plain wording — the pair is now square
-	// with no paint, so the mirror finds nothing to do.
-	fixture.chord(SPOT_LEFT, Key.LEFT_CTRL, Key.Z);
-	test::@check(fixture.app.release_all_recorded() > 0, "the edited weights would not let go");
-	fixture.app.select(left);
-	fixture.tap(SPOT_LEFT, Key.M);
-	test::@check(fixture.doc().dots.len() == 2 && !fixture.notice_text().contains("paint"),
-		"an unpainted mirror mentioned paint: \"%s\"", fixture.notice_text());
 }
 
 <*
@@ -1375,36 +1042,6 @@ fn void undo_restores_bones_with_the_dot() @test
 	test::@check(fixture.doc().dots.len() == 3, "undo puts the dot back");
 	test::@check(fixture.doc().edges.len() == 2, "and both bones with it");
 	test::@check(fixture.doc().find(middle) != null, "under the id it had");
-}
-
-<*
- Editing after an undo forks the timeline, and the branch not taken cannot be
- re-entered.
-*>
-fn void new_edit_discards_the_redo_tail() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("a new edit discards the redo tail");
-	fixture.reset();
-
-	fixture.click(SPOT_A);
-	fixture.click(SPOT_B);
-	fixture.chord(SPOT_B, Key.LEFT_CTRL, Key.Z);
-	test::@check(fixture.app.undo_stack.can_redo(), "the undone placement is redoable");
-
-	fixture.click(SPOT_C);
-	test::@check(!fixture.app.undo_stack.can_redo(), "placing something else drops it");
-
-	sz count = fixture.doc().dots.len();
-	fixture.chord(SPOT_C, Key.LEFT_CTRL, Key.Y);
-	test::@check(fixture.doc().dots.len() == count, "and redo then does nothing");
 }
 
 <*

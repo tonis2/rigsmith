@@ -16,8 +16,6 @@ fn crig::AnimKeyDot keyed(String joint, float angle, float move, crig::AnimChann
 	};
 }
 
-fn bool near(float a, float b) => math::abs(a - b) < 1.0e-4f;
-
 fn void outgoing_interpolation_is_independent_per_sparse_channel() @test
 {
 	crig::AnimKeyDot[1] first = { keyed("hip", 0.0f, 0.0f, crig::AnimChannels.BOTH) };
@@ -30,9 +28,9 @@ fn void outgoing_interpolation_is_independent_per_sparse_channel() @test
 	};
 	crig::AnimTemplate clip = { .duration = 1.0f, .keyframes = keys[..] };
 	crig::AnimKeyDot middle = clip.entry_at("hip", 0.5f);
-	test::@check(near(middle.angle, 0.0f), "held rotation moved before its next key: %s", middle.angle);
-	test::@check(near(middle.move.x, 0.5f), "linear position was held with its sibling rotation: %s", middle.move.x);
-	test::@check(near(clip.entry_at("hip", 1.0f).angle, 1.0f),
+	test::@check(math::is_approx(middle.angle, 0.0f, 1e-4f), "held rotation moved before its next key: %s", middle.angle);
+	test::@check(math::is_approx(middle.move.x, 0.5f, 1e-4f), "linear position was held with its sibling rotation: %s", middle.move.x);
+	test::@check(math::is_approx(clip.entry_at("hip", 1.0f).angle, 1.0f, 1e-4f),
 		"hold did not change exactly on the next key");
 }
 
@@ -46,7 +44,7 @@ fn void explicit_linear_and_auto_override_the_legacy_clip_blend() @test
 	};
 	crig::AnimTemplate smooth = { .duration = 1.0f, .keyframes = keys[..], .blend = crig::AnimBlend.SMOOTH };
 	first[0].rotation_interpolation = crig::AnimInterpolation.LINEAR;
-	test::@check(near(smooth.entry_at("hip", 0.25f).angle, 0.25f),
+	test::@check(math::is_approx(smooth.entry_at("hip", 0.25f).angle, 0.25f, 1e-4f),
 		"explicit Linear still used the clip's smooth curve");
 
 	crig::AnimTemplate linear = { .duration = 1.0f, .keyframes = keys[..], .blend = crig::AnimBlend.LINEAR };
@@ -54,7 +52,7 @@ fn void explicit_linear_and_auto_override_the_legacy_clip_blend() @test
 	float curved = linear.entry_at("hip", 0.25f).angle;
 	first[0].rotation_interpolation = crig::AnimInterpolation.INHERIT;
 	float inherited_smooth = smooth.entry_at("hip", 0.25f).angle;
-	test::@check(near(curved, inherited_smooth),
+	test::@check(math::is_approx(curved, inherited_smooth, 1e-4f),
 		"explicit Auto did not match the legacy smooth curve: %s vs %s", curved, inherited_smooth);
 	test::@check(math::abs(curved - 0.25f) > 0.001f,
 		"explicit Auto still used the clip's linear curve: %s", curved);
@@ -73,8 +71,8 @@ fn void channels_sample_their_own_surrounding_keys() @test
 	crig::AnimTemplate clip = { .duration = 1.0f, .keyframes = keys[..] };
 
 	crig::AnimKeyDot halfway = clip.entry_at("hip", 0.5f);
-	test::@check(near(halfway.angle, 0.5f), "rotation sampled adjacent whole frames: %s", halfway.angle);
-	test::@check(near(halfway.move.x, 0.25f), "single translation key did not hold: %s", halfway.move.x);
+	test::@check(math::is_approx(halfway.angle, 0.5f, 1e-4f), "rotation sampled adjacent whole frames: %s", halfway.angle);
+	test::@check(math::is_approx(halfway.move.x, 0.25f, 1e-4f), "single translation key did not hold: %s", halfway.move.x);
 	test::@check(halfway.channels == crig::AnimChannels.BOTH, "sample did not report both driven channels");
 }
 
@@ -87,10 +85,10 @@ fn void sparse_nonloop_edges_hold_and_missing_channels_rest() @test
 		{ .time = 0.75f, .dots = b[..] },
 	};
 	crig::AnimTemplate clip = { .duration = 1.0f, .keyframes = keys[..] };
-	test::@check(near(clip.entry_at("hip", -2.0f).angle, 0.4f), "before-first did not hold");
-	test::@check(near(clip.entry_at("hip", 2.0f).angle, 0.8f), "after-last did not hold");
+	test::@check(math::is_approx(clip.entry_at("hip", -2.0f).angle, 0.4f, 1e-4f), "before-first did not hold");
+	test::@check(math::is_approx(clip.entry_at("hip", 2.0f).angle, 0.8f, 1e-4f), "after-last did not hold");
 	crig::AnimKeyDot absent = clip.entry_at("knee", 0.5f);
-	test::@check(near(absent.angle, 0.0f) && absent.move.length_sq() == 0.0f,
+	test::@check(math::is_approx(absent.angle, 0.0f, 1e-4f) && absent.move.length_sq() == 0.0f,
 		"a track with no keys did not return rest");
 }
 
@@ -119,8 +117,8 @@ fn void linear_sparse_tracks_wrap_and_compiled_indices_match() @test
 	float scanned = clip.entry_at("hip", 0.0f).angle;
 	clip.compile_tracks(mem);
 	float compiled = clip.entry_at("hip", 0.0f).angle;
-	test::@check(near(scanned, 0.5f), "linear loop did not interpolate across its seam: %s", scanned);
-	test::@check(near(compiled, scanned), "compiled track changed sampling: %s vs %s", compiled, scanned);
+	test::@check(math::is_approx(scanned, 0.5f, 1e-4f), "linear loop did not interpolate across its seam: %s", scanned);
+	test::@check(math::is_approx(compiled, scanned, 1e-4f), "compiled track changed sampling: %s vs %s", compiled, scanned);
 	test::@check(clip.tracks.len == 1 && clip.tracks[0].rotations.len == 2
 		&& clip.tracks[0].translations.len == 0, "compiled channel indices have the wrong shape");
 }
@@ -134,7 +132,7 @@ fn void a_distinct_duration_key_is_sampled_at_the_export_endpoint() @test
 		{ .time = 1.0f, .dots = b[..] },
 	};
 	crig::AnimTemplate clip = { .duration = 1.0f, .keyframes = keys[..], .loop = true };
-	test::@check(near(clip.entry_at("hip", 1.0f).angle, 1.0f),
+	test::@check(math::is_approx(clip.entry_at("hip", 1.0f).angle, 1.0f, 1e-4f),
 		"the distinct duration key was replaced by the wrapped opening pose");
 }
 
@@ -173,6 +171,6 @@ fn void a_same_valued_duration_key_only_closes_a_zero_time_track() @test
 		{ .time = 1.0f, .dots = close[..] },
 	};
 	crig::AnimTemplate clip = { .duration = 1.0f, .keyframes = keys[..], .loop = true };
-	test::@check(near(clip.entry_at("hip", 0.9f).angle, 0.25f),
+	test::@check(math::is_approx(clip.entry_at("hip", 0.9f).angle, 0.25f, 1e-4f),
 		"a duration key was mistaken for a closing duplicate without a zero-time opening key");
 }

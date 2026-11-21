@@ -283,8 +283,7 @@ fn float point_pose_measure(rig::Skeleton* skeleton, rig::Pose* pose, PointGoal[
 		}
 		if (goal.rotation)
 		{
-			float cosine = math::min(math::abs(world[goal.joint].v.dot(goal.orient.v)), 1.0f);
-			goal.turn_residual = 2.0f * (float)math::acos(cosine);
+			goal.turn_residual = turn_gap(world[goal.joint], goal.orient);
 		}
 	}
 	return worst;

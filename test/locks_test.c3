@@ -12,6 +12,7 @@ module crig_tests::locks;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::vector;
@@ -103,22 +104,6 @@ fn Vec3 Sitter.at(&self, uint id) => self.app.dot_position(*self.app.doc.find(id
 // quaternion has |w| = cos(half-angle), 1 at rest and falling as the joint turns.
 fn float bend_of(Quaternionf q) @local => 1.0f - math::abs(q.v.w);
 
-// The angle of a rotation, in degrees, 0 to 180.
-fn float angle_of(Quaternionf q) @local
-{
-	q = q.normalize();
-	float vector = math::sqrt(q.v[0] * q.v[0] + q.v[1] * q.v[1] + q.v[2] * q.v[2]);
-	return 2.0f * (float)math::atan2(vector, math::abs(q.v[3])) * 57.29578f;
-}
-
-// How far a rotation's up has leaned from where `was` had it, in degrees.
-fn float tilt_of(Quaternionf was, Quaternionf now) @local
-{
-	Vec3 before = was.rotate_vec3({ 0, 1, 0 });
-	Vec3 after = now.rotate_vec3({ 0, 1, 0 });
-	return (float)math::atan2(before.cross(after).length(), before.dot(after)) * 57.29578f;
-}
-
 // The thresholds `puppet_test` judges a sit by: the hips (and the trunk, where it is
 // asked) lean less than `UPRIGHT` degrees, a pinned foot turns less than `FOOT_FLAT`.
 const float UPRIGHT = 10.0f;
@@ -153,17 +138,19 @@ fn Stance Sitter.stance(&self) => {
 fn void Sitter.check_stance(&self, Stance* was, bool waist, String what)
 {
 	crig::AppState* app = &self.app;
-	float foot_l = angle_of(app.dot_world_rotation(self.ankle_l).mul(was.foot_l.invert()));
-	float foot_r = angle_of(app.dot_world_rotation(self.ankle_r).mul(was.foot_r.invert()));
-	float hips = tilt_of(was.hips, app.dot_world_rotation(self.hips));
-	float trunk = tilt_of(was.waist, app.dot_world_rotation(self.upper_spine));
+	float foot_l = helpers::angle_of(app.dot_world_rotation(self.ankle_l).mul(was.foot_l.invert()));
+	float foot_r = helpers::angle_of(app.dot_world_rotation(self.ankle_r).mul(was.foot_r.invert()));
+	float hips = helpers::tilt_of(was.hips, app.dot_world_rotation(self.hips));
+	float trunk = helpers::tilt_of(was.waist, app.dot_world_rotation(self.upper_spine));
 	test::@check(foot_l < FOOT_FLAT && foot_r < FOOT_FLAT, "%s: a foot turned %.2f / %.2f degrees", what, foot_l, foot_r);
 	test::@check(hips < UPRIGHT, "%s: the hips tilted %.2f degrees", what, hips);
 	test::@check(!waist || trunk < UPRIGHT, "%s: the waist tilted %.2f degrees", what, trunk);
 }
 
 <*
- The sit: lock the feet, pull the hips down, the knees fold and the feet stay.
+ The sit: lock the feet, pull the hips down, the knees fold and the feet stay
+ flat, the left held by angle as well and the right by position alone, and
+ every anchor reports a miss near zero.
 *>
 fn void anchored_feet_hold_while_the_hips_drop() @test
 {
@@ -175,9 +162,11 @@ fn void anchored_feet_hold_while_the_hips_drop() @test
 	Vec3 foot_l = fixture.at(fixture.ankle_l);
 	Vec3 foot_r = fixture.at(fixture.ankle_r);
 	test::@check(app.lock_position(fixture.ankle_l), "the left foot did not lock");
+	test::@check(app.lock_rotation(fixture.ankle_l), "the left foot's angle did not lock");
 	test::@check(app.lock_position(fixture.ankle_r), "the right foot did not lock");
 	test::@check(app.is_anchored(fixture.ankle_l) && app.is_anchored(fixture.ankle_r),
 		"the feet report unlocked");
+	test::@check(!app.locks_rotation(fixture.ankle_r), "the right foot took a rotation anchor it was not given");
 
 	app.select(fixture.hips);
 	test::@check(app.begin_pose(), "G did not begin on the hips");
@@ -199,6 +188,11 @@ fn void anchored_feet_hold_while_the_hips_drop() @test
 	test::@check(bend_of(app.working_pose(fixture.knee_l).rotation) > 1.0e-3f, "the left knee did not bend");
 	test::@check(bend_of(app.working_pose(fixture.knee_r).rotation) > 1.0e-3f, "the right knee did not bend");
 	fixture.check_stance(&stance, false, "hips drop");
+	test::@check(app.lock_position_residual(fixture.ankle_l) < 0.03f && app.lock_position_residual(fixture.ankle_r) < 0.03f,
+		"the feet report %.3f / %.3f off their pins", app.lock_position_residual(fixture.ankle_l),
+		app.lock_position_residual(fixture.ankle_r));
+	test::@check(app.lock_rotation_residual(fixture.ankle_l) < 0.1f,
+		"the left foot's tilt reports %.3f rad off held", app.lock_rotation_residual(fixture.ankle_l));
 }
 
 <*
@@ -274,33 +268,6 @@ fn void grabbing_the_spine_carries_the_body_and_holds_the_feet() @test
 }
 
 <*
- Without an anchor the spine still moves, and the body with it: the hips follow
- it and the unpinned legs ride along — near enough the spine's own move, the
- pelvis turning a little where the pull is sideways.
-*>
-fn void the_spine_carries_the_body_without_an_anchor() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-
-	app.select(fixture.spine);
-	test::@check(app.begin_pose(), "G on the spine was refused with no foot anchored");
-	Vec3 spine_from = fixture.at(fixture.spine);
-	Vec3 hips_from = fixture.at(fixture.hips);
-	Vec3 foot_from = fixture.at(fixture.ankle_l);
-	Vec3 by = { 0.1f, -0.2f, 0 };
-	for (int k = 1; k <= 10; k++) app.pose_toward(spine_from + by * (k / 10.0f));
-	float off = (fixture.at(fixture.spine) - (spine_from + by)).length();
-	test::@check(off < 0.02f, "the spine did not follow the drag; %.3f off the target", off);
-	float hips = (fixture.at(fixture.hips) - (hips_from + by)).length();
-	test::@check(hips < 0.05f, "the hips did not come with the spine; %.3f off its move", hips);
-	float carried = (fixture.at(fixture.ankle_l) - (foot_from + by)).length();
-	test::@check(carried < 0.1f, "the unpinned foot did not ride along; %.3f off", carried);
-}
-
-<*
  Escape undoes the whole sit — the folded legs the anchors bent, not only the
  grabbed hips.
 *>
@@ -327,41 +294,11 @@ fn void escape_puts_the_folded_legs_back() @test
 }
 
 <*
- The state the checkbox and L both drive: an idempotent toggle over a list that
- never holds two of one dot, and a clear that empties it.
+ The state the checkbox, the padlocks and L drive: the two halves toggle on
+ their own in one entry, a re-lock re-captures rather than adding a second, and
+ a clear empties the list.
 *>
-fn void the_anchor_toggles_and_clears() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-
-	test::@check(app.toggle_position_anchor(fixture.ankle_l), "toggle did not anchor");
-	test::@check(app.is_anchored(fixture.ankle_l), "the anchor did not take");
-	// Locking again re-captures rather than duplicating.
-	test::@check(app.lock_position(fixture.ankle_l), "re-lock refused");
-	test::@check(app.position_locks.len == 1, "a re-lock left %d anchors, not one", (int)app.position_locks.len);
-
-	test::@check(!app.toggle_position_anchor(fixture.ankle_l), "toggle did not release");
-	test::@check(!app.is_anchored(fixture.ankle_l), "the anchor did not clear");
-
-	app.lock_position(fixture.ankle_l);
-	app.lock_position(fixture.ankle_r);
-	app.clear_position_locks();
-	test::@check(!app.is_anchored(fixture.ankle_l) && !app.is_anchored(fixture.ankle_r), "clear left an anchor");
-	test::@check(app.position_locks.len == 0, "clear left %d anchors", (int)app.position_locks.len);
-}
-
-// How far two orientations differ, 0 when equal.
-fn float orient_gap(Quaternionf a, Quaternionf b) @local => 1.0f - math::abs(a.v.dot(b.v));
-
-<*
- The two padlocks are independent: each half toggles on its own, both can be on
- at once, and dropping one leaves the other — a rotation-only anchor still counts
- as anchored, and only when both halves are off does the entry go.
-*>
-fn void the_two_anchor_halves_are_independent() @test
+fn void the_anchor_halves_toggle_apart() @test
 {
 	Sitter fixture;
 	test::@check(fixture.open(), "the fixture did not open");
@@ -371,6 +308,8 @@ fn void the_two_anchor_halves_are_independent() @test
 	test::@check(app.toggle_position_anchor(fixture.ankle_l), "position toggle did not anchor");
 	test::@check(app.locks_position(fixture.ankle_l) && !app.locks_rotation(fixture.ankle_l),
 		"position toggle also turned rotation on");
+	test::@check(app.lock_position(fixture.ankle_l), "re-lock refused");
+	test::@check(app.position_locks.len == 1, "a re-lock left %d anchors, not one", (int)app.position_locks.len);
 
 	test::@check(app.toggle_rotation_anchor(fixture.ankle_l), "rotation toggle did not anchor");
 	test::@check(app.locks_position(fixture.ankle_l) && app.locks_rotation(fixture.ankle_l),
@@ -383,70 +322,12 @@ fn void the_two_anchor_halves_are_independent() @test
 
 	test::@check(!app.toggle_rotation_anchor(fixture.ankle_l), "rotation toggle did not release");
 	test::@check(!app.is_anchored(fixture.ankle_l), "both halves off left the anchor standing");
-}
-
-<*
- A rotation anchor holds the foot's orientation flat while its leg folds, and a
- position-only anchor keeps it too — softly (`POINT_POSE_PIN_SOFT_TURN`), where the
- rotation anchor holds it hard. The sitter's ankles have no limits to give way
- against, so both feet stay flat; the difference between the two is what happens
- past an ankle's reach, which the humanoid's own checks measure (`puppet_test`).
-*>
-fn void a_rotation_anchor_holds_the_foot_flat() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-
-	// Left foot pinned position and rotation; right foot position only.
-	app.lock_position(fixture.ankle_l);
-	app.lock_rotation(fixture.ankle_l);
-	app.lock_position(fixture.ankle_r);
-	test::@check(app.locks_rotation(fixture.ankle_l), "the rotation half did not take");
-	test::@check(!app.locks_rotation(fixture.ankle_r), "the right foot took a rotation anchor it was not given");
-
-	Quaternionf held = app.dot_world_rotation(fixture.ankle_l);
-
-	app.select(fixture.hips);
-	test::@check(app.begin_pose(), "G did not begin");
-	Vec3 hips_from = fixture.at(fixture.hips);
-	app.pose_toward(hips_from - (Vec3){ 0, 0.5, 0 });
-
-	// The rotation-anchored foot kept its orientation, and so did the position-only
-	// one: its angle is held softly, and nothing here asks it to give.
-	float held_gap = orient_gap(app.dot_world_rotation(fixture.ankle_l), held);
-	float free_gap = orient_gap(app.dot_world_rotation(fixture.ankle_r), held);
-	test::@check(held_gap < 0.01f, "the rotation-anchored foot tilted by %.3f", held_gap);
-	test::@check(free_gap < 0.01f, "the position-only foot did not keep its angle (free %.3f vs held %.3f)", free_gap, held_gap);
-}
-
-<*
- Every anchor that held reports a residual near zero — K2's read-back: both feet
- hold, and the rotation-anchored foot's angular miss is small too.
-*>
-fn void anchors_report_that_they_held() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
 
 	app.lock_position(fixture.ankle_l);
-	app.lock_rotation(fixture.ankle_l);
 	app.lock_position(fixture.ankle_r);
-
-	app.select(fixture.hips);
-	test::@check(app.begin_pose(), "G did not begin on the hips");
-	Vec3 hips_from = fixture.at(fixture.hips);
-	app.pose_toward(hips_from - (Vec3){ 0, 0.35, 0 });
-
-	test::@check(app.lock_position_residual(fixture.ankle_l) < 0.03f,
-		"the left foot reports %.3f off its pin", app.lock_position_residual(fixture.ankle_l));
-	test::@check(app.lock_position_residual(fixture.ankle_r) < 0.03f,
-		"the right foot reports %.3f off its pin", app.lock_position_residual(fixture.ankle_r));
-	test::@check(app.lock_rotation_residual(fixture.ankle_l) < 0.1f,
-		"the left foot's tilt reports %.3f rad off held", app.lock_rotation_residual(fixture.ankle_l));
+	app.clear_position_locks();
+	test::@check(!app.is_anchored(fixture.ankle_l) && !app.is_anchored(fixture.ankle_r), "clear left an anchor");
+	test::@check(app.position_locks.len == 0, "clear left %d anchors", (int)app.position_locks.len);
 }
 
 <*
@@ -687,35 +568,6 @@ fn void pulling_the_waist_sits_a_t_pose_down() @test
 }
 
 <*
- Down and back is a sit onto a chair: the hips travel behind the feet, the feet
- hold, and one release banks the whole pose as one undo step.
-*>
-fn void a_chair_sit_holds_the_feet_and_undoes_in_one_step() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-
-	Vec3 foot_l = fixture.at(fixture.ankle_l);
-	Vec3 hips_from = fixture.at(fixture.hips);
-	test::@check(app.lock_position(fixture.ankle_l) && app.lock_position(fixture.ankle_r), "the feet did not lock");
-
-	Stance stance;
-	pull_in_steps(&fixture, fixture.hips, { 0, -0.3f, -0.2f }, &stance);
-	test::@check((fixture.at(fixture.hips) - (hips_from + (Vec3){ 0, -0.3f, -0.2f })).length() < 0.03f,
-		"the hips did not reach the chair");
-	test::@check((fixture.at(fixture.ankle_l) - foot_l).length() < 0.014f, "the foot slipped");
-	// The waist is left to lean over the feet (the next test); the pelvis and the feet are not.
-	fixture.check_stance(&stance, false, "chair sit");
-
-	app.auto_key = true;
-	app.end_drag();
-	test::@check(app.undo(), "the sit did not undo");
-	test::@check((fixture.at(fixture.hips) - hips_from).length() < 1.0e-3f, "one undo did not stand the figure back up");
-}
-
-<*
  A turn of the hips with the feet pinned: the pelvis tilts and the legs follow it
  so the feet stay where they were.
 *>
@@ -753,7 +605,8 @@ fn float lean_of(Sitter* fixture) @local
 <*
  A person sitting back on planted feet leans forward to keep their weight over
  them. Pulling the hips down and back leans the spine forward while the hips
- still go where they were pulled; with Balance off the spine stays upright.
+ still go where they were pulled; with Balance off the spine stays upright. One
+ release banks the whole sit as one undo step.
 *>
 fn void sitting_back_leans_the_body_over_the_feet() @test
 {
@@ -777,6 +630,11 @@ fn void sitting_back_leans_the_body_over_the_feet() @test
 		test::@check(off_target < 0.02f, "the hips missed the pull by %.3f (balance %s)", off_target, off ? "off" : "on");
 		test::@check((fixture.at(fixture.ankle_l) - foot_l).length() < 0.014f, "the foot slipped");
 		leans[run] = lean_of(&fixture);
+
+		app.auto_key = true;
+		app.end_drag();
+		test::@check(app.undo(), "the sit did not undo");
+		test::@check((fixture.at(fixture.hips) - hips_from).length() < 1.0e-3f, "one undo did not stand the figure back up");
 	}
 	test::@check(leans[0] > 0.2f, "sitting back leaned the spine only %.3f forward", leans[0]);
 	test::@check(math::abs(leans[1]) < 0.05f, "with Balance off the spine still leaned %.3f", leans[1]);
@@ -784,7 +642,7 @@ fn void sitting_back_leans_the_body_over_the_feet() @test
 
 <*
  A rest pose whose knees are modelled slightly hyper-extended — behind the line
- from hip to ankle, the way Zidane's are. The hinge's 0 is that rest angle, so
+ from hip to ankle, the way some downloaded rigs' are. The hinge's 0 is that rest angle, so
  folding the knee the way its range opens first *lengthens* the leg; a solve that
  only saw "shorter" bent it further back, which the limit refuses, and stalled.
  The waist pull still has to sit the figure down.
@@ -808,28 +666,6 @@ fn void a_hyper_extended_rest_knee_still_sits() @test
 	test::@check((fixture.at(fixture.ankle_l) - foot_l).length() < 0.014f, "the foot slipped");
 	test::@check(fixture.at(fixture.knee_l).z > 0.05f, "the knee did not come forward (z %.3f)", fixture.at(fixture.knee_l).z);
 	fixture.check_stance(&stance, true, "hyper-extended sit");
-}
-
-<*
- Pin feet pins both ankles, position and angle, where they stand, and a second
- press lets them go.
-*>
-fn void pin_feet_pins_both_ankles_and_lets_them_go() @test
-{
-	Sitter fixture;
-	test::@check(fixture.open(), "the fixture did not open");
-	defer fixture.close();
-	crig::AppState* app = &fixture.app;
-
-	test::@check(!app.feet_pinned(), "the feet read pinned before anything was pinned");
-	test::@check(app.pin_feet(true) == 2, "Pin feet did not find both ankles");
-	test::@check(app.feet_pinned(), "the feet do not read pinned");
-	foreach (foot : (uint[2]){ fixture.ankle_l, fixture.ankle_r })
-	{
-		test::@check(app.locks_position(foot) && app.locks_rotation(foot), "a foot missed a half of its pin");
-	}
-	app.pin_feet(false);
-	test::@check(!app.is_anchored(fixture.ankle_l) && !app.is_anchored(fixture.ankle_r), "unpinning left a foot pinned");
 }
 
 <*

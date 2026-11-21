@@ -33,13 +33,13 @@ import std::math::quaternion;
 <*
  Raised when a pose does not carry exactly one rotation per joint.
 *>
-faultdef POSE_SIZE_MISMATCH;
+excuse POSE_SIZE_MISMATCH;
 
 <*
  Raised when a vertex leans on a joint the palette does not have — a binding and
  a skeleton from different rigs.
 *>
-faultdef PALETTE_INDEX_OUT_OF_RANGE;
+excuse PALETTE_INDEX_OUT_OF_RANGE;
 
 <*
  One local rotation and one local offset per joint, in joint order. Identity

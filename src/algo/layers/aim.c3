@@ -522,13 +522,8 @@ fn Quaternionf aim_carry(Vec3 from, Vec3 to, Vec3 up)
 
 fn bool aim_finite(Vec3 v) @local => math::is_finite(v.x) && math::is_finite(v.y) && math::is_finite(v.z);
 
-<*
- The shortest-arc slerp: `b` is flipped onto the same hemisphere as `a` first.
-*>
-fn Quaternionf slerp_short(Quaternionf a, Quaternionf b, float t)
-{
-	return (a.v.dot(b.v) < 0.0f ? a.slerp(-b, t) : a.slerp(b, t)).normalize();
-}
+// The shortest-arc slerp, normalized: the stdlib's slerp takes the short way but leaves its length.
+fn Quaternionf slerp_short(Quaternionf a, Quaternionf b, float t) => a.slerp(b, t).normalize();
 
 <*
  The joints one aim turns: `joint` first, then its parents, at most `spread`

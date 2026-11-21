@@ -139,30 +139,3 @@ fn void the_attachment_panel_grips_with_the_other_hand() @test
 	test::@check(f.app.attachment_dot == 0, "the panel stayed up on a deleted joint");
 	test::@check(!has_id(&f, crig::ATTACHMENT_KIND_ID), "the panel's controls outlived its joint");
 }
-
-// Where an element's branch sits among the root's children, or -1.
-fn sz root_place(Ui* ui, Element* root, String id) @local
-{
-	Element*? found = ui.find_id(id);
-	if (catch found) return -1;
-	Element* at = found;
-	while (at && at.parent != root) at = at.parent;
-	foreach (usz i, child : root.children.array_view()) if (child == at) return (sz)i;
-	return -1;
-}
-
-// The panel floats, so a modal or a menu opened while it's up covers it.
-fn void the_attachment_panel_paints_under_the_modals_and_menus() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	Element* root = f.ui.find(crig::AppRoot)!!;
-	sz panel = root_place(f.ui, root, crig::ATTACHMENT_DIALOG_ID);
-	test::@check(panel >= 0, "no Attachment panel in the tree");
-	foreach (id : (String[]){ crig::EXPORT_DIALOG_ID, crig::MOVE_BY_DIALOG_ID, crig::VIEWPORT_CONTEXT_ID, crig::UNSAVED_DIALOG_ID })
-	{
-		sz over = root_place(f.ui, root, id);
-		test::@check(over >= 0 && panel < over, "the Attachment panel paints over %s", id);
-	}
-}

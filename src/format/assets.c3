@@ -725,6 +725,12 @@ fn String file_stem(String path)
 	return path[start:end - start];
 }
 
+<* Whether `path` ends in `ext`, ignoring case. *>
+fn bool has_extension(String path, String ext)
+{
+	return path.len >= ext.len && path[^ext.len..].compare_to_ignore_case(ext) == 0;
+}
+
 <*
  The positions of every entry passing the filter, in index order.
 
@@ -746,34 +752,6 @@ fn usz[] AssetIndex.matching(&self, Allocator allocator, AssetFilter filter)
 	usz[] found = out.to_array(allocator);
 	out.free();
 	return found;
-}
-
-<*
- Whether `needle` appears in `haystack`, ignoring case.
-
- Folded per byte rather than by copying both sides lower: this runs once per
- entry per keystroke, and the alternative allocates twice as many strings as
- there are assets every time a character is typed.
-*>
-fn bool contains_fold(String haystack, String needle) @local
-{
-	if (needle.len == 0) return true;
-	if (needle.len > haystack.len) return false;
-
-	for (usz start = 0; start + needle.len <= haystack.len; start++)
-	{
-		bool same = true;
-		for (usz i = 0; i < needle.len; i++)
-		{
-			if (haystack[start + i].to_lower() != needle[i].to_lower())
-			{
-				same = false;
-				break;
-			}
-		}
-		if (same) return true;
-	}
-	return false;
 }
 
 <*

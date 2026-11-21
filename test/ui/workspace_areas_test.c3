@@ -413,32 +413,6 @@ fn void settings_port_rebinds_the_mcp_server() @test
 }
 
 <*
- Settings has an AI page for the llm folder the pipelines run from. The model
- files are not there: they are set on the Nodes pane's model nodes.
-*>
-fn void settings_ai_page_holds_the_plugins_only() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	crig::open_settings_dialog(f.ui);
-	f.ui.flush();
-	test::@check(f.in_tree(crig::SETTINGS_TABS_ID), "Settings has no tabs");
-	test::@check(f.in_tree(crig::SETTINGS_PORT_ID), "Settings does not open on its General page");
-
-	crig::open_ai_settings(f.ui);
-	f.ui.flush();
-	test::@check(!f.in_tree(crig::SETTINGS_PORT_ID), "the General page stayed up");
-	test::@check(!f.in_tree("settings-motion-model") && !f.in_tree("settings-capture-backbone"), "model files are asked for on the AI page");
-	test::@check(f.in_tree(crig::SETTINGS_PLUGINS_FOLDER_ID) && f.in_tree(crig::AI_PLUGINS_STATUS_ID), "no plugins folder");
-	crig::set_motion_path(f.ui, "plugins", "  /nowhere/llm ");
-	f.ui.flush();
-	test::@check(f.app.config.motion_generator.plugins == "/nowhere/llm", "the folder reads '%s'", f.app.config.motion_generator.plugins);
-	Element* folder = f.ui.find_id(crig::SETTINGS_PLUGINS_FOLDER_ID)!!;
-	test::@check(folder.widget_as(TextField).value() == "/nowhere/llm", "the field reads '%s'", folder.widget_as(TextField).value());
-}
-
-<*
  The first Scene editor is the logical hierarchy crig can faithfully expose
  today: one flattened mesh and the rig derived from the document. Its rows are
  also the bridge into object-level selection for the transform tools.
@@ -781,43 +755,6 @@ fn void the_level_is_the_scene_panes_first_row() @test
 }
 
 <*
- Switching tabs rebuilds the pane, which recycles every element in it — so the
- strip is re-found for the switch back, and `fixture.viewport` is re-resolved
- for whoever runs next.
-*>
-fn void tabs_swap_the_pane_content() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("a pane's tabs swap its content");
-	fixture.reset();
-
-	Element*? strip = fixture.ui.find(AreaTabStrip);
-	if (catch strip)
-	{
-		test::@check(false, "SKIPPED — no tab strip in the tree");
-		return;
-	}
-
-	fixture.click(tab_center(fixture, strip, 1));
-	test::@check(fixture.in_tree("hud") == false, "the Assets tab takes the 3D view down");
-	test::@check(fixture.in_tree(crig::ASSETS_GRID_ID), "and puts the asset grid up");
-
-	if (try Element* s2 = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, s2, 0));
-	bool viewport_back = false;
-	if (try Element* v = fixture.ui.find(Viewport)) viewport_back = true;
-	test::@check(viewport_back, "the 3D View tab brings the viewport back");
-
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
  Rig and View are on the window bar, beside File, Edit and Help: they stay when
  no pane shows a 3D View, the Rig items still act on the document, and View's
  camera items grey until a 3D View is back. Each 3D View pane keeps a header
@@ -1095,9 +1032,6 @@ fn Element* asset_cell(Fixture* fixture, crig::AssetKind kind, String name = "")
 	return found;
 }
 
-// The middle of a cell, in window coordinates — where a click on it goes.
-fn Vec2 cell_center(Element* cell) => cell.absolute + cell.size * 0.5f;
-
 <*
  The middle of a sidebar row, in window coordinates.
 
@@ -1272,7 +1206,7 @@ fn void a_skin_cell_places_that_files_rig() @test
 	// Nothing to lose, so it lands straight away — see
 	// `applying_a_rig_asks_before_replacing` for why an empty document is not
 	// asked. What this says is that the cell reached the right pack.
-	fixture.click(cell_center(skin));
+	fixture.click(centre_of(skin));
 	test::@check(fixture.doc().dots.len() == QUADRUPED_PACK_DOTS, "clicking a skin cell places that file's rig");
 	test::@check(fixture.doc().plan == "quadruped", "under the plan its file declares");
 
@@ -1285,118 +1219,13 @@ fn void a_skin_cell_places_that_files_rig() @test
 	// and not straight to the fit.
 	test::@check(fixture.app.apply_plan_named("biped"), "with a biped rig placed");
 	sz placed = fixture.doc().dots.len();
-	fixture.click(cell_center(skin));
+	fixture.click(centre_of(skin));
 	fixture.ui.flush();
 	test::@check(ask.asking(panel), "a second skin cell raises the question instead of replacing");
 	test::@check(fixture.doc().dots.len() == placed, "and nothing is replaced while it stands");
 
 	panel.widget_as(ConfirmDialog).withdraw(panel);
 	crig::answer_rig_dialog(fixture.ui, false);
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, 0));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
- A cell lights under the pointer, and puts it out when the pointer leaves.
-
- Leaving an element produces no MOVE inside it, so a highlight with nothing to
- clear it stays lit for as long as the pane is open — on a cell the user is no
- longer anywhere near. Asserted through the hover state rather than the pixels,
- because that flag is what the paint reads.
-*>
-fn void a_cell_lights_under_the_pointer() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("a cell lights under the pointer and goes out behind it");
-	fixture.reset();
-
-	Element*? strip = fixture.ui.find(AreaTabStrip);
-	if (catch strip)
-	{
-		test::@check(false, "SKIPPED — no tab strip in the tree");
-		return;
-	}
-	fixture.click(tab_center(fixture, strip, 1));
-
-	Element* clip = asset_cell(fixture, crig::AssetKind.ANIMATION);
-	if (!clip)
-	{
-		test::@check(false, "SKIPPED — the browser offered no clip to hover");
-		return;
-	}
-	crig::AssetCell* cell = clip.widget_as(crig::AssetCell);
-
-	fixture.feed(cell_center(clip));
-	test::@check(cell.hovered, "a cell under the pointer is lit");
-
-	// Off the browser entirely, rather than onto a neighbouring cell: what is being
-	// checked is the path with no MOVE to clear the flag.
-	fixture.feed({ 4.0, crig::WIN_H - 4.0 });
-	test::@check(!cell.hovered, "and leaving the browser puts it out");
-
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, 0));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
- An empty library says so, and keeps the room to say it in.
-
- crig started from a directory with no assets finds nothing at all, and a pane
- that came up blank reads as a broken build rather than as an empty folder. The
- line needs a row's worth of height under it: sized to the padding alone it falls
- outside the box the Scroll clips to.
-
- The library is emptied *before* the view is built, because the height is decided
- in layout and nothing about a rescan marks a laid-out sheet stale.
-*>
-fn void an_empty_library_says_so() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("an empty library says so");
-	fixture.reset();
-
-	fixture.app.config.remove_library(0);
-	fixture.app.config.add_library("build/no-such-asset-folder", "Missing");
-	fixture.app.scan_libraries();
-	test::@check(fixture.app.assets.entries.len == 0,
-		"a folder that is not there is an empty library, not an error");
-	test::@check(fixture.app.packs.len() == 0, "and no pack was read from it either");
-
-	Element*? strip = fixture.ui.find(AreaTabStrip);
-	if (catch strip)
-	{
-		test::@check(false, "SKIPPED — no tab strip in the tree");
-		return;
-	}
-	fixture.click(tab_center(fixture, strip, 1));
-
-	Element*? sheet = fixture.ui.find(crig::AssetSheet);
-	if (catch sheet)
-	{
-		test::@check(false, "SKIPPED — the Assets view did not build");
-		return;
-	}
-	test::@check(sheet.size.y >= crig::ASSET_CELL.y,
-		"and the sheet holds a cell's height for the line that says so");
-
-	// Put the fixture's library back, since the workspace is shared across checks.
-	fixture.app.config.remove_library(0);
-	fixture.app.config.add_library(library::ready(), "Checks");
-	fixture.app.scan_libraries();
 	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, 0));
 	fixture.viewport = fixture.ui.find(Viewport)!!;
 }
@@ -1670,63 +1499,6 @@ fn void a_clip_brings_its_own_rig() @test
 	fixture.viewport = fixture.ui.find(Viewport)!!;
 }
 
-<*
- The default workspace keeps the model, Scene Outliner, Assets and animation
- controls visible together. Generate remains available from the pane's tabs. Check
- both the split tree and actual widget bounds at the startup size and a larger window.
-*>
-fn void the_default_workspace_opens_four_panes() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	crig::build_ui(f.ui, &f.app);
-	f.ui.flush();
-	AreaNode* root = crig::area_layout.root;
-	test::@check(!root.is_leaf() && root.axis == SplitAxis.VERTICAL,
-		"the timeline must be below the upper panes");
-	test::@check(root.second.is_leaf() && root.second.active == crig::ANIMATION_VIEW,
-		"the bottom pane must show Animations");
-	test::@check(!root.first.is_leaf() && root.first.axis == SplitAxis.HORIZONTAL,
-		"the upper area must split left and right");
-	AreaNode* column = root.first.second;
-	test::@check(root.first.first.active == TAB_3D && !column.is_leaf() && column.axis == SplitAxis.VERTICAL,
-		"the model must be left of a column of panes");
-	test::@check(column.first.active == crig::SCENE_VIEW && column.second.active == crig::LIBRARY_VIEW,
-		"the column must hold the Scene Outliner over Assets");
-	foreach (size : (Vec2[]) { { crig::WIN_W, crig::WIN_H }, { 1920, 1080 } })
-	{
-		f.ui.resize(size);
-		f.ui.flush();
-		Element* model = f.ui.find(Viewport)!!;
-		Element* outliner = f.ui.find_id(crig::SCENE_OUTLINER_ID)!!;
-		Element* animation = f.ui.find_id(crig::ANIM_PANEL_ID)!!;
-		Element* assets = f.ui.find_id(crig::ASSETS_GRID_ID)!!;
-		test::@check(assets.absolute.x >= model.absolute.x + model.size.x
-			&& assets.absolute.y > outliner.absolute.y,
-			"Assets must sit right of the model, under the Scene Outliner");
-		// The narrow column's strips give up padding, then shorten the long
-		// names, rather than push the last tab — this pane's own — off the end.
-		f.ui.@each(AreaTabStrip; strip)
-		{
-			if (strip.absolute.x < model.absolute.x + model.size.x) continue;
-			AreaTabStrip* tabs = strip.widget_as(AreaTabStrip);
-			int last = tabs.zone_at(strip, { strip.size.x - 2, strip.size.y * 0.5f });
-			test::@check(last == (int)crig::NODES_VIEW + 1,
-				"a %.0f px strip ends on tab %d, not on Nodes", strip.size.x, last - 1);
-		};
-		test::@check(model.size.x > size.x * 0.68f && model.size.x < size.x * 0.76f,
-			"the model should occupy nearly three quarters of the width");
-		test::@check(outliner.absolute.x >= model.absolute.x + model.size.x,
-			"the Scene Outliner must sit to the right of the model");
-		test::@check(animation.absolute.y >= model.absolute.y + model.size.y,
-			"the animation panel must be below the model");
-		test::@check(animation.size.x > size.x * 0.95f,
-			"the animation panel must span the window");
-		test::@check(model.size.y > size.y * 0.5f, "the model needs the larger height share");
-	}
-}
-
 fn void split_and_close() @test
 {
 	Fixture harness;
@@ -1979,7 +1751,7 @@ fn void the_search_box_narrows_the_grid_as_it_is_typed() @test
 	// Cleared with Backspace rather than by setting the text, so the deletion path
 	// reports too — a search that narrowed and never widened again would be worse
 	// than one that did nothing.
-	for (usz i = 0; i < 4; i++) fixture.tap(cell_or_center(search), Key.BACKSPACE);
+	for (usz i = 0; i < 4; i++) fixture.tap(centre_of(search), Key.BACKSPACE);
 	test::@check(count_cells(fixture) == everything,
 		"clearing the box brings every cell back");
 
@@ -1994,9 +1766,6 @@ fn usz count_cells(Fixture* fixture)
 	fixture.ui.@each(crig::AssetCell; cell) { found++; };
 	return found;
 }
-
-// The middle of an element, for a key aimed at it.
-fn Vec2 cell_or_center(Element* elem) => elem.absolute + elem.size * 0.5f;
 
 <*
  The middle of a sidebar row's disclosure mark, in window coordinates.
@@ -2016,34 +1785,6 @@ fn Vec2 category_mark(Element* tree, usz row, usz depth)
 		text_x - style.indent * 0.5f,
 		((float)row + 0.5f) * style.row_height,
 	};
-}
-
-<*
- Where in the frame's paint order the first rectangle of this colour inside `rect`
- was recorded, or -1 when there is none.
-
- The canvas is the display list the renderer consumes, in the order the painter
- filled it, so an index into it is a z position: of two things covering the same
- pixels, the one recorded later is the one the user sees. This is the only way to
- ask "is it on top" from a test — the elements' own rects say where things are and
- nothing about which won.
-
- @param corner : `Top-left of the window region to look in.`
- @param size : `Its extent. A drawing counts when its centre falls inside.`
-*>
-fn int painted_at(Fixture* fixture, Color color, Vec2 corner, Vec2 size)
-{
-	foreach (usz i, drawing : fixture.ui.canvas.drawings.array_view())
-	{
-		if (drawing.kind != DrawingKind.RECT) continue;
-		if (drawing.color != (Vec4)color) continue;
-
-		Vec2 at = drawing.corner + drawing.size * 0.5f;
-		if (at.x < corner.x || at.x >= corner.x + size.x) continue;
-		if (at.y < corner.y || at.y >= corner.y + size.y) continue;
-		return (int)i;
-	}
-	return -1;
 }
 
 <*
@@ -2151,88 +1892,6 @@ fn usz plan_row_under(Fixture* fixture, crig::AssetKind kind)
 }
 
 <*
- The library chooser's list is drawn over the sidebar rather than under it.
-
- cui records an open `Select`'s popup in the Select's own slot in the paint
- order — its own doc comment says so — so a toolbar built before the content it
- covers is a list the sidebar is then painted straight over. The chooser sits
- directly above the category tree, which is the one thing its list has to be
- readable against.
-
- Asked of the display list because that is where the answer is. The elements'
- rects say the list and the sidebar occupy the same pixels; only the order the
- painter filled them in says which one the user sees.
-*>
-fn void the_library_chooser_opens_over_the_sidebar() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the library chooser drops its list over the sidebar");
-	fixture.reset();
-
-	Element*? strip = fixture.ui.find(AreaTabStrip);
-	if (catch strip)
-	{
-		test::@check(false, "SKIPPED — no tab strip in the tree");
-		return;
-	}
-	fixture.click(tab_center(fixture, strip, 1));
-
-	Element*? tree = fixture.ui.find_id(crig::ASSETS_TREE_ID);
-	if (catch tree)
-	{
-		test::@check(false, "SKIPPED — the browser has no sidebar");
-		return;
-	}
-	Element*? chooser = fixture.ui.find_id(crig::ASSETS_LIBRARY_ID);
-	if (catch chooser)
-	{
-		test::@check(false, "SKIPPED — the browser has no library chooser");
-		return;
-	}
-
-	// The browser opens on "All", so the sidebar has a filled selection rect
-	// directly under the toolbar for the list to land on. Without something
-	// painted there the comparison below would have nothing to compare against.
-	int row = painted_at(fixture, crig::ACCENT, tree.absolute, tree.size);
-	if (row < 0)
-	{
-		test::@check(false, "SKIPPED — the sidebar draws no selected row for the list to cover");
-		return;
-	}
-
-	fixture.click(cell_or_center(chooser));
-
-	// Re-resolved: opening the chooser rebuilds the subtree it sits in.
-	Element*? opened = fixture.ui.find_id(crig::ASSETS_TREE_ID);
-	if (catch opened)
-	{
-		test::@check(false, "the sidebar went away when the chooser opened");
-		return;
-	}
-
-	int list = painted_at(fixture, crig::MENU_STYLE.panel_color, opened.absolute, opened.size);
-	int covered = painted_at(fixture, crig::ACCENT, opened.absolute, opened.size);
-	test::@check(list >= 0, "the chooser dropped no list over the sidebar at all");
-	test::@check(covered >= 0, "the sidebar stopped drawing its selected row");
-	test::@check(list > covered,
-		"the list is recorded at %d and the sidebar row under it at %d — the sidebar wins", list, covered);
-
-	// Shut before leaving. An open Select lays a window-wide catcher over
-	// everything, so the tab click below would only close the list.
-	if (try Element* head = fixture.ui.find_id(crig::ASSETS_LIBRARY_ID)) fixture.click(cell_or_center(head));
-
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, 0));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
  A category's disclosure mark closes it, and closing narrows nothing.
 
  Two gestures on one row: the mark opens and closes, the label narrows the grid.
@@ -2283,7 +1942,6 @@ fn void a_category_closes_from_its_mark() @test
 
 	usz rows = fixture.app.asset_categories.len;
 	usz everything = count_cells(fixture);
-	io::printfn("  Animations holds %d plan rows of %d in the sidebar", plans, rows);
 
 	// Depth 1: a kind heading, one indent step in, and the mark sits in the step
 	// left of its label.

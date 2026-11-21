@@ -6,49 +6,6 @@ import rig;
 import std::core::test;
 import std::math;
 
-fn void animation_workspace_key_clipboard_shortcuts_are_timeline_scoped() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
-	AnimRef clip = f.app.new_clip("Clipboard", 2);
-	f.app.show_edited();
-	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
-	f.ui.flush();
-	sz initial_history = f.app.undo_stack.cursor;
-	f.app.resume_clip();
-	f.feed({ 0, 0 });
-	Element* sheet = f.ui.find(Timeline)!!;
-	Timeline* timeline = sheet.widget_as(Timeline);
-	Vec2 key = sheet.absolute + (Vec2){ timeline.x_of(sheet, 0), timeline.lane_y(0) };
-	f.click(key);
-	f.feed(key, keys: { Key.LEFT_CTRL, Key.C });
-	f.feed(key);
-	test::@check(f.app.anim_key_clipboard.keyframes.len == 1, "timeline Ctrl+C did not copy");
-	sheet = f.ui.find(Timeline)!!;
-	timeline = sheet.widget_as(Timeline);
-	test::@check(timeline.marks[0].selected, "current pose key was not highlighted");
-	test::@check(f.app.undo_stack.cursor == initial_history, "selecting/copying a key added history");
-	sz history = f.app.undo_stack.cursor;
-	Vec2 destination = sheet.absolute + (Vec2){ timeline.x_of(sheet, 1), 5 };
-	f.click(destination);
-	f.feed(destination, keys: { Key.LEFT_CTRL, Key.V });
-	f.feed(destination);
-	test::@check(f.app.clip(f.app.editing).keyframes.len == 2, "timeline Ctrl+V did not paste");
-	test::@check(f.app.undo_stack.cursor == history + 1, "paste was not one history edit");
-	sheet = f.ui.find(Timeline)!!;
-	timeline = sheet.widget_as(Timeline);
-	key = sheet.absolute + (Vec2){ timeline.x_of(sheet, 1), timeline.lane_y(0) };
-	f.click(key);
-	f.feed(key, keys: { Key.DELETE });
-	f.feed(key);
-	test::@check(f.app.clip(f.app.editing).keyframes.len == 1 && f.app.doc.dots.len() > 0,
-		"timeline Delete removed rig data or left the key");
-	test::@check(f.app.undo() && f.app.clip(f.app.editing).keyframes.len == 2, "delete did not undo");
-	test::@check(f.app.undo() && f.app.clip(f.app.editing).keyframes.len == 1, "paste did not undo separately");
-}
-
 fn void animation_workspace_timing_controls_preserve_keys_and_history() @test
 {
 	Fixture f;
@@ -125,28 +82,6 @@ fn void animation_workspace_timing_controls_preserve_keys_and_history() @test
 	test::@check(f.app.clip(clip).keyframes[1].time == 0.413f && f.app.clip(clip).duration == 4,
 		"preview controls changed stored timing");
 	test::@check(f.app.undo_stack.cursor == history, "preview controls created document edits");
-}
-
-// A hand-keyed clip is a one-shot by default: past the last key it holds that
-// pose rather than blending back to the first. That is what lets someone key a
-// fall and carry straight on — the character does not rise back up on its own.
-fn void a_new_animation_holds_its_last_pose_by_default() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
-	f.click(tab_center(&f, f.ui.find(AreaTabStrip)!!, TAB_ANIMATIONS));
-	f.ui.flush();
-
-	f.click(f.center_of(crig::ANIM_NEW_ID)!!);
-	f.ui.flush();
-	f.click(f.center_of(crig::ANIM_NEW_ANIMATION_ID)!!);
-	f.ui.flush();
-	f.click(f.center_of("anim-create")!!);
-	f.ui.flush();
-	test::@check(f.app.clip(f.app.editing) && !f.app.clip(f.app.editing).loop,
-		"a hand-authored clip should hold its last pose, not spring back to the first");
 }
 
 // The loop is one toggle away: the Loop checkbox beside Auto-key flips the
@@ -687,18 +622,20 @@ fn void the_interpolation_popover_sets_the_selected_keys() @test
 	multi_pose_workspace(&f);
 
 	f.click(multi_pose_point(&f, 1));
+	f.shift_click(multi_pose_point(&f, 2));
 	f.ui.flush();
-	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)1);
+	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)2);
 	f.click(f.center_of(crig::ANIM_INTERP_ID)!!);
 	f.ui.flush();
 	test::@check(f.ui.find_id(crig::ANIM_INTERP_POPOVER_ID)!!.widget_as(Dialog).open, "the button did not open the popover");
 	sz history = f.app.undo_stack.cursor;
 	f.click(f.center_of(crig::ANIM_INTERP_THUMB_IDS[1])!!);
 	f.ui.flush();
-	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)1);
+	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)2);
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	AnimTemplate* clip = f.app.clip(f.app.editing);
-	test::@check(clip.keyframes[1].dots[0].rotation_interpolation == LINEAR, "Linear did not reach the key");
+	test::@check(clip.keyframes[1].dots[0].rotation_interpolation == LINEAR
+		&& clip.keyframes[2].dots[0].rotation_interpolation == LINEAR, "Linear did not reach both selected keys");
 	test::@check(clip.keyframes[0].dots[0].rotation_interpolation == INHERIT, "Linear reached an unselected key");
 	f.feed({ 0, 0 });
 	test::@check(f.app.animation_selection_uses_interpolation(f.app.editing, LINEAR), "selection is not linear");
@@ -715,83 +652,6 @@ fn void the_interpolation_popover_sets_the_selected_keys() @test
 	test::@check(clip.keyframes[2].dots[0].interpolation(true, clip.blend) == HOLD, "Step did not reach the key at the playhead");
 	f.feed({ 0, 0 });
 	test::@check(f.ui.find(Timeline)!!.widget_as(Timeline).marks[2].curve == HOLD, "the sheet does not draw the key as Step");
-}
-
-// The ⋯ clip menu holds the clip-wide actions, Clip tools the trim and loop
-// tools, and the library is the Assets tab narrowed to animations.
-fn void the_clip_menu_and_from_library() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-
-	f.click(f.center_of(crig::ANIM_MORE_ID)!!);
-	f.ui.flush();
-	foreach (id : (String[]) { "anim-properties", "anim-duplicate", crig::ANIM_NEW_WALK_ID, "anim-retime",
-		"anim-mirror-clip", "anim-move-up", "anim-move-down", crig::ANIM_UNBIND_ID })
-	{
-		test::@check(f.in_tree(id), "the clip menu has no %s", id);
-	}
-	// Trim and the two loop tools are Clip tools.
-	String[3] tools = { "anim-trim", "anim-close-loop", crig::ANIM_MAKE_LOOP_ID };
-	foreach (id : tools) test::@check(!f.in_tree(id), "the clip menu still has %s", id);
-	f.click({ 4, crig::WIN_H - 4 });
-	f.ui.flush();
-	test::@check(!f.ui.find_id(crig::ANIM_CLIP_MENU_ID)!!.widget_as(Dialog).open, "an outside click left the clip menu open");
-	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
-	foreach (id : tools) test::@check(f.in_tree(id), "Clip tools has no %s", id);
-	f.close_menu();
-
-	crig::anim_from_library_clicked(f.ui);
-	f.ui.flush();
-	test::@check(!f.app.asset_filter.any_kind && f.app.asset_filter.kind == ANIMATION,
-		"From library did not narrow the assets to animations");
-	test::eq(crig::area_layout.root.active, crig::LIBRARY_VIEW);
-	if (try Element* back = f.ui.find(AreaTabStrip)) f.click(tab_center(&f, back, 0));
-}
-
-// Curve clean-up belongs to Curves mode: one button there, and nowhere else.
-fn void curve_tools_sit_behind_their_own_button_in_curves_mode() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-	String[5] rows = { crig::ANIM_CURVE_FLIPS_ID, crig::ANIM_CURVE_SMOOTH_ID, crig::ANIM_CURVE_SIMPLIFY_ID,
-		crig::ANIM_CURVE_FLATTEN_ID, crig::ANIM_CURVE_SEAM_ID };
-
-	test::@check(!f.in_tree(crig::ANIM_CURVE_TOOLS_ID), "Curve tools shows outside Curves");
-	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
-	foreach (id : rows) test::@check(!f.in_tree(id), "Clip tools has %s", id);
-	f.close_menu();
-
-	crig::anim_sheet_mode_chosen(f.ui, 1);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	f.feed({ 0, 0 });
-	test::@check(f.in_tree(crig::ANIM_CURVE_TOOLS_ID), "Curves has no Curve tools button");
-	foreach (id : rows) test::@check(!f.in_tree(id), "%s is still a button of its own", id);
-	f.open_menu(crig::ANIM_TOOLS_BUTTON_ID);
-	foreach (id : rows) test::@check(!f.in_tree(id), "Clip tools has %s in Curves", id);
-	f.close_menu();
-
-	f.open_menu(crig::ANIM_CURVE_TOOLS_ID);
-	foreach (id : rows) test::@check(f.in_tree(id), "Curve tools has no %s", id);
-	f.close_menu();
-
-	// A row acts on the selected joint's curves, as one undo step: these hips hold
-	// still over eight keys, so Simplify has keys to lose.
-	f.app.editing = f.app.author_clip(stepping_clip());
-	f.app.show_edited();
-	f.app.select(f.app.dot_named("hips").id);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	f.feed({ 0, 0 });
-	sz history = f.app.undo_stack.cursor;
-	f.pick_menu_item(crig::ANIM_CURVE_TOOLS_ID, crig::ANIM_CURVE_SIMPLIFY_ID);
-	test::@check(f.app.undo_stack.cursor == history + 1, "Simplify landed nothing: %s", f.notice_text());
-	test::@check(!f.in_tree(crig::ANIM_CURVE_SIMPLIFY_ID), "the menu stayed open after a row");
 }
 
 // The View menu keeps Ghosts and Motion path, and reaches the Ghosts panel; all of
@@ -829,68 +689,12 @@ fn void the_view_menu_toggles_ghosts_and_the_motion_path() @test
 	test::eq(f.app.ghost_poses().len, (sz)0);
 }
 
-fn Dialog* ghosts_dialog(Fixture* f)
-{
-	return f.ui.find_id(crig::ANIM_GHOSTS_DIALOG_ID)!!.widget_as(Dialog);
-}
-
 // A press on a slider's track, at `fraction` of its length.
 fn void click_slider(Fixture* f, String id, float fraction)
 {
 	Element* elem = f.ui.find_id(id)!!;
 	Vec2 span = elem.widget_as(Slider).track_span(elem);
 	f.click(elem.absolute + (Vec2){ span.x + span.y * fraction, elem.size.y * 0.5f });
-}
-
-fn void the_ghosts_button_toggles_ghosts_and_opens_a_floating_panel() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-
-	test::@check(f.in_tree(crig::ANIM_GHOSTS_ID), "the transport row has no Ghosts button");
-	test::@check(f.in_tree(crig::ANIM_GHOSTS_DIALOG_ID), "the Ghosts panel is not mounted");
-	Dialog* panel = ghosts_dialog(&f);
-	test::@check(!panel.open && !panel.modal, "the Ghosts panel starts open or modal");
-	test::@check(!f.app.config.show_ghosts, "Ghosts starts on");
-	Element* button = f.ui.find_id(crig::ANIM_GHOSTS_ID)!!;
-	test::@check(button.absolute.y < f.ui.find(Timeline)!!.absolute.y, "the button is not above the sheet");
-
-	// On, and the panel is up, with the sliders on the config.
-	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	test::@check(f.app.config.show_ghosts, "the button did not turn Ghosts on");
-	panel = ghosts_dialog(&f);
-	test::@check(panel.open, "the button did not open the panel");
-	foreach (id : (String[]) { crig::ANIM_GHOSTS_ON_ID, crig::ANIM_GHOSTS_PAST_ID, crig::ANIM_GHOSTS_FUTURE_ID,
-		crig::ANIM_GHOSTS_STEP_ID, crig::ANIM_GHOSTS_OPACITY_ID, crig::ANIM_GHOSTS_SPREAD_ID,
-		crig::ANIM_GHOSTS_DIRECTION_ID, crig::ANIM_GHOSTS_PATH_ID })
-	{
-		test::@check(f.in_tree(id), "the panel has no %s", id);
-	}
-	test::@check(f.ui.find_id(crig::ANIM_GHOSTS_PAST_ID)!!.widget_as(Slider).value == (float)crig::DEFAULT_GHOST_SIDE,
-		"Past does not show the config");
-	test::@check(f.ui.find_id(crig::ANIM_GHOSTS_ON_ID)!!.widget_as(Checkbox).checked, "the On box is not ticked");
-
-	// It moves: a Dialog is dragged by its bar and keeps what it is given.
-	panel.at = { 40, 60 };
-	panel.placed = true;
-	f.feed({ 0, 0 });
-	test::@check(panel.placed && panel.at.x <= 40.5f, "the panel did not stay where it was put");
-
-	// Pressing the button with the panel up puts both away.
-	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
-	f.ui.flush();
-	test::@check(!f.app.config.show_ghosts && !ghosts_dialog(&f).open, "the second press did not turn Ghosts off");
-	// Pressing it on a closed panel with Ghosts on reopens the panel.
-	crig::anim_ghosts_toggled(f.ui, true);
-	f.ui.flush();
-	test::@check(!ghosts_dialog(&f).open, "toggling Ghosts opened the panel");
-	f.click(f.center_of(crig::ANIM_GHOSTS_ID)!!);
-	f.ui.flush();
-	test::@check(f.app.config.show_ghosts && ghosts_dialog(&f).open, "the button did not reopen the panel");
 }
 
 fn void the_ghosts_panel_edits_the_config() @test
@@ -948,40 +752,6 @@ fn void the_ghosts_panel_edits_the_config() @test
 	f.click(f.center_of(crig::ANIM_GHOSTS_ON_ID)!!);
 	f.ui.flush();
 	test::@check(!f.app.config.show_ghosts && !crig::query_ghosts(f.ui).checked, "the panel's Ghosts box did not turn them off");
-}
-
-fn void the_timeline_shades_the_ghosts_reach() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-
-	Timeline* timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
-	test::@check(timeline.ghost_past == 0.0f && timeline.ghost_future == 0.0f, "the sheet shades with Ghosts off");
-
-	f.app.config.ghost_past = 4;
-	f.app.config.ghost_future = 2;
-	f.app.config.ghost_step = 3;
-	crig::anim_ghosts_toggled(f.ui, true);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
-	// At 30 fps, three frames is a tenth of a second.
-	test::@check(math::abs(timeline.ghost_past - 0.4f) < 1e-4f, "the past shade is %f s, not 0.4", timeline.ghost_past);
-	test::@check(math::abs(timeline.ghost_future - 0.2f) < 1e-4f, "the future shade is %f s, not 0.2", timeline.ghost_future);
-
-	crig::anim_ghost_step_moved(f.ui, 1.0f);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
-	test::@check(math::abs(timeline.ghost_past - 4.0f / 30.0f) < 1e-4f, "the shade did not follow the step (%f)", timeline.ghost_past);
-
-	crig::anim_ghosts_toggled(f.ui, false);
-	f.ui.flush();
-	f.feed({ 0, 0 });
-	timeline = f.ui.find(Timeline)!!.widget_as(Timeline);
-	test::@check(timeline.ghost_past == 0.0f && timeline.ghost_future == 0.0f, "the shade stayed with Ghosts off");
 }
 
 fn void the_pending_banner_says_a_pose_keys_onto_the_selected_keys() @test

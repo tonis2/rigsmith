@@ -30,8 +30,6 @@ fn AnimRef lyr_workspace(Fixture* f)
 	return f.app.editing;
 }
 
-fn AnimLayer* lyr_layer(Fixture* f, usz at) => &f.app.clip(f.app.editing).layers[at];
-
 fn void lyr_add(Fixture* f, String menu_id)
 {
 	f.click(f.center_of(crig::ANIM_LAYER_ADD_ID)!!);
@@ -79,7 +77,7 @@ fn void layer_ui_adds_a_layer_through_the_strip() @test
 
 	lyr_add(&f, crig::ANIM_LAYER_KEYED_ID);
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)2);
-	test::@check(lyr_layer(&f, 1).kind == KEYED && lyr_layer(&f, 1).keyframes.len == 1, "a keyed layer starts empty");
+	test::@check(layer_at(&f, 1).kind == KEYED && layer_at(&f, 1).keyframes.len == 1, "a keyed layer starts empty");
 	test::eq(f.app.active_layer_of(f.app.editing), (sz)1);
 
 	test::@check(f.app.undo(), "undo failed");
@@ -101,14 +99,14 @@ fn void layer_ui_mute_and_solo_toggle_from_the_row() @test
 
 	// Row 0 is the top of the stack: the noise layer, index 1.
 	crig::anim_layer_row_toggled(f.ui, 0, 0);
-	test::@check(lyr_layer(&f, 1).mute && !lyr_layer(&f, 0).mute, "the eye did not mute the top layer");
+	test::@check(layer_at(&f, 1).mute && !layer_at(&f, 0).mute, "the eye did not mute the top layer");
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	crig::anim_layer_row_toggled(f.ui, 1, 1);
-	test::@check(lyr_layer(&f, 0).solo, "the solo switch did not solo the lower layer");
-	test::@check(!lyr_layer(&f, 1).plays(f.app.clip(f.app.editing).layers, true), "a solo left the other layer playing");
+	test::@check(layer_at(&f, 0).solo, "the solo switch did not solo the lower layer");
+	test::@check(!layer_at(&f, 1).plays(f.app.clip(f.app.editing).layers, true), "a solo left the other layer playing");
 	crig::anim_layer_row_toggled(f.ui, 0, 0);
-	test::@check(!lyr_layer(&f, 1).mute, "the eye did not unmute");
-	test::@check(f.app.undo() && lyr_layer(&f, 1).mute && lyr_layer(&f, 0).solo, "undo did not step back one toggle");
+	test::@check(!layer_at(&f, 1).mute, "the eye did not unmute");
+	test::@check(f.app.undo() && layer_at(&f, 1).mute && layer_at(&f, 0).solo, "undo did not step back one toggle");
 }
 
 fn void layer_ui_choosing_a_row_changes_the_active_layer() @test
@@ -156,19 +154,19 @@ fn void layer_ui_the_generator_form_edits_the_layer() @test
 	sz history = f.app.undo_stack.cursor;
 
 	crig::anim_layer_amplitude_committed(f.ui, 30.0f);
-	test::@check(math::abs(lyr_layer(&f, 0).amplitude - 30.0f * (float)math::PI / 180.0f) < 1.0e-5f, "amplitude is stored in radians");
+	test::@check(math::abs(layer_at(&f, 0).amplitude - 30.0f * (float)math::PI / 180.0f) < 1.0e-5f, "amplitude is stored in radians");
 	crig::anim_layer_cycles_committed(f.ui, 3.0f);
-	test::eq(lyr_layer(&f, 0).cycles, 3.0f);
+	test::eq(layer_at(&f, 0).cycles, 3.0f);
 	crig::anim_layer_axis_chosen(f.ui, 2);
-	test::@check(lyr_layer(&f, 0).axis.z == 1.0f && lyr_layer(&f, 0).axis.y == 0.0f, "the axis did not move to Z");
+	test::@check(layer_at(&f, 0).axis.z == 1.0f && layer_at(&f, 0).axis.y == 0.0f, "the axis did not move to Z");
 	crig::anim_layer_weight_committed(f.ui, 0.5f);
-	test::eq(lyr_layer(&f, 0).weight, 0.5f);
+	test::eq(layer_at(&f, 0).weight, 0.5f);
 	crig::anim_layer_mode_chosen(f.ui, 1);
-	test::@check(lyr_layer(&f, 0).mode == OVERRIDE, "the mode did not change");
+	test::@check(layer_at(&f, 0).mode == OVERRIDE, "the mode did not change");
 	crig::anim_layer_named(f.ui, "Tail swish");
-	test::@check(lyr_layer(&f, 0).name == "Tail swish", "the layer was not renamed");
+	test::@check(layer_at(&f, 0).name == "Tail swish", "the layer was not renamed");
 	crig::anim_layer_joint_chosen(f.ui, 1);
-	test::@check(lyr_layer(&f, 0).joint.len > 0, "the joint chooser lost the joint");
+	test::@check(layer_at(&f, 0).joint.len > 0, "the joint chooser lost the joint");
 	test::eq(f.app.undo_stack.cursor, history + 7);
 	test::@check(f.app.undo() && f.app.clip(f.app.editing).layers[0].name == "Tail swish", "undo took back more than the last edit");
 }
@@ -182,12 +180,12 @@ fn void layer_ui_mask_from_the_selection() @test
 	lyr_add(&f, crig::ANIM_LAYER_WAVE_ID);
 	f.app.select(0);
 	crig::anim_layer_mask_clicked(f.ui);
-	test::eq(lyr_layer(&f, 0).mask.len, (sz)0);
+	test::eq(layer_at(&f, 0).mask.len, (sz)0);
 	f.app.select(f.app.doc.root_id);
 	crig::anim_layer_mask_clicked(f.ui);
-	test::eq(lyr_layer(&f, 0).mask.len, (sz)1);
+	test::eq(layer_at(&f, 0).mask.len, (sz)1);
 	crig::anim_layer_mask_clear_clicked(f.ui);
-	test::eq(lyr_layer(&f, 0).mask.len, (sz)0);
+	test::eq(layer_at(&f, 0).mask.len, (sz)0);
 }
 
 fn void layer_ui_reordering_and_deleting_keep_the_active_layer() @test
@@ -201,10 +199,10 @@ fn void layer_ui_reordering_and_deleting_keep_the_active_layer() @test
 	lyr_add(&f, crig::ANIM_LAYER_PULSE_ID);
 	f.app.set_active_layer(f.app.editing, 0);
 	crig::anim_layer_up_clicked(f.ui);
-	test::@check(lyr_layer(&f, 1).kind == WAVE && lyr_layer(&f, 0).kind == NOISE, "Move up did not raise the wave");
+	test::@check(layer_at(&f, 1).kind == WAVE && layer_at(&f, 0).kind == NOISE, "Move up did not raise the wave");
 	test::eq(f.app.active_layer_of(f.app.editing), (sz)1);
 	crig::anim_layer_down_clicked(f.ui);
-	test::@check(lyr_layer(&f, 0).kind == WAVE, "Move down did not lower it again");
+	test::@check(layer_at(&f, 0).kind == WAVE, "Move down did not lower it again");
 	test::eq(f.app.active_layer_of(f.app.editing), (sz)0);
 	crig::anim_layer_delete_clicked(f.ui);
 	test::eq(f.app.clip(f.app.editing).layers.len, (sz)2);
@@ -392,7 +390,7 @@ fn void layer_ui_keying_into_an_override_layer_stores_the_wanted_pose() @test
 	defer f.close();
 	lyr_workspace(&f);
 	lyr_add(&f, crig::ANIM_LAYER_OVERRIDE_ID);
-	test::@check(lyr_layer(&f, 0).mode == OVERRIDE, "the menu did not add an override layer");
+	test::@check(layer_at(&f, 0).mode == OVERRIDE, "the menu did not add an override layer");
 
 	Quaternionf turn = quaternion::from_axis_angle{float}((Vec3){ 0, 1, 0 }, 0.6f);
 	f.app.edit_time = 2.0f;
@@ -492,13 +490,4 @@ fn void layer_ui_remove_joint_animation_asks_first() @test
 
 	test::@check(f.app.undo(), "undo failed");
 	test::@check(lyr_base_keys(&f, "thigh_L"), "undo did not bring the keys back");
-}
-
-// Where `dot` stands in `pose`.
-fn Vec3 stale_world(RigView* view, rig::Pose pose, uint dot)
-{
-	Matrix4f[] palette = rig::joint_palette(mem, &view.skeleton, pose)!!;
-	defer alloc::free(mem, palette);
-	foreach (usz j, id : view.dot_ids) if (id == dot) return view.skeleton.joints[j].transform(palette[j]);
-	return {};
 }

@@ -568,8 +568,7 @@ fn String node_status_text(Element* elem) @private
 		case VIDEO:
 			if (first.len > 0 && !path::exists((Path)first)) return "Not there".copy(mem);
 			if (first.len > 0 && path::is_dir((Path)first)) return "A folder of frames".copy(mem);
-			String lower = first.to_lower_tcopy();
-			if (first.len > 0 && !lower.ends_with(".mp4") && !lower.ends_with(".mov") && !lower.ends_with(".m4v")) return "Not an .mp4 or .mov".copy(mem);
+			if (first.len > 0 && !is_video_name(first)) return "Not an .mp4 or .mov".copy(mem);
 			return "H.264 .mp4 or .mov, read in Rigsmith".copy(mem);
 		case TRAIN:
 			uint? poses = first.to_uint();

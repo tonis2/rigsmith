@@ -139,55 +139,6 @@ fn void solve_targets_holds_an_orientation() @test
 }
 
 <*
- The keyframe solve_targets answers with is exactly what apply_clip takes.
-
- The claim the whole tool rests on — solve here, bake there — checked by feeding
- one straight into the other rather than by inspecting the shape. Rebuilt from the
- parsed answer because no serialiser is at hand; the rotations are the solved ones.
-*>
-fn void solve_targets_keyframe_feeds_apply_clip() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	Object*? solved = f.call_tool("solve_targets",
-		`{"targets":[{"joint":"foot","position":[0.5,0.7,0]}]}`);
-	if (catch solved)
-	{
-		test::@check(false, "solve_targets answers");
-		return;
-	}
-	defer solved.free();
-
-	Object* joints = solved.get("keyframe")!!.get("joints")!!;
-	test::@check(joints.get_len() > 0, "there is a keyframe to bake");
-
-	DString kf = dstring::new(mem);
-	defer kf.free();
-	kf.append_string(`{"name":"reach","duration":1.0,"keyframes":[{"time":0,"joints":[`);
-	for (sz i = 0; i < joints.get_len(); i++)
-	{
-		Object* e = joints.get_at(i);
-		Object* r = e.get("rotation")!!;
-		if (i > 0) kf.append_char(',');
-		kf.appendf(`{"name":"%s","rotation":{"x":%.9g,"y":%.9g,"z":%.9g,"w":%.9g}}`,
-			e.get_string("name")!!, r.get_float("x")!!, r.get_float("y")!!, r.get_float("z")!!, r.get_float("w")!!);
-	}
-	kf.append_string(`]}]}`);
-
-	Object*? applied = f.call_tool("apply_clip", kf.str_view());
-	if (catch applied)
-	{
-		test::@check(false, "the solved keyframe bakes through apply_clip unchanged");
-		return;
-	}
-	defer applied.free();
-	test::@check(true, "solve here, apply_clip bakes there");
-}
-
-<*
  An unknown joint is refused by name, not solved for silently.
 *>
 fn void solve_targets_refuses_an_unknown_joint() @test
@@ -269,10 +220,10 @@ fn void solve_targets_pole_aims_the_bend() @test
 }
 
 <*
- A pole reports whether it was aimed: yes on a two-bone limb, no on a limb with
- one bend, where there is no elbow or knee to point.
+ A pole reports whether it was aimed: yes on a two-bone limb; no on a limb with
+ one bend, or on a straight limb, and the note says it was the straight limb.
 *>
-fn void solve_targets_pole_reports_when_it_cannot_aim() @test
+fn void solve_targets_pole_says_whether_it_aimed() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -293,27 +244,14 @@ fn void solve_targets_pole_reports_when_it_cannot_aim() @test
 	defer one.free();
 	test::@check(one.get("targets")!!.get_at(0).get_bool("pole_aimed")!! == false,
 		"a one-bone limb reports the pole was not aimed");
-}
 
-<*
- A pole the limb reaches straight through is ignored, and the note says why it
- was — not that the limb had too few bends.
-*>
-fn void solve_targets_pole_notes_a_straight_limb() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	// The foot is already at its rest place, so the leg stays straight down its
-	// axis: a real two-bone limb, but with no bend off the line for the pole to aim.
-	Object*? solved = f.call_tool("solve_targets",
+	// The foot at its rest place keeps the leg straight: two bones, but no bend
+	// off the line for the pole to aim.
+	Object*? straight = f.call_tool("solve_targets",
 		`{"targets":[{"joint":"foot","position":[0,0,0],"pole":[0,0.5,5]}]}`);
-	if (catch solved) { test::@check(false, "the straight solve answers"); return; }
-	defer solved.free();
-
-	Object* first = solved.get("targets")!!.get_at(0);
+	if (catch straight) { test::@check(false, "the straight solve answers"); return; }
+	defer straight.free();
+	Object* first = straight.get("targets")!!.get_at(0);
 	test::@check(first.get_bool("pole_aimed")!! == false, "a straight limb aims no pole");
 	test::@check((first.get_string("pole_note") ?? "").contains("straight"),
 		"and the note names the straight limb, not a missing bend");

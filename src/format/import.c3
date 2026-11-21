@@ -62,35 +62,35 @@ import std::core::string;
 <*
  Raised when the file carries no animations at all.
 *>
-faultdef ANIM_NO_ANIMATIONS;
+excuse ANIM_NO_ANIMATIONS;
 
 <*
  Raised when the requested animation index or name is not in the file.
 *>
-faultdef ANIM_NOT_FOUND;
+excuse ANIM_NOT_FOUND;
 
 <*
  Raised when nothing in the file can be used as a named joint.
 *>
-faultdef ANIM_NO_JOINTS;
+excuse ANIM_NO_JOINTS;
 
 <*
  Raised when the animation has no keys, or all of them at one instant.
 *>
-faultdef ANIM_NO_KEYFRAMES;
+excuse ANIM_NO_KEYFRAMES;
 
 <*
  Raised when the clip moves a joint on a rig with no vertical extent, leaving
  nothing to measure the offset against. A flat rig that only turns things is
  fine, since it never needs the unit.
 *>
-faultdef ANIM_NO_HEIGHT;
+excuse ANIM_NO_HEIGHT;
 
 <*
  Raised when a sampler stores its times or values as something other than
  floats. Legal in glTF for other channels, not for these.
 *>
-faultdef ANIM_SAMPLER_UNSUPPORTED;
+excuse ANIM_SAMPLER_UNSUPPORTED;
 
 alias AnimTemplateList = List{AnimTemplate};
 
@@ -744,21 +744,8 @@ fn void free_animations(Allocator allocator, AnimTemplate[] templates)
 	if (templates.len > 0) alloc::free(allocator, templates);
 }
 
-// Not what keeps junk out of the library — a file that gets this far and is not
-// glTF fails to open, and the loop skips it either way. What this saves is
-// handing a README or a stray PNG to the JSON parser, which answers by printing
-// its complaint, so a user with anything else in the folder would meet a wall of
-// parser noise every time crig started.
-//
-// An extension test rather than a mask on `ls`, which would need two passes for
-// the two spellings and would not lowercase either of them.
-fn bool is_gltf_name(String name) @local
-{
-	if (name.len < 5) return false;
-	String tail = name[^5..];
-	if (tail == ".gltf" || tail == ".GLTF") return true;
-	return name[^4..] == ".glb" || name[^4..] == ".GLB";
-}
+// A .glb or .gltf in any case; a README is never handed to the JSON parser, which would print its complaint.
+fn bool is_gltf_name(String name) => has_extension(name, ".gltf") || has_extension(name, ".glb");
 
 <*
  The full path of every glTF file directly inside `directory`, in the order the
@@ -1275,7 +1262,7 @@ fn float[] node_motion(Allocator allocator, gltf::GltfStream* stream) @local
 			for (usz k = 0; k < keys; k++)
 			{
 				Quaternionf q = ((Quaternionf){ .v = key_value(stream, output, k, cubic) }).normalize();
-				out[node] = math::max(out[node], rotation_angle_between(q, rest));
+				out[node] = math::max(out[node], angle_between_turns(q, rest));
 			}
 		}
 	}

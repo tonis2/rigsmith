@@ -9,6 +9,7 @@
 module crig_tests::deformed_collision;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import collision;
@@ -16,27 +17,6 @@ import std::core::test;
 import std::math;
 import std::math::matrix;
 
-
-const uint[36] BOX_FACES @local = {
-	4, 5, 6, 4, 6, 7,
-	0, 3, 2, 0, 2, 1,
-	1, 2, 6, 1, 6, 5,
-	0, 4, 7, 0, 7, 3,
-	3, 7, 6, 3, 6, 2,
-	0, 1, 5, 0, 5, 4,
-};
-
-fn void corners(Vec3[] into, Vec3 low, Vec3 high) @local
-{
-	into[0] = { low.x, low.y, low.z };
-	into[1] = { high.x, low.y, low.z };
-	into[2] = { high.x, high.y, low.z };
-	into[3] = { low.x, high.y, low.z };
-	into[4] = { low.x, low.y, high.z };
-	into[5] = { high.x, low.y, high.z };
-	into[6] = { high.x, high.y, high.z };
-	into[7] = { low.x, high.y, high.z };
-}
 
 struct SurfaceFixture @local
 {
@@ -52,9 +32,9 @@ struct SurfaceFixture @local
 
 fn void SurfaceFixture.init(&self)
 {
-	corners(self.positions[:8], { -2.5, -0.5, -0.5 }, { -1.5, 0.5, 0.5 });
-	corners(self.positions[8:8], { 1.5, -0.5, -0.5 }, { 2.5, 0.5, 0.5 });
-	foreach (usz i, corner : BOX_FACES)
+	helpers::corners(self.positions[:8], { -2.5, -0.5, -0.5 }, { -1.5, 0.5, 0.5 });
+	helpers::corners(self.positions[8:8], { 1.5, -0.5, -0.5 }, { 2.5, 0.5, 0.5 });
+	foreach (usz i, corner : helpers::BOX_FACES)
 	{
 		self.indices[i] = corner;
 		self.indices[i + 36] = corner + 8;

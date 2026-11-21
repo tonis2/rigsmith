@@ -15,7 +15,7 @@ module crig;
 
 import std::collections::object;
 
-faultdef PLAY_REFUSED;
+excuse PLAY_REFUSED;
 
 <*
  play: start a clip in the player the user is watching.

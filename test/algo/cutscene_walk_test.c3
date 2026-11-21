@@ -11,8 +11,6 @@ import rig;
 import std::core::test;
 import std::math;
 
-fn bool near(float a, float b, float eps = 1e-3f) @local => math::abs(a - b) <= eps;
-
 // A stand-in for the level's colliders, asked as ground_below asks: a ray down from
 // 0.5 m over the point. A ramp from x = 2 to 6 up to 1 m, then level; a hole at x 7..8.
 fn float stand_in_height(float x) @local
@@ -55,11 +53,11 @@ fn void samples_drop_onto_the_ground_and_keep_the_curve_where_there_is_none() @t
 		if (k > 0) widest = math::max(widest, (p - dropped.points[k - 1]).length());
 		// A sample beside the hole lies on the line down into it.
 		if (p.x > 6.74f && p.x < 8.26f) continue;
-		test::@check(near(p.y, stand_in_height(p.x), 0.02f), "the sample at x %f stands at %f, not on the ground at %f", p.x, p.y, stand_in_height(p.x));
+		test::@check(math::is_approx(p.y, stand_in_height(p.x), 0.02f), "the sample at x %f stands at %f, not on the ground at %f", p.x, p.y, stand_in_height(p.x));
 	}
 	test::@check(widest <= crig::WALK_PATH_SPACING + 2e-3f, "samples %f apart", widest);
-	test::@check(near(dropped.points[0].x, 0.0f) && near(dropped.points[^1].x, 10.0f), "the ends are the end knots");
-	test::@check(near(dropped.length, crig::polyline_length(dropped.points), 1e-4f), "the length is the dropped line's: %f", dropped.length);
+	test::@check(math::is_approx(dropped.points[0].x, 0.0f, 1e-3f) && math::is_approx(dropped.points[^1].x, 10.0f, 1e-3f), "the ends are the end knots");
+	test::@check(math::is_approx(dropped.length, crig::polyline_length(dropped.points), 1e-4f), "the length is the dropped line's: %f", dropped.length);
 
 	// Over the hole the curve's own height is kept.
 	WalkSamples curve = crig::sample_walk_path(mem, knots);
@@ -73,7 +71,7 @@ fn void samples_drop_onto_the_ground_and_keep_the_curve_where_there_is_none() @t
 		{
 			if (math::abs(c.x - p.x) < best) { best = math::abs(c.x - p.x); want = c.y; }
 		}
-		test::@check(near(p.y, want, 0.05f), "over the hole at x %f the sample is at %f, not the curve's %f", p.x, p.y, want);
+		test::@check(math::is_approx(p.y, want, 0.05f), "over the hole at x %f the sample is at %f, not the curve's %f", p.x, p.y, want);
 	}
 }
 
@@ -85,10 +83,10 @@ fn void a_rise_between_two_knots_is_found_from_above() @test
 	defer free(dropped.points);
 	float top;
 	foreach (p : dropped.points) top = math::max(top, p.y);
-	test::@check(near(top, 2.0f, 1e-3f), "the walk goes over the hill's top, 2 m, not %f", top);
+	test::@check(math::is_approx(top, 2.0f, 1e-3f), "the walk goes over the hill's top, 2 m, not %f", top);
 	// 1 m flat, up 2 m over 2 m, 4 m along the top, down again and 1 m flat.
 	float want = 2.0f * math::sqrt(8.0f) + 6.0f;
-	test::@check(near(dropped.length, want, 0.05f), "the dropped length is %f, not %f", dropped.length, want);
+	test::@check(math::is_approx(dropped.length, want, 0.05f), "the dropped length is %f, not %f", dropped.length, want);
 }
 
 fn bool ramp_ground(void* context, Vec3 at, float* height) @local
@@ -104,21 +102,21 @@ fn void a_dropped_path_is_as_long_as_its_line_on_the_ground() @test
 	WalkPath path = { .knots = alloc::clone_slice(mem, knots) };
 	defer path.free(mem);
 	path.resample(mem, { .probe = &ramp_ground });
-	test::@check(near(path.length, math::sqrt(20.0f), 1e-3f), "the ramp is %f long, not %f", path.length, math::sqrt(20.0f));
-	foreach (p : path.points) test::@check(near(p.y, p.x * 0.5f, 1e-4f), "a sample at x %f is off the ramp", p.x);
+	test::@check(math::is_approx(path.length, math::sqrt(20.0f), 1e-3f), "the ramp is %f long, not %f", path.length, math::sqrt(20.0f));
+	foreach (p : path.points) test::@check(math::is_approx(p.y, p.x * 0.5f, 1e-4f), "a sample at x %f is off the ramp", p.x);
 	// With no ground the samples keep the curve.
 	path.resample(mem);
-	test::@check(near(path.length, math::sqrt(20.0f), 1e-3f), "the line itself is %f long", path.length);
+	test::@check(math::is_approx(path.length, math::sqrt(20.0f), 1e-3f), "the line itself is %f long", path.length);
 }
 
 fn void a_walk_plays_at_the_rate_that_keeps_its_feet_on_the_ground() @test
 {
-	test::@check(near(crig::cut_walk_rate(8.0f, 4.0f, 1.0f), 2.0f), "8 m in 4 s on a 1 m/s walk plays it at 2x");
-	test::@check(near(crig::cut_walk_rate(6.0f, 4.0f, 1.5f), 1.0f), "the walk's own pace plays it at 1x");
-	test::@check(near(crig::cut_walk_rate(6.0f, 4.0f, 0.0f), 1.0f), "no ground speed leaves it at 1x");
-	test::@check(near(crig::cut_walk_rate(6.0f, 0.0f, 1.0f), 1.0f), "nor does a strip with no length");
-	test::@check(near(crig::cut_walk_seconds(9.0f, 1.5f), 6.0f), "9 m at 1.5 m/s takes 6 s");
-	test::@check(near(crig::cut_walk_seconds(9.0f, 0.0f), 9.0f / crig::CUT_DEFAULT_GROUND_SPEED), "with no ground speed it is timed at 1 m/s");
+	test::@check(math::is_approx(crig::cut_walk_rate(8.0f, 4.0f, 1.0f), 2.0f, 1e-3f), "8 m in 4 s on a 1 m/s walk plays it at 2x");
+	test::@check(math::is_approx(crig::cut_walk_rate(6.0f, 4.0f, 1.5f), 1.0f, 1e-3f), "the walk's own pace plays it at 1x");
+	test::@check(math::is_approx(crig::cut_walk_rate(6.0f, 4.0f, 0.0f), 1.0f, 1e-3f), "no ground speed leaves it at 1x");
+	test::@check(math::is_approx(crig::cut_walk_rate(6.0f, 0.0f, 1.0f), 1.0f, 1e-3f), "nor does a strip with no length");
+	test::@check(math::is_approx(crig::cut_walk_seconds(9.0f, 1.5f), 6.0f, 1e-3f), "9 m at 1.5 m/s takes 6 s");
+	test::@check(math::is_approx(crig::cut_walk_seconds(9.0f, 0.0f), 9.0f / crig::CUT_DEFAULT_GROUND_SPEED, 1e-3f), "with no ground speed it is timed at 1 m/s");
 	String[] named = { "Idle", "slow_Walk", "Run" };
 	String[] several = { "wounded_walk", "Walk_fast", "walk", "Run" };
 	String[] unnamed = { "Idle", "Run" };
@@ -209,7 +207,7 @@ fn void a_play_spanning_its_move_is_tied_and_takes_its_new_times() @test
 	strips[3].end = 13.0f;
 	test::@check(crig::cut_carry_ties(mem, &strips, ties), "nothing carried");
 	test::@check(strips[1].start == 0.0f && strips[1].end == 5.0f, "the walk runs %f to %f", strips[1].start, strips[1].end);
-	test::@check(near(strips[2].start, 5.0f) && near(strips[2].end, 6.0f), "the rest runs %f to %f", strips[2].start, strips[2].end);
+	test::@check(math::is_approx(strips[2].start, 5.0f, 1e-3f) && math::is_approx(strips[2].end, 6.0f, 1e-3f), "the rest runs %f to %f", strips[2].start, strips[2].end);
 	test::@check(strips[4].start == 9.0f && strips[4].end == 12.0f, "the partial walk moved to %f to %f", strips[4].start, strips[4].end);
 }
 
@@ -255,15 +253,15 @@ fn void made_in_place_a_walk_keeps_the_travel_it_took_off() @test
 	defer walk.free(mem);
 
 	AnimTravel still = crig::clip_travel(&skeleton, names, walk);
-	test::@check(near(still.distance, 0.5f, 1e-3f), "the hips cross %f rig heights, not 0.5", still.distance);
-	test::@check(near(still.speed, 0.5f, 1e-3f), "at %f rig heights a second, not 0.5", still.speed);
+	test::@check(math::is_approx(still.distance, 0.5f, 1e-3f), "the hips cross %f rig heights, not 0.5", still.distance);
+	test::@check(math::is_approx(still.speed, 0.5f, 1e-3f), "at %f rig heights a second, not 0.5", still.speed);
 
 	AnimTemplate moved;
 	RootMotionOutcome outcome = crig::clip_root_moved(mem, walk, &skeleton, names, { .mode = IN_PLACE }, &moved);
 	test::@check(outcome == MOVED, "the walk was not made in place: %s", outcome);
 	if (outcome != MOVED) return;
 	defer moved.free(mem);
-	test::@check(near(moved.travel.distance, 0.5f, 1e-3f) && near(moved.travel.speed, 0.5f, 1e-3f),
+	test::@check(math::is_approx(moved.travel.distance, 0.5f, 1e-3f) && math::is_approx(moved.travel.speed, 0.5f, 1e-3f),
 		"made in place it keeps a travel of %f at %f", moved.travel.distance, moved.travel.speed);
 	AnimTravel left = crig::clip_travel(&skeleton, names, moved);
 	test::@check(left.distance < 1e-3f, "in place it still travels %f", left.distance);
@@ -271,7 +269,7 @@ fn void made_in_place_a_walk_keeps_the_travel_it_took_off() @test
 	// A retimed copy covers the same ground in twice the time.
 	AnimTemplate slow = crig::clip_retimed(mem, moved, 2.0f);
 	defer slow.free(mem);
-	test::@check(near(slow.travel.distance, 0.5f, 1e-3f) && near(slow.travel.speed, 0.25f, 1e-3f), "retimed the travel is %f at %f",
+	test::@check(math::is_approx(slow.travel.distance, 0.5f, 1e-3f) && math::is_approx(slow.travel.speed, 0.25f, 1e-3f), "retimed the travel is %f at %f",
 		slow.travel.distance, slow.travel.speed);
 }
 
@@ -287,7 +285,7 @@ fn void a_clip_keeps_its_travel_in_the_file() @test
 	AnimTemplate[1] read = { { .name = "walk".copy(mem), .duration = 1.0f, .loop = true, .owned = true } };
 	defer read[0].free(mem);
 	crig::apply_clip_extras(mem, read[..], text);
-	test::@check(near(read[0].travel.distance, 0.5f) && near(read[0].travel.speed, 0.25f), "read back as %f at %f",
+	test::@check(math::is_approx(read[0].travel.distance, 0.5f, 1e-3f) && math::is_approx(read[0].travel.speed, 0.25f, 1e-3f), "read back as %f at %f",
 		read[0].travel.distance, read[0].travel.speed);
 	// A clip that never travelled says nothing.
 	written[0].travel = {};

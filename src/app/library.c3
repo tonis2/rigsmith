@@ -617,12 +617,7 @@ fn AnimTemplate AppState.swap_authored_clip(&self, String name, AnimTemplate cli
 // `AnimRef` into this pack goes stale.
 fn void AppState.append_authored(&self, AnimPack* pack, AnimTemplate clip)
 {
-	usz count = pack.clips.len;
-	AnimTemplate[] grown = alloc::new_array(mem, AnimTemplate, (sz)(count + 1));
-	foreach (i, held : pack.clips) grown[i] = held;
-	grown[count] = clip;
-	if (count > 0) alloc::free(mem, pack.clips);
-	pack.clips = grown;
+	slice_push(mem, &pack.clips, clip);
 }
 
 // Open a slot at `at` and put the clip in it. Every reference past it shifts up.
@@ -652,16 +647,7 @@ fn void AppState.insert_authored(&self, AnimPack* pack, usz at, AnimTemplate cli
 *>
 fn void AppState.remove_authored(&self, AnimPack* pack, usz at)
 {
-	usz count = pack.clips.len;
-	AnimTemplate[] left = count > 1 ? alloc::new_array(mem, AnimTemplate, (sz)(count - 1)) : (AnimTemplate[]){};
-	usz kept = 0;
-	foreach (usz i, held : pack.clips)
-	{
-		if (i == at) continue;
-		left[kept++] = held;
-	}
-	alloc::free(mem, pack.clips);
-	pack.clips = left;
+	slice_remove_at(mem, &pack.clips, at);
 	self.shift_authored_refs((int)at, -1);
 }
 
@@ -1056,11 +1042,11 @@ enum PackBody
 	MESH,
 }
 
-faultdef PACK_NOTHING_TO_SAVE, PACK_RIG_UNNAMED, PACK_NO_LIBRARY;
+excuse PACK_NOTHING_TO_SAVE, PACK_RIG_UNNAMED, PACK_NO_LIBRARY;
 // Declared here rather than borrowed from the MCP surface: `survey_weights` is
 // AppState's, and every target that builds src/app/ has to be able to name what it
 // returns whether or not it builds a socket.
-faultdef WEIGHTS_NO_RIG, WEIGHTS_NO_SUCH_DOT;
+excuse WEIGHTS_NO_RIG, WEIGHTS_NO_SUCH_DOT;
 
 <*
  Publish the authored clips into an animation library pack, then read that disk

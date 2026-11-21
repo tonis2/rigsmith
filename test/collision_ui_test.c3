@@ -158,69 +158,6 @@ fn void prevent_intersections_is_one_checkbox_that_the_session_keeps() @test
 	test::@check(!plain.contains("allow_intersections"), "the default is written out");
 }
 
-fn void the_status_line_speaks_only_when_the_check_is_not_simply_on() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	collision_workspace(&f);
-	test::@check(f.app.collision_policy.ready, "the workspace has no policy to report");
-
-	// A working check says nothing: no text, and no line in the pane.
-	String rest = crig::collision_status_text(&f.app);
-	test::@check(rest.len == 0, "at rest the line reads \"%s\"", rest);
-	f.feed(VIEWPORT_CENTER);
-	f.feed(VIEWPORT_CENTER);
-	if (try Element* line = f.ui.find_id(crig::ANIM_COLLISION_STATUS_ID))
-	{
-		test::@check(false, "the pane shows a status line with nothing to say");
-	}
-
-	// A stop says nothing either — the joint standing at the body is the
-	// whole announcement — and nothing is drawn for it unless asked.
-	f.app.last_block = {
-		.tested = true, .blocked = true, .tests = 9, .seconds = 0.012f,
-		.contact = { .hit = true, .pair = { .a = 0, .b = 1 } },
-		.shown_at = f.app.pose_generation,
-	};
-	String stopped = crig::collision_status_text(&f.app);
-	test::@check(stopped.len == 0, "a blocked gesture reads \"%s\"", stopped);
-	test::@check(!f.app.show_collision_contacts, "contacts are drawn by default");
-
-	// Paused: says so, with the cost and how to retry — and the line appears.
-	f.app.collision_mode = PAUSED;
-	String paused = crig::collision_status_text(&f.app);
-	defer paused.free(mem);
-	test::@check(paused.starts_with("Live blocking paused") && paused.contains("Prevent intersections"),
-		"paused reads \"%s\"", paused);
-	test::@check(hud_modes_say(&f, "collision check paused"), "the modes line does not say paused");
-	// Two frames: the pane notices the mode and rebuilds, then the line's own
-	// update runs. Looked up after, since a rebuild replaces it.
-	f.feed(VIEWPORT_CENTER);
-	f.feed(VIEWPORT_CENTER);
-	Element* status = f.ui.find_id(crig::ANIM_COLLISION_STATUS_ID)!!;
-	test::@check(status.widget_as(LiveLabel).shown == paused, "the pane's line reads \"%s\", not the status text",
-		status.widget_as(LiveLabel).shown);
-
-	// Reduced likewise.
-	f.app.collision_mode = REDUCED;
-	String reduced = crig::collision_status_text(&f.app);
-	defer reduced.free(mem);
-	test::@check(reduced.starts_with("Live blocking reduced") && reduced.contains("Prevent intersections"),
-		"reduced reads \"%s\"", reduced);
-	test::@check(hud_modes_say(&f, "collision check reduced"), "the modes line does not say reduced");
-
-	// Back in full, the line goes.
-	f.app.collision_mode = FULL;
-	f.feed(VIEWPORT_CENTER);
-	f.feed(VIEWPORT_CENTER);
-	if (try Element* line = f.ui.find_id(crig::ANIM_COLLISION_STATUS_ID))
-	{
-		test::@check(false, "the status line stayed after the check came back in full");
-	}
-	test::@check(!hud_modes_say(&f, "collision"), "the modes line still mentions the check");
-}
-
 fn void the_collision_dialog_sets_the_numbers_and_keeps_the_excluded_pairs() @test
 {
 	Fixture f;

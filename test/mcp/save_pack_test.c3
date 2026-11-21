@@ -259,58 +259,14 @@ fn void saving_again_adds_to_the_pack() @test
 }
 
 <*
- A joint named optional is written as one, and read back as one off the file.
+ A joint named optional is written as one and read back off the file; a second
+ save that says nothing keeps the list, and `[]` clears it.
 
- What it decides is what `apply_plan` does with the pack later: an optional joint
- is held back when the plan is fitted, and one that is not is placed on every
- model the plan ever meets. A pack that marked none is why a wire-built humanoid
- guesses forty knuckles onto a figure that has no hands.
+ It decides what `apply_plan` places later: an optional joint is held back when
+ the plan is fitted. A list that evaporated because a second call did not repeat
+ it would turn a careful pack into a careless one with nothing said.
 *>
-fn void save_pack_marks_the_joints_it_was_told_are_optional() @test
-{
-	Fixture fixture;
-	fixture.open_saver();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	String arguments = bend_clip("Bend", QUARTER_TURN_AXIS);
-	defer alloc::free(mem, arguments);
-	Object*? applied = f.call_tool("apply_clip", arguments);
-	if (catch applied)
-	{
-		test::@check(false, "the saver fixture takes a clip");
-		return;
-	}
-	applied.free();
-
-	Object*? saved = f.call_tool("save_pack", `{"name":"Kit","optional":["foot"]}`);
-	if (catch saved)
-	{
-		test::@check(false, "save_pack takes a list of optional joints");
-		return;
-	}
-	defer saved.free();
-
-	test::@check((saved.get_int("optional") ?? -1) == 1,
-		"the answer counts what was marked, so a caller can see the list landed");
-	test::@check(pack_spare(&f.app, "Kit") == 1 && pack_marks(&f.app, "Kit", "foot"),
-		"the file marks that joint and only that joint");
-	test::@check(!pack_marks(&f.app, "Kit", "hips") && !pack_marks(&f.app, "Kit", "knee"),
-		"and leaves the joints it was not told about alone");
-}
-
-<*
- The list survives a second save that says nothing about it, and `[]` clears it.
-
- The same rule the plan tag and the tags follow, and for a sharper reason: those
- change which rigs are offered a pack, and this changes what a plan places onto a
- user's model. A list that evaporated because the second call did not repeat it
- would turn a careful pack into a careless one with nothing said.
-
- So silence carries it and an empty array is how a caller means none — the one
- place in this surface where those two differ, which is why both are checked.
-*>
-fn void saving_again_keeps_the_optional_joints() @test
+fn void save_pack_marks_optional_joints_and_keeps_them_until_cleared() @test
 {
 	Fixture fixture;
 	fixture.open_saver();
@@ -333,7 +289,11 @@ fn void saving_again_keeps_the_optional_joints() @test
 		test::@check(false, "save_pack takes a list of optional joints");
 		return;
 	}
+	test::@check((marked.get_int("optional") ?? -1) == 1,
+		"the answer counts what was marked, so a caller can see the list landed");
 	marked.free();
+	test::@check(pack_spare(&f.app, "Kit") == 1 && pack_marks(&f.app, "Kit", "foot"),
+		"the file marks that joint and only that joint");
 
 	String second = bend_clip("Straighten", QUARTER_TURN_EULER);
 	defer alloc::free(mem, second);

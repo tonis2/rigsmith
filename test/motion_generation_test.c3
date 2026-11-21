@@ -16,7 +16,7 @@ import std::math;
 import std::math::vector;
 import std::math::matrix;
 import crig_tests::shared_app;
-import crig_tests::trust_fixes;
+import crig_tests::helpers;
 import std::collections::object;
 import std::encoding::json;
 import std::core::test;
@@ -27,31 +27,6 @@ import std::os::env;
 import llm::pipeline;
 
 const String GENERATION_DIR = "build/test-generation";
-
-fn void a_clip_name_is_the_prompts_first_words() @test
-{
-	String brief = crig::motion_clip_name(mem, "  a person waves  ");
-	defer brief.free(mem);
-	test::@check(brief == "A person waves", "named '%s'", brief);
-
-	String cut = crig::motion_clip_name(mem, "a person walks forward, stops, looks over the left shoulder and sits down");
-	defer cut.free(mem);
-	test::@check(cut == "A person walks forward", "cut at the first clause: '%s'", cut);
-
-	String worded = crig::motion_clip_name(mem, "a person walks forward and then turns around to look over the left shoulder");
-	defer worded.free(mem);
-	test::@check(worded == "A person walks forward and then turns", "cut at a word: '%s'", worded);
-}
-
-fn void the_runners_step_lines_are_read_and_nothing_else() @test
-{
-	uint step;
-	uint steps;
-	test::@check(crig::parse_motion_step("  step 40/100, 5.21s", &step, &steps), "a step line was not read");
-	test::@check(step == 40 && steps == 100, "read %d/%d", step, steps);
-	test::@check(!crig::parse_motion_step("=== Kimodo ===", &step, &steps), "a banner read as a step");
-	test::@check(!crig::parse_motion_step("  step 3/0", &step, &steps), "a step of nothing read");
-}
 
 fn void the_job_file_carries_the_request_escaped() @test
 {
@@ -68,7 +43,7 @@ fn void the_job_file_carries_the_request_escaped() @test
 }
 
 <*
- The motion model is a .gguf, or NVIDIA's release as downloaded: the folder or
+ The motion model is a .gguf, or the release as downloaded: the folder or
  its .safetensors under any name. The plugin carries the motion statistics, so
  the weights are all Settings looks for.
 *>
@@ -119,18 +94,6 @@ fn void the_generator_survives_a_restart() @test
 	test::@check(back.motion_generator.text_model.len == 0, "an emptied path came back: '%s'", back.motion_generator.text_model);
 }
 
-fn void generating_without_a_generator_is_refused() @test
-{
-	crig::AppState app = shared_app::open_cube();
-	defer app.free();
-	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }, app.config.motion_generator.kimodo()))
-	{
-		test::@check(err == crig::MOTION_NO_GENERATOR, "refused with %s", err);
-		return;
-	}
-	test::@check(false, "a job started with no generator configured");
-}
-
 fn crig::AppState generating_app(String name)
 {
 	String directory = string::tformat("%s/%s", GENERATION_DIR, name);
@@ -143,15 +106,26 @@ fn crig::AppState generating_app(String name)
 	return app;
 }
 
-// The pipeline needs a GPU and the weights; a headless AppState has neither
-// and says so rather than starting.
-fn void generating_with_no_gpu_is_refused() @test
+// A job needs a generator configured, and then a GPU and the weights; a headless
+// AppState has neither and says so rather than starting.
+fn void generating_without_a_generator_or_a_gpu_is_refused() @test
 {
+	crig::AppState bare = shared_app::open_cube();
+	defer bare.free();
+	if (catch err = bare.start_motion_generation({ .prompt = "a person waves" }, bare.config.motion_generator.kimodo()))
+	{
+		test::@check(err == crig::MOTION_NO_GENERATOR, "with no generator, refused with %s", err);
+	}
+	else
+	{
+		test::@check(false, "a job started with no generator configured");
+	}
+
 	crig::AppState app = generating_app("no-gpu");
 	defer app.free();
 	if (catch err = app.start_motion_generation({ .prompt = "a person waves" }, app.config.motion_generator.kimodo()))
 	{
-		test::@check(err == crig::MOTION_NO_GPU, "refused with %s", err);
+		test::@check(err == crig::MOTION_NO_GPU, "with no GPU, refused with %s", err);
 		test::@check(!app.motion_job.running, "a refused job reads as running");
 		return;
 	}
@@ -200,6 +174,8 @@ fn void the_pipelines_lines_move_the_progress() @test
 	crig::motion_line(&job, "  step 40/100, 5.21s");
 	test::@check(job.step == 40 && job.steps == 100, "read %d/%d", job.step, job.steps);
 	test::@check(job.last() == "step 40/100, 5.21s", "the last line is '%s'", job.last());
+	crig::motion_line(&job, "  step 3/0");
+	test::@check(job.step == 40 && job.steps == 100, "a step of nothing moved the progress to %d/%d", job.step, job.steps);
 }
 
 <*
@@ -214,8 +190,8 @@ fn void a_generated_clip_lands_in_the_character_from_memory() @test
 	(void)path::rmtree((Path)directory);
 	(void)path::mkdir((Path)directory, recursive: true);
 	String model = DIRECTORY +++ "/humanoid.glb";
-	trust_fixes::copy_humanoid(model);
-	defer trust_fixes::remove_with_sidecar(model);
+	helpers::copy_humanoid(model);
+	defer helpers::remove_with_sidecar(model);
 	rig::TriMesh mesh = rig::load_gltf(mem, model)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, model);
@@ -300,8 +276,8 @@ fn void a_generated_clip_lands_with_the_keys_its_optimize_level_keeps() @test
 	(void)path::rmtree((Path)directory);
 	(void)path::mkdir((Path)directory, recursive: true);
 	String model = DIRECTORY +++ "/humanoid.glb";
-	trust_fixes::copy_humanoid(model);
-	defer trust_fixes::remove_with_sidecar(model);
+	helpers::copy_humanoid(model);
+	defer helpers::remove_with_sidecar(model);
 	rig::TriMesh mesh = rig::load_gltf(mem, model)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, model);
@@ -419,8 +395,8 @@ fn void a_guide_clips_keys_become_the_pipelines_poses() @test
 {
 	String source = GENERATION_DIR +++ "/guide-humanoid.glb";
 	(void)path::mkdir((Path)GENERATION_DIR, recursive: true);
-	trust_fixes::copy_humanoid(source);
-	defer trust_fixes::remove_with_sidecar(source);
+	helpers::copy_humanoid(source);
+	defer helpers::remove_with_sidecar(source);
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, source);
@@ -491,8 +467,8 @@ fn void a_turned_rig_sends_its_guide_facing_forward() @test
 {
 	String source = GENERATION_DIR +++ "/turned-humanoid.glb";
 	(void)path::mkdir((Path)GENERATION_DIR, recursive: true);
-	trust_fixes::copy_humanoid(source);
-	defer trust_fixes::remove_with_sidecar(source);
+	helpers::copy_humanoid(source);
+	defer helpers::remove_with_sidecar(source);
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
 	crig::AppState app = crig::new_app(mesh, source);

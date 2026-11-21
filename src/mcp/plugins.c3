@@ -12,7 +12,7 @@ module crig;
 import std::collections::object;
 import llm::pipeline;
 
-faultdef PLUGINS_REFUSED;
+excuse PLUGINS_REFUSED;
 
 const String PLUGINS_SCHEMA = `{"type":"object","properties":{
 	"action":{"type":"string","enum":["list","link","unlink"],"description":"What to do."},

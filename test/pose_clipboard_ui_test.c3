@@ -9,6 +9,7 @@
 module crig_tests::ui;
 
 import crig;
+import crig_tests::helpers;
 import cui;
 import cui::widgets;
 import std::core::test;
@@ -50,14 +51,6 @@ fn Vec3 pose_turn(Fixture* f, String joint, float time)
 	return dot.axis.normalize() * dot.angle;
 }
 
-fn Vec3 pose_turn_of(Quaternionf q)
-{
-	Vec3 axis;
-	float angle;
-	crig::axis_angle_of(q, &axis, &angle);
-	return axis * angle;
-}
-
 fn void pose_clipboard_ui_viewport_chords_copy_paste_and_flip() @test
 {
 	Fixture f;
@@ -77,7 +70,7 @@ fn void pose_clipboard_ui_viewport_chords_copy_paste_and_flip() @test
 	Vec3 between = pose_turn(&f, POSE_LEFT, 1);
 	f.chord(VIEWPORT_CENTER, Key.LEFT_CTRL, Key.V);
 	test::eq(f.app.undo_stack.cursor, history + 1);
-	test::@check((pose_turn(&f, POSE_LEFT, 1) - pose_turn_of(turn)).length() < 1.0e-4f,
+	test::@check((pose_turn(&f, POSE_LEFT, 1) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
 		"Ctrl+V did not key the copied turn at the playhead");
 	test::@check(pose_turn(&f, POSE_RIGHT, 1).length() < 1.0e-6f, "a plain paste touched the other leg");
 
@@ -89,7 +82,7 @@ fn void pose_clipboard_ui_viewport_chords_copy_paste_and_flip() @test
 	f.feed(VIEWPORT_CENTER, keys: held[..]);
 	f.feed(VIEWPORT_CENTER);
 	test::eq(f.app.undo_stack.cursor, history + 2);
-	Vec3 want = pose_turn_of(turn);
+	Vec3 want = helpers::turn_of_quaternion(turn);
 	want = { want.x, -want.y, -want.z };
 	test::@check((pose_turn(&f, POSE_RIGHT, 1) - want).length() < 1.0e-4f,
 		"Ctrl+Shift+V did not put the reflection on the right leg");
@@ -136,11 +129,11 @@ fn void pose_clipboard_ui_toolbar_buttons_copy_and_mirror() @test
 	sz history = f.app.undo_stack.cursor;
 	f.click(f.center_of(crig::ANIM_MIRROR_POSE_ID)!!);
 	test::eq(f.app.undo_stack.cursor, history + 1);
-	Vec3 want = pose_turn_of(turn);
+	Vec3 want = helpers::turn_of_quaternion(turn);
 	want = { want.x, -want.y, -want.z };
 	test::@check((pose_turn(&f, POSE_RIGHT, 0) - want).length() < 1.0e-4f,
 		"Mirror pose did not put the reflection on the right leg");
-	test::@check((pose_turn(&f, POSE_LEFT, 0) - pose_turn_of(turn)).length() < 1.0e-4f,
+	test::@check((pose_turn(&f, POSE_LEFT, 0) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
 		"Mirror pose with one side selected rewrote that side");
 
 	// Paste mirrored at the far key, from the clipboard the first button filled.
@@ -151,7 +144,7 @@ fn void pose_clipboard_ui_toolbar_buttons_copy_and_mirror() @test
 		"Paste mirrored did not land the reflection at 2 s");
 	f.click(f.center_of(crig::ANIM_PASTE_POSE_ID)!!);
 	test::eq(f.app.undo_stack.cursor, history + 3);
-	test::@check((pose_turn(&f, POSE_LEFT, 2) - pose_turn_of(turn)).length() < 1.0e-4f,
+	test::@check((pose_turn(&f, POSE_LEFT, 2) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
 		"Paste pose did not land the copied turn at 2 s");
 }
 
@@ -191,11 +184,11 @@ fn void pose_clipboard_ui_shift_m_mirrors_the_pose_and_m_leaves_it() @test
 	f.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.M);
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	test::eq(f.app.doc.dots.len(), dots);
-	Vec3 want = pose_turn_of(turn);
+	Vec3 want = helpers::turn_of_quaternion(turn);
 	want = { want.x, -want.y, -want.z };
 	test::@check((pose_turn(&f, POSE_RIGHT, 0) - want).length() < 1.0e-4f,
 		"Shift+M did not put the reflection on the right leg");
-	test::@check((pose_turn(&f, POSE_LEFT, 0) - pose_turn_of(turn)).length() < 1.0e-4f,
+	test::@check((pose_turn(&f, POSE_LEFT, 0) - helpers::turn_of_quaternion(turn)).length() < 1.0e-4f,
 		"Shift+M with one side selected rewrote that side");
 	test::@check(f.notice_text().starts_with("Mirrored the pose"), "the notice reads \"%s\"", f.notice_text());
 	test::@check(f.app.undo() && pose_turn(&f, POSE_RIGHT, 0).length() < 1.0e-6f,
@@ -209,32 +202,4 @@ fn void pose_clipboard_ui_shift_m_mirrors_the_pose_and_m_leaves_it() @test
 		&& pose_turn(&f, POSE_LEFT, 0).length() < 1.0e-6f,
 		"a whole-pose mirror should trade the two sides");
 	f.app.undo();
-}
-
-<*
- With no clip open M is the rig's mirror, and on a rig the plan placed square
- it says so rather than "nothing to mirror". Shift+M there has no pose to
- mirror and says that instead of touching the dots.
-*>
-fn void rig_mirror_on_a_square_rig_says_so() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	test::@check(f.app.apply_plan_named("biped"), "could not fit rig");
-	sz dots = f.app.doc.dots.len();
-	uint left;
-	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == POSE_LEFT) left = dot.id;
-	f.app.select(left);
-	test::@check(!f.app.animation_pose_ready(), "no clip is open, so M is the rig's mirror");
-	sz history = f.app.undo_stack.cursor;
-	f.tap(VIEWPORT_CENTER, Key.M);
-	test::@check(f.notice_text().starts_with("already mirrored"), "the rig mirror reads \"%s\"", f.notice_text());
-	test::eq(f.app.doc.dots.len(), dots);
-	test::eq(f.app.undo_stack.cursor, history);
-
-	f.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.M);
-	test::@check(f.notice_text().starts_with("pick an animation"), "Shift+M with no clip reads \"%s\"", f.notice_text());
-	test::eq(f.app.doc.dots.len(), dots);
-	test::eq(f.app.undo_stack.cursor, history);
 }

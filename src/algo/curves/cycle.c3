@@ -305,7 +305,7 @@ fn AnimKeyframe[] cycle_frames(Allocator allocator, AnimTemplate source, usz sta
 	return frames;
 }
 
-faultdef CYCLE_TOO_SHORT;
+excuse CYCLE_TOO_SHORT;
 
 // The summed squared angle between two samples' turns over every rotating track.
 fn float cycle_distance(Quaternionf[] turns, AnimTrack[] tracks, usz samples, usz a, usz b) @local
@@ -314,8 +314,7 @@ fn float cycle_distance(Quaternionf[] turns, AnimTrack[] tracks, usz samples, us
 	foreach (usz t, track : tracks)
 	{
 		if (track.rotations.len == 0) continue;
-		float d = math::min(1.0f, math::abs(turns[t * samples + a].v.dot(turns[t * samples + b].v)));
-		float angle = 2.0f * (float)math::acos(d);
+		float angle = turn_gap(turns[t * samples + a], turns[t * samples + b]);
 		total += angle * angle;
 	}
 	return total;

@@ -7,6 +7,7 @@
 module crig_tests::aim_export;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf_edit;
 import std::core::test;
@@ -51,8 +52,6 @@ fn rig::Pose shown(rig::Skeleton* skeleton, crig::AnimTemplate clip, float time)
 	return pose;
 }
 
-fn float closeness(Quaternionf a, Quaternionf b) => math::abs(a.v.dot(b.v));
-
 fn void a_baked_export_carries_the_aimed_head() @test
 {
 	rig::Skeleton skeleton = chain_rig();
@@ -76,7 +75,7 @@ fn void a_baked_export_carries_the_aimed_head() @test
 	{
 		rig::Pose expected = shown(&skeleton, clip, time);
 		defer expected.free(mem);
-		test::@check(closeness(head.turns[k], expected.rotations[3]) > 0.99999f,
+		test::@check(helpers::closeness(head.turns[k], expected.rotations[3]) > 0.99999f,
 			"the baked head at %s differs from what the viewport shows", time);
 	}
 
@@ -108,7 +107,7 @@ fn void the_packed_clip_has_its_aims_written_into_keys() @test
 		defer baked.free(mem);
 		for (usz j = 0; j < 4; j++)
 		{
-			test::@check(closeness(baked.rotations[j], expected.rotations[j]) > 0.9999f,
+			test::@check(helpers::closeness(baked.rotations[j], expected.rotations[j]) > 0.9999f,
 				"joint %d at %s differs from the aimed clip", j, time);
 		}
 	}

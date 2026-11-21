@@ -8,6 +8,7 @@ module crig_tests::onion_pose_edit;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::math;
@@ -18,15 +19,6 @@ struct Fig
 	crig::AppState app;
 	uint thigh;
 	uint knee;
-}
-
-fn uint dot_named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
 }
 
 fn bool Fig.key(&self, float time, float angle)
@@ -44,7 +36,7 @@ fn bool Fig.open(&self, float[] times, float playhead)
 {
 	self.app = shared_app::open();
 	if (!self.app.apply_plan_named("biped")) return false;
-	self.thigh = dot_named(&self.app, "thigh_L");
+	self.thigh = helpers::dot_named(&self.app, "thigh_L");
 	if (self.thigh == 0) return false;
 	foreach (dot : self.app.doc.dots.array_view())
 	{

@@ -13,6 +13,7 @@ module crig_tests::aim_gesture;
 import crig;
 import rig;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::vector;
@@ -62,12 +63,7 @@ fn bool Figure.open(&self)
 
 fn void Figure.close(&self) => self.app.free();
 
-fn float Figure.height(&self)
-{
-	crig::RigView view = self.app.open_rig(mem)!!;
-	defer view.free(mem);
-	return view.skeleton.height();
-}
+fn float Figure.height(&self) => helpers::rig_height(&self.app);
 
 fn Vec3 Figure.at(&self, uint id) => self.app.dot_position(*self.app.doc.find(id));
 
@@ -87,24 +83,8 @@ fn Vec3 Figure.aim_head_aside(&self)
 	return moved;
 }
 
-// 1 - cos of the angle between where the aimed head faces on screen and the
-// direction from the head to `target`; 0 when it faces it.
-fn float Figure.facing_error(&self, Vec3 target)
-{
-	crig::AppState* app = &self.app;
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	rig::Pose pose = app.draft_pose(mem, &view);
-	defer pose.free(mem);
-	crig::AnimTemplate* clip = self.clip();
-	app.apply_clip_aims(&view, *clip, app.editing, app.edit_time, &pose);
-	Vec3 position;
-	Quaternionf world;
-	usz joint = (usz)view.joint_of(self.head);
-	if (!crig::aim_frame(&view, pose, joint, &position, &world)) return 1.0f;
-	Vec3 facing = world.rotate_vec3(clip.aims[0].forward).normalize();
-	return 1.0f - facing.dot((target - position).normalize());
-}
+// 0 when the aimed head faces `target`.
+fn float Figure.facing_error(&self, Vec3 target) => helpers::facing_error(&self.app, self.head, target);
 
 // Whether the draft holds exactly the rotation and offset the joint had in `was`.
 fn bool Figure.same_as(&self, uint id, crig::PosedJoint was)

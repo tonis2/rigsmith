@@ -21,7 +21,7 @@ fn bool key_order_rig(Fixture* fixture) @local
 	return true;
 }
 
-fn void shift_leaves_a_plain_letter_reading_as_itself() @test
+fn void shift_reads_a_letter_and_ctrl_keeps_a_chord_away() @test
 {
 	Fixture fixture;
 	if (catch fixture.open()) return;
@@ -31,23 +31,15 @@ fn void shift_leaves_a_plain_letter_reading_as_itself() @test
 	bool mesh = fixture.app.show_mesh;
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.B);
 	test::@check(fixture.app.show_mesh != mesh, "shift+B is B");
-}
 
-fn void ctrl_keeps_a_chord_away_from_the_letters() @test
-{
-	Fixture fixture;
-	if (catch fixture.open()) return;
-	defer fixture.close();
-	if (!key_order_rig(&fixture)) return;
-
-	bool mesh = fixture.app.show_mesh;
+	mesh = fixture.app.show_mesh;
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_CTRL, Key.B);
 	test::@check(fixture.app.show_mesh == mesh, "ctrl+B reached B");
 
 	bool auto = fixture.doc().auto_connect;
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_CTRL, Key.A);
 	test::@check(fixture.doc().auto_connect == auto, "ctrl+A reached A");
-	test::@check(fixture.app.also_selected.len() + 1 >= 2, "ctrl+A selected nothing");
+	test::eq(fixture.app.also_selected.len() + 1, fixture.doc().dots.len());
 }
 
 fn void undo_reaches_past_a_drag_that_owns_the_letters() @test

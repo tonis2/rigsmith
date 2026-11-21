@@ -47,18 +47,18 @@ import std::collections::list;
 <*
  Raised when the skeleton has no joints, or fewer names than joints.
 *>
-faultdef ANIM_EXPORT_SHAPE_MISMATCH;
+excuse ANIM_EXPORT_SHAPE_MISMATCH;
 
 <*
  Raised when a joint has no name. A template is looked up by name, so a rig
  written out with anonymous joints could never be matched to one.
 *>
-faultdef ANIM_EXPORT_UNNAMED_JOINT;
+excuse ANIM_EXPORT_UNNAMED_JOINT;
 
 <*
  Raised when there is nothing to write — no templates, or none with keyframes.
 *>
-faultdef ANIM_EXPORT_EMPTY;
+excuse ANIM_EXPORT_EMPTY;
 
 // Below this a rotation is no rotation and an offset is no offset, so the
 // channel carrying it is not written at all. Matches the importer's own
@@ -335,7 +335,7 @@ fn void? export_rigged_animated_glb(
 {
 	usz joints = skeleton.len();
 	if (joints == 0 || names.len < joints) return ANIM_EXPORT_SHAPE_MISMATCH~;
-	foreach (usz j, joint_name : names[:joints])
+	foreach (joint_name : names[:joints])
 	{
 		if (joint_name.len == 0) return ANIM_EXPORT_UNNAMED_JOINT~;
 	}
@@ -1096,7 +1096,7 @@ fn String clip_extras_text(Allocator allocator, AnimTemplate[] templates, String
 			String[] joints = shorthand ? keyed.array_view() : (String[]){};
 			out.append_string(`"sparse":[`);
 			usz scheduled = 0;
-			foreach (usz k, key : template.keyframes)
+			foreach (key : template.keyframes)
 			{
 				if (key.dots.len == 0) continue;
 				if (scheduled++ > 0) out.append_char(',');

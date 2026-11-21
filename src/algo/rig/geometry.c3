@@ -13,7 +13,7 @@ module rig;
 import std::math;
 import std::math::vector;
 
-faultdef
+excuse
     EMPTY_MESH,
     NOT_TRIANGULATED,
     NORMAL_COUNT_MISMATCH,

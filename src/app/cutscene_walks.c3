@@ -10,6 +10,7 @@ import collision;
 import rig;
 import std::collections::list;
 import std::math;
+import std::hash::fnv32a;
 
 const String CUT_PATH_NAME = "Path";
 // A walk is checked for colliders with a capsule this far over the ground, so the ground is stepped over.
@@ -80,6 +81,8 @@ fn void AppState.level_came_in(&self)
 		foreach (&c : found) c.rig = level_character_rig(tmem, c.entry);
 		self.restage_actors(found);
 	};
+	// Another level's colliders: the walks are measured again.
+	self.cut_blocks_key = 0;
 	self.ground_all_cut_paths();
 }
 
@@ -156,11 +159,7 @@ fn sz AppState.add_cut_path(&self, String name = "")
 		made = string::format(mem, "%s %d", base, n);
 	}
 	usz count = c.paths.len;
-	WalkPath[] grown = alloc::new_array(mem, WalkPath, (sz)count + 1);
-	foreach (usz k, p : c.paths) grown[k] = p;
-	grown[count] = { .name = made };
-	if (count > 0) alloc::free(mem, c.paths);
-	c.paths = grown;
+	slice_push(mem, &c.paths, (WalkPath){ .name = made });
 	self.cut_path_pick = count + 1;
 	self.cut_knot_pick = 0;
 	self.cutscenes_changed();
@@ -199,13 +198,7 @@ fn bool AppState.delete_cut_path(&self, usz i)
 	self.cut_checkpoint();
 	c = self.cutscene();
 	c.paths[i].free(mem);
-	for (usz k = i; k + 1 < c.paths.len; k++) c.paths[k] = c.paths[k + 1];
-	c.paths = c.paths[:c.paths.len - 1];
-	if (c.paths.len == 0)
-	{
-		alloc::free(mem, c.paths.ptr);
-		c.paths = {};
-	}
+	slice_remove_at(mem, &c.paths, i);
 	foreach (&actor : c.actors)
 	{
 		foreach (&s : actor.strips)
@@ -324,8 +317,7 @@ fn bool AppState.delete_cut_knot(&self, usz path, usz knot)
 	}
 	self.cut_checkpoint();
 	WalkPath* p = &self.cutscene().paths[path];
-	for (usz k = knot; k + 1 < p.knots.len; k++) p.knots[k] = p.knots[k + 1];
-	p.knots = p.knots[:p.knots.len - 1];
+	slice_remove_at(mem, &p.knots, knot);
 	self.cut_knot_pick = 0;
 	self.cut_path_moved(path);
 	return true;
@@ -640,29 +632,26 @@ fn bool AppState.actor_capsule(&self, usz character, float* radius, float* heigh
 // What the capsule check depends on, so a cutscene unchanged is not checked again.
 fn uint AppState.walk_blocks_key(&self, Cutscene* cutscene)
 {
-	uint key = 2166136261u;
-	key = (key ^ (level_shown() ? 1u : 2u)) * 16777619u;
+	Fnv32a key;
+	key.init();
+	key.mix(level_shown());
 	foreach (usz a, &actor : cutscene.actors)
 	{
 		sz holder = self.actor_character(actor.row);
 		float radius;
 		float height;
 		if (holder < 0 || !self.actor_capsule((usz)holder, &radius, &height)) continue;
-		key = (key ^ bitcast(radius, uint)) * 16777619u;
-		key = (key ^ bitcast(height, uint)) * 16777619u;
+		key.mix(radius);
+		key.mix(height);
 		foreach (usz k, &s : actor.strips)
 		{
 			if (s.kind != MOVE || s.path < 0 || s.path >= cutscene.paths.len) continue;
-			key = (key ^ (uint)(a * 7919 + k)) * 16777619u;
-			foreach (p : cutscene.paths[s.path].points)
-			{
-				key = (key ^ bitcast(p.x, uint)) * 16777619u;
-				key = (key ^ bitcast(p.y, uint)) * 16777619u;
-				key = (key ^ bitcast(p.z, uint)) * 16777619u;
-			}
+			key.mix(a);
+			key.mix(k);
+			foreach (p : cutscene.paths[s.path].points) key.mix(p);
 		}
 	}
-	return key;
+	return (uint)key;
 }
 
 <*

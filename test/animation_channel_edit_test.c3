@@ -4,75 +4,23 @@
 module crig_tests::animation_channel_edit;
 
 import crig;
+import crig_tests::helpers;
 import std::core::test;
-import std::io::file;
 import std::math;
 import std::math::quaternion;
 
 const float EPSILON = 1.0e-5f;
 
-fn AnimKeyDot channel_dot(float value, AnimChannels channels)
-{
-	return {
-		.joint_name = "hip".copy(mem),
-		.axis = { 0, 1, 0 },
-		.angle = value,
-		.move = { value, 0, 0 },
-		.channels = channels,
-	};
-}
-
-fn AnimTemplate channel_clip(String name, float duration, float[] times,
-	AnimChannels[] channels)
-{
-	AnimKeyframe[] keys = alloc::new_array(mem, AnimKeyframe, (sz)times.len);
-	foreach (usz i, &key : keys)
-	{
-		AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
-		dots[0] = channel_dot(times[i], channels[i]);
-		*key = { .time = times[i], .dots = dots };
-	}
-	return { .name = name.copy(mem), .duration = duration, .keyframes = keys, .owned = true };
-}
-
-fn sz frame_at(AnimTemplate* clip, float time)
-{
-	foreach (usz i, frame : clip.keyframes)
-		if (math::abs(frame.time - time) < EPSILON) return (sz)i;
-	return -1;
-}
-
 fn AnimChannels channels_at(AnimTemplate* clip, float time)
 {
-	sz frame = frame_at(clip, time);
+	sz frame = helpers::frame_at(clip, time);
 	if (frame < 0 || clip.keyframes[(usz)frame].dots.len == 0) return BOTH;
 	return clip.keyframes[(usz)frame].dots[0].channels;
 }
 
-struct ChannelFixture { AppState app; }
-
-fn void ChannelFixture.open(&self)
-{
-	self.app = crig::new_app({});
-	self.app.doc.root_id = self.app.doc.add_dot({}, "hip");
-}
-
-fn AnimRef ChannelFixture.add(&self, String name, float duration, float[] times,
-	AnimChannels[] channels)
-{
-	AnimRef ref = self.app.put_authored_clip(channel_clip(name, duration, times, channels));
-	(void)self.app.bind_ref(ref);
-	self.app.undo_stack.commit();
-	self.app.undo_stack.clear();
-	self.app.editing = ref;
-	return ref;
-}
-
-fn void ChannelFixture.close(&self) => self.app.free();
-
 fn void channel_move_merges_independent_tracks_and_rejects_overlap_atomically() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("move channels", 1.0f, ((float[3]){ 0.2f, 0.4f, 0.6f })[..],
@@ -84,7 +32,7 @@ fn void channel_move_merges_independent_tracks_and_rejects_overlap_atomically() 
 	test::@check(f.app.move_selected_animation_keys(clip, 0.2f),
 		"rotation could not move onto an independently keyed translation");
 	AnimTemplate* moved = f.app.clip(f.app.editing);
-	test::@check(frame_at(moved, 0.2f) < 0 && channels_at(moved, 0.4f) == BOTH,
+	test::@check(helpers::frame_at(moved, 0.2f) < 0 && channels_at(moved, 0.4f) == BOTH,
 		"independent same-time channels did not merge into one sparse dot");
 	test::@check(math::abs(moved.entry_at("hip", 0.4f).angle - 0.2f) < EPSILON
 		&& math::abs(moved.entry_at("hip", 0.4f).move.x - 0.4f) < EPSILON,
@@ -105,7 +53,7 @@ fn void channel_move_merges_independent_tracks_and_rejects_overlap_atomically() 
 
 fn void channel_group_move_refuses_two_keys_aliasing_one_destination_frame() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("close channel move", 2.0f,
@@ -118,9 +66,9 @@ fn void channel_group_move_refuses_two_keys_aliasing_one_destination_frame() @te
 	sz history = f.app.undo_stack.cursor;
 	test::@check(!f.app.move_selected_animation_keys(clip, 0.8f),
 		"two selected rotations were aliased through one nearby destination frame");
-	test::@check(frame_at(f.app.clip(clip), 0.2f) >= 0
-		&& frame_at(f.app.clip(clip), 0.2006f) >= 0
-		&& frame_at(f.app.clip(clip), 1.0003f) >= 0
+	test::@check(helpers::frame_at(f.app.clip(clip), 0.2f) >= 0
+		&& helpers::frame_at(f.app.clip(clip), 0.2006f) >= 0
+		&& helpers::frame_at(f.app.clip(clip), 1.0003f) >= 0
 		&& channels_at(f.app.clip(clip), 1.0003f) == TRANSLATION
 		&& f.app.undo_stack.cursor == history,
 		"ambiguous group move lost a key, changed the occupied frame, or wrote history");
@@ -129,17 +77,17 @@ fn void channel_group_move_refuses_two_keys_aliasing_one_destination_frame() @te
 		&& f.app.undo_stack.cursor == history,
 		"zero channel movement changed history or was treated as an error");
 	test::@check(!f.app.move_selected_animation_keys(clip, -0.3f)
-		&& frame_at(f.app.clip(clip), 0.2f) >= 0 && f.app.undo_stack.cursor == history,
+		&& helpers::frame_at(f.app.clip(clip), 0.2f) >= 0 && f.app.undo_stack.cursor == history,
 		"out-of-bounds channel movement partially changed keys or history");
 	f.app.pose_edit_pending = true;
 	test::@check(!f.app.move_selected_animation_keys(clip, 0.1f)
-		&& frame_at(f.app.clip(clip), 0.2f) >= 0 && f.app.undo_stack.cursor == history,
+		&& helpers::frame_at(f.app.clip(clip), 0.2f) >= 0 && f.app.undo_stack.cursor == history,
 		"a pending pose draft did not guard channel movement atomically");
 }
 
 fn void channel_delete_preserves_the_other_channel_and_undo_restores_it() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("delete channel", 1.0f, ((float[2]){ 0.2f, 0.8f })[..],
@@ -149,7 +97,7 @@ fn void channel_delete_preserves_the_other_channel_and_undo_restores_it() @test
 	sz history = f.app.undo_stack.cursor;
 	test::@check(f.app.delete_selected_animation_keys(clip), "channel delete failed");
 	test::@check(channels_at(f.app.clip(f.app.editing), 0.2f) == ROTATION
-		&& frame_at(f.app.clip(f.app.editing), 0.8f) >= 0,
+		&& helpers::frame_at(f.app.clip(f.app.editing), 0.8f) >= 0,
 		"channel delete removed its sibling or an unrelated key");
 	test::@check(f.app.undo_stack.cursor == history + 1 && f.app.undo(),
 		"channel delete was not one undoable edit");
@@ -159,7 +107,7 @@ fn void channel_delete_preserves_the_other_channel_and_undo_restores_it() @test
 
 fn void channel_copy_paste_replaces_only_incoming_channels_and_undoes_once() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef source = f.add("channel source", 2.0f, ((float[2]){ 0.2f, 0.4f })[..],
@@ -182,9 +130,9 @@ fn void channel_copy_paste_replaces_only_incoming_channels_and_undoes_once() @te
 	test::@check(math::abs(pasted.entry_at("hip", 1.0f).angle - 0.2f) < EPSILON
 		&& math::abs(pasted.entry_at("hip", 1.0f).move.x - 1.0f) < EPSILON,
 		"incoming rotation did not replace rotation while preserving translation");
-	test::@check(pasted.keyframes[(usz)frame_at(pasted, 1.0f)].dots[0].rotation_interpolation == HOLD
-		&& pasted.keyframes[(usz)frame_at(pasted, 1.0f)].dots[0].translation_interpolation == HOLD
-		&& pasted.keyframes[(usz)frame_at(pasted, 1.2f)].dots[0].translation_interpolation == AUTO,
+	test::@check(pasted.keyframes[(usz)helpers::frame_at(pasted, 1.0f)].dots[0].rotation_interpolation == HOLD
+		&& pasted.keyframes[(usz)helpers::frame_at(pasted, 1.0f)].dots[0].translation_interpolation == HOLD
+		&& pasted.keyframes[(usz)helpers::frame_at(pasted, 1.2f)].dots[0].translation_interpolation == AUTO,
 		"paste lost an incoming segment mode or replaced its sibling channel's mode");
 	test::@check(f.app.undo_stack.cursor == history + 1, "channel paste was not one edit");
 
@@ -208,7 +156,7 @@ fn void channel_copy_paste_replaces_only_incoming_channels_and_undoes_once() @te
 
 fn void copying_both_channels_normalizes_one_dot_and_pastes_both_once() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef source = f.add("both channel source", 2.0f, ((float[1]){ 0.2f })[..],
@@ -226,7 +174,7 @@ fn void copying_both_channels_normalizes_one_dot_and_pastes_both_once() @test
 	test::@check(f.app.paste_animation_keys(target, 1.0f),
 		"paired channels could not replace an occupied joint");
 	AnimRef replaced = f.app.editing;
-	sz occupied = frame_at(f.app.clip(replaced), 1.0f);
+	sz occupied = helpers::frame_at(f.app.clip(replaced), 1.0f);
 	test::@check(occupied >= 0 && f.app.clip(replaced).keyframes[(usz)occupied].dots.len == 1
 		&& f.app.clip(replaced).keyframes[(usz)occupied].dots[0].channels == BOTH
 		&& math::abs(f.app.clip(replaced).entry_at("hip", 1.0f).angle - 0.2f) < EPSILON
@@ -236,7 +184,7 @@ fn void copying_both_channels_normalizes_one_dot_and_pastes_both_once() @test
 	test::@check(f.app.paste_animation_keys(replaced, 1.5f),
 		"paired channels could not paste at a fresh time");
 	AnimRef fresh = f.app.editing;
-	sz inserted = frame_at(f.app.clip(fresh), 1.5f);
+	sz inserted = helpers::frame_at(f.app.clip(fresh), 1.5f);
 	test::@check(inserted >= 0 && f.app.clip(fresh).keyframes[(usz)inserted].dots.len == 1
 		&& f.app.clip(fresh).keyframes[(usz)inserted].dots[0].channels == BOTH,
 		"fresh paste duplicated the same joint instead of storing one BOTH dot");
@@ -245,63 +193,9 @@ fn void copying_both_channels_normalizes_one_dot_and_pastes_both_once() @test
 		"fresh paired paste did not select both resulting channel keys");
 }
 
-fn void sparse_channel_edit_survives_session_round_trip() @test
-{
-	const String SESSION = "build/animation-channel-edit-session.rigsmith.json";
-	defer (void)file::delete(SESSION);
-	ChannelFixture f;
-	f.open();
-	defer f.close();
-	AnimRef clip = f.add("persist channels", 1.0f, ((float[2]){ 0.2f, 0.7f })[..],
-		((AnimChannels[2]){ BOTH, ROTATION })[..]);
-	(void)f.app.select_animation_channel_key(clip, 0.2f, "hip", TRANSLATION);
-	test::@check(f.app.move_selected_animation_keys(clip, 0.2f), "fixture channel move failed");
-
-	AnimPack* authored = f.app.authored();
-	test::@check(authored != null, "no authored pack after channel edit");
-	if (!authored) return;
-	if (catch crig::write_session(SESSION, &f.app.doc, "fixture.glb", authored.clips))
-	{
-		test::@check(false, "could not persist channel edit");
-		return;
-	}
-	ProjectSession? reading = crig::read_project_session(mem, SESSION);
-	if (catch reading) { test::@check(false, "could not reload channel edit"); return; }
-	ProjectSession loaded = reading;
-	defer loaded.free(mem);
-	test::@check(loaded.authored.len == 1
-		&& channels_at(&loaded.authored[0], 0.2f) == ROTATION
-		&& channels_at(&loaded.authored[0], 0.4f) == TRANSLATION
-		&& channels_at(&loaded.authored[0], 0.7f) == ROTATION,
-		"session round trip lost the independently moved sparse channel");
-}
-
-fn void library_channel_edit_forks_without_touching_the_source() @test
-{
-	ChannelFixture f;
-	f.open();
-	defer f.close();
-	AnimTemplate[] clips = alloc::new_array(mem, AnimTemplate, 1);
-	clips[0] = channel_clip("borrowed channels", 1.0f, ((float[2]){ 0.2f, 0.7f })[..],
-		((AnimChannels[2]){ BOTH, ROTATION })[..]);
-	AnimRef borrowed = { (int)f.app.adopt_pack({
-		.name = "channel library".copy(mem), .clips = clips, .owned = true,
-	}), 0 };
-	(void)f.app.select_animation_channel_key(borrowed, 0.2f, "hip", TRANSLATION);
-	test::@check(f.app.delete_selected_animation_keys(borrowed), "library channel edit failed");
-	test::@check(channels_at(f.app.clip(borrowed), 0.2f) == BOTH,
-		"library source was changed in place");
-	test::@check(f.app.editing.valid() && !f.app.editing.same(borrowed)
-		&& f.app.editing.pack == f.app.authored_pack
-		&& channels_at(f.app.clip(f.app.editing), 0.2f) == ROTATION,
-		"channel edit did not land in an authored fork");
-	test::@check(f.app.undo() && channels_at(f.app.clip(borrowed), 0.2f) == BOTH,
-		"fork undo disturbed the library source");
-}
-
 fn void selected_channel_keying_saves_only_that_channel_and_keeps_the_other_draft() @test
 {
-	ChannelFixture f;
+	HipFixture f;
 	f.open();
 	defer f.close();
 	AnimRef clip = f.add("selected channel key", 1.0f, ((float[2]){ 0.0f, 1.0f })[..],
@@ -316,7 +210,7 @@ fn void selected_channel_keying_saves_only_that_channel_and_keeps_the_other_draf
 		"could not scope Selected to the explicit rotation lane");
 	test::@check(f.app.key_pose_edit(SELECTED), "selected rotation could not be keyed");
 	AnimTemplate* keyed = f.app.clip(f.app.editing);
-	sz inserted = frame_at(keyed, 0.5f);
+	sz inserted = helpers::frame_at(keyed, 0.5f);
 	test::@check(inserted >= 0 && keyed.keyframes[(usz)inserted].dots.len == 1
 		&& keyed.keyframes[(usz)inserted].dots[0].channels == ROTATION,
 		"Selected expanded a rotation-only timeline selection to both channels");

@@ -81,21 +81,6 @@ fn void a_pin_on_the_angle_holds_it_hard() @test
 	test::@check(goals[1].rotation && goals[1].turn_weight == 0.0f, "the angle is not held hard");
 }
 
-fn void the_dragged_joints_pin_does_not_hold_it() @test
-{
-	crig::RigView view = leg_view();
-	LegPose leg = rest_leg(&view);
-	defer leg.free();
-	crig::PointGoal[1] gesture = { { .joint = 1, .position = true } };
-	crig::PositionLock[1] locks = { { .dot_id = 13, .position = true } };
-
-	List{crig::PointGoal} goals;
-	goals.init(mem);
-	defer goals.free();
-	crig::body_goals(&goals, &view, 0, gesture[..], locks[..], 13, {}, leg.palette, leg.world, {}, {});
-	test::@check(goals.len() == 1, "a pin held the joint in the user's hand");
-}
-
 fn void a_planted_toe_holds_its_heel_too() @test
 {
 	crig::RigView view = leg_view();
@@ -114,35 +99,34 @@ fn void a_planted_toe_holds_its_heel_too() @test
 	test::@check(goals[2].joint == 2 && goals[2].turn_weight == crig::POINT_POSE_PIN_SOFT_TURN, "the heel is not held");
 }
 
-fn void a_foot_off_the_ground_is_not_held() @test
+// Only the gesture's goal is left: nothing holds what the user has in hand, or a lifted foot.
+fn void the_joint_in_hand_and_a_lifted_foot_are_not_held() @test
 {
 	crig::RigView view = leg_view();
 	LegPose leg = rest_leg(&view);
 	defer leg.free();
-	crig::PointGoal[1] gesture = { { .joint = 4, .position = true } };
+	crig::PositionLock[1] pin = { { .dot_id = 13, .position = true } };
 	usz[1] standing = { 3 };
-	bool[1] planted = { false };
+	bool[1] down = { true };
+	bool[1] lifted = { false };
 
+	// The pinned ankle is the dot being dragged.
 	List{crig::PointGoal} goals;
 	goals.init(mem);
 	defer goals.free();
-	crig::body_goals(&goals, &view, 0, gesture[..], {}, 0, {}, leg.palette, leg.world, standing[..], planted[..]);
+	crig::PointGoal[1] knee = { { .joint = 1, .position = true } };
+	crig::body_goals(&goals, &view, 0, knee[..], pin[..], 13, {}, leg.palette, leg.world, {}, {});
+	test::@check(goals.len() == 1, "a pin held the joint in the user's hand");
+
+	// The arm is grabbed and the foot is off the ground.
+	goals.clear();
+	crig::PointGoal[1] arm = { { .joint = 4, .position = true } };
+	crig::body_goals(&goals, &view, 0, arm[..], {}, 0, {}, leg.palette, leg.world, standing[..], lifted[..]);
 	test::@check(goals.len() == 1, "a lifted foot was held");
-}
 
-fn void a_foot_under_the_grab_is_lifted_not_stood_on() @test
-{
-	crig::RigView view = leg_view();
-	LegPose leg = rest_leg(&view);
-	defer leg.free();
-	crig::PointGoal[1] gesture = { { .joint = 1, .position = true } };
-	usz[1] standing = { 3 };
-	bool[1] planted = { true };
-
-	List{crig::PointGoal} goals;
-	goals.init(mem);
-	defer goals.free();
-	crig::body_goals(&goals, &view, 0, gesture[..], {}, 0, {}, leg.palette, leg.world, standing[..], planted[..]);
+	// The knee above the planted foot is grabbed.
+	goals.clear();
+	crig::body_goals(&goals, &view, 0, knee[..], {}, 0, {}, leg.palette, leg.world, standing[..], down[..]);
 	test::@check(goals.len() == 1, "a foot in the user's hand was held down");
 }
 

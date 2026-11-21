@@ -400,11 +400,7 @@ fn bool AppState.add_path_slice(&self, usz at, float u, float time)
 		path.generated = false;
 		return self.replace_path(self.editing, at, path);
 	}
-	AnimPathSlice[] grown = alloc::new_array(mem, AnimPathSlice, (sz)(path.slices.len + 1));
-	foreach (usz i, slice : path.slices) grown[i] = slice;
-	grown[path.slices.len] = { .time = time, .u = math::clamp(u, 0.0f, 1.0f) };
-	if (path.slices.len > 0) alloc::free(mem, path.slices);
-	path.slices = grown;
+	slice_push(mem, &path.slices, (AnimPathSlice){ .time = time, .u = math::clamp(u, 0.0f, 1.0f) });
 	path.sort_slices();
 	path.generated = false;
 	return self.replace_path(self.editing, at, path);
@@ -462,9 +458,7 @@ fn bool AppState.delete_path_selection(&self)
 	AnimPath path = found;
 	if (self.path_slice_selected >= 0 && (usz)self.path_slice_selected < path.slices.len)
 	{
-		usz gone = (usz)self.path_slice_selected;
-		for (usz i = gone; i + 1 < path.slices.len; i++) path.slices[i] = path.slices[i + 1];
-		path.slices = path.slices[:path.slices.len - 1];
+		slice_remove_at(mem, &path.slices, (usz)self.path_slice_selected);
 		self.path_slice_selected = -1;
 		path.generated = false;
 		return self.replace_path(self.editing, at, path);
@@ -475,8 +469,7 @@ fn bool AppState.delete_path_selection(&self)
 		Vec3[] placed = alloc::new_array(tmem, Vec3, (sz)path.slices.len);
 		float[] lengths = path.length_table(tmem);
 		foreach (usz i, slice : path.slices) placed[i] = path.at_fraction(slice.u, lengths);
-		for (usz i = gone; i + 1 < path.points.len; i++) path.points[i] = path.points[i + 1];
-		path.points = path.points[:path.points.len - 1];
+		slice_remove_at(mem, &path.points, gone);
 		foreach (usz i, &slice : path.slices) slice.u = path.nearest_fraction(placed[i]);
 		self.path_point_selected = -1;
 		path.generated = false;
@@ -532,13 +525,9 @@ fn bool AppState.begin_path_drawing(&self, String joint)
 	if (joint.len == 0 || !self.prepare_animation_pose()) return false;
 	self.cancel_path_drawing();
 	self.open_path_draft();
-	AnimPath[] grown = alloc::new_array(mem, AnimPath, (sz)(self.path_draft.len + 1));
-	foreach (usz i, path : self.path_draft) grown[i] = path;
-	if (self.path_draft.len > 0) alloc::free(mem, self.path_draft);
-	grown[^1] = { .joint = joint.copy(mem), .name = string::format(mem, "%s path", joint) };
-	self.path_draft = grown;
+	slice_push(mem, &self.path_draft, (AnimPath){ .joint = joint.copy(mem), .name = string::format(mem, "%s path", joint) });
 	self.path_drawing = true;
-	self.path_selected = (sz)grown.len - 1;
+	self.path_selected = (sz)self.path_draft.len - 1;
 	self.path_point_selected = -1;
 	self.path_slice_selected = -1;
 	self.refresh_ui();
@@ -551,11 +540,7 @@ fn void AppState.add_drawn_point(&self, Vec3 at_model)
 	if (!self.path_drawing || self.path_draft.len == 0 || !(self.path_height > 0.0f)) return;
 	AnimPath* path = &self.path_draft[^1];
 	if (path.points.len >= PATH_POINTS_MOST) return;
-	AnimPathPoint[] grown = alloc::new_array(mem, AnimPathPoint, (sz)(path.points.len + 1));
-	foreach (usz i, point : path.points) grown[i] = point;
-	grown[^1] = { .at = at_model / self.path_height };
-	if (path.points.len > 0) alloc::free(mem, path.points);
-	path.points = grown;
+	slice_push(mem, &path.points, (AnimPathPoint){ .at = at_model / self.path_height });
 	self.refresh_ui();
 }
 

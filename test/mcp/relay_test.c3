@@ -25,31 +25,6 @@ import std::math::quaternion;
 // zeroed AppState. Two things have to hold for that, and neither is visible from
 // the relay's own code.
 
-fn void the_catalog_answers_with_no_document_behind_it() @test
-{
-	// No mesh, no dots, no library — and not even `new_app`. This is the value
-	// `serve_relay` builds its catalog over, and a handler that reached into it
-	// for anything would fault here rather than in front of a user.
-	crig::AppState empty = {};
-	crig::ToolTable catalog_tools = crig::new_tool_table(&empty);
-	mcp::Server catalog = crig::serve_table(&catalog_tools, &empty);
-
-	String response = catalog.handle_message(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`);
-	defer alloc::free(mem, response);
-
-	Object*? root = json::parse(mem, response);
-	if (catch root)
-	{
-		test::@check(false, "a catalog with no document still answers tools/list as JSON");
-		return;
-	}
-	defer root.free();
-
-	sz listed = root.get("result").get("tools").get_len() ?? 0;
-	test::@check(listed == listed_tools.len,
-		"the whole catalog is a property of the build, not of the rig — so it answers before crig is up");
-}
-
 <*
  The catalog survives being written as one line.
 
@@ -62,6 +37,8 @@ fn void the_catalog_answers_with_no_document_behind_it() @test
 *>
 fn void the_catalog_survives_being_written_as_one_line() @test
 {
+	// Not even `new_app`: `serve_relay` builds its catalog over a zeroed state, so
+	// a handler that reached into the document would fault here.
 	crig::AppState empty = {};
 	crig::ToolTable catalog_tools = crig::new_tool_table(&empty);
 	mcp::Server catalog = crig::serve_table(&catalog_tools, &empty);
@@ -94,52 +71,31 @@ fn void the_catalog_survives_being_written_as_one_line() @test
 	test::@check(listed == listed_tools.len, "and every listed tool survives being flattened onto one");
 }
 
-fn void unknown_method() @test
+// Each bad request is answered with its own JSON-RPC error code, not a crash.
+fn void protocol_errors_carry_their_codes() @test
 {
 	Fixture fixture;
 	fixture.open();
 	defer fixture.close();
 	Fixture* f = &fixture;
-	Object*? root = f.request(`{"jsonrpc":"2.0","id":9,"method":"bogus/method"}`);
-	if (catch root)
-	{
-		test::@check(false, "unknown method answers");
-		return;
-	}
-	defer root.free();
-	test::@check(error_code_is(root, -32601), "unknown method is -32601");
-}
 
-fn void garbage_is_a_parse_error() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? root = f.request(`{"jsonrpc":`);
-	if (catch root)
+	String[3] requests = {
+		`{"jsonrpc":"2.0","id":9,"method":"bogus/method"}`,
+		`{"jsonrpc":`,
+		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"nope","arguments":{}}}`,
+	};
+	int[3] codes = { -32601, -32700, -32602 };
+	foreach (i, request : requests)
 	{
-		test::@check(false, "garbage answers");
-		return;
+		Object*? root = f.request(request);
+		if (catch root)
+		{
+			test::@check(false, "%s does not answer", request);
+			continue;
+		}
+		defer root.free();
+		test::@check(error_code_is(root, codes[i]), "%s is not %d", request, codes[i]);
 	}
-	defer root.free();
-	test::@check(error_code_is(root, -32700), "garbage is -32700");
-}
-
-fn void unknown_tool() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-	Object*? root = f.request(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"nope","arguments":{}}}`);
-	if (catch root)
-	{
-		test::@check(false, "unknown tool answers");
-		return;
-	}
-	defer root.free();
-	test::@check(error_code_is(root, -32602), "unknown tool is -32602");
 }
 
 fn bool? string_id_body(Object* root)

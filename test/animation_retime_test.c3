@@ -51,27 +51,16 @@ fn void stretch_preserves_motion_phase_and_ground_contacts() @test
 		"normalized contact window changed");
 	test::@check(source.duration == 2.0f && source.keyframes[1].time == 1.0f,
 		"retiming mutated the source");
-}
 
-fn void invalid_durations_are_refused() @test
-{
-	io::printn("retiming refuses non-positive and non-finite durations");
-	AnimTemplate source = timed_clip();
-	defer source.free(mem);
-
+	// Non-positive, non-finite, and so short that saved poses would share a time.
 	float infinity = 1.0f;
 	infinity /= 0.0f;
-	AnimTemplate zero = crig::clip_retimed(mem, source, 0.0f);
-	defer zero.free(mem);
-	AnimTemplate infinite = crig::clip_retimed(mem, source, infinity);
-	defer infinite.free(mem);
-	test::@check(zero.duration == source.duration && infinite.duration == source.duration,
-		"an invalid duration changed the clip");
-
-	AnimTemplate crowded = crig::clip_retimed(mem, source, 0.0005f);
-	defer crowded.free(mem);
-	test::@check(crowded.duration == source.duration,
-		"stretching collapsed distinct saved poses onto one time");
+	foreach (bad : (float[]){ 0.0f, infinity, 0.0005f })
+	{
+		AnimTemplate refused = crig::clip_retimed(mem, source, bad);
+		defer refused.free(mem);
+		test::@check(refused.duration == source.duration, "a duration of %f changed the clip", bad);
+	}
 }
 
 fn void animation_stretch_dialog_scales_keys_and_undoes_once() @test

@@ -130,9 +130,8 @@ fn String export_file_name(ExportWhat what, String typed)
 		case CHARACTER:
 			return typed;
 		case ALL_CHARACTERS:
-			return typed.ends_with(".glb") ? typed : string::tformat("%s.glb", typed);
+			return has_extension(typed, ".glb") ? typed : string::tformat("%s.glb", typed);
 		case CUTSCENE:
-			bool named = typed.ends_with(".glb") || typed.ends_with(".gltf");
-			return named ? typed : string::tformat("%s.cutscene.glb", typed);
+			return is_gltf_name(typed) ? typed : string::tformat("%s.cutscene.glb", typed);
 	}
 }

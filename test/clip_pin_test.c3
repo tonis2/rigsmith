@@ -13,6 +13,7 @@
 module crig_tests::clip_pin;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf_edit;
 import std::io;
@@ -86,7 +87,7 @@ fn void Person.close(&self)
 // The clip on show, with `pin` put on it.
 fn void Person.pin(&self, crig::AnimPin pin)
 {
-	self.ref = self.app.land_clip(self.ref, crig::clip_with_pin(mem, *self.app.clip(self.ref), pin));
+	self.ref = self.app.land_clip(self.ref, crig::clip_with_pin_at(mem, *self.app.clip(self.ref), -1, pin));
 }
 
 fn crig::AnimPin Person.hold_ankle(&self, float from, float to, float blend)
@@ -103,20 +104,11 @@ fn Vec3 Person.ankle_at(&self, float time, bool pinned = true)
 	if (!pinned) clip.pins = {};
 	rig::Pose pose = self.app.evaluated_clip_pose(mem, &self.view, clip, self.ref, time, false, true);
 	defer pose.free(mem);
-	return joint_position(&self.view.skeleton, pose, self.ankle);
-}
-
-fn Vec3 joint_position(rig::Skeleton* skeleton, rig::Pose pose, usz joint)
-{
-	Matrix4f[] palette = rig::joint_palette(mem, skeleton, pose)!!;
-	defer alloc::free(mem, palette);
-	return skeleton.joints[joint].transform(palette[joint]);
+	return helpers::joint_at(&self.view.skeleton, pose, self.ankle);
 }
 
 // How far the ankle is from the pinned place, in rig heights.
 fn float Person.miss(&self, float time, bool pinned = true) => (self.ankle_at(time, pinned) - self.rest * self.height).length() / self.height;
-
-fn float closeness(Quaternionf a, Quaternionf b) => math::abs(a.v.dot(b.v));
 
 // ---------------------------------------------------------------------------
 
@@ -158,7 +150,6 @@ fn void a_pin_holds_inside_its_window_and_blends_at_the_edges() @test
 	// Halfway up the ramp: between the keys and the hold.
 	float loose = p.miss(0.5f, false);
 	float half = p.miss(0.5f);
-	io::printfn("  mid-ramp: keys %.4f, blended %.4f", loose, half);
 	test::@check(half < loose * 0.9f && half > 0.002f, "the ramp did not blend (%.4f of %.4f)", half, loose);
 	// The ramp is monotone: nearer the hold the further it has come.
 	test::@check(p.miss(0.45f) / p.miss(0.45f, false) > half / loose, "the ramp does not rise");
@@ -221,7 +212,7 @@ fn void feet_pinned_through_a_still_loop_never_move() @test
 	{
 		crig::AnimPin pin = crig::pin_defaults(mem, foot, view.skeleton.joints[joint_named(names, foot)] / height, 0.0f, 4.0f);
 		pin.blend = 0.1f;
-		ref = app.land_clip(ref, crig::clip_with_pin(mem, *app.clip(ref), pin));
+		ref = app.land_clip(ref, crig::clip_with_pin_at(mem, *app.clip(ref), -1, pin));
 	}
 	usz[3] watched = { 0, joint_named(names, "ankle_L"), joint_named(names, "ankle_R") };
 	Vec3[3] still;
@@ -231,7 +222,7 @@ fn void feet_pinned_through_a_still_loop_never_move() @test
 		defer pose.free(mem);
 		foreach (usz k, j : watched)
 		{
-			Vec3 at = joint_position(&view.skeleton, pose, j);
+			Vec3 at = helpers::joint_at(&view.skeleton, pose, j);
 			if (i == 0) still[k] = at;
 			float moved = (at - still[k]).length() / height;
 			test::@check(moved < 1.0e-4f, "%s moved %.4f heights by %.2f s", names[j], moved, t);
@@ -266,7 +257,6 @@ fn void a_rotation_pin_keeps_the_foot_flat() @test
 	pin.orient = quaternion::IDENTITY;
 	p.pin(pin);
 	float flat = p.foot_tilt(1.0f);
-	io::printfn("  foot tilt: position only %.4f, with rotation %.4f", folded, flat);
 	test::@check(folded > 0.1f, "the folded leg does not tilt the foot (%.4f)", folded);
 	test::@check(flat < folded * 0.7f, "the rotation pin did not flatten the foot (%.4f of %.4f)", flat, folded);
 	test::@check(p.miss(1.0f) < 0.005f, "holding the angle lost the position (%.4f)", p.miss(1.0f));
@@ -405,7 +395,7 @@ fn void export_bakes_the_pin_into_keys_and_leaves_none() @test
 	{
 		rig::Pose baked = flat.pose(mem, skeleton, p.names, time, false, honor_solo: false);
 		defer baked.free(mem);
-		float off = (joint_position(skeleton, baked, p.ankle) - p.rest * p.height).length() / p.height;
+		float off = (helpers::joint_at(skeleton, baked, p.ankle) - p.rest * p.height).length() / p.height;
 		test::@check(off < 0.005f, "the flattened ankle is %.4f heights off at %s", off, time);
 	}
 
@@ -428,7 +418,7 @@ fn void export_bakes_the_pin_into_keys_and_leaves_none() @test
 			rig::Pose want = clip.pose(mem, skeleton, p.names, time, false, honor_solo: false);
 			defer want.free(mem);
 			crig::pin_pose(mem, skeleton, p.names, clip.pins, time, clip.duration, clip.loop, &want, p.height);
-			test::@check(closeness(curve.turns[k], want.rotations[limb]) > 0.9999f, "the exported joint %d differs from the held pose at %s", limb, time);
+			test::@check(helpers::closeness(curve.turns[k], want.rotations[limb]) > 0.9999f, "the exported joint %d differs from the held pose at %s", limb, time);
 		}
 	}
 

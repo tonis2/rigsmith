@@ -11,6 +11,7 @@ module crig_tests::cutscene_one_off_app;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import rig;
 import std::collections::object;
 import std::core::test;
@@ -22,8 +23,6 @@ import std::math::quaternion;
 
 const String MODEL @local = "assets/animations/humanoid.glb";
 const String FOLDER @local = "build/cutscene-one-off-app";
-
-fn bool near(float a, float b, float eps = 1e-3f) @local => math::abs(a - b) <= eps;
 
 // A fresh copy of the model in `name`, its sidecars from an earlier run gone.
 fn String fresh_model(String name) @local
@@ -56,20 +55,9 @@ fn bool open_hero(Fixture* f, String model) @local
 	return true;
 }
 
-fn Object* call(Fixture* f, String tool, String args) @local
-{
-	Object*? got = f.call_tool(tool, args);
-	if (catch got)
-	{
-		test::@check(false, "%s %s was refused", tool, args);
-		return null;
-	}
-	return got;
-}
-
 fn bool posed(Fixture* f, String args) @local
 {
-	Object* answer = call(f, "pose_joint", args);
+	Object* answer = f.call_checked("pose_joint", args);
 	if (!answer) return false;
 	answer.free();
 	return true;
@@ -83,8 +71,6 @@ fn usz keyed_dots(AnimTemplate* clip) @local
 	foreach (&k : clip.keyframes) count += k.dots.len;
 	return count;
 }
-
-fn usz cut_steps(crig::AppState* app) @local => (usz)app.cut_history.undo.len();
 
 fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 {
@@ -108,7 +94,7 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	test::@check(app.make_actor(app.active, "hero"), "the hero is no actor");
 	(void)app.add_cutscene();
 	app.show_cutscene_at(1.0f);
-	usz steps = cut_steps(app);
+	usz steps = helpers::cut_steps(app);
 
 	// New one-off: an empty clip of the cutscene and a 2 s strip of it at the playhead, one step.
 	sz k = app.new_cut_one_off(0);
@@ -116,9 +102,9 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	if (k < 0) return;
 	Cutscene* c = app.cutscene();
 	CutStrip* s = &c.actors[0].strips[k];
-	test::@check(s.one_off && s.clip == "one_off" && near(s.start, 1.0f) && near(s.end, 3.0f), "the strip is %s %f-%f", s.clip, s.start, s.end);
+	test::@check(s.one_off && s.clip == "one_off" && math::is_approx(s.start, 1.0f, 1e-3f) && math::is_approx(s.end, 3.0f, 1e-3f), "the strip is %s %f-%f", s.clip, s.start, s.end);
 	test::@check(c.one_offs.len == 1 && c.one_offs[0].row == "hero", "the one-off is not the hero's");
-	test::eq(cut_steps(app), steps + 1);
+	test::eq(helpers::cut_steps(app), steps + 1);
 	test::eq((usz)app.doc.animations.len(), own_clips);
 
 	// Edit: the hero's own tools on the one-off alone, staged where the cutscene stands it.
@@ -138,15 +124,15 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	{
 		test::@check(dot.joint_name == "shoulder_L", "a key on %s, which was never posed", dot.joint_name);
 	}
-	test::@check(near(app.cut_time, 1.0f + 1.5f, 1e-3f), "the others stand at %f, the cutscene time the playhead stands for", app.cut_time);
-	test::eq(cut_steps(app), steps + 1);
+	test::@check(math::is_approx(app.cut_time, 1.0f + 1.5f, 1e-3f), "the others stand at %f, the cutscene time the playhead stands for", app.cut_time);
+	test::eq(helpers::cut_steps(app), steps + 1);
 
 	// Undo steps the one-off's own edits, and only them.
 	usz keys = keyed_dots(&app.cutscene().one_offs[0].clip);
 	test::@check(app.undo_latest(), "nothing to undo in the one-off");
 	(void)app.tick_one_off();
 	test::@check(keyed_dots(&app.cutscene().one_offs[0].clip) < keys, "undo did not take the last key back");
-	test::eq(cut_steps(app), steps + 1);
+	test::eq(helpers::cut_steps(app), steps + 1);
 	test::@check(app.redo_latest(), "redo");
 	(void)app.tick_one_off();
 	test::eq(keyed_dots(&app.cutscene().one_offs[0].clip), keys);
@@ -174,8 +160,8 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	test::@check(!app.one_off_open() && !app.staged, "still editing");
 	test::eq((usz)app.doc.animations.len(), own_clips);
 	foreach (bound : app.doc.animations) test::@check(bound.clip != "one_off", "the one-off was left among the hero's clips");
-	test::eq(cut_steps(app), steps + 2);
-	test::@check(near(app.cut_time, 2.5f, 1e-3f), "the playhead came back at %f", app.cut_time);
+	test::eq(helpers::cut_steps(app), steps + 2);
+	test::@check(math::is_approx(app.cut_time, 2.5f, 1e-3f), "the playhead came back at %f", app.cut_time);
 	// Ctrl+Z takes the whole edit back at once, and redo brings it back.
 	test::@check(app.undo_latest(), "undo the edit");
 	test::eq(keyed_dots(&app.cutscene().one_offs[0].clip), (usz)0);
@@ -200,10 +186,10 @@ fn void a_one_off_is_edited_with_the_own_tools_and_kept_by_the_cutscene() @test
 	test::@check(back.actors[0].strips[0].end > back.actors[0].strips[0].start + 1.4f, "the strip did not follow its clip");
 
 	// Deleting the last strip that plays it takes it away in the same step.
-	usz before = cut_steps(app);
+	usz before = helpers::cut_steps(app);
 	test::@check(app.delete_cut_strip(0, 0), "delete the strip");
 	test::@check(app.cutscene().one_offs.len == 0, "the one-off outlived its last strip");
-	test::eq(cut_steps(app), before + 1);
+	test::eq(helpers::cut_steps(app), before + 1);
 	test::@check(app.undo_cutscene(), "undo the delete");
 	test::@check(app.cutscene().one_offs.len == 1 && app.cutscene().actors[0].strips.len == 1, "the strip and its one-off came back");
 
@@ -235,7 +221,7 @@ fn void a_hand_pinned_to_the_level_is_baked_into_the_one_off() @test
 	Vec3 world = app.placement().point(wrist * app.drawn_scale()) + (Vec3){ 0.0f, 0.25f, 0.1f };
 	test::@check(posed(f, string::tformat(`{"joint":"wrist_L","world_target":[%f,%f,%f],"time":0}`, world.x, world.y, world.z)),
 		"the hand would not reach the point");
-	Object* pinned = call(f, "set_pins", `{"pins":[{"joint":"wrist_L"}]}`);
+	Object* pinned = f.call_checked("set_pins", `{"pins":[{"joint":"wrist_L"}]}`);
 	if (pinned) pinned.free();
 	test::@check(app.clip(app.editing).pins.len == 1, "the hand is not pinned");
 	test::@check(app.back_to_cutscene(), "back");
@@ -372,9 +358,9 @@ fn void a_stand_in_reads_its_level_node_again_when_the_level_comes_in() @test
 	LevelCharacter[1] found = { { .name = "hero_armature", .position = { 2.0f, 1.05f, -3.0f }, .rotation = turned,
 		.height = tall * 1.5f, .floor = 0.1f, .rig = rig[..] } };
 	app.restage_actors(found[..]);
-	test::@check(near(app.stage_scale, 1.5f) && near(app.stage_lift, 0.95f), "scale %f, lift %f", app.stage_scale, app.stage_lift);
+	test::@check(math::is_approx(app.stage_scale, 1.5f, 1e-3f) && math::is_approx(app.stage_lift, 0.95f, 1e-3f), "scale %f, lift %f", app.stage_scale, app.stage_lift);
 	Vec3 at = app.doc.model_transform.location;
-	test::@check(near(at.x, 2.0f) && near(at.z, -3.0f) && near(at.y, 0.1f - own.min.y * 1.5f), "it stands at [%f, %f, %f]", at.x, at.y, at.z);
+	test::@check(math::is_approx(at.x, 2.0f, 1e-3f) && math::is_approx(at.z, -3.0f, 1e-3f) && math::is_approx(at.y, 0.1f - own.min.y * 1.5f, 1e-3f), "it stands at [%f, %f, %f]", at.x, at.y, at.z);
 	test::@check(app.doc.model_transform.orientation().v == turned.v, "it does not face the node's way");
 	test::@check(app.stage_rig.len == 1 && app.stage_rig[0].name == "hips", "the level's rig was not read");
 	test::@check(!app.stage_missing, "a node that is there is missing");
@@ -383,7 +369,7 @@ fn void a_stand_in_reads_its_level_node_again_when_the_level_comes_in() @test
 	(void)app.add_cutscene();
 	app.restage_actors({});
 	test::@check(app.stage_missing, "a gone node was not noticed");
-	test::@check(near(app.doc.model_transform.location.x, 2.0f) && near(app.stage_scale, 1.5f), "it did not keep its place");
+	test::@check(math::is_approx(app.doc.model_transform.location.x, 2.0f, 1e-3f) && math::is_approx(app.stage_scale, 1.5f, 1e-3f), "it did not keep its place");
 	String[] problems = app.cutscene_problem_texts(mem);
 	defer crig::free_names(mem, problems);
 	bool named;
@@ -399,10 +385,10 @@ fn void an_agent_makes_and_edits_a_one_off_over_the_wire() @test
 	if (!open_hero(f, model)) return;
 	defer f.close();
 	crig::AppState* app = &f.app;
-	Object* listed = call(f, "add_actor", `{"row":"hero"}`);
+	Object* listed = f.call_checked("add_actor", `{"row":"hero"}`);
 	if (!listed) return;
 	listed.free();
-	Object* made = call(f, "set_cutscene", `{"new":true,"name":"Act"}`);
+	Object* made = f.call_checked("set_cutscene", `{"new":true,"name":"Act"}`);
 	if (!made) return;
 	made.free();
 
@@ -412,7 +398,7 @@ fn void an_agent_makes_and_edits_a_one_off_over_the_wire() @test
 		"one_offs":[{"row":"hero","clip":{"name":"nod","duration":1,"loop":false,"blend":"smooth","keys":[
 			{"time":0,"dots":[{"joint":"head","axis":[1,0,0],"angle":0,"move":[0,0,0],"bone":[0,0,0],"channels":"rotation"}]},
 			{"time":0.5,"dots":[{"joint":"head","axis":[1,0,0],"angle":0.4,"move":[0,0,0],"bone":[0,0,0],"channels":"rotation"}]}]}}]}}`;
-	Object* set = call(f, "set_cutscene", shape);
+	Object* set = f.call_checked("set_cutscene", shape);
 	if (!set) return;
 	defer set.free();
 	Object* one_offs = set.get("cutscene")!!.get("one_offs")!!;
@@ -421,13 +407,13 @@ fn void an_agent_makes_and_edits_a_one_off_over_the_wire() @test
 	test::@check(set.get("problems")!!.get_len() == 0, "the one-off has %d problems", set.get("problems")!!.get_len());
 
 	// Edited over the wire with the pose tools, then back as one cutscene step.
-	usz steps = cut_steps(app);
-	Object* opened = call(f, "set_cutscene_time", `{"one_off":{"actor":"hero","strip":0}}`);
+	usz steps = helpers::cut_steps(app);
+	Object* opened = f.call_checked("set_cutscene_time", `{"one_off":{"actor":"hero","strip":0}}`);
 	if (!opened) return;
 	defer opened.free();
 	test::@check(opened.get("one_off")!!.get_string("clip")!! == "nod", "the answer does not say what is edited");
 	test::@check(posed(f, `{"joint":"shoulder_R","turn":{"axis":"z","angle":-0.8},"time":0.25}`), "pose the one-off");
-	Object* report = call(f, "get_cutscene", `{}`);
+	Object* report = f.call_checked("get_cutscene", `{}`);
 	if (!report) return;
 	defer report.free();
 	Object* keys = report.get("cutscene")!!.get("one_offs")!!.get_at(0).get("clip")!!.get("keys")!!;
@@ -438,10 +424,10 @@ fn void an_agent_makes_and_edits_a_one_off_over_the_wire() @test
 		for (usz d = 0; d < (usz)dots.get_len(); d++) shoulder = shoulder || dots.get_at((sz)d).get_string("joint")!! == "shoulder_R";
 	}
 	test::@check(shoulder, "get_cutscene does not show the edit being made");
-	Object* closed = call(f, "set_cutscene_time", `{"one_off":false}`);
+	Object* closed = f.call_checked("set_cutscene_time", `{"one_off":false}`);
 	if (!closed) return;
 	defer closed.free();
-	test::@check(!app.one_off_open() && cut_steps(app) == steps + 1, "back was %d steps", cut_steps(app) - steps);
+	test::@check(!app.one_off_open() && helpers::cut_steps(app) == steps + 1, "back was %d steps", helpers::cut_steps(app) - steps);
 }
 
 fn void the_playing_preview_fades_into_a_one_off_from_the_walk_before_it() @test

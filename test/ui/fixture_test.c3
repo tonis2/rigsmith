@@ -61,7 +61,7 @@ fn void? Fixture.open(&self, rig::TriMesh mesh = cube())
 	self.app = is_shared_cube ? shared_app::open() : crig::new_app(mesh);
 	if (!is_shared_cube) shared_app::attach_library(&self.app);
 	// The app opens with the N-panel closed; these checks are about what is in it,
-	// so the fixture opens it. `the_n_panel_starts_closed` covers the default.
+	// so the fixture opens it.
 	self.app.show_joint_panel = true;
 	self.ui = cui::new_ui({ crig::WIN_W, crig::WIN_H });
 
@@ -102,6 +102,48 @@ fn void Fixture.close(&self)
 }
 
 fn RigDocument* Fixture.doc(&self) => &self.app.doc;
+
+// ---------------------------------------------------------------------------
+// Look-ups the checks share
+
+// The middle of an element, in window coordinates: where a click on it goes.
+fn Vec2 centre_of(Element* elem) => elem.absolute + elem.size * 0.5f;
+
+// The middle of the element `id`.
+fn Vec2 id_centre(Fixture* f, String id) => centre_of(f.ui.find_id(id)!!);
+
+// Which child of `root` holds the element `id`, or -1.
+fn sz root_place(Ui* ui, Element* root, String id)
+{
+	Element*? found = ui.find_id(id);
+	if (catch found) return -1;
+	Element* at = found;
+	while (at && at.parent != root) at = at.parent;
+	foreach (usz i, child : root.children.array_view()) if (child == at) return (sz)i;
+	return -1;
+}
+
+// Replace the text of the field `id` with `text` and press Return.
+fn void type_field(Fixture* f, String id, String text)
+{
+	Element* field = f.ui.find_id(id)!!;
+	field.widget_as(TextField).set_text(field, "");
+	f.type_into(field, text);
+	f.feed_key(Key.RETURN);
+	f.feed(f.ui.input.mouse);
+}
+
+// The Animations dock in a pane under the model, showing the first cutscene, one frame later.
+fn void show_cutscene_tab(Fixture* f)
+{
+	crig::show_pane_view(f.ui, crig::ANIMATION_VIEW, SplitAxis.VERTICAL, 0.5f);
+	(void)f.app.show_cutscene(0);
+	f.ui.flush();
+	f.feed(f.ui.input.mouse);
+}
+
+// The editing clip's layer `at`.
+fn AnimLayer* layer_at(Fixture* f, usz at) => &f.app.clip(f.app.editing).layers[at];
 
 <*
  Place a dot in the middle of the model unless there is already one.

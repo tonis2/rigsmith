@@ -7,6 +7,7 @@
 module crig_tests::paths;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::collections::object;
 import std::core::test;
@@ -31,8 +32,6 @@ fn void give_slices(AnimPath* path, float[] times, float[] us)
 	foreach (usz i, time : times) path.slices[i] = { .time = time, .u = us[i] };
 }
 
-fn bool near(Vec3 a, Vec3 b, float tolerance = 1.0e-3f) => (a - b).length() < tolerance;
-
 <*
  Between two sharp points the curve is the straight line, and the joint moves
  along it at a steady speed between two slices.
@@ -48,10 +47,10 @@ fn void a_straight_path_is_walked_at_a_steady_speed() @test
 	for (float t = 0.0f; t <= 1.0f; t += 0.125f)
 	{
 		Vec3 at = path.held_at(t, 1.0f, false);
-		test::@check(near(at, { t, 0, 0 }), "at %ss the joint is at %s, not %s along", t, at, t);
+		test::@check(helpers::near3(at, { t, 0, 0 }, 1e-3f), "at %ss the joint is at %s, not %s along", t, at, t);
 	}
 	// Past the last slice of an open path it waits there.
-	test::@check(near(path.held_at(2.0f, 3.0f, false), { 1, 0, 0 }), "the joint left the end of the path");
+	test::@check(helpers::near3(path.held_at(2.0f, 3.0f, false), { 1, 0, 0 }, 1e-3f), "the joint left the end of the path");
 }
 
 <*
@@ -69,7 +68,7 @@ fn void a_curve_runs_through_its_points() @test
 	foreach (usz i, point : at)
 	{
 		float u = lengths[i * crig::PATH_STEPS] / total;
-		test::@check(near(path.at_fraction(u), point), "the curve misses point %d", i);
+		test::@check(helpers::near3(path.at_fraction(u), point, 1e-3f), "the curve misses point %d", i);
 		test::@check(math::abs(path.nearest_fraction(point) - u) < 0.01f, "point %d is not found where it is", i);
 	}
 }
@@ -87,8 +86,8 @@ fn void a_closed_path_runs_on_through_its_start() @test
 	float[2] us = { 0.0f, 0.5f };
 	give_slices(&path, times[..], us[..]);
 	test::@check(math::abs(path.fraction_at(0.75f, 1.0f, true) - 0.75f) < 1.0e-4f, "the loop did not run forward through the start");
-	test::@check(near(path.held_at(0.75f, 1.0f, true), { 0, 0, 1 }), "three quarters round the square is not its last corner");
-	test::@check(near(path.held_at(1.0f, 1.0f, true), { 0, 0, 0 }), "the loop does not close at its start");
+	test::@check(helpers::near3(path.held_at(0.75f, 1.0f, true), { 0, 0, 1 }, 1e-3f), "three quarters round the square is not its last corner");
+	test::@check(helpers::near3(path.held_at(1.0f, 1.0f, true), { 0, 0, 0 }, 1e-3f), "the loop does not close at its start");
 }
 
 struct Person
@@ -275,28 +274,41 @@ fn void a_following_path_turns_the_joint() @test
 }
 
 <*
- Baked, the hand moves through the same places on plain keys, and the clip has no
- path left.
+ Baked, the hand moves through the same places on plain keys and the clip has no
+ path left; a following path's bake keeps the hand's turn as well.
 *>
 fn void a_baked_path_plays_as_it_did_live() @test
 {
-	Person p;
-	if (!p.open()) return;
-	defer p.close();
-	AnimPath arc = p.arc();
-	defer arc.free(mem);
-	p.app.add_path(p.ref, arc.copy(mem));
-	p.ref = p.app.editing;
-	Vec3[5] live;
-	foreach (usz i, &at : live) *at = p.hand_at((float)i * 0.25f, *p.app.clip(p.ref));
-	test::@check(p.app.bake_paths(p.ref)!!, "the bake did not land");
-	p.ref = p.app.editing;
-	AnimTemplate* baked = p.app.clip(p.ref);
-	test::@check(baked.paths.len == 0, "the bake left the path on");
-	foreach (usz i, at : live)
+	foreach (bool follow : { false, true })
 	{
-		float miss = (p.hand_at((float)i * 0.25f, *baked) - at).length() / p.height;
-		test::@check(miss < 0.005f, "the baked hand is %.4f heights from the live one at %ss", miss, (float)i * 0.25f);
+		Person p;
+		if (!p.open()) return;
+		defer p.close();
+		AnimPath arc = p.arc();
+		if (follow) arc.points[1].at.z -= 0.02f;
+		arc.follow = follow;
+		p.app.add_path(p.ref, arc);
+		p.ref = p.app.editing;
+		Vec3[5] live;
+		Quaternionf[5] facing;
+		foreach (usz i, &at : live)
+		{
+			*at = p.hand_at((float)i * 0.25f, *p.app.clip(p.ref));
+			facing[i] = p.hand_facing((float)i * 0.25f, *p.app.clip(p.ref));
+		}
+		test::@check(p.app.bake_paths(p.ref)!!, "the bake did not land (follow %s)", follow);
+		p.ref = p.app.editing;
+		AnimTemplate* baked = p.app.clip(p.ref);
+		test::@check(baked.paths.len == 0, "the bake left the path on (follow %s)", follow);
+		foreach (usz i, at : live)
+		{
+			float t = (float)i * 0.25f;
+			float miss = (p.hand_at(t, *baked) - at).length() / p.height;
+			test::@check(miss < 0.005f, "follow %s: the baked hand is %.4f heights from the live one at %ss", follow, miss, t);
+			if (!follow || i == 4) continue;
+			float turned = turn_angle(p.hand_facing(t, *baked), facing[i]);
+			test::@check(turned < 0.03f, "the baked hand faces %s rad from the live one at %ss", turned, t);
+		}
 	}
 }
 
@@ -389,28 +401,4 @@ fn void set_path_adds_bakes_and_refuses_a_stranger() @test
 	String baked = call(&p.app, `{"op":"bake"}`, &ok);
 	defer baked.free(mem);
 	test::@check(ok && p.app.clip(p.app.editing).paths.len == 0, "bake refused or left the path: %s", baked);
-}
-
-<*
- Baked, a following path keeps the hand's turn on plain keys.
-*>
-fn void a_baked_following_path_keeps_its_turn() @test
-{
-	Person p;
-	if (!p.open()) return;
-	defer p.close();
-	AnimPath arc = p.arc();
-	arc.points[1].at.z -= 0.02f;
-	arc.follow = true;
-	p.app.add_path(p.ref, arc);
-	p.ref = p.app.editing;
-	Quaternionf[4] live;
-	foreach (usz i, &q : live) *q = p.hand_facing((float)i * 0.25f, *p.app.clip(p.ref));
-	test::@check(p.app.bake_paths(p.ref)!!, "the bake did not land");
-	p.ref = p.app.editing;
-	foreach (usz i, q : live)
-	{
-		float miss = turn_angle(p.hand_facing((float)i * 0.25f, *p.app.clip(p.ref)), q);
-		test::@check(miss < 0.03f, "the baked hand faces %s rad from the live one at %ss", miss, (float)i * 0.25f);
-	}
 }

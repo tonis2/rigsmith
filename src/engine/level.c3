@@ -13,6 +13,7 @@ import std::math;
 import std::math::matrix;
 import std::time;
 import std::collections::list;
+import std::hash::fnv32a;
 
 enum LevelPhase : char
 {
@@ -25,8 +26,6 @@ enum LevelPhase : char
 
 // How long a frame may spend placing nodes before it draws.
 const long LEVEL_SLICE_NS = 12_000_000;
-// A ground ray starts this far above the point, so a branch overhead is not hit.
-const float GROUND_RAY_LIFT = 0.5f;
 const usz GROUND_RAY_HITS = 128;
 // How far off a wall a view ray's hit is dropped from.
 const float GROUND_STEP_OFF = 0.05f;
@@ -886,16 +885,18 @@ fn bool level_character_named(String name, LevelCharacter* out)
 // Each level character a stand-in takes the place of is hidden; one read by an actor is posed by it; the rest are shown.
 fn void hide_taken_characters(AppState* app) @local
 {
-	uint key = 2166136261u;
+	Fnv32a key;
+	key.init();
 	for (usz i = 0; i < app.character_count(); i++)
 	{
 		Character* actor = app.character(i);
-		foreach (ch : actor.level_node) key = (key ^ ch) * 16777619u;
-		key = (key ^ actor.id) * 16777619u;
-		key = (key ^ (actor.level_read ? 1u : 0u) ^ (actor.hidden ? 2u : 0u)) * 16777619u;
+		key.text(actor.level_node);
+		key.mix(actor.id);
+		key.mix(actor.level_read);
+		key.mix(actor.hidden);
 	}
-	if (level.hidden_applied && key == level.hidden_key) return;
-	level.hidden_key = key;
+	if (level.hidden_applied && (uint)key == level.hidden_key) return;
+	level.hidden_key = (uint)key;
 	level.hidden_applied = true;
 	release_drives(true);
 	@pool()

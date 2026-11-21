@@ -10,6 +10,7 @@ import crig;
 import cui;
 import cui::widgets;
 import crig_tests::library;
+import crig_tests::helpers;
 import std::core::test;
 import std::io::file;
 import std::io::path;
@@ -17,11 +18,7 @@ import std::math;
 
 const String CUT_DROP_FOLDER @local = "build/cutscene-asset-drop";
 
-fn usz cut_drop_steps(Fixture* f) @local => (usz)f.app.cut_history.undo.len();
-
 fn usz cut_drop_strips(Fixture* f, usz actor) @local => f.app.cutscene().actors[actor].strips.len;
-
-fn bool cut_drop_near(float a, float b, float eps = 1e-3f) @local => math::abs(a - b) <= eps;
 
 // The cube in the biped as actor "hero", in a cutscene with a road and a move on it
 // from 1 s; the Animations dock under the model shows it, the Assets pane beside the
@@ -139,9 +136,9 @@ fn void cut_drop_a_clip_he_has_lays_a_play_that_walks_with_his_move() @test
 	cut_drop_settle(&f);
 	sz bound = f.app.doc.animations.len();
 	sz rig_steps = f.app.undo_stack.cursor;
-	usz steps = cut_drop_steps(&f);
+	usz steps = helpers::cut_steps(&f.app);
 	CutStrip* move = &f.app.cutscene().actors[0].strips[0];
-	test::@check(move.kind == MOVE && cut_drop_near(move.start, 1.0f) && cut_drop_near(move.end, 7.0f), "the move runs %f-%f", move.start, move.end);
+	test::@check(move.kind == MOVE && math::is_approx(move.start, 1.0f, 1e-3f) && math::is_approx(move.end, 7.0f, 1e-3f), "the move runs %f-%f", move.start, move.end);
 	float move_start = move.start;
 	float move_end = move.end;
 
@@ -152,22 +149,22 @@ fn void cut_drop_a_clip_he_has_lays_a_play_that_walks_with_his_move() @test
 	if (laid.len != 2) return;
 	usz play = laid[0].kind == PLAY ? 0 : 1;
 	CutStrip* s = &laid[play];
-	test::@check(s.kind == PLAY && s.clip == walk.name && s.loop && cut_drop_near(s.start, 2.0f) && cut_drop_near(s.end, move_end),
+	test::@check(s.kind == PLAY && s.clip == walk.name && s.loop && math::is_approx(s.start, 2.0f, 1e-3f) && math::is_approx(s.end, move_end, 1e-3f),
 		"the drop laid %s %f-%f", s.clip, s.start, s.end);
 	test::@check(crig::cut_paired_move(laid, play, f.app.cutscene().paths) == (sz)(1 - play), "the play does not pair with the move");
 	float ground = f.app.cut_actor_clip_speed(0, walk.name);
 	test::@check(ground >= crig::CUT_PAIR_GROUND_MIN, "Walk's ground speed %f is not known", ground);
 	float fit = crig::cut_walk_rate(f.app.cutscene().paths[0].length, move_end - move_start, ground);
-	test::@check(cut_drop_near(s.speed, fit) && !cut_drop_near(s.speed, 1.0f), "the walk plays at %f, not %f", s.speed, fit);
-	test::@check(f.app.cut_selected == s.id && cut_drop_near(f.app.cut_time, 2.0f), "the play is not picked at the drop");
-	test::eq(cut_drop_steps(&f), steps + 1);
+	test::@check(math::is_approx(s.speed, fit, 1e-3f) && !math::is_approx(s.speed, 1.0f, 1e-3f), "the walk plays at %f, not %f", s.speed, fit);
+	test::@check(f.app.cut_selected == s.id && math::is_approx(f.app.cut_time, 2.0f, 1e-3f), "the play is not picked at the drop");
+	test::eq(helpers::cut_steps(&f.app), steps + 1);
 	test::eq(f.app.undo_stack.cursor, rig_steps);
 	test::eq(f.app.doc.animations.len(), bound);
 
 	// One Ctrl+Z takes it back.
 	test::@check(f.app.undo_latest(), "nothing to undo");
 	test::eq(cut_drop_strips(&f, 0), (usz)1);
-	test::eq(cut_drop_steps(&f), steps);
+	test::eq(helpers::cut_steps(&f.app), steps);
 	test::eq(f.app.doc.animations.len(), bound);
 	cut_drop_settle(&f);
 
@@ -178,7 +175,7 @@ fn void cut_drop_a_clip_he_has_lays_a_play_that_walks_with_his_move() @test
 	{
 		cut_drop_drag(&f, "Walk", at);
 		test::@check(f.app.cutscene().actors[0].strips.len == 1, "a drop off the lanes laid a strip");
-		test::eq(cut_drop_steps(&f), steps);
+		test::eq(helpers::cut_steps(&f.app), steps);
 	}
 }
 
@@ -203,7 +200,7 @@ fn void cut_drop_a_clip_he_lacks_is_bound_first_and_undone_after_the_play() @tes
 	Character* his = f.app.character(newcomer);
 	test::@check(!his.binds_clip(wave.file, wave.name), "the newcomer binds Wave already");
 	sz bound = his.doc.animations.len();
-	usz steps = cut_drop_steps(&f);
+	usz steps = helpers::cut_steps(&f.app);
 
 	// Dropped on his Clip lane: bound to him, as the focus, then laid.
 	cut_drop_drag(&f, "Wave", cut_drop_at(&f, 1, 1.0f));
@@ -211,19 +208,19 @@ fn void cut_drop_a_clip_he_lacks_is_bound_first_and_undone_after_the_play() @tes
 	test::eq(f.app.doc.animations.len(), bound + 1);
 	test::@check(f.app.binds_clip(wave.file, wave.name), "the newcomer does not bind Wave");
 	CutStrip[] laid = f.app.cutscene().actors[1].strips;
-	test::@check(laid.len == 1 && laid[0].kind == PLAY && laid[0].clip == wave.name && cut_drop_near(laid[0].start, 1.0f),
+	test::@check(laid.len == 1 && laid[0].kind == PLAY && laid[0].clip == wave.name && math::is_approx(laid[0].start, 1.0f, 1e-3f),
 		"the drop laid %d strips", laid.len);
-	test::eq(cut_drop_steps(&f), steps + 1);
+	test::eq(helpers::cut_steps(&f.app), steps + 1);
 	test::@check(f.notice_text().contains("added Wave"), "the drop said %s", f.notice_text());
 
 	// Ctrl+Z takes back the play, then the binding.
 	test::@check(f.app.undo_latest(), "nothing to undo");
 	test::eq(cut_drop_strips(&f, 1), (usz)0);
 	test::eq(f.app.doc.animations.len(), bound + 1);
-	test::eq(cut_drop_steps(&f), steps);
+	test::eq(helpers::cut_steps(&f.app), steps);
 	test::@check(f.app.undo_latest(), "the binding did not undo");
 	test::eq(f.app.doc.animations.len(), bound);
-	test::eq(cut_drop_steps(&f), steps);
+	test::eq(helpers::cut_steps(&f.app), steps);
 	test::@check(f.app.cutscene().actors.len == 2, "the undo took an actor");
 }
 
@@ -248,7 +245,7 @@ fn void cut_drop_a_level_actor_and_a_clip_named_like_his_own_refuse() @test
 	cut_drop_settle(&f);
 	sz guide_bound = f.app.character(guide).doc.animations.len();
 	sz twin_bound = f.app.character(twin).doc.animations.len();
-	usz steps = cut_drop_steps(&f);
+	usz steps = helpers::cut_steps(&f.app);
 
 	cut_drop_drag(&f, "Wave", cut_drop_at(&f, 1, 1.0f));
 	test::eq(f.notice_text(), "guide plays the level's clips only");
@@ -261,5 +258,5 @@ fn void cut_drop_a_level_actor_and_a_clip_named_like_his_own_refuse() @test
 	test::eq(f.app.character(twin).doc.animations.len(), twin_bound);
 
 	test::@check(f.app.active == hero, "a refused drop moved the focus to %d", f.app.active);
-	test::eq(cut_drop_steps(&f), steps);
+	test::eq(helpers::cut_steps(&f.app), steps);
 }

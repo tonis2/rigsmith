@@ -40,7 +40,7 @@ const String[SKETCH_CELLS] SKETCH_TIPS = {
 };
 const float SKETCH_GAP = 6.0f;
 
-faultdef NO_SKETCH_CELL;
+excuse NO_SKETCH_CELL;
 
 struct SketchToolbar (Widget)
 {

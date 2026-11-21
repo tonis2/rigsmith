@@ -451,8 +451,6 @@ fn AnimLayer AnimLayer.plain(&self, Allocator allocator, AnimTemplate* clip)
 	return out;
 }
 
-fn bool AnimTemplate.has_layers(&self) => self.layers.len > 0;
-
 <*
  Whether any layer would contribute when the stack is evaluated.
 
@@ -571,20 +569,15 @@ fn AnimLayer[] layers_inserted(Allocator allocator, AnimLayer[] source, usz at, 
 }
 
 <*
- `source` without the layer at `at`, which is freed. The returned array replaces
- `source`, which is released.
+ `source` without the layer at `at`, which is freed. The returned array replaces `source`.
+
+ @require at < source.len : "No such layer"
 *>
 fn AnimLayer[] layers_removed(Allocator allocator, AnimLayer[] source, usz at)
 {
-	AnimLayer[] shrunk = alloc::new_array(allocator, AnimLayer, (sz)(source.len - 1));
-	usz write = 0;
-	for (usz i = 0; i < source.len; i++)
-	{
-		if (i == at) { source[i].free(allocator); continue; }
-		shrunk[write++] = source[i];
-	}
-	alloc::free(allocator, source);
-	return shrunk;
+	source[at].free(allocator);
+	slice_remove_at(allocator, &source, at);
+	return source;
 }
 
 <*
@@ -853,12 +846,7 @@ fn usz[] layer_chain(Allocator allocator, rig::Skeleton* skeleton, String[] name
 		}
 		if (met)
 		{
-			for (usz i = 0; i < length / 2; i++)
-			{
-				usz swap = run[i];
-				run[i] = run[length - 1 - i];
-				run[length - 1 - i] = swap;
-			}
+			for (usz i = 0; i < length / 2; i++) @swap(run[i], run[length - 1 - i]);
 			usz[] out = alloc::new_array(allocator, usz, (sz)length);
 			foreach (usz i, joint_index : run[:length]) out[i] = joint_index;
 			alloc::free(allocator, run);

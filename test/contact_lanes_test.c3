@@ -31,8 +31,6 @@ fn String contact_workspace(Fixture* f)
 
 fn AnimGround contact_ground(Fixture* f) => f.app.clip(f.app.editing).ground;
 
-fn bool near_phase(float a, float b) => math::abs(a - b) < 1e-4f;
-
 fn String joint_containing(Fixture* f, String part)
 {
 	RigView view = f.app.open_rig(mem)!!;
@@ -57,7 +55,7 @@ fn void contact_windows_edit_in_one_undo_step_each() @test
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	AnimGround ground = contact_ground(&f);
 	test::eq(ground.feet.len, (sz)1);
-	test::@check(near_phase(ground.feet[0].down, 0.1f) && near_phase(ground.feet[0].up, 0.4f), "the window is not 0.1–0.4");
+	test::@check(math::is_approx(ground.feet[0].down, 0.1f, 1e-4f) && math::is_approx(ground.feet[0].up, 0.4f, 1e-4f), "the window is not 0.1–0.4");
 	test::@check(!ground.feet[0].off_floor, "a foot was taken for an off-floor contact");
 
 	// A second window on the same foot may not overlap the first.
@@ -68,7 +66,7 @@ fn void contact_windows_edit_in_one_undo_step_each() @test
 	test::@check(f.app.add_contact_window(f.app.editing, foot, 0.8f, 0.25f), "a wrapping window was refused");
 	ground = contact_ground(&f);
 	test::eq(ground.feet.len, (sz)2);
-	test::@check(near_phase(ground.feet[1].down, 0.8f) && near_phase(ground.feet[1].up, 0.05f), "the wrap is not 0.8–0.05");
+	test::@check(math::is_approx(ground.feet[1].down, 0.8f, 1e-4f) && math::is_approx(ground.feet[1].up, 0.05f, 1e-4f), "the wrap is not 0.8–0.05");
 	test::eq(crig::contact_lane_count(ground), (usz)1);
 
 	// Moving and resizing.
@@ -76,7 +74,7 @@ fn void contact_windows_edit_in_one_undo_step_each() @test
 	test::@check(f.app.set_contact_window(f.app.editing, 0, 0.15f, 0.4f), "the window did not move");
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	ground = contact_ground(&f);
-	test::@check(near_phase(ground.feet[0].down, 0.15f) && near_phase(ground.feet[0].up, 0.55f), "the move landed wrong");
+	test::@check(math::is_approx(ground.feet[0].down, 0.15f, 1e-4f) && math::is_approx(ground.feet[0].up, 0.55f, 1e-4f), "the move landed wrong");
 	test::@check(!f.app.set_contact_window(f.app.editing, 0, 0.5f, 0.35f), "a move onto the other window was allowed");
 
 	// Delete one, then undo and redo it.
@@ -147,7 +145,7 @@ fn void contact_windows_persist_and_survive_a_trim() @test
 	AnimTemplate[] back = crig::parse_session_clips(mem, text)!!;
 	defer crig::free_animations(mem, back);
 	test::@check(back.len == 1 && back[0].ground.feet.len == 2, "the sidecar lost a window");
-	test::@check(near_phase(back[0].ground.feet[0].down, 0.7f) && near_phase(back[0].ground.feet[0].up, 0.2f)
+	test::@check(math::is_approx(back[0].ground.feet[0].down, 0.7f, 1e-4f) && math::is_approx(back[0].ground.feet[0].up, 0.2f, 1e-4f)
 		&& !back[0].ground.feet[0].off_floor && back[0].ground.feet[1].off_floor, "the sidecar changed a window");
 
 	Vec3[1] joints = { { 0, 1, 0 } };
@@ -161,7 +159,7 @@ fn void contact_windows_persist_and_survive_a_trim() @test
 	defer pack.free(mem);
 	test::@check(pack.clips.len == 1 && pack.clips[0].ground.feet.len == 2
 		&& !pack.clips[0].ground.feet[0].off_floor && pack.clips[0].ground.feet[1].off_floor
-		&& near_phase(pack.clips[0].ground.feet[1].down, 0.3f), "the pack changed a window");
+		&& math::is_approx(pack.clips[0].ground.feet[1].down, 0.3f, 1e-4f), "the pack changed a window");
 
 	// Trimming to the first half keeps the wrapping window's tail and the hold.
 	AnimTemplate trimmed = crig::clip_cropped(mem, clip, 0.0f, 0.5f);
@@ -169,7 +167,7 @@ fn void contact_windows_persist_and_survive_a_trim() @test
 	test::@check(trimmed.ground.feet.len == 2, "the trim dropped a window (%d)", trimmed.ground.feet.len);
 	if (trimmed.ground.feet.len == 2)
 	{
-		test::@check(near_phase(trimmed.ground.feet[0].down, 0.0f) && near_phase(trimmed.ground.feet[0].up, 0.4f),
+		test::@check(math::is_approx(trimmed.ground.feet[0].down, 0.0f, 1e-4f) && math::is_approx(trimmed.ground.feet[0].up, 0.4f, 1e-4f),
 			"the trimmed window is %f–%f", trimmed.ground.feet[0].down, trimmed.ground.feet[0].up);
 		test::@check(trimmed.ground.feet[1].off_floor, "the trim lost the hold");
 	}
@@ -216,7 +214,7 @@ fn void contact_lanes_show_and_edit_on_the_sheet() @test
 	// The swaying clip never lifts a foot, so each one's step is the whole cycle.
 	foreach (window : contact_ground(&f).feet)
 	{
-		test::@check(near_phase(window.down, 0.0f) && near_phase(window.up, 1.0f), "%s's step is not the whole cycle", window.joint);
+		test::@check(math::is_approx(window.down, 0.0f, 1e-4f) && math::is_approx(window.up, 1.0f, 1e-4f), "%s's step is not the whole cycle", window.joint);
 	}
 
 	// One foot from here on, its window a quarter of the cycle.

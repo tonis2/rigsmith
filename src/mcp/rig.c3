@@ -27,7 +27,7 @@ import std::collections::object;
 import std::math;
 import std::math::quaternion;
 
-faultdef RIG_REFUSED;
+excuse RIG_REFUSED;
 
 <*
  edit_rig's argument shape, as the client sees it.

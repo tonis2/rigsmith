@@ -1,6 +1,11 @@
-module crig_tests::trust_fixes;
+<*
+ What a model keeps through an export and a reopen: its UVs, materials and
+ texture wherever it was placed, and the weights it arrived with.
+*>
+module crig_tests::model_round_trip;
 
 import crig;
+import crig_tests::helpers;
 import gltf;
 import rig;
 import std::core::test;
@@ -30,21 +35,6 @@ fn bool keeps_the_model(String path)
 	return true;
 }
 
-fn void copy_humanoid(String path)
-{
-	char[] original = file::load(mem, "assets/animations/humanoid.glb")!!;
-	defer alloc::free(mem, original);
-	file::save(path, original)!!;
-}
-
-fn void remove_with_sidecar(String path)
-{
-	(void)file::delete(path);
-	String sidecar = crig::session_path(mem, path);
-	defer sidecar.free(mem);
-	(void)file::delete(sidecar);
-}
-
 <*
  Export carries the model whole — UVs, materials and texture — and Ctrl+S
  afterwards writes into that export without losing them.
@@ -54,12 +44,12 @@ fn void an_export_keeps_uvs_and_materials_and_save_follows_it() @test
 	io::printn("an export keeps UVs and materials, and a save after it does too");
 	String source = "build/trust-export-source.glb";
 	String exported = "build/trust-export-rigged.glb";
-	copy_humanoid(source);
-	remove_with_sidecar(exported);
+	helpers::copy_humanoid(source);
+	helpers::remove_with_sidecar(exported);
 	defer
 	{
-		remove_with_sidecar(source);
-		remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(source);
+		helpers::remove_with_sidecar(exported);
 	}
 	test::@check(keeps_the_model(source), "the humanoid should carry UVs, materials and its texture");
 
@@ -88,12 +78,12 @@ fn void a_placed_model_exports_whole_at_its_origin() @test
 {
 	String source = "build/trust-placed-source.glb";
 	String exported = "build/trust-placed-rigged.glb";
-	copy_humanoid(source);
-	remove_with_sidecar(exported);
+	helpers::copy_humanoid(source);
+	helpers::remove_with_sidecar(exported);
 	defer
 	{
-		remove_with_sidecar(source);
-		remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(source);
+		helpers::remove_with_sidecar(exported);
 	}
 
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
@@ -156,8 +146,8 @@ fn void an_added_joint_keeps_the_imported_weights() @test
 {
 	io::printn("a rename and an added joint keep the imported weights");
 	String path = "build/trust-rename.glb";
-	copy_humanoid(path);
-	defer remove_with_sidecar(path);
+	helpers::copy_humanoid(path);
+	defer helpers::remove_with_sidecar(path);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, path)!!;
 	defer mesh.free(mem);
@@ -213,12 +203,12 @@ fn void crig_weights_reopen_as_crig_weights() @test
 	io::printn("a model crig wrote reopens with weights bound from its joints");
 	String source = "build/trust-weights-source.glb";
 	String exported = "build/trust-weights-exported.glb";
-	copy_humanoid(source);
-	remove_with_sidecar(exported);
+	helpers::copy_humanoid(source);
+	helpers::remove_with_sidecar(exported);
 	defer
 	{
-		remove_with_sidecar(source);
-		remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(source);
+		helpers::remove_with_sidecar(exported);
 	}
 
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
@@ -240,7 +230,7 @@ fn void crig_weights_reopen_as_crig_weights() @test
 		test::@check(said == crig::PACK_WEIGHTS_AUTOMATIC, "the export did not mark its weights as crig's: '%s'", said);
 	}
 
-	remove_with_sidecar(exported);
+	helpers::remove_with_sidecar(exported);
 	app.export_rig(exported);
 	String sidecar = crig::session_path(mem, exported);
 	defer sidecar.free(mem);

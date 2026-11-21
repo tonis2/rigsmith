@@ -30,7 +30,7 @@ fn crig::ScreenProbe row_probe(crig::HiddenTest hidden = &nothing_hidden, bool x
 	};
 }
 
-fn void a_brush_takes_what_is_under_it_with_a_soft_edge() @test
+fn void a_brush_takes_what_is_under_it_by_its_strength() @test
 {
 	crig::ScreenProbe probe = row_probe();
 	uint[4] vertices;
@@ -38,15 +38,8 @@ fn void a_brush_takes_what_is_under_it_with_a_soft_edge() @test
 	usz taken = crig::brush_vertices(&probe, vertices[..], strength[..], { 25, 50 }, 8.0f, 1.0f);
 	test::@check(taken == 1 && vertices[0] == 0, "took %d", taken);
 	test::@check(strength[0] > 0.9f, "the middle of the brush is soft: %f", strength[0]);
-}
-
-fn void a_brush_scales_by_its_own_strength() @test
-{
-	crig::ScreenProbe probe = row_probe();
-	uint[4] vertices;
-	float[4] strength;
 	crig::brush_vertices(&probe, vertices[..], strength[..], { 25, 50 }, 8.0f, 0.5f);
-	test::@check(strength[0] <= 0.5f && strength[0] > 0.4f, "gave %f", strength[0]);
+	test::@check(strength[0] <= 0.5f && strength[0] > 0.4f, "a half-strength brush gave %f", strength[0]);
 }
 
 fn void a_brush_skips_a_hidden_vertex_unless_it_reaches_through() @test
@@ -79,16 +72,11 @@ fn void a_lasso_walks_from_what_it_sees_and_stays_inside_the_outline() @test
 	usz kept = crig::lasso_region(&probe, &around, within[..], out[..]);
 	// Vertex 2 is hidden but joined to 1, which can be seen.
 	test::@check(kept == 2 && out[0] == 1 && out[1] == 2, "kept %d", kept);
-}
 
-fn void a_lasso_with_nothing_to_walk_keeps_what_it_sees() @test
-{
-	rig::MeshAdjacency around;
-	crig::ScreenProbe probe = row_probe(&the_right_half_hidden);
-	bool[4] within = { false, true, true, false };
-	uint[4] out;
-	usz kept = crig::lasso_region(&probe, &around, within[..], out[..]);
-	test::@check(kept == 1 && out[0] == 1, "kept %d", kept);
+	// With nothing to walk, only what it sees.
+	rig::MeshAdjacency none;
+	kept = crig::lasso_region(&probe, &none, within[..], out[..]);
+	test::@check(kept == 1 && out[0] == 1, "with no adjacency kept %d", kept);
 }
 
 // ---- graph and dopesheet
@@ -127,21 +115,17 @@ fn void a_graph_draws_only_the_axes_on_show() @test
 	test::@check(graph.keys.len == 2, "%d keys", graph.keys.len);
 	test::@check(graph.keys[0].selected && !graph.keys[1].selected, "the selection");
 	test::@check(!graph.mixed, "one kind of curve is not mixed");
-}
 
-fn void rotation_and_position_together_are_scaled_to_share_a_plot() @test
-{
-	crig::AnimTemplate clip = two_joint_clip();
-	defer clip.free(mem);
-	String[2] names = { "hand", "arm" };
-	uint[2] ids = { 7, 8 };
-	crig::GraphAsk ask = { .clip = &clip, .names = names[..], .ids = ids[..], .primary = "hand",
+	// Rotation and position together are scaled to share a plot.
+	String[2] both = { "hand", "arm" };
+	uint[2] both_ids = { 7, 8 };
+	crig::GraphAsk mixed = { .clip = &clip, .names = both[..], .ids = both_ids[..], .primary = "hand",
 		.axis_hidden = &all_shown, .key_selected = &the_first_key };
-	crig::Graph graph = { .unit = 1.0f };
-	defer graph.free();
-	crig::graph_fill(&graph, &ask);
-	test::@check(graph.mixed, "not mixed");
-	foreach (curve : graph.curves) test::@check(curve.half > 0.0f, "a curve kept no range");
+	crig::Graph shared = { .unit = 1.0f };
+	defer shared.free();
+	crig::graph_fill(&shared, &mixed);
+	test::@check(shared.mixed, "not mixed");
+	foreach (curve : shared.curves) test::@check(curve.half > 0.0f, "a curve kept no range");
 }
 
 fn void dopesheet_rows_read_as_the_rigs_tree_with_strangers_last() @test

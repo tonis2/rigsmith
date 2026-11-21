@@ -20,7 +20,8 @@ fn rig::Surface? surface_of(String path, rig::TriMesh* mesh) @local
 <*
  Every merged vertex gets its uv and every merged triangle falls in exactly one
  material run, in the order the flattener laid them down — or the picture lands
- on the wrong parts.
+ on the wrong parts. A mesh the file does not flatten to (built in crig, or
+ edited since) does not fit, so Textured falls back to Solid.
 *>
 fn void a_surface_lines_up_with_the_merged_mesh() @test
 {
@@ -49,6 +50,9 @@ fn void a_surface_lines_up_with_the_merged_mesh() @test
 	usz placed = 0;
 	foreach (uv : surface.uvs) if (uv.x != 0 || uv.y != 0) placed++;
 	test::@check(placed * 2 > surface.uvs.len, "most uvs are zero: %d of %d placed", placed, surface.uvs.len);
+
+	rig::TriMesh other = { .positions = mesh.positions[:3], .indices = mesh.indices[:3] };
+	test::@check(!surface.fits(&other), "a surface fitted a mesh it was not read beside");
 }
 
 <*
@@ -67,21 +71,4 @@ fn void a_surface_without_uvs_says_so() @test
 	test::@check(surface.fits(&mesh), "the surface does not line up with the mesh");
 	test::@check(!surface.has_uvs, "no primitive carries TEXCOORD_0");
 	foreach (uv : surface.uvs) test::@check(uv.x == 0 && uv.y == 0, "a missing uv is not zero");
-}
-
-<*
- A mesh that is not the one the file flattens to — a body built in crig, or one
- edited since — does not fit, so Textured falls back to Solid.
-*>
-fn void a_surface_does_not_fit_another_mesh() @test
-{
-	rig::TriMesh mesh;
-	rig::Surface surface = surface_of(PAINTED, &mesh)!!;
-	defer
-	{
-		surface.free(mem);
-		mesh.free(mem);
-	}
-	rig::TriMesh other = { .positions = mesh.positions[:3], .indices = mesh.indices[:3] };
-	test::@check(!surface.fits(&other), "a surface fitted a mesh it was not read beside");
 }

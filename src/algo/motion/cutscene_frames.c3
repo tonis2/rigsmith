@@ -72,13 +72,6 @@ fn sz joint_rest_index(JointRest[] rig, String name)
 	return -1;
 }
 
-// The angle between two rotations, either sign of the quaternion.
-fn float rest_turn_between(Quaternionf a, Quaternionf b) @local
-{
-	float d = math::min(math::abs(a.v.dot(b.v)), 1.0f);
-	return 2.0f * math::acos(d);
-}
-
 fn bool unscaled(Vec3 s) @local
 {
 	return math::abs(s.x - 1.0f) <= CUT_RIG_SCALE_TOLERANCE && math::abs(s.y - 1.0f) <= CUT_RIG_SCALE_TOLERANCE
@@ -102,7 +95,7 @@ fn RigMismatch rigs_agree(JointRest[] from, JointRest[] to, bool any_turn = fals
 		if (at < 0) return { MISSING_JOINT, j.name };
 		JointRest* other = &to[at];
 		if (other.parent != j.parent) return { OTHER_PARENT, j.name };
-		if (!any_turn && rest_turn_between(j.rotation, other.rotation) > CUT_RIG_TURN_TOLERANCE) return { OTHER_TURN, j.name };
+		if (!any_turn && turn_gap(j.rotation, other.rotation) > CUT_RIG_TURN_TOLERANCE) return { OTHER_TURN, j.name };
 		if (!unscaled(j.scale) || !unscaled(other.scale)) return { OTHER_SCALE, j.name };
 	}
 	return {};

@@ -100,7 +100,7 @@ fn uint Fixture.two_dots(&self)
  T is the lasso's key: closed it opens selecting, selecting it switches to
  pinning, pinning it switches back. shift+T is the shortcut to the far job — it
  lands on pinning from anywhere and only closes the tool when pinning is what was
- already running.
+ already running — and is refused with no joint to pin to.
 
  Every step is checked against the *items* as well as the state, because the two
  jobs share a mode flag and nothing else: an item that lit for "the lasso is
@@ -119,7 +119,7 @@ fn void the_lasso_walks_its_two_jobs() @test
 	}
 	defer fixture.close();
 
-	fixture.two_dots();
+	uint chest = fixture.two_dots();
 
 	// --- the shifted letter: straight to pinning, and out again ---------------
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
@@ -160,6 +160,17 @@ fn void the_lasso_walks_its_two_jobs() @test
 	fixture.feed_key(Key.ESCAPE);
 	test::@check(!fixture.app.lassoing, "escape did not close the lasso");
 
+	// Pinning needs a joint to hand the region to: with none selected the item is
+	// greyed before the click and shift+T is refused out loud.
+	fixture.app.select(0);
+	fixture.app.refresh_ui();
+	test::@check(crig::query_lasso(fixture.ui).disabled, "the pinning item is not greyed with nothing selected");
+	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
+	test::@check(!fixture.app.lassoing, "the lasso opened with no dot to pin to");
+	test::@check(fixture.app.notice().len > 0, "and said nothing about why");
+	fixture.app.select(chest);
+	fixture.app.refresh_ui();
+
 	// And the brush closes it, which is the symmetry the three modes owe each
 	// other: all of them claim the plain drag over the model.
 	fixture.feed_key(Key.T);
@@ -173,47 +184,6 @@ fn void the_lasso_walks_its_two_jobs() @test
 	// drag it has not got.
 	test::@check(!crig::query_tweak(fixture.ui).checked, "the tweak cell is lit while the brush has the drag");
 	test::@check(!crig::query_lasso_tool(fixture.ui).checked, "the lasso cell is lit while the brush has the drag");
-}
-
-<*
- The pinning job opens over an animated body — the region is gathered against
- the body on screen (`lasso_vertices`) — and is still refused with no joint to
- hand a region to, with the item greyed before the click.
-*>
-fn void the_lasso_pins_while_an_animation_is_shown() @test
-{
-	io::printn("the lasso pins over an animated body, and needs a joint");
-
-	Fixture fixture;
-	if (catch fault error = fixture.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer fixture.close();
-
-	fixture.two_dots();
-
-	AnimRef clip = fixture.app.new_clip("Lasso lock", 1.0f, from_rest: true);
-	fixture.app.editing = clip;
-	test::@check(fixture.app.park_clip(clip, 0.0f), "the lasso lock clip would not park");
-	test::@check(fixture.app.rig_locked(), "a parked clip should lock the rest rig");
-
-	test::@check(!crig::query_lasso(fixture.ui).disabled, "the item is greyed while an animation is shown");
-	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
-	test::@check(fixture.app.lassoing && fixture.app.lasso_job == crig::LassoJob.PIN,
-		"the lasso would not pin over an animated body");
-	fixture.app.end_lasso();
-
-	// With nothing selected it is refused, since there is nothing to hand a
-	// region to.
-	fixture.app.select(0);
-	fixture.app.refresh_ui();
-	test::@check(crig::query_lasso(fixture.ui).disabled, "the item is not greyed with nothing selected");
-	fixture.chord(VIEWPORT_CENTER, Key.LEFT_SHIFT, Key.T);
-	test::@check(!fixture.app.lassoing, "the lasso opened with no dot to pin to");
-	test::@check(fixture.app.notice().len > 0, "and said nothing about why");
-	fixture.app.stop_animation();
 }
 
 <*

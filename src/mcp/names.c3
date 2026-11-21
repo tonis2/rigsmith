@@ -21,7 +21,7 @@ import rig;
 import std::collections::object;
 import std::math;
 
-faultdef CLIP_NOT_FOUND, CLIP_AMBIGUOUS;
+excuse CLIP_NOT_FOUND, CLIP_AMBIGUOUS;
 
 <*
  The clip `name` asks for, either as `"Pack/Clip"` or as a name to look for

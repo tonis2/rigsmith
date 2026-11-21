@@ -14,6 +14,9 @@ const usz WALK_SPAN_SEARCH @local = 24;
 <* The ground under a point: true with its height there, false where there is none. *>
 alias WalkGroundFn = fn bool(void* context, Vec3 at, float* height);
 
+// A ground ray starts this far above the point, so a branch overhead is not hit.
+const float GROUND_RAY_LIFT = 0.5f;
+
 <* What a walk's samples are dropped onto; with no function they keep the curve's height. *>
 struct WalkGround
 {

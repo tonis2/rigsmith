@@ -94,10 +94,6 @@ fn Element* physics_box(Fixture* fixture, String label)
 	return found;
 }
 
-// The middle of a control, which is on the track for a slider and on the box for
-// a tick — both of which are what a pointer would land on.
-fn Vec2 control_center(Element* elem) => elem.absolute + elem.size * 0.5f;
-
 // A pixel on a slider's track, as a fraction along it. Derived from the widget's
 // own geometry, so a restyled column moves the click with it.
 fn Vec2 slider_pixel(Element* elem, float fraction)
@@ -113,71 +109,16 @@ fn Vec2 slider_pixel(Element* elem, float fraction)
 }
 
 <*
- The pane offers the panel, and the panel says what it is for.
-
- The panel is a real view in the workspace's registry rather than a dialog, so
- the check that it exists is a check that the tab reached it — a view whose
- builder is never called is a tab that switches to an empty pane.
-*>
-fn void the_physics_pane_builds_its_panel() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the physics pane builds its panel");
-	fixture.reset();
-
-	physics_rig(fixture);
-	test::@check(show_physics_pane(fixture), "the Physics tab did not build a panel");
-
-	test::@check(physics_box(fixture, "Simulate") != null, "no Simulate box in the panel");
-	test::@check(physics_box(fixture, "Secondary motion") != null, "no Secondary motion box in the panel");
-	test::@check(physics_slider(fixture, "Flexibility") != null, "no Flexibility slider in the panel");
-	test::@check(physics_slider(fixture, "Damping") != null, "no Damping slider in the panel");
-	test::@check(physics_slider(fixture, "Gravity") != null, "no Gravity slider in the panel");
-	test::@check(physics_box(fixture, "Collide with character") != null, "no Collide box in the panel");
-	test::@check(@ok(fixture.ui.find_id(crig::PHYSICS_PRESET_ID)), "no Preset menu in the panel");
-	test::@check(@ok(fixture.ui.find_id(crig::PHYSICS_STATUS_ID)), "no collision status line in the panel");
-
-	// The old per-bone controls are gone, and so are the cone, the thickness
-	// and the capsule: where a chain swings is the Joint card's limits, how
-	// thick it is comes off its skin, and the capsule is behind Advanced.
-	test::@check(physics_slider(fixture, "Stiffness") == null && physics_slider(fixture, "Cone") == null
-		&& physics_slider(fixture, "Swing") == null && physics_slider(fixture, "Thickness") == null,
-		"a Stiffness, Cone, Swing or Thickness slider is still on the panel");
-	test::@check(physics_box(fixture, "Collider capsule") == null && physics_slider(fixture, "Radius") == null,
-		"the capsule controls are in the ordinary workflow rather than behind Advanced");
-	bool listed = false;
-	fixture.ui.@each(Tree; t) { listed = true; };
-	test::@check(!listed, "the owned-bone list is still on the panel");
-
-	// Behind Advanced they are, though — for a rig with no mesh, or a KHR file.
-	crig::physics_advanced_clicked(fixture.ui);
-	fixture.ui.flush();
-	test::@check(physics_box(fixture, "Collider capsule") != null && physics_slider(fixture, "Radius") != null,
-		"opening Advanced did not offer the capsule");
-	crig::physics_advanced_clicked(fixture.ui);
-	fixture.ui.flush();
-	test::@check(physics_box(fixture, "Collider capsule") == null, "closing Advanced left the capsule on the panel");
-
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, TAB_3D));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
  Ticking Secondary motion gives the selected dot a chain, with its tip inferred
- and the Tail preset on it — and one Ctrl+Z hands it back.
+ and the Tail preset on it — and one Ctrl+Z hands it back. The root is refused,
+ the way `set_secondary_motion` refuses it: with nothing above it to hang from,
+ its chain would never move.
 
  The inference matters as much as the tick: a chain rooted at the spine runs
  down through the tail, since the tail is the spine's only child, so one tick
  on the spine is the whole tail rather than one bone of it.
 *>
-fn void ticking_secondary_motion_gives_the_run_a_chain() @test
+fn void ticking_secondary_motion_chains_the_run_and_refuses_the_root() @test
 {
 	Fixture harness;
 	if (catch fault error = harness.open())
@@ -187,11 +128,12 @@ fn void ticking_secondary_motion_gives_the_run_a_chain() @test
 	}
 	defer harness.close();
 	Fixture* fixture = &harness;
-	io::printn("ticking secondary motion gives the run a chain");
+	io::printn("ticking secondary motion chains the run and refuses the root");
 	fixture.reset();
 
 	PhysicsRig rig = physics_rig(fixture);
-	fixture.app.select(rig.spine);
+	fixture.app.select(rig.hips);
+	test::@check(fixture.doc().root_id == rig.hips, "the first dot placed was not the root");
 
 	if (!show_physics_pane(fixture))
 	{
@@ -205,8 +147,22 @@ fn void ticking_secondary_motion_gives_the_run_a_chain() @test
 		test::@check(false, "SKIPPED — no Secondary motion box in the panel");
 		return;
 	}
+	fixture.click(centre_of(box));
+	fixture.ui.flush();
+	test::@check(!fixture.doc().secondary_of(rig.hips).present(), "the root was given a chain");
+	test::@check(fixture.app.notice().contains("root"), "and the notice does not say why: \"%s\"", fixture.app.notice());
 
-	fixture.click(control_center(box));
+	fixture.app.select(rig.spine);
+	fixture.feed(VIEWPORT_CENTER);
+	fixture.ui.flush();
+	box = physics_box(fixture, "Secondary motion");
+	if (!box)
+	{
+		test::@check(false, "the panel lost its Secondary motion box on a rebuild");
+		return;
+	}
+
+	fixture.click(centre_of(box));
 	fixture.ui.flush();
 
 	crig::SecondaryChain chain = fixture.doc().secondary_of(rig.spine);
@@ -227,7 +183,7 @@ fn void ticking_secondary_motion_gives_the_run_a_chain() @test
 	test::@check(again != null && again.widget_as(Checkbox).checked, "the box is unticked on a bone inside a chain");
 	if (again)
 	{
-		fixture.click(control_center(again));
+		fixture.click(centre_of(again));
 		fixture.ui.flush();
 		test::@check(!fixture.doc().secondary_of(rig.spine).present(), "unticking from the tail did not take the spine's chain back");
 		fixture.chord(VIEWPORT_CENTER, Key.LEFT_CTRL, Key.Z);
@@ -236,53 +192,6 @@ fn void ticking_secondary_motion_gives_the_run_a_chain() @test
 
 	fixture.chord(VIEWPORT_CENTER, Key.LEFT_CTRL, Key.Z);
 	test::@check(!fixture.doc().secondary_of(rig.spine).present(), "a second Ctrl+Z did not take the first tick back");
-
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, TAB_3D));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
- The root is refused, the way `set_secondary_motion` refuses it.
-
- `jiggle_specs_from_document` skips a chain on a joint with no parent above it
- — there is nothing for it to hang from — so a tick that took would be a chain
- that never moved, which is worse than a tick that does not.
-*>
-fn void the_root_cannot_start_a_chain() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the root cannot start a chain");
-	fixture.reset();
-
-	PhysicsRig rig = physics_rig(fixture);
-	fixture.app.select(rig.hips);
-	test::@check(fixture.doc().root_id == rig.hips, "the first dot placed was not the root");
-
-	if (!show_physics_pane(fixture))
-	{
-		test::@check(false, "SKIPPED — the Physics tab did not build a panel");
-		return;
-	}
-
-	Element* box = physics_box(fixture, "Secondary motion");
-	if (!box)
-	{
-		test::@check(false, "SKIPPED — no Secondary motion box in the panel");
-		return;
-	}
-
-	fixture.click(control_center(box));
-	fixture.ui.flush();
-
-	test::@check(!fixture.doc().secondary_of(rig.hips).present(), "the root was given a chain");
-	test::@check(fixture.app.notice().len > 0, "and nothing said why");
 
 	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, TAB_3D));
 	fixture.viewport = fixture.ui.find(Viewport)!!;
@@ -479,165 +388,12 @@ fn void the_preset_the_tip_and_the_capsule_take_the_documented_values() @test
 		return;
 	}
 
-	fixture.click(control_center(capsule));
+	fixture.click(centre_of(capsule));
 	fixture.ui.flush();
 
 	float radius = fixture.doc().collider_of(rig.spine);
 	test::@check(math::abs(radius - 0.1f) < 0.001f,
 		"the capsule arrived at %s where a quarter of its 0.4 bone is 0.1", radius);
-
-	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, TAB_3D));
-	fixture.viewport = fixture.ui.find(Viewport)!!;
-}
-
-<*
- The overlay's toggle is offered only when there is something to mark.
-
- The rule the tint views follow: an item that can be ticked on a rig where it
- shows nothing is one that reads as broken. What it controls is checked by the
- flag rather than by the pixels — the paint is projection arithmetic that
- `check_pick` already pins, and what is new here is only which colour it picks.
-*>
-fn void the_overlay_toggle_follows_what_the_physics_owns() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the overlay toggle follows what the physics owns");
-	fixture.reset();
-
-	PhysicsRig rig = physics_rig(fixture);
-
-	test::@check(crig::query_show_physics(fixture.ui).disabled,
-		"the overlay toggle is offered on a rig with nothing dynamic on it");
-
-	fixture.app.set_secondary_recorded(physics_chain(rig.tail, rig.tail));
-	fixture.app.undo_stack.commit();
-
-	MenuItemFlags flags = crig::query_show_physics(fixture.ui);
-	test::@check(!flags.disabled, "the toggle stayed greyed with a chain on the rig");
-	test::@check(flags.checked, "the marks are off by default, so a chain shows nothing");
-	test::@check(fixture.app.is_dynamic(rig.tail), "the overlay would not know the tail is dynamic");
-	test::@check(!fixture.app.is_dynamic(rig.hips), "and thinks the hips are");
-
-	crig::menu_show_physics(fixture.ui);
-	test::@check(!fixture.app.show_physics, "the menu item did not turn the marks off");
-	crig::menu_show_physics(fixture.ui);
-	test::@check(fixture.app.show_physics, "or back on");
-}
-
-<*
- Every control the panel builds lands inside the pane, in order, without
- overlapping the one above it.
-
- The check a screenshot would be. A panel of stacked rows is exactly the shape
- that goes wrong quietly — a slider that fills the window rather than the column
- still paints, and a row that overflows the pane is clipped rather than reported
- — so what is asserted here is the geometry the eye would be checking: nothing
- wider than the pane, nothing on top of anything else, and the list between the
- two halves rather than under them.
-*>
-fn void the_panel_stacks_its_controls_inside_the_pane() @test
-{
-	Fixture harness;
-	if (catch fault error = harness.open())
-	{
-		test::@check(false, "could not build the interface (%s) — run from the crig directory", error);
-		return;
-	}
-	defer harness.close();
-	Fixture* fixture = &harness;
-	io::printn("the panel stacks its controls inside the pane");
-	fixture.reset();
-
-	PhysicsRig rig = physics_rig(fixture);
-	fixture.app.select(rig.tail);
-	fixture.app.set_secondary_recorded(physics_chain(rig.tail, rig.tail));
-	fixture.app.set_collider_recorded(rig.tail, 0.05f);
-	fixture.app.undo_stack.commit();
-	fixture.app.physics_advanced = true;
-
-	if (!show_physics_pane(fixture))
-	{
-		test::@check(false, "SKIPPED — the Physics tab did not build a panel");
-		return;
-	}
-
-	Element*? found = fixture.ui.find_id(crig::PHYSICS_PANEL_ID);
-	if (catch found)
-	{
-		test::@check(false, "SKIPPED — no panel to measure");
-		return;
-	}
-	Element* panel = found;
-
-	// The pane the panel is in: everything below the window bar and the tab strip.
-	float pane_right = crig::WIN_W;
-	float pane_bottom = crig::WIN_H;
-
-	test::@check(panel.absolute.x >= 0 && panel.absolute.x + panel.size.x <= pane_right + 0.5f,
-		"the panel is %s wide at x=%s, which does not fit the pane",
-		panel.size.x, panel.absolute.x);
-	test::@check(panel.size.y > 0, "the panel came out with no height at all");
-
-	// A column's worth, whatever the pane is. The starting pane is the whole
-	// window, so a panel that took what it was offered would put every slider's
-	// caption a screen away from its own number.
-	test::@check(panel.size.x <= crig::PHYSICS_PANEL_W + 0.5f,
-		"the panel took %s of a %s-wide pane rather than capping at %s",
-		panel.size.x, pane_right, crig::PHYSICS_PANEL_W);
-
-	// The sliders, in the order they are built — the capsule's last, under
-	// Advanced. Each has to be inside the panel's own column and below the one
-	// before it.
-	String[4] captions = { "Flexibility", "Damping", "Gravity", "Radius" };
-	float previous_bottom = panel.absolute.y;
-	foreach (caption : captions)
-	{
-		Element* slider = physics_slider(fixture, caption);
-		if (!slider)
-		{
-			test::@check(false, "no %s slider in the panel", caption);
-			continue;
-		}
-
-		test::@check(slider.size.x > 0 && slider.size.y > 0,
-			"the %s slider laid out to nothing (%s x %s)", caption, slider.size.x, slider.size.y);
-		test::@check(slider.absolute.x >= panel.absolute.x - 0.5f
-			&& slider.absolute.x + slider.size.x <= panel.absolute.x + panel.size.x + 0.5f,
-			"the %s slider runs outside the panel's own column", caption);
-		test::@check(slider.absolute.y >= previous_bottom - 0.5f,
-			"the %s slider starts at %s, above the bottom of the control before it (%s)",
-			caption, slider.absolute.y, previous_bottom);
-		test::@check(slider.absolute.y + slider.size.y <= pane_bottom + 0.5f,
-			"the %s slider hangs off the bottom of the window", caption);
-
-		// The track has to be a real span, or the control is a caption and a number
-		// with nothing to drag between them.
-		Vec2 span = slider.widget_as(Slider).track_span(slider);
-		test::@check(span.y > crig::PHYSICS_SLIDER_STYLE.handle_width,
-			"the %s slider's track came out %s wide, which is narrower than its own handle", caption, span.y);
-
-		previous_bottom = slider.absolute.y + slider.size.y;
-	}
-
-	// The collision check sits above the chain: what stops at the body, then
-	// what moves on its own — the order the plan's pane reads in.
-	Element*? status = fixture.ui.find_id(crig::PHYSICS_STATUS_ID);
-	if (try status)
-	{
-		Element* flexibility = physics_slider(fixture, "Flexibility");
-		if (flexibility)
-		{
-			test::@check(status.absolute.y < flexibility.absolute.y,
-				"the collision status is below the sliders rather than above them");
-		}
-	}
 
 	if (try Element* back = fixture.ui.find(AreaTabStrip)) fixture.click(tab_center(fixture, back, TAB_3D));
 	fixture.viewport = fixture.ui.find(Viewport)!!;

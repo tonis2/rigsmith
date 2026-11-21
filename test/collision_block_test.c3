@@ -16,31 +16,11 @@ import rig;
 import gltf;
 import collision;
 import crig_tests::shared_app;
+import crig_tests::helpers;
 import std::core::test;
 import std::math;
 import std::math::quaternion;
 import std::math::matrix;
-
-const uint[36] BOX_FACES @local = {
-	4, 5, 6, 4, 6, 7,
-	0, 3, 2, 0, 2, 1,
-	1, 2, 6, 1, 6, 5,
-	0, 4, 7, 0, 7, 3,
-	3, 7, 6, 3, 6, 2,
-	0, 1, 5, 0, 5, 4,
-};
-
-fn void corners(Vec3[] into, Vec3 low, Vec3 high) @local
-{
-	into[0] = { low.x, low.y, low.z };
-	into[1] = { high.x, low.y, low.z };
-	into[2] = { high.x, high.y, low.z };
-	into[3] = { low.x, high.y, low.z };
-	into[4] = { low.x, low.y, high.z };
-	into[5] = { high.x, low.y, high.z };
-	into[6] = { high.x, high.y, high.z };
-	into[7] = { low.x, high.y, high.z };
-}
 
 const float DEG @local = (float)math::PI / 180.0f;
 
@@ -74,12 +54,12 @@ struct Pivot
 
 fn bool Pivot.open(&self)
 {
-	corners(self.positions[0:8], { -0.5, -0.5, -0.5 }, { 0.5, 0.5, 0.5 });
-	corners(self.positions[8:8], { -0.2, 1.8, -0.2 }, { 0.2, 2.2, 0.2 });
-	corners(self.positions[16:8], { -0.5, 3.5, -0.5 }, { 0.5, 4.5, 0.5 });
+	helpers::corners(self.positions[0:8], { -0.5, -0.5, -0.5 }, { 0.5, 0.5, 0.5 });
+	helpers::corners(self.positions[8:8], { -0.2, 1.8, -0.2 }, { 0.2, 2.2, 0.2 });
+	helpers::corners(self.positions[16:8], { -0.5, 3.5, -0.5 }, { 0.5, 4.5, 0.5 });
 	for (usz box = 0; box < 3; box++)
 	{
-		foreach (usz i, corner : BOX_FACES) self.indices[box * 36 + i] = corner + (uint)(box * 8);
+		foreach (usz i, corner : helpers::BOX_FACES) self.indices[box * 36 + i] = corner + (uint)(box * 8);
 	}
 	rig::TriMesh mesh = { .positions = self.positions[..], .indices = self.indices[..] };
 	self.app = crig::new_app(mesh);

@@ -6,6 +6,7 @@ module crig;
 
 import cui;
 import cui::widgets;
+import std::hash::fnv32a;
 
 const String CUT_SIDE_ID = "cut-side";
 const String CUT_DELETE_ID = "cut-delete";
@@ -25,16 +26,17 @@ const Color CUT_PROBLEM_INK = { 1.0, 0.62, 0.15, 1.0 };
 // What the actors, the problems and the clip choices read from the characters.
 fn uint cut_cast_links(AppState* app) @private
 {
-	uint hash = 2166136261u;
+	Fnv32a hash;
+	hash.init();
 	for (usz i = 0; i < app.character_count(); i++)
 	{
 		Character* c = app.character(i);
-		hash = (hash ^ c.id) * 16777619u;
-		hash = (hash ^ (uint)c.doc.animations.len()) * 16777619u;
-		foreach (ch : c.actor_row) hash = (hash ^ ch) * 16777619u;
-		foreach (ch : c.level_node) hash = (hash ^ ch) * 16777619u;
+		hash.mix(c.id);
+		hash.mix(c.doc.animations.len());
+		hash.text(c.actor_row);
+		hash.text(c.level_node);
 	}
-	return hash;
+	return (uint)hash;
 }
 
 // Whether `elem` waits to rebuild: a held timeline press would lose its widget, a field typed in its text.

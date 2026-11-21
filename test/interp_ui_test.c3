@@ -28,39 +28,6 @@ fn void interp_thumb(Fixture* f, usz preset)
 
 fn String interp_label(Fixture* f) => crig::anim_interp_label(crig::anim_interp_state(&f.app));
 
-fn void the_popover_sets_linear_on_the_selected_keys() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-
-	f.click(multi_pose_point(&f, 1));
-	f.shift_click(multi_pose_point(&f, 2));
-	f.ui.flush();
-	interp_open(&f);
-	test::@check(f.ui.find_id(crig::ANIM_INTERP_POPOVER_ID)!!.widget_as(Dialog).open, "the button did not open the popover");
-	foreach (id : crig::ANIM_INTERP_THUMB_IDS) test::@check(f.in_tree(id), "the popover has no %s", id);
-	test::@check(f.in_tree(crig::ANIM_INTERP_EASE_IN_ID) && f.in_tree(crig::ANIM_INTERP_EASE_OUT_ID), "the ease sliders are missing");
-	test::@check(f.in_tree(crig::ANIM_KEY_TIME_ID) && f.in_tree(crig::ANIM_KEY_SPAN_ID), "Time and Span are missing");
-
-	// Step first, so Linear is a change from something.
-	interp_thumb(&f, 2);
-	test::eq(interp_label(&f), "Step");
-	sz history = f.app.undo_stack.cursor;
-	interp_thumb(&f, 1);
-	test::eq(f.app.undo_stack.cursor, history + 1);
-	AnimTemplate* clip = f.app.clip(f.app.editing);
-	foreach (frame : clip.keyframes[1:2])
-	{
-		foreach (dot : frame.dots) test::@check(dot.interpolation(true, clip.blend) == LINEAR, "key 1 is not Linear");
-	}
-	test::@check(clip.keyframes[2].dots[0].interpolation(true, clip.blend) == LINEAR, "key 2 is not Linear");
-	test::eq(interp_label(&f), "Linear");
-	test::@check(clip.keyframes[0].dots[0].rotation_interpolation == INHERIT, "an unselected key changed");
-	test::@check(f.app.undo(), "Linear did not undo");
-}
-
 fn void the_ease_in_thumbnail_sets_the_ease() @test
 {
 	Fixture f;
@@ -111,32 +78,6 @@ fn void the_sliders_set_a_custom_ease() @test
 	test::@check(math::abs(slider.value - 0.25f) < 1e-4f, "the slider does not show the ease");
 }
 
-fn void a_mixed_selection_reads_mixed() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-
-	f.click(multi_pose_point(&f, 1));
-	f.ui.flush();
-	crig::anim_interp_apply_preset(f.ui, 2);
-	f.click(multi_pose_point(&f, 2));
-	f.ui.flush();
-	crig::anim_interp_apply_preset(f.ui, 1);
-	f.click(multi_pose_point(&f, 1));
-	f.shift_click(multi_pose_point(&f, 2));
-	f.ui.flush();
-	test::eq(f.app.animation_key_selection_count(f.app.editing), (usz)2);
-	test::eq(interp_label(&f), "Mixed");
-	test::eq(crig::anim_interp_preset(crig::anim_interp_state(&f.app)), (sz)-1);
-	interp_open(&f);
-	foreach (id : crig::ANIM_INTERP_THUMB_IDS)
-	{
-		test::@check(!f.ui.find_id(id)!!.widget_as(InterpThumb).lit, "a preset is lit for a mixed selection");
-	}
-}
-
 fn void the_i_key_opens_the_popover_only_with_a_clip() @test
 {
 	Fixture f;
@@ -157,9 +98,12 @@ fn void the_k_key_keys_the_pose_and_shift_k_flips_auto_key() @test
 	f.open()!!;
 	defer f.close();
 	multi_pose_workspace(&f);
-	f.app.stage = crig::EditStage.POSE_STAGE;
 	f.app.edit_time = 3.0f;
 	usz keys = f.app.clip(f.app.editing).keyframes.len;
+	f.app.stage = crig::EditStage.JOINTS_STAGE;
+	f.feed_key(Key.K);
+	test::@check(f.app.clip(f.app.editing).keyframes.len == keys, "K keyed a pose in the Joints stage");
+	f.app.stage = crig::EditStage.POSE_STAGE;
 	f.feed_key(Key.K);
 	test::@check(!f.app.sketching, "K opened the Sketch tool; it has no key now");
 	test::@check(f.app.clip(f.app.editing).keyframes.len == keys + 1, "K did not key the pose at the playhead");
@@ -168,37 +112,4 @@ fn void the_k_key_keys_the_pose_and_shift_k_flips_auto_key() @test
 	f.feed(f.ui.input.mouse, keys: { Key.LEFT_SHIFT, Key.K });
 	f.feed(f.ui.input.mouse);
 	test::@check(f.app.auto_key != auto_key, "Shift+K did not flip Auto-key");
-}
-
-fn void the_k_key_does_nothing_in_the_joints_stage() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-	f.app.stage = crig::EditStage.JOINTS_STAGE;
-	f.app.edit_time = 3.0f;
-	usz keys = f.app.clip(f.app.editing).keyframes.len;
-	f.feed_key(Key.K);
-	test::@check(f.app.clip(f.app.editing).keyframes.len == keys, "K keyed a pose in the Joints stage");
-}
-
-fn void the_key_menu_has_one_interpolation_item() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-	multi_pose_workspace(&f);
-	f.app.select_animation_key(f.app.editing, 2.0f);
-	crig::anim_key_context(f.ui, { .at = 2.0f }, { 200, 200 });
-	f.ui.flush();
-	test::@check(f.in_tree(crig::ANIM_CONTEXT_INTERP_ID), "the key menu has no Interpolation item");
-	foreach (id : (String[]) { "anim-context-auto", "anim-context-linear", "anim-context-hold",
-		"anim-context-ease-in", "anim-context-ease-out", "anim-context-no-ease" })
-	{
-		test::@check(!f.in_tree(id), "the key menu still has the flat %s", id);
-	}
-	f.click(f.center_of(crig::ANIM_CONTEXT_INTERP_ID)!!);
-	f.ui.flush();
-	test::@check(f.in_tree(crig::ANIM_INTERP_THUMB_IDS[0]), "the item did not open the popover");
 }

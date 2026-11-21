@@ -26,7 +26,7 @@ import rig;
 import std::collections::object;
 import std::math;
 
-faultdef LAYER_REFUSED;
+excuse LAYER_REFUSED;
 
 const String SET_LAYER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The clip whose stack to change. A clip from a library file is forked into the authored pack first, as apply_clip does."},

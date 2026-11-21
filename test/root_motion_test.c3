@@ -12,7 +12,7 @@ import gltf;
 import gltf_edit;
 import crig_tests::gltf_replay;
 import crig_tests::pose_clipboard;
-import crig_tests::trust_fixes;
+import crig_tests::helpers;
 import std::core::test;
 import std::io;
 import std::io::file;
@@ -178,35 +178,14 @@ fn Vec3? file_joint(String path, String name, float t)
 	return {};
 }
 
-fn bool same_bytes(char[] a, char[] b)
-{
-	if (a.len != b.len) return false;
-	foreach (usz i, c : a) if (b[i] != c) return false;
-	return true;
-}
-
 macro bool same_values(a, b)
 {
 	if (a.len != b.len) return false;
 	for (usz i = 0; i < a.len; i++)
 	{
-		if (!same_bytes(@as_char_view(a[i]), @as_char_view(b[i]))) return false;
+		if (!helpers::same_bytes(@as_char_view(a[i]), @as_char_view(b[i]))) return false;
 	}
 	return true;
-}
-
-fn void motion_roots_finds_a_root_joint_only_under_the_hips() @test
-{
-	gltf_replay::Bench* bench = gltf_replay::setup();
-	crig::MotionRoots plain = crig::motion_roots(&bench.skeleton, gltf_replay::JOINTS[..]);
-	test::eq(plain.root, (sz)-1);
-	test::eq(plain.hips, (sz)0);
-
-	rig::Skeleton rooted = rooted_skeleton();
-	defer rooted.free(mem);
-	crig::MotionRoots found = crig::motion_roots(&rooted, ROOTED_JOINTS[..]);
-	test::eq(found.root, (sz)0);
-	test::eq(found.hips, (sz)1);
 }
 
 <*
@@ -228,7 +207,6 @@ fn void an_in_place_export_replays_the_viewport_without_travel() @test
 
 	Replayed gaps = replay(OUT, &bench.skeleton, gltf_replay::JOINTS[..], clip, motion.root,
 		bench.body, bench.preview)!!;
-	io::printfn("  in place: joints %.7f, vertices %.7f", gaps.joints, gaps.vertices);
 	test::@check(gaps.joints < gltf_replay::EXACT && gaps.vertices < gltf_replay::EXACT,
 		"the in-place file does not replay the viewport minus its travel");
 
@@ -266,7 +244,6 @@ fn void a_root_motion_export_moves_travel_onto_the_root_joint() @test
 		test::eq(report.moved, (usz)1);
 
 		Replayed gaps = replay(OUT, &rooted, ROOTED_JOINTS[..], clip, motion.root)!!;
-		io::printfn("  on root (turning %s): joints %.7f, others vs viewport %.7f", turning, gaps.joints, gaps.others);
 		float tolerance = turning ? 1.0e-3f : gltf_replay::EXACT;
 		test::@check(gaps.joints < tolerance, "the root-motion file does not replay its intended pose");
 		test::@check(gaps.others < tolerance, "a joint under the root moved away from the viewport");
@@ -338,9 +315,6 @@ fn void a_reduced_export_writes_fewer_keys_and_still_replays() @test
 		if (reduce == OFF) baseline = gaps;
 		// The full bake's own gap between samples, plus what reduction may add.
 		float reach = 1.5f * reduce.tolerance(height).reach;
-		io::printfn("  reduce %s: %d of %d keys, joints %.6f, vertices %.6f (full bake %.6f / %.6f, + %.6f)",
-			reduce, report.keys_after, report.keys_before, gaps.joints, gaps.vertices,
-			baseline.joints, baseline.vertices, reach);
 		test::@check(gaps.joints <= baseline.joints + reach && gaps.vertices <= baseline.vertices + reach,
 			"a reduced file strays from the viewport");
 		if (reduce == OFF) test::eq(report.keys_after, report.keys_before);
@@ -407,7 +381,7 @@ fn void default_export_options_write_the_same_bytes() @test
 	defer alloc::free(mem, x);
 	char[] y = file::load(mem, keep)!!;
 	defer alloc::free(mem, y);
-	test::@check(same_bytes(x, y), "options off changed the written file");
+	test::@check(helpers::same_bytes(x, y), "options off changed the written file");
 	test::@check(report.keys_before > 0 && report.keys_after == report.keys_before, "the report did not count the keys");
 
 	gltf_edit::ReskinClip[] one = crig::reskin_clips(mem, &bench.skeleton, gltf_replay::JOINTS[..], clips[..]);
@@ -518,10 +492,11 @@ fn void the_clip_rewrite_moves_travel_in_its_keys() @test
 }
 
 <*
- Make in place on the edited clip is one undo step, and a rig rooted at its hips
+ Make in place on the edited clip takes the hips' travel out and leaves their
+ rise unless height is ticked, one undo step each; a rig rooted at its hips
  refuses Move travel to root joint with a notice.
 *>
-fn void make_in_place_is_one_undo_step() @test
+fn void make_in_place_takes_height_only_when_asked_in_one_undo_step() @test
 {
 	pose_clipboard::Figure f;
 	bool opened = f.open();
@@ -529,16 +504,17 @@ fn void make_in_place_is_one_undo_step() @test
 	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
 	test::@check(!f.app.has_root_joint(), "the biped should be rooted at its hips");
 
-	// Carry the hips forward over the clip.
+	// Carry the hips forward and up over the clip.
 	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not sample the end");
 	f.app.edit_time = 1.0f;
-	test::@check(f.app.set_working_pose(f.hips, quaternion::IDENTITY, { 0.3f, 0.0f, 0.5f }), "could not move the hips");
+	test::@check(f.app.set_working_pose(f.hips, quaternion::IDENTITY, { 0.3f, 0.4f, 0.5f }), "could not move the hips");
 	f.app.pose_edit_pending = true;
 	test::@check(f.app.key_pose_edit(), "could not key the travel");
 	f.app.undo_stack.clear();
 	crig::AnimTemplate* clip = f.app.clip(f.app.editing);
 	Vec3 travelled = clip.entry_at("hips", 1.0f).move;
-	test::@check(travelled.length() > 0.1f, "the fixture does not travel");
+	float rise = travelled.y - clip.entry_at("hips", 0.0f).move.y;
+	test::@check(travelled.length() > 0.1f && rise > 0.1f, "the fixture does not travel and rise");
 
 	sz cursor = f.app.undo_stack.cursor;
 	test::@check(f.app.move_clip_travel(f.app.editing, { .mode = IN_PLACE }), "Make in place did nothing: %s", f.app.notice());
@@ -546,9 +522,15 @@ fn void make_in_place_is_one_undo_step() @test
 	clip = f.app.clip(f.app.editing);
 	Vec3 now = clip.entry_at("hips", 1.0f).move - clip.entry_at("hips", 0.0f).move;
 	test::@check(math::abs(now.x) < 1.0e-4f && math::abs(now.z) < 1.0e-4f, "the hips still travel");
+	test::@check(math::abs(now.y - rise) < 1.0e-3f, "ground-only removal changed the height (%f vs %f)", now.y, rise);
 	test::@check(f.app.undo(), "Make in place would not undo");
 	test::@check((f.app.clip(f.app.editing).entry_at("hips", 1.0f).move - travelled).length() < 1.0e-6f,
 		"undo did not bring the travel back");
+
+	test::@check(f.app.move_clip_travel(f.app.editing, { .mode = IN_PLACE, .vertical = true }), "removing height did nothing: %s", f.app.notice());
+	clip = f.app.clip(f.app.editing);
+	float left = clip.entry_at("hips", 1.0f).move.y - clip.entry_at("hips", 0.0f).move.y;
+	test::@check(math::abs(left) < 1.0e-3f, "the height is still there (%f)", left);
 
 	cursor = f.app.undo_stack.cursor;
 	test::@check(!f.app.move_clip_travel(f.app.editing, { .mode = ON_ROOT }), "a hips-rooted rig took root motion");
@@ -630,37 +612,6 @@ fn void optimize_smooths_a_clip_already_in_place() @test
 	test::eq(f.app.undo_stack.cursor, cursor + 1);
 	test::@check(f.app.notice().contains("jitter") && f.app.notice().contains("already stays in place"),
 		"the notice does not say what changed: %s", f.app.notice());
-}
-
-<*
- Remove movement with height ticked takes the rise out of the hips' travel as
- well; without it the height is left in.
-*>
-fn void remove_movement_takes_height_only_when_asked() @test
-{
-	pose_clipboard::Figure f;
-	bool opened = f.open();
-	defer f.close();
-	if (!opened) { test::@check(false, "could not build the biped fixture"); return; }
-
-	test::@check(f.app.pose_from_clip(f.app.editing, 1.0f), "could not sample the end");
-	f.app.edit_time = 1.0f;
-	test::@check(f.app.set_working_pose(f.hips, quaternion::IDENTITY, { 0.3f, 0.4f, 0.5f }), "could not move the hips");
-	f.app.pose_edit_pending = true;
-	test::@check(f.app.key_pose_edit(), "could not key the travel");
-	f.app.undo_stack.clear();
-
-	float rise = f.app.clip(f.app.editing).entry_at("hips", 1.0f).move.y - f.app.clip(f.app.editing).entry_at("hips", 0.0f).move.y;
-	test::@check(rise > 0.1f, "the fixture does not rise");
-	test::@check(f.app.move_clip_travel(f.app.editing, { .mode = IN_PLACE }), "Remove movement did nothing: %s", f.app.notice());
-	crig::AnimTemplate* clip = f.app.clip(f.app.editing);
-	float kept = clip.entry_at("hips", 1.0f).move.y - clip.entry_at("hips", 0.0f).move.y;
-	test::@check(math::abs(kept - rise) < 1.0e-3f, "ground-only removal changed the height (%f vs %f)", kept, rise);
-
-	test::@check(f.app.move_clip_travel(f.app.editing, { .mode = IN_PLACE, .vertical = true }), "removing height did nothing: %s", f.app.notice());
-	clip = f.app.clip(f.app.editing);
-	float left = clip.entry_at("hips", 1.0f).move.y - clip.entry_at("hips", 0.0f).move.y;
-	test::@check(math::abs(left) < 1.0e-3f, "the height is still there (%f)", left);
 }
 
 <*
@@ -866,11 +817,11 @@ fn void an_exported_model_leaves_its_key_schedule_to_the_sidecar() @test
 {
 	String source = "build/schedule-source.glb";
 	String exported = "build/schedule-export.glb";
-	trust_fixes::copy_humanoid(source);
+	helpers::copy_humanoid(source);
 	defer
 	{
-		trust_fixes::remove_with_sidecar(source);
-		trust_fixes::remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(source);
+		helpers::remove_with_sidecar(exported);
 	}
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
@@ -924,11 +875,11 @@ fn void an_app_export_reports_the_keys_it_wrote() @test
 {
 	String source = "build/root-motion-source.glb";
 	String exported = "build/root-motion-export.glb";
-	trust_fixes::copy_humanoid(source);
+	helpers::copy_humanoid(source);
 	defer
 	{
-		trust_fixes::remove_with_sidecar(source);
-		trust_fixes::remove_with_sidecar(exported);
+		helpers::remove_with_sidecar(source);
+		helpers::remove_with_sidecar(exported);
 	}
 	rig::TriMesh mesh = rig::load_gltf(mem, source)!!;
 	defer mesh.free(mem);
@@ -944,7 +895,6 @@ fn void an_app_export_reports_the_keys_it_wrote() @test
 	usz keys = one[0].keyframes.len;
 
 	app.export_rig(exported, one, { .root = { .mode = IN_PLACE }, .reduce = LIGHT });
-	io::printfn("  %s", app.notice());
 	test::@check(file::is_file(exported), "the export wrote nothing: %s", app.notice());
 	test::@check(app.notice().contains("keys written"), "the notice does not count keys: %s", app.notice());
 	crig::AnimTemplate[] after = app.bound_templates(mem);

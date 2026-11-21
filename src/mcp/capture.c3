@@ -19,7 +19,7 @@ import std::collections::object;
 import std::io::file;
 import std::collections::list;
 
-faultdef CAPTURE_REFUSED;
+excuse CAPTURE_REFUSED;
 
 const String CAPTURE_SCHEMA = `{"type":"object","properties":{
 	"action":{"type":"string","enum":["status","train","use_finder","reference","animate","reads","stop"],"description":"What to do. reads: where the last animate run kept what it read (reads.png: frames with the fitted bones and every read drawn on them; tracks.json) and its report, whose reads list each point per view as [name, weight, median miss in px, share of frames over 30 px off]."},

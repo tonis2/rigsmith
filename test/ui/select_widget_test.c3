@@ -14,135 +14,7 @@ import std::io;
 import std::math;
 
 // ---------------------------------------------------------------------------
-// The Select widget — cui's dropdown chooser, in its own little tree. crig has
-// no consumer for it yet (presets and the falloff picker will be); this pins
-// the widget's contract down before anything depends on it.
-
-usz select_picked = 999;
-
-fn void select_changed(Ui* ui, usz index)
-{
-	select_picked = index;
-}
-
-fn void pump(Ui* ui, Vec2 mouse, bool left = false)
-{
-	ui.process_input({ .mouse = mouse, .buttons = { left, false, false } }, DT);
-	ui.flush();
-}
-
-fn void click_at(Ui* ui, Vec2 at)
-{
-	pump(ui, at);
-	pump(ui, at, left: true);
-	pump(ui, at);
-}
-
-fn void select_widget() @test
-{
-	io::printn("the Select widget chooses an option");
-
-	Ui* ui = cui::new_ui({ 400.0, 300.0 });
-	defer ui.free();
-	if (catch ui.load_font(crig::FONT_PATH))
-	{
-		test::@check(false, "SKIPPED — the font is needed to size the options");
-		return;
-	}
-
-	String[3] options = { "Linear", "Smooth", "Sharp" };
-	@canvas(ui)
-	{
-		@tree((Stack) { })
-		{
-			@node((Select) { .options = options[..], .on_change = &select_changed }).with_id("select")
-				.set_offset({ 40.0, 40.0 });
-		};
-	};
-	ui.flush();
-
-	Element*? select_elem = ui.find_id("select");
-	if (catch select_elem)
-	{
-		test::@check(false, "SKIPPED — the Select is not in the tree");
-		return;
-	}
-	Select* select = select_elem.widget_as(Select);
-	Vec2 head      = select_elem.absolute + select_elem.size * 0.5f;
-
-	click_at(ui, head);
-	test::@check(select.open, "clicking the head opens the list");
-
-	Element*? sharp = ui.find_id("Sharp");
-	if (catch sharp)
-	{
-		test::@check(false, "SKIPPED — the options are not in the open list");
-		return;
-	}
-	click_at(ui, sharp.absolute + sharp.size * 0.5f);
-	test::@check(select.selected == 2, "clicking an option selects it");
-	test::@check(select_picked == 2, "and the change callback fired with its index");
-	test::@check(!select.open, "and the list closed");
-
-	click_at(ui, head);
-	test::@check(select.open, "it reopens");
-	click_at(ui, { 300.0, 250.0 });
-	test::@check(!select.open, "a click elsewhere closes it");
-	test::@check(select.selected == 2, "without changing the choice");
-}
-
-<*
- The size-field convention, end to end: a widget with a `Vec2 size` field and
- no layout is sized by the field, a zero component fills the parent, and
- a fixed-size Column offers its own width downward so "fill" inherits 400
- rather than the window. Rectangle is the widget under test because it is the
- worked example — it has no layout at all.
-*>
-fn void size_field_convention() @test
-{
-	io::printn("a Vec2 size field sizes a widget with no layout code");
-
-	Ui* ui = cui::new_ui({ 1000.0, 600.0 });
-	defer ui.free();
-
-	@canvas(ui)
-	{
-		@tree((Stack) { })
-		{
-			@node((Rectangle) { .size = { 70.0, 30.0 } }).with_id("fixed").set_offset({ 10.0, 10.0 });
-
-			// A 400px column: the bar's zero width must become 400, not 1000.
-			@tree((Column) { .size = { 400.0, 0.0 } })
-			{
-				@node((Rectangle) { .size = { 0.0, 24.0 } }).with_id("bar");
-			}.set_offset({ 10.0, 60.0 });
-		};
-	};
-	ui.flush();
-
-	Element*? fixed = ui.find_id("fixed");
-	if (catch fixed)
-	{
-		test::@check(false, "SKIPPED — the fixed rectangle is not in the tree");
-		return;
-	}
-	test::@check(fixed.size.x == 70.0 && fixed.size.y == 30.0, "the field decides the size with no layout written");
-
-	Element*? bar = ui.find_id("bar");
-	if (catch bar)
-	{
-		test::@check(false, "SKIPPED — the bar rectangle is not in the tree");
-		return;
-	}
-	test::@check(bar.size.y == 24.0, "a set component is fixed");
-	test::@check(bar.size.x == 400.0, "and a zero component fills the column's own width, top-down");
-
-	// The field is read live, so mutating it and asking for layout resizes.
-	fixed.widget_as(Rectangle).size = { 90.0, 40.0 };
-	fixed.request_layout();
-	ui.flush();
-	test::@check(fixed.size.x == 90.0 && fixed.size.y == 40.0, "mutating the field and requesting layout resizes");
-}
+// Presets, and moving a joint: axis locks, escape and the body clamp.
 
 <*
  Rig > Quadruped preset drops a whole body plan in, and one Ctrl+Z takes it out.
@@ -300,7 +172,7 @@ fn usz drawn(Fixture* fixture, DrawingKind kind, Color color)
 <*
  Raised when the canvas does not hold exactly one drawing of the kind asked for.
 *>
-faultdef NOT_ONE_DRAWING;
+excuse NOT_ONE_DRAWING;
 
 <*
  Where the one drawing of this kind and colour was put, in window coordinates.

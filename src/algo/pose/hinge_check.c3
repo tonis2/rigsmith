@@ -190,14 +190,14 @@ struct HingeShape @local
 fn bool hinge_shape(rig::Skeleton* skeleton, String[] names, usz j, Vec3 forward, bool upright, HingeShape* out) @local
 {
 	String name = names[j];
-	bool knee = name_has(name, "knee") || name_has(name, "shin") || name_has(name, "calf");
+	bool knee = contains_fold(name, "knee") || contains_fold(name, "shin") || contains_fold(name, "calf");
 	// A quadruped's foreleg folds the other way round at the joint called the
 	// elbow, so only an upright figure's elbows are held to a human's.
-	bool elbow = upright && (name_has(name, "elbow") || name_has(name, "forearm"));
-	bool toe = name_has(name, "toe") && !name_has(name, "tip");
+	bool elbow = upright && (contains_fold(name, "elbow") || contains_fold(name, "forearm"));
+	bool toe = contains_fold(name, "toe") && !contains_fold(name, "tip");
 	// A thigh is a ball, not a hinge, but every leg swings forward from the hip:
 	// a table that will not let it is one read in the wrong frame.
-	bool thigh = upright && (name_has(name, "thigh") || name_has(name, "upper_leg") || name_has(name, "upperleg"));
+	bool thigh = upright && (contains_fold(name, "thigh") || contains_fold(name, "upper_leg") || contains_fold(name, "upperleg"));
 	if (!knee && !elbow && !toe && !thigh) return false;
 
 	sz child = longest_child(skeleton, j);
@@ -274,8 +274,7 @@ fn float fold_refused(JointLimitFrame frame, JointRotationLimits limits, Vec3 ax
 {
 	Quaternionf turn = quaternion::from_axis_angle{float}(axis, angle);
 	Quaternionf held = constrain_joint_rotation(frame, limits, turn);
-	float dot = math::abs(held.v.x * turn.v.x + held.v.y * turn.v.y + held.v.z * turn.v.z + held.v.w * turn.v.w);
-	return 2.0f * math::acos(math::min(dot, 1.0f));
+	return turn_gap(held, turn);
 }
 
 <*
@@ -372,8 +371,8 @@ fn bool rig_facing(rig::Skeleton* skeleton, String[] names, Vec3* out)
 		if (j >= names.len) break;
 		String name = names[j];
 		sz parent = skeleton.parents[j];
-		if (parent >= 0 && name_has(name, "toe") && !name_has(name, "tip")
-			&& (name_has(names[(usz)parent], "ankle") || name_has(names[(usz)parent], "foot")))
+		if (parent >= 0 && contains_fold(name, "toe") && !contains_fold(name, "tip")
+			&& (contains_fold(names[(usz)parent], "ankle") || contains_fold(names[(usz)parent], "foot")))
 		{
 			Vec3 step = at - skeleton.joints[(usz)parent];
 			toes += (Vec3){ step.x, 0, step.z };
@@ -424,19 +423,13 @@ fn float side_sign(String name)
 	}
 }
 
-fn bool name_has(String name, String part)
+<* Whether `needle` appears in `haystack`, ignoring case; folded per byte, so a search allocates nothing. *>
+fn bool contains_fold(String haystack, String needle)
 {
-	if (name.len < part.len) return false;
-	for (usz i = 0; i + part.len <= name.len; i++)
+	if (needle.len > haystack.len) return false;
+	for (usz start = 0; start + needle.len <= haystack.len; start++)
 	{
-		bool same = true;
-		for (usz k = 0; k < part.len; k++)
-		{
-			char a = name[i + k];
-			if (a >= 'A' && a <= 'Z') a += 32;
-			if (a != part[k]) { same = false; break; }
-		}
-		if (same) return true;
+		if (haystack[start:needle.len].compare_to_ignore_case(needle) == 0) return true;
 	}
 	return false;
 }

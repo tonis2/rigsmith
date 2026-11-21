@@ -16,7 +16,7 @@ import rig;
 import std::collections::object;
 import std::math;
 
-faultdef POSE_REFUSED;
+excuse POSE_REFUSED;
 
 const String SAVE_POSE_SCHEMA = `{"type":"object","properties":{
 	"name":{"type":"string","description":"What to call the pose. A pose of that name is replaced. Empty picks the next free \"Pose N\"."},

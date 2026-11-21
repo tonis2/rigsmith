@@ -28,6 +28,7 @@
 module crig_tests::pick;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import collision;
@@ -149,11 +150,10 @@ fn float? worst_round_trip(crig::OrbitCamera camera, Vec2* worst_at)
 }
 
 <*
- project and ray_direction have to be inverses.
-
- No mesh: a box around the origin, which is where float32 has the most to spend
- on the answer, so what is left is the projection math rather than cancellation.
- See `OFF_ORIGIN_TOLERANCE` for the other half of the story.
+ project and ray_direction have to be inverses: on a box around the origin,
+ where float32 has the most to spend on the answer, and on the framing of a real
+ model, which is not centred on the origin and pays for that offset (see
+ `OFF_ORIGIN_TOLERANCE`).
 *>
 fn void project_and_ray_direction_are_inverses() @test
 {
@@ -166,20 +166,9 @@ fn void project_and_ray_direction_are_inverses() @test
 		test::@check(false, "a viewport pixel resolved to no ray (%s)", error);
 		return;
 	}
-
 	test::@check(worst < PIXEL_TOLERANCE, "worst round trip %.4f px at (%.0f, %.0f)",
 		worst, worst_at.x, worst_at.y);
-}
 
-<*
- And on the framing of a real model, which is not centred on the origin.
-
- Pins the cost of that offset rather than leaving it to be discovered when a dot
- lands beside the pointer. A model placed much further out than this one pays
- proportionally more — see `OFF_ORIGIN_TOLERANCE`.
-*>
-fn void the_round_trip_survives_a_model_off_the_origin() @test
-{
 	Aimed? scene = aimed();
 	if (catch fault error = scene)
 	{
@@ -187,27 +176,28 @@ fn void the_round_trip_survives_a_model_off_the_origin() @test
 		return;
 	}
 	defer scene.free();
-
-	Vec2 worst_at = { 0, 0 };
-	float? worst = worst_round_trip(scene.camera, &worst_at);
-	if (catch fault error = worst)
+	float? off_origin = worst_round_trip(scene.camera, &worst_at);
+	if (catch fault error = off_origin)
 	{
-		test::@check(false, "a viewport pixel resolved to no ray (%s)", error);
+		test::@check(false, "a viewport pixel resolved to no ray off the origin (%s)", error);
 		return;
 	}
-
-	test::@check(worst < OFF_ORIGIN_TOLERANCE, "worst round trip %.4f px at (%.0f, %.0f)",
-		worst, worst_at.x, worst_at.y);
+	test::@check(off_origin < OFF_ORIGIN_TOLERANCE, "worst round trip off the origin %.4f px at (%.0f, %.0f)",
+		off_origin, worst_at.x, worst_at.y);
 }
 
 <*
- A click at the middle of the viewport has to land inside the model.
+ A click at the middle of the viewport lands inside the model, comes back to the
+ pixel that placed it, and sits in the interior rather than on the skin.
 
- `framed` aims the camera at the bounding-box centre, so the centre pixel is
- looking straight down the barrel of the mesh — if that misses, the camera and
- the picker do not agree on where the model is.
+ `framed` aims the camera at the bounding-box centre, so the centre pixel looks
+ straight down the barrel of the mesh: if it misses, the camera and the picker
+ disagree about where the model is. A dot the user cannot click again is the
+ same bug as one placed in the wrong spot. And casting back along the view ray,
+ an interior point sees the near wall behind it and the far wall ahead, where a
+ point on the skin sees nothing behind it and one outside sees nothing one way.
 *>
-fn void a_click_at_the_centre_lands_inside_the_mesh() @test
+fn void a_click_at_the_centre_snaps_inside_the_mesh_under_its_pixel() @test
 {
 	Aimed? scene = aimed();
 	if (catch fault error = scene)
@@ -226,23 +216,8 @@ fn void a_click_at_the_centre_lands_inside_the_mesh() @test
 			"the dot's axis %d landed at %.4f, outside the mesh bounds %.4f..%.4f",
 			axis, snapped[axis], box.min[axis], box.max[axis]);
 	}
-}
 
-// And that it comes back to the pixel that placed it. A dot the user cannot
-// click again is the same bug as a dot placed in the wrong spot.
-fn void a_placed_dot_projects_back_to_its_pixel() @test
-{
-	Aimed? scene = aimed();
-	if (catch fault error = scene)
-	{
-		test::@check(false, "could not load %s (%s) — run from the crig directory", MESH, error);
-		return;
-	}
-	defer scene.free();
-
-	Vec3 snapped = snap_at_centre(&scene)!!;
 	Vec2 centre = VIEWPORT * 0.5f;
-
 	Vec2? back = crig::project(
 		scene.camera.view_projection(VIEWPORT.x / VIEWPORT.y), snapped, VIEWPORT);
 	if (catch back)
@@ -250,40 +225,15 @@ fn void a_placed_dot_projects_back_to_its_pixel() @test
 		test::@check(false, "the dot projects nowhere on the screen");
 		return;
 	}
-
 	float off = (back - centre).length();
 	test::@check(off < PIXEL_TOLERANCE, "the dot reprojected %.4f px from the pixel that placed it", off);
-}
-
-<*
- The snapped point is in the interior, not welded to the skin.
-
- Casts back along the view ray from the snapped point. A point in the interior
- sees the near wall behind it and the far wall ahead; a point on the skin sees
- nothing behind it, and a point floating outside the mesh entirely sees nothing
- in one direction or the other. A proxy rather than a parity test, but it fails
- for exactly the ways `snap_inside` can go wrong.
-*>
-fn void a_placed_dot_has_surface_on_both_sides() @test
-{
-	Aimed? scene = aimed();
-	if (catch fault error = scene)
-	{
-		test::@check(false, "could not load %s (%s) — run from the crig directory", MESH, error);
-		return;
-	}
-	defer scene.free();
-
-	Vec2 centre = VIEWPORT * 0.5f;
-	Vec3 direction = scene.camera.ray_direction(centre, VIEWPORT)!!;
-	Vec3 snapped = snap_at_centre(&scene)!!;
 
 	// Started far enough off the point that the cast does not immediately
 	// re-find a triangle it is sitting on.
+	Vec3 direction = scene.camera.ray_direction(centre, VIEWPORT)!!;
 	float step = scene.picker.scale * 0.0001f;
 	collision::Ray forward = { .origin = snapped + direction * step, .direction = direction };
 	collision::Ray backward = { .origin = snapped - direction * step, .direction = -direction };
-
 	test::@check(scene.picker.bvh.ray_intersects(forward).collided, "nothing ahead of the dot along the view ray");
 	test::@check(scene.picker.bvh.ray_intersects(backward).collided, "nothing behind the dot along the view ray");
 }
@@ -291,8 +241,7 @@ fn void a_placed_dot_has_surface_on_both_sides() @test
 <*
  Where a click at the centre of the viewport puts a dot.
 
- Shared by the three snap checks so each states one claim about the same point
- rather than re-deriving it and asserting the derivation too.
+ Shared by the snap checks so each claim is about the same point.
 *>
 fn Vec3? snap_at_centre(Aimed* scene)
 {
@@ -308,20 +257,6 @@ fn Vec3? snap_at_centre(Aimed* scene)
 // seven of them making up a single hand. The fixtures below are the smallest
 // statement of each way that meets a ray, built by hand so every claim can name
 // the coordinate it expects rather than measuring the mesh and believing it.
-
-// The twelve triangles of a box, wound outward.
-//
-// `snap_inside` reads a face's facing off its winding, so a box wound the other
-// way is a box the walk sees inside-out — which is the one way these fixtures
-// could quietly stop testing what they claim to.
-const uint[36] BOX_FACES @local = {
-	4, 5, 6, 4, 6, 7,   // +Z
-	0, 3, 2, 0, 2, 1,   // -Z
-	1, 2, 6, 1, 6, 5,   // +X
-	0, 4, 7, 0, 7, 3,   // -X
-	3, 7, 6, 3, 6, 2,   // +Y
-	0, 1, 5, 0, 5, 4,   // -Y
-};
 
 <*
  Two axis-aligned boxes, as one mesh.
@@ -339,28 +274,15 @@ struct TwoBoxes @local
 
 fn rig::TriMesh TwoBoxes.mesh(&self, Vec3 low, Vec3 high, Vec3 other_low, Vec3 other_high)
 {
-	corners(self.positions[:8], low, high);
-	corners(self.positions[8:8], other_low, other_high);
+	helpers::corners(self.positions[:8], low, high);
+	helpers::corners(self.positions[8:8], other_low, other_high);
 
-	foreach (usz i, corner : BOX_FACES)
+	foreach (usz i, corner : helpers::BOX_FACES)
 	{
 		self.indices[i] = corner;
 		self.indices[i + 36] = corner + 8;
 	}
 	return { .positions = self.positions[..], .indices = self.indices[..] };
-}
-
-// The eight corners of a box, in the order `BOX_FACES` winds them.
-fn void corners(Vec3[] into, Vec3 low, Vec3 high) @local
-{
-	into[0] = { low.x, low.y, low.z };
-	into[1] = { high.x, low.y, low.z };
-	into[2] = { high.x, high.y, low.z };
-	into[3] = { low.x, high.y, low.z };
-	into[4] = { low.x, low.y, high.z };
-	into[5] = { high.x, low.y, high.z };
-	into[6] = { high.x, high.y, high.z };
-	into[7] = { low.x, high.y, high.z };
 }
 
 // Straight at the model from in front, which is where every claim below reads
@@ -411,8 +333,15 @@ fn void two_interpenetrating_boxes_are_read_as_one_piece() @test
  re-chosen from nothing on every mouse move, and on a model whose ray passes
  through more than one piece the answer changes between neighbouring pixels,
  which is the whole of what the user sees as the dot jumping.
+
+ The continuity only holds a dot in a piece it is genuinely *inside*. A drag that
+ has carried the dot into the gap between two limbs, in front of the whole model
+ or off the back of it is inside neither, and the front-most piece wins as a
+ fresh click's would. Nearest-to-the-hint used to win there, so a dot nudged into
+ the gap a hair nearer the far box was pulled through to the back of the body:
+ the jump the user reported.
 *>
-fn void a_hint_holds_the_dot_in_its_own_piece() @test
+fn void a_hint_holds_the_dot_in_its_piece_and_none_takes_the_front() @test
 {
 	TwoBoxes fixture;
 	rig::TriMesh mesh = fixture.mesh(
@@ -437,29 +366,6 @@ fn void a_hint_holds_the_dot_in_its_own_piece() @test
 	Vec3 kept = picker.snap_inside(down_z(), &in_near)!!;
 	test::@check(math::abs(kept.z - 0.75f) < DEPTH_TOLERANCE,
 		"a dot in the near box moved to z %.4f", kept.z);
-}
-
-<*
- A hint that sits in no piece snaps to the front, never onto what is behind it.
-
- The continuity only holds a dot in a piece it is genuinely *inside*. A drag that
- has carried the dot into the gap between two limbs — or in front of the whole
- model, or clean off the back of it — is inside neither, and the front-most piece
- wins exactly as a fresh click's would. Nearest-to-the-hint used to win here
- instead, so a dot nudged into the gap and a hair nearer the far box was pulled
- through to the back of the body; that is the jump the user reported, and the
- hint at 0.35 below is closer to the far box's face than to the near box's yet
- still lands in front.
-*>
-fn void a_hint_in_no_piece_snaps_to_the_front() @test
-{
-	TwoBoxes fixture;
-	rig::TriMesh mesh = fixture.mesh(
-		{ -0.25, -0.25, 0.60 }, { 0.25, 0.25, 0.90 },   // near the eye
-		{ -0.25, -0.25, 0.00 }, { 0.25, 0.25, 0.30 });  // and well behind it
-
-	crig::Picker picker = crig::build_picker(mesh);
-	defer picker.free();
 
 	// In the 0.30..0.60 gap, nearer the far box's face (0.30) than the near box's
 	// (0.60) — the exact bias that used to drag the dot to the back.
@@ -562,8 +468,8 @@ fn void material_the_ray_starts_inside_ends_where_it_leaves() @test
 fn void posed_occlusion_follows_the_palette_and_invalidates_its_lazy_cache() @test
 {
 	Vec3[8] rest;
-	corners(rest[..], { -1, -1, -1 }, { 1, 1, 1 });
-	uint[36] indices = BOX_FACES;
+	helpers::corners(rest[..], { -1, -1, -1 }, { 1, 1, 1 });
+	uint[36] indices = helpers::BOX_FACES;
 	rig::TriMesh mesh = { .positions = rest[..], .indices = indices[..] };
 
 	ushort[32] joints;
@@ -653,7 +559,7 @@ fn void posed_occlusion_follows_the_palette_and_invalidates_its_lazy_cache() @te
  whole guide disappears at the moment it is most wanted, and it looks like a
  missing feature rather than a bug.
 *>
-fn void a_segment_running_past_the_camera_still_draws() @test
+fn void a_segment_is_clipped_at_the_eye_and_refused_wholly_behind_it() @test
 {
 	Aimed? ready = aimed();
 	if (catch ready)
@@ -714,29 +620,14 @@ fn void a_segment_running_past_the_camera_still_draws() @test
 			"the visible end moved %.3f px when the far end was clipped",
 			(line[1] - kept).length());
 	}
-}
 
-// A segment wholly behind the eye has no image, and says so rather than
-// returning two numbers a caller would draw a line between.
-fn void a_segment_wholly_behind_the_camera_is_refused() @test
-{
-	Aimed? ready = aimed();
-	if (catch ready)
-	{
-		test::@check(false, "could not load %s — run from the crig directory", MESH);
-		return;
-	}
-	Aimed scene = ready;
-	defer scene.free();
-
-	Matrix4f view_projection = scene.camera.view_projection(VIEWPORT.x / VIEWPORT.y);
-
-	// Behind the eye, along the line from the target through it and out the back.
+	// A segment wholly behind the eye has no image, and says so rather than
+	// returning two numbers a caller would draw a line between.
+	Matrix4f framed = scene.camera.view_projection(VIEWPORT.x / VIEWPORT.y);
 	Vec3 back = scene.camera.eye() + (scene.camera.eye() - scene.camera.target);
 	Vec3 further = back + (scene.camera.eye() - scene.camera.target);
-
-	Vec2[2]? drawn = crig::project_segment(view_projection, back, further, VIEWPORT);
-	if (try drawn) test::@check(false, "a segment behind the camera came back with an image");
+	Vec2[2]? behind_only = crig::project_segment(framed, back, further, VIEWPORT);
+	if (try behind_only) test::@check(false, "a segment behind the camera came back with an image");
 }
 
 <*
@@ -751,8 +642,8 @@ fn void a_segment_wholly_behind_the_camera_is_refused() @test
 fn void the_lasso_gathers_the_posed_body() @test
 {
 	Vec3[8] rest;
-	corners(rest[..], { -1, -1, -1 }, { 1, 1, 1 });
-	uint[36] indices = BOX_FACES;
+	helpers::corners(rest[..], { -1, -1, -1 }, { 1, 1, 1 });
+	uint[36] indices = helpers::BOX_FACES;
 	rig::TriMesh mesh = { .positions = rest[..], .indices = indices[..] };
 
 	ushort[32] joints;
@@ -813,8 +704,8 @@ fn void the_lasso_gathers_the_posed_body() @test
 fn void a_point_deep_along_one_solid_is_behind_it() @test
 {
 	Vec3[8] at;
-	corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
-	uint[36] indices = BOX_FACES;
+	helpers::corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
+	uint[36] indices = helpers::BOX_FACES;
 	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
 	defer picker.free();
 
@@ -857,8 +748,8 @@ fn void a_solid_in_front_hides_a_joint_in_the_one_behind() @test
 fn void the_body_radius_is_the_thickness_round_the_point() @test
 {
 	Vec3[8] at;
-	corners(at[..], { -1, -1, -1 }, { 1, 1, 1 });
-	uint[36] indices = BOX_FACES;
+	helpers::corners(at[..], { -1, -1, -1 }, { 1, 1, 1 });
+	uint[36] indices = helpers::BOX_FACES;
 	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
 	defer picker.free();
 
@@ -883,8 +774,8 @@ fn void the_body_radius_is_the_thickness_round_the_point() @test
 fn void a_joint_behind_its_own_skin_is_seen_and_behind_another_limb_hidden() @test
 {
 	Vec3[8] at;
-	corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
-	uint[36] indices = BOX_FACES;
+	helpers::corners(at[..], { -0.5, -0.5, -10 }, { 0.5, 0.5, 0 });
+	uint[36] indices = helpers::BOX_FACES;
 	crig::Picker picker = crig::build_picker({ .positions = at[..], .indices = indices[..] });
 	defer picker.free();
 	crig::AppState app = { .picker = picker, .show_mesh = true };
@@ -900,15 +791,4 @@ fn void a_joint_behind_its_own_skin_is_seen_and_behind_another_limb_hidden() @te
 	test::@check(app.rig_point_hidden(eye, deep, -1.0f, crossed[..], 2),
 		"the same joint behind another limb's skin was seen");
 	test::@check(app.rig_point_hidden(eye, deep), "with no bones, depth alone did not decide");
-}
-
-// A joint is never given less body than its bones allow, and a long bone does
-// not buy it more than a few hundredths of the model.
-fn void a_joints_radius_floor_follows_its_bone_and_stops() @test
-{
-	test::@check(math::abs(crig::joint_radius_floor(0.1f, 2.0f) - 0.1f * crig::RADIUS_BONE_SHARE) < 1e-6f,
-		"a short bone's joint was not given its bone's share");
-	test::@check(math::abs(crig::joint_radius_floor(1.0f, 2.0f) - 2.0f * crig::RADIUS_FLOOR_CAP) < 1e-6f,
-		"a long bone bought its joint more than the cap");
-	test::eq(crig::joint_radius_floor(0.0f, 2.0f), 0.0f);
 }

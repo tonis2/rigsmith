@@ -11,7 +11,7 @@
  The fixture is a two-legged stick figure built in code — a pelvis, a hip and a
  foot down each side. Small enough to reason about by hand, and shaped like the
  failure that matters: two limbs side by side, which is exactly where
- straight-line binding bleeds one into the other. `the_still_leg_mostly_stays_put`
+ straight-line binding bleeds one into the other. `turning_a_hip_swings_its_leg_from_the_hip`
  measures that bleed as a number, so a better binder has something to beat.
 
  The last two run the load-bearing claims again at a real vertex count, against
@@ -20,6 +20,7 @@
 module crig_tests::anim;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import std::core::test;
@@ -237,23 +238,6 @@ fn void the_rest_palette_is_the_identity() @test
 	}
 }
 
-// And the same claim from the other side: whatever the palette holds, the
-// vertices have to come out where they were modelled.
-fn void the_rest_pose_leaves_every_vertex_alone() @test
-{
-	Biped fixture = biped();
-	defer fixture.free();
-
-	rig::Pose rest_pose = rig::rest_pose(mem, fixture.skeleton.len());
-	defer rest_pose.free(mem);
-
-	Vec3[] unmoved = posed_positions(mem, fixture.rest, &fixture.skeleton, rest_pose, fixture.binding);
-	defer alloc::free(mem, unmoved);
-
-	float travelled = max_travel(fixture.rest, unmoved, 0, fixture.rest.len);
-	test::@check(travelled < REST_EPSILON, "the rest pose moved a vertex by %.7f", travelled);
-}
-
 <*
  Turning the root rotates the whole mesh rigidly about it.
 
@@ -346,6 +330,7 @@ fn void sliding_a_hip_carries_only_its_own_leg() @test
  lands is a claim about composition down the chain. The tip sits on the foot
  joint with essentially all its weight there, so the landing point is
  predictable rather than merely plausible: a pivot at the hip sends it to +X.
+ The other leg barely moves: straight-line binding bleeds a little across the gap.
 *>
 fn void turning_a_hip_swings_its_leg_from_the_hip() @test
 {
@@ -370,33 +355,10 @@ fn void turning_a_hip_swings_its_leg_from_the_hip() @test
 	test::@check((tip - expected).length() < 0.02f,
 		"the foot tip landed at (%.4f, %.4f, %.4f), not (%.4f, %.4f, %.4f)",
 		tip.x, tip.y, tip.z, expected.x, expected.y, expected.z);
-}
 
-<*
- The leg that was not posed mostly stays put — the bleed, as a number.
-
- The other leg is not attached to the joint that moved, so ideally it does not
- move at all. It does, a little, because `bind_geometric` measures straight-line
- distance and the gap between two limbs is short. This is PLAN.md §3's bleed,
- and the figure a better binder has to beat: the message prints it either way a
- failure is read.
-*>
-fn void the_still_leg_mostly_stays_put() @test
-{
-	Biped fixture = biped();
-	defer fixture.free();
-
-	rig::Pose hip_turn = rig::rest_pose(mem, fixture.skeleton.len());
-	defer hip_turn.free(mem);
-	hip_turn.turn(HIP_L, { 0, 0, 1 }, (float)math::PI * 0.5f);
-
-	Vec3[] posed = posed_positions(mem, fixture.rest, &fixture.skeleton, hip_turn, fixture.binding);
-	defer alloc::free(mem, posed);
-
-	float swung = max_travel(fixture.rest, posed, LEFT_FIRST, LEG_SAMPLES);
 	float bled = max_travel(fixture.rest, posed, RIGHT_FIRST, LEG_SAMPLES);
 	test::@check(bled < swung * 0.25f, "the still leg travelled %.4f against the swung leg's %.4f (%.1f%%)",
-		bled, swung, swung > 0.0f ? bled / swung * 100.0f : 0.0f);
+		bled, swung, bled / swung * 100.0f);
 }
 
 <*
@@ -435,8 +397,9 @@ fn void? load_real_mesh(rig::TriMesh* mesh, rig::Skeleton* skeleton, gltf::SkinB
 }
 
 // The rest claim again, at a real vertex count: thousands of vertices, each
-// with up to four influences, all of which have to cancel exactly.
-fn void a_real_mesh_rests_where_it_was_modelled() @test
+// with up to four influences, all of which have to cancel exactly. And bending
+// it stays finite: a zero weight divided by shows up here, not in the stick figure.
+fn void a_real_mesh_rests_in_place_and_bends_without_coming_apart() @test
 {
 	rig::TriMesh mesh;
 	rig::Skeleton skeleton;
@@ -456,34 +419,16 @@ fn void a_real_mesh_rests_where_it_was_modelled() @test
 
 	float travelled = max_travel(mesh.positions, unmoved, 0, mesh.positions.len);
 	test::@check(travelled < REST_EPSILON, "the rest pose moved a real mesh's vertex by %.7f", travelled);
-}
-
-// And that bending it does something finite. A binder that divides by a zero
-// weight somewhere in a real mesh shows up here and nowhere in the stick figure.
-fn void a_real_mesh_bends_without_coming_apart() @test
-{
-	rig::TriMesh mesh;
-	rig::Skeleton skeleton;
-	gltf::SkinBinding binding;
-	if (catch fault error = load_real_mesh(&mesh, &skeleton, &binding))
-	{
-		test::@check(false, "could not load %s (%s) — run from the crig directory", REAL_MESH, error);
-		return;
-	}
-	defer { binding.free(mem); skeleton.free(mem); mesh.free(mem); }
 
 	rig::Pose bend = rig::rest_pose(mem, skeleton.len());
 	defer bend.free(mem);
 	bend.turn(skeleton.len() - 1, { 0, 0, 1 }, (float)math::PI * 0.25f);
-
 	Vec3[] posed = posed_positions(mem, mesh.positions, &skeleton, bend, binding);
 	defer alloc::free(mem, posed);
-
 	sz broken = first_broken(posed);
 	test::@check(broken < 0, "posed vertex %d of a real mesh is NaN or infinite", broken);
-
-	float travelled = max_travel(mesh.positions, posed, 0, mesh.positions.len);
-	test::@check(travelled > 0.0f, "bending the last joint of a real mesh moved nothing");
+	test::@check(max_travel(mesh.positions, posed, 0, mesh.positions.len) > 0.0f,
+		"bending the last joint of a real mesh moved nothing");
 }
 
 // ---------------------------------------------------------------------------
@@ -968,17 +913,6 @@ fn AnimTemplate one_sided_clip(float duration)
 	return { .name = "One", .duration = duration, .keyframes = frames, .loop = true };
 }
 
-<*
- An entry's turn as a rotation vector — the axis scaled by the angle.
-
- Compared instead of the axis and the angle separately, because those are not
- unique: a quaternion converts back as a non-negative angle about whichever
- direction that needs, so the same turn is stored as `+0.4` about `a` or `+0.4`
- about `-a` depending on which side of zero it came from. The rotation vector is
- the same either way, and it is what the sign rules are actually a claim about.
-*>
-fn Vec3 rotation_vector(AnimKeyDot dot) => dot.axis.normalize() * dot.angle;
-
 // The entry a keyframe holds for a joint, or a zeroed one when it holds none.
 fn AnimKeyDot entry_in(AnimKeyframe frame, String joint)
 {
@@ -990,70 +924,16 @@ fn AnimKeyDot entry_in(AnimKeyframe frame, String joint)
 }
 
 <*
- The three sign rules, as an assertion.
+ The three sign rules, as an assertion, half a cycle later.
 
  An axis keeps the component a displacement flips and flips the two it keeps,
  because an axis is a pseudo-vector. Getting that backwards produces a clip that
  plays, looks nearly right, and has one leg rotating the wrong way — which reads
- as bad animation rather than as a bug.
+ as bad animation rather than as a bug. Half a cycle on a cycle keyed in quarters
+ lands on a key, so the filled side is the authored one two keys along. The
+ contact windows are mirrored too, or the solve drops the figure onto one foot.
 *>
-fn void a_mirrored_clip_reflects_the_side_it_fills() @test
-{
-	AnimTemplate source = one_sided_clip(1.0f);
-	defer free_swing(source);
-
-	AnimTemplate both = crig::mirror_template(mem, source, "Both", 0.0f);
-	defer both.free(mem);
-
-	// Key 1, not key 0: at an angle of zero the axis is arbitrary and every sign
-	// rule agrees with every other.
-	AnimKeyDot filled = entry_in(both.keyframes[1], "hip_R");
-	test::@check(filled.joint_name == "hip_R", "the mirror filled in no hip_R at all");
-
-	Vec3 authored = tilted() * SWING[1];
-	Vec3 want = { authored.x, -authored.y, -authored.z };
-	Vec3 got = rotation_vector(filled);
-	test::@check((got - want).length() < 1.0e-4f,
-		"the reflected turn came out (%.4f, %.4f, %.4f) against (%.4f, %.4f, %.4f)",
-		got.x, got.y, got.z, want.x, want.y, want.z);
-
-	test::@check(math::abs(filled.move.x + 0.1f) < 1.0e-5f
-		&& math::abs(filled.move.y - 0.2f) < 1.0e-5f
-		&& math::abs(filled.move.z - 0.3f) < 1.0e-5f,
-		"the reflected slide came out (%.4f, %.4f, %.4f)", filled.move.x, filled.move.y, filled.move.z);
-
-	// And what the author wrote is left exactly as written.
-	AnimKeyDot kept = entry_in(both.keyframes[1], "hip_L");
-	test::@check(math::abs(kept.angle - SWING[1]) < 1.0e-6f
-		&& math::abs(kept.move.x - 0.1f) < 1.0e-6f,
-		"the mirror disturbed the side that was authored");
-}
-
-// Half a cycle, on a cycle keyed in quarters, lands on a key — so the filled
-// side is the authored one two keys along, not a resampling of it.
-fn void a_mirrored_side_lags_by_the_phase_asked_for() @test
-{
-	AnimTemplate source = one_sided_clip(1.0f);
-	defer free_swing(source);
-
-	AnimTemplate both = crig::mirror_template(mem, source, "Both", 0.5f);
-	defer both.free(mem);
-
-	foreach (usz k, frame : both.keyframes)
-	{
-		usz from = (k + SWING.len - SWING.len / 2) % (usz)SWING.len;
-		Vec3 authored = tilted() * SWING[from];
-		Vec3 want = { authored.x, -authored.y, -authored.z };
-		Vec3 got = rotation_vector(entry_in(frame, "hip_R"));
-		test::@check((got - want).length() < 1.0e-4f,
-			"key %d's mirrored side turns (%.4f, %.4f, %.4f); key %d of the source asks for (%.4f, %.4f, %.4f)",
-			k, got.x, got.y, got.z, from, want.x, want.y, want.z);
-	}
-}
-
-// A gait's contact windows have to be mirrored too, or the solve drops the
-// figure onto the one foot the author happened to write.
-fn void a_mirrored_clip_plants_both_feet() @test
+fn void a_mirrored_clip_fills_the_other_side_half_a_cycle_later() @test
 {
 	AnimFoot[] feet = alloc::new_array(mem, AnimFoot, 1);
 	feet[0] = { .joint = "foot_L", .down = 0.0f, .up = 0.4f };
@@ -1065,6 +945,26 @@ fn void a_mirrored_clip_plants_both_feet() @test
 
 	AnimTemplate both = crig::mirror_template(mem, source, "Both", 0.5f);
 	defer both.free(mem);
+
+	foreach (usz k, frame : both.keyframes)
+	{
+		usz from = (k + SWING.len - SWING.len / 2) % (usz)SWING.len;
+		AnimKeyDot filled = entry_in(frame, "hip_R");
+		test::@check(filled.joint_name == "hip_R", "key %d: the mirror filled in no hip_R", k);
+		Vec3 authored = tilted() * SWING[from];
+		Vec3 want = { authored.x, -authored.y, -authored.z };
+		Vec3 got = helpers::turn_of(filled);
+		test::@check((got - want).length() < 1.0e-4f,
+			"key %d's mirrored side turns (%.4f, %.4f, %.4f); key %d of the source asks for (%.4f, %.4f, %.4f)",
+			k, got.x, got.y, got.z, from, want.x, want.y, want.z);
+		test::@check((filled.move - (Vec3){ -0.1f, 0.2f, 0.3f }).length() < 1.0e-5f,
+			"key %d: the reflected slide came out (%.4f, %.4f, %.4f)", k, filled.move.x, filled.move.y, filled.move.z);
+
+		// And what the author wrote is left exactly as written.
+		AnimKeyDot kept = entry_in(frame, "hip_L");
+		test::@check(math::abs(kept.angle - SWING[k]) < 1.0e-6f && math::abs(kept.move.x - 0.1f) < 1.0e-6f,
+			"key %d: the mirror disturbed the side that was authored", k);
+	}
 
 	test::@check(both.ground.feet.len == 2, "the mirrored clip plants %d feet", both.ground.feet.len);
 	if (both.ground.feet.len != 2) return;
@@ -1199,7 +1099,8 @@ fn void metrics_catch_a_sliding_foot() @test
 
  The pelvis carries both legs, so turning it to place one foot swings the other.
  That is the whole of the rule, and the stick figure is the smallest rig that
- states it: two joints down each side of one fork.
+ states it: two joints down each side of one fork. A joint whose parent forks,
+ and a root, have no run at all: the caller has to answer for that.
 *>
 fn void the_run_above_a_foot_is_its_own_leg() @test
 {
@@ -1211,21 +1112,6 @@ fn void the_run_above_a_foot_is_its_own_leg() @test
 
 	test::@check(count == 1, "the run above the left foot holds %d joints, expected the hip alone", count);
 	test::@check(run[0] == HIP_L, "it starts at joint %d rather than the left hip", run[0]);
-}
-
-<*
- A joint whose parent forks, and a root, both come back with nothing.
-
- Not an oversight and not an error: there is no joint above either that can move
- it without moving its siblings too, and the caller has to answer for that rather
- than be handed a chain that swings half the figure.
-*>
-fn void a_forked_parent_and_a_root_have_no_run() @test
-{
-	rig::Skeleton skeleton = biped_skeleton(mem);
-	defer skeleton.free(mem);
-
-	usz[8] run;
 	test::@check(skeleton.ancestor_run(HIP_L, run[..]) == 0,
 		"the hip found a run above it, but the pelvis carries both legs");
 	test::@check(skeleton.ancestor_run(0, run[..]) == 0, "the root found a run above it");

@@ -4,6 +4,7 @@ module crig;
 import rig;
 import std::math::vector;
 import std::collections::list;
+import std::sort;
 
 <*
  How long the rig has to sit still before the weights are rebound.
@@ -357,15 +358,7 @@ fn StrayIsland[] find_stray_islands(Allocator allocator, rig::TriMesh* geometry,
 
 	StrayIsland[] strays = alloc::new_array(allocator, StrayIsland, found.len());
 	foreach (i, stray : found) strays[i] = stray;
-	for (usz i = 0; i + 1 < strays.len; i++)
-	{
-		usz top = i;
-		for (usz j = i + 1; j < strays.len; j++) if (strays[j].pull > strays[top].pull) top = j;
-		if (top == i) continue;
-		StrayIsland swap = strays[i];
-		strays[i] = strays[top];
-		strays[top] = swap;
-	}
+	sort::insertionsort(strays, fn int(StrayIsland* a, StrayIsland* b) => (int)(b.pull > a.pull) - (int)(b.pull < a.pull));
 	return strays;
 }
 
@@ -470,22 +463,8 @@ fn WeightSurvey survey_of(Allocator allocator, rig::MeshShells* shells, RigView*
 		};
 	}
 
-	// Worst first, so a caller reading only the head of the list reads the
-	// boundary most likely to tear. Selection sort over one entry per joint.
-	for (usz i = 0; i + 1 < shared.len; i++)
-	{
-		usz top = i;
-		for (usz j = i + 1; j < shared.len; j++)
-		{
-			if (shared[j].vertices > shared[top].vertices) top = j;
-		}
-		if (top != i)
-		{
-			BlendShare swap = shared[i];
-			shared[i] = shared[top];
-			shared[top] = swap;
-		}
-	}
+	// Worst first: a caller reading only the head reads the boundary most likely to tear.
+	sort::insertionsort(shared, fn int(BlendShare* a, BlendShare* b) => (int)(b.vertices > a.vertices) - (int)(b.vertices < a.vertices));
 
 	return {
 		.vertices = vertices,

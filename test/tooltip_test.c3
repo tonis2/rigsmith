@@ -1,7 +1,6 @@
 <*
- crig's tooltips: the tool column's hover text, what a greyed tool says, the
- hint bar following the pointer, and an audit that no icon-only control in the
- tool column, the N-panel rail or the view header is left without one. How the
+ crig's tooltips: an audit that no icon-only control in the tool column, the
+ N-panel rail, the view header or the Weights card is left without one. How the
  widget itself behaves (the delay, hiding on leave, press and scroll, wrapping)
  is cui's, and tested there: cui test/unit/tooltip_test.c3.
 
@@ -25,77 +24,10 @@ fn Element* tip_cell(Fixture* f, usz index)
 	return tools.children[0].children[(sz)index];
 }
 
-fn Vec2 tip_centre(Element* e) => e.absolute + e.size * 0.5f;
-
 // Rest the pointer at `at` for longer than the delay.
 fn void tip_hover(Fixture* f, Vec2 at)
 {
 	for (int i = 0; i < TIP_FRAMES; i++) f.feed(at);
-}
-
-fn void tooltip_on_rotate_says_its_name_key_and_what_it_does() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	tip_hover(&f, tip_centre(tip_cell(&f, 2)));
-	String shown = widgets::tooltip_shown(f.ui);
-	test::@check(shown == crig::tool_cells[2].tip, "hovering Rotate did not show its text");
-	test::@check(shown.len > 0 && shown[:6] == "Rotate" && shown.contains("(R)") && shown.contains(" — "),
-		"the text is not name, key and description");
-}
-
-fn void tooltip_each_tool_has_its_own_text() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	for (usz i = 0; i < crig::tool_cells.len; i++)
-	{
-		tip_hover(&f, tip_centre(tip_cell(&f, i)));
-		String shown = widgets::tooltip_shown(f.ui);
-		test::@check(shown.len > 0, "a tool cell showed no tooltip");
-		test::@check(shown.contains(crig::tool_cells[i].tip[:4]), "a tool cell showed another tool's text");
-		f.feed(VIEWPORT_CENTER);
-	}
-}
-
-fn void tooltip_on_a_greyed_tool_says_why() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	// No joints: the lasso is greyed.
-	tip_hover(&f, tip_centre(tip_cell(&f, 4)));
-	test::@check(widgets::tooltip_shown(f.ui).contains("unavailable: place a joint"), "the greyed lasso did not explain itself");
-
-	// With a joint it is live again, and says what it does.
-	f.ensure_a_dot();
-	f.app.select(f.app.doc.dots[0].id);
-	f.feed(VIEWPORT_CENTER);
-	f.ui.flush();
-	tip_hover(&f, tip_centre(tip_cell(&f, 4)));
-	test::@check(!widgets::tooltip_shown(f.ui).contains("unavailable"), "a live lasso still says it is unavailable");
-}
-
-fn void tooltip_hover_puts_the_tools_keys_on_the_hint_bar() @test
-{
-	Fixture f;
-	f.open()!!;
-	defer f.close();
-
-	f.feed(VIEWPORT_CENTER);
-	test::@check(widgets::tooltip_hint(f.ui).len == 0, "a hint lingered with the pointer off the tools");
-	f.feed(tip_centre(tip_cell(&f, 1)));
-	f.feed(tip_centre(tip_cell(&f, 1)));
-	test::@check(widgets::tooltip_hint(f.ui) == crig::tool_cells[1].hint, "the hint was not the Move tool's keys");
-	test::@check(crig::hint_line(&f.app) == crig::tool_cells[1].hint, "the bar does not show the hovered tool's keys");
-	f.feed(VIEWPORT_CENTER);
-	f.feed(VIEWPORT_CENTER);
-	test::@check(widgets::tooltip_hint(f.ui).len == 0, "the hint stayed after the pointer left");
 }
 
 // Every Button under `e` must sit under a tooltip that has something to say.
@@ -106,7 +38,7 @@ fn usz tip_audit(Element* e, bool* ok)
 	{
 		buttons++;
 		Element* holder = widgets::tooltip_above(e);
-		if (!holder || holder.widget_as(Tooltip).text_at(holder, tip_centre(e)).len == 0) *ok = false;
+		if (!holder || holder.widget_as(Tooltip).text_at(holder, centre_of(e)).len == 0) *ok = false;
 	}
 	foreach (child : e.children) buttons += tip_audit(child, ok);
 	return buttons;

@@ -13,7 +13,7 @@ module crig;
 
 import std::collections::object;
 
-faultdef CLIPS_REFUSED;
+excuse CLIPS_REFUSED;
 
 const String UNBIND_CLIP_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"The bound clip's name, as get_scene lists the character's animations. One undo step; the clip itself stays in its pack."}

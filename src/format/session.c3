@@ -78,7 +78,7 @@ alias JsonFloat = gltf_edit::JsonFloat;
 alias JsonVec3 = gltf_edit::JsonVec3;
 alias JsonQuat = gltf_edit::JsonQuat;
 
-faultdef SESSION_IO, SESSION_SHAPE, SESSION_OLD;
+excuse SESSION_IO, SESSION_SHAPE, SESSION_OLD;
 
 struct ProjectSession
 {

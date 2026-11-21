@@ -1227,7 +1227,7 @@ fn HeldProp RigDocument.prop_of(&self, uint dot_id)
 
 fn bool HeldProp.held(self) => self.length > 0.0f;
 
-faultdef UNKNOWN_PROP;
+excuse UNKNOWN_PROP;
 
 <*
  The kind a label names: "sword", "wand" or "staff".

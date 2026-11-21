@@ -20,6 +20,7 @@ import cui::widgets;
 
 import std::math;
 import std::math::vector;
+import std::hash::fnv32a;
 
 const String ANIM_PANEL_ID = "anim-panel";
 const String ANIM_SHEET_ID = "anim-sheet";
@@ -246,31 +247,31 @@ fn usz anim_aim_key_total(AnimTemplate* clip) @private
 // The cutscenes' names folded into one number, so one added, renamed or taken away is a change.
 fn uint anim_cut_names_hash(AppState* app) @private
 {
-	uint hash = 2166136261u;
-	foreach (&c : app.cutscenes)
-	{
-		foreach (ch : c.name) hash = (hash ^ ch) * 16777619u;
-		hash *= 16777619u;
-	}
-	return hash;
+	Fnv32a hash;
+	hash.init();
+	foreach (&c : app.cutscenes) hash.text(c.name);
+	return (uint)hash;
 }
 
 // The pins' windows folded into one number, so a pin whose window moved is a change.
 fn uint anim_pin_window_hash(AnimTemplate* clip) @private
 {
-	uint hash = 2166136261u;
+	Fnv32a hash;
+	hash.init();
 	if (clip) foreach (&pin : clip.pins)
 	{
-		hash = (hash ^ (uint)(pin.from * 1000.0f)) * 16777619u;
-		hash = (hash ^ (uint)(pin.to * 1000.0f)) * 16777619u;
+		hash.mix(pin.from);
+		hash.mix(pin.to);
 	}
-	return hash;
+	return (uint)hash;
 }
 
 fn AnimSnapshot anim_snapshot(AppState* app) @private
 {
-	uint selected_hash = app.selected * 16777619u;
-	foreach (id : app.also_selected.array_view()) selected_hash = (selected_hash ^ id) * 16777619u;
+	Fnv32a selected_hash;
+	selected_hash.init();
+	selected_hash.mix(app.selected);
+	foreach (id : app.also_selected.array_view()) selected_hash.mix(id);
 	return {
 		.bound = app.doc.animations.len(),
 		// The rig, because whether a clip can play on it is printed in every row.
@@ -289,7 +290,7 @@ fn AnimSnapshot anim_snapshot(AppState* app) @private
 		.show_layers = app.anim_show_layers,
 		.selected_tracks_only = app.anim_tracks_selected_only,
 		.selected_joint = app.selected,
-		.selected_joints_hash = selected_hash,
+		.selected_joints_hash = (uint)selected_hash,
 		.posing = app.stage == POSE_STAGE,
 		.blend_collapsed = app.layer_blend_collapsed,
 		.motion_collapsed = app.layer_motion_collapsed,

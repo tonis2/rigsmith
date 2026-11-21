@@ -46,7 +46,7 @@ fn usz rig_arms(rig::Skeleton* skeleton, String[] names, GaitArm[] out)
 	foreach (usz j, name : names)
 	{
 		if (j >= skeleton.len() || count >= out.len) break;
-		bool upper = name_has(name, "shoulder") || name_has(name, "upper_arm") || name_has(name, "upperarm");
+		bool upper = contains_fold(name, "shoulder") || contains_fold(name, "upper_arm") || contains_fold(name, "upperarm");
 		float side = side_sign(name);
 		if (!upper || side == 0.0f) continue;
 		GaitArm arm = { .side = side, .clavicle = -1, .shoulder = (sz)j, .elbow = -1, .wrist = -1 };
@@ -162,7 +162,7 @@ fn GaitBody gait_body_of(
 	for (usz i = 0; i < steps; i++)
 	{
 		usz j = path[steps - 1 - i];
-		if (name_has(names[j], "neck")) { body.neck = (sz)j; break; }
+		if (contains_fold(names[j], "neck")) { body.neck = (sz)j; break; }
 		if (body.spine_count < GAIT_SPINE_MAX) body.spine[body.spine_count++] = j;
 	}
 	if (body.spine_count == 0) return body;

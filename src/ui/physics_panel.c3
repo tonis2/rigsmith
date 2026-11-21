@@ -701,8 +701,6 @@ fn String physics_selection_line(AppState* app, Dot* dot) @private
 fn String physics_chain_line(AppState* app, SecondaryChain chain, uint selected) @private
 {
 	if (!chain.present()) return "not part of a chain";
-	Dot* tip = app.doc.find(chain.tip);
-	String end = tip ? (tip.name.len > 0 ? tip.name : "unnamed") : "(gone)";
 	if (chain.root == selected)
 	{
 		return chain.tip == chain.root ? "roots a chain of one bone" : "roots a chain";

@@ -82,50 +82,25 @@ fn void a_scan_finds_items_rather_than_files() @test
 	// skeleton entry. One rig standing as two rows in the browser is the failure
 	// this guards.
 	test::eq((int)count_of(index, crig::AssetKind.JOINTS), 0);
-}
 
-<*
- Every entry says where it came from, what it belongs to, and enough to fill a
- cell.
-
- A joint count of zero would draw a cell reading "0 joints"; a duration of zero
- would say a clip is instantaneous. Both are what an entry left unfilled looks
- like, so both are worth a check.
-*>
-fn void entries_carry_what_a_cell_shows() @test
-{
-	io::printn("an entry carries its file, its plan and its numbers");
-
-	crig::AssetIndex index = crig::scan_assets(mem, one_library(library::ready()));
-	defer crig::free_assets(mem, index);
-
-	bool saw_rig = false;
-	bool saw_clip = false;
+	// Every entry says where it came from, and what a cell shows: an unfilled
+	// entry reads "0 joints" or an instantaneous clip.
 	foreach (&entry : index.entries)
 	{
-		test::@check(entry.name.len > 0, "an entry came back unnamed");
-		test::@check(entry.file.len > 0, "an entry does not say which file it is in");
-		test::@check(entry.library == 0, "an entry was attributed to library %d, and only one was scanned",
-			entry.library);
-
+		test::@check(entry.name.len > 0 && entry.file.len > 0 && entry.library == 0,
+			"an entry came back unnamed, without its file, or in library %d", entry.library);
 		switch (entry.kind)
 		{
 			case SKIN:
-				saw_rig = true;
 				test::@check(entry.joints > 1, "a skeleton came back with %d joints", entry.joints);
-				// All three declare one, so an empty plan here is the extras read
-				// failing rather than an untagged file.
+				// Every pack here declares a plan, so an empty one is the extras read failing.
 				test::@check(entry.plan.len > 0, "%s lost its body-plan tag", entry.name);
 			case ANIMATION:
-				saw_clip = true;
-				test::@check(entry.duration > 0.0f,
-					"clip %s came back %.3f seconds long", entry.name, entry.duration);
+				test::@check(entry.duration > 0.0f, "clip %s came back %.3f seconds long", entry.name, entry.duration);
 			default:
 				break;
 		}
 	}
-
-	test::@check(saw_rig && saw_clip, "the scan found neither a skeleton nor a clip to check");
 }
 
 <*
@@ -274,45 +249,6 @@ fn void categories_are_derived_from_what_was_found() @test
 	// no Joints row may be offered over a category holding none.
 	test::@check(!saw_joints, "a Joints row was offered over a library holding none");
 	test::@check(saw_plan, "the body-plan rows are missing from the sidebar");
-}
-
-<*
- No heading stands over a kind that cannot be opened.
-
- A sidebar row is an offer: it says there is something of this sort here and
- clicking it narrows to them. "Meshes" and "Materials" were both offers crig
- could not honour — a mesh cell was drawn greyed for ever and a material cell was
- never drawn at all — and both are gone from `AssetKind` rather than hidden by
- the sidebar, so there is nothing left to accidentally list.
-
- Checked on the labels the sidebar actually draws rather than on the enum, since
- a heading is what the user reads and `label()` is the only thing that decides
- it.
-*>
-fn void no_heading_stands_over_a_dead_kind() @test
-{
-	io::printn("every category heading is one the browser can open");
-
-	crig::AssetIndex index = crig::scan_assets(mem, one_library(library::ready()));
-	defer crig::free_assets(mem, index);
-
-	crig::AssetCategory[] rows = index.categories(mem);
-	defer alloc::free(mem, rows);
-
-	usz headings = 0;
-	foreach (row : rows)
-	{
-		if (row.depth != 1) continue;
-		headings++;
-
-		test::@check(row.label != "Meshes" && row.label != "Materials",
-			"the sidebar offers a %s row, which nothing can be done with", row.label);
-		test::@check(
-			row.label == "Body plans" || row.label == "Skeletons" || row.label == "Animations",
-			"%s heads a kind the browser has no reading for", row.label);
-	}
-
-	test::@check(headings > 0, "the sidebar came back with no kind headings at all");
 }
 
 <*

@@ -5,6 +5,7 @@
 module crig_tests::held_prop;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::math;
@@ -38,13 +39,6 @@ fn Vec3 held_point(rig::Skeleton* skeleton, rig::Pose pose, Vec3 at) @local
 	return skeleton.joints[WRIST_R].transform(palette[WRIST_R]) + world[WRIST_R].rotate_vec3(at);
 }
 
-fn Vec3 joint_at(rig::Skeleton* skeleton, rig::Pose pose, usz joint) @local
-{
-	Matrix4f[] palette = rig::joint_palette(mem, skeleton, pose)!!;
-	defer alloc::free(mem, palette);
-	return skeleton.joints[joint].transform(palette[joint]);
-}
-
 <*
  The left hand held on a point in the right hand's frame lands on it wherever
  the right arm swings: the grip follows the prop hand.
@@ -69,13 +63,13 @@ fn void a_relative_pin_follows_the_prop_hand() @test
 		{
 			Quaternionf[] world = pose.world_rotations(mem, &skeleton)!!;
 			defer alloc::free(mem, world);
-			pins[0].at = world[WRIST_R].invert().rotate_vec3((Vec3){ 0.05f, 1.3f, 0.35f } - joint_at(&skeleton, pose, WRIST_R));
+			pins[0].at = world[WRIST_R].invert().rotate_vec3((Vec3){ 0.05f, 1.3f, 0.35f } - helpers::joint_at(&skeleton, pose, WRIST_R));
 		}
 		Vec3 want = held_point(&skeleton, pose, pins[0].at);
 		test::@check((want - arm_joints[2]).length() < 0.48f, "swing %.2f: the grip is out of the left arm's reach", swing);
 		crig::pin_pose(mem, &skeleton, arm_names[..], pins[..], 0.5f, 1.0f, false, &pose, 1.0f);
 
-		Vec3 got = joint_at(&skeleton, pose, WRIST_L);
+		Vec3 got = helpers::joint_at(&skeleton, pose, WRIST_L);
 		test::@check((got - want).length() < 0.005f, "swing %.2f: the left hand is %.3f off the grip", swing, (got - want).length());
 		test::@check((want - held_point(&skeleton, pose, pins[0].at)).length() < 1.0e-5f,
 			"swing %.2f: the pin moved the prop hand", swing);
@@ -124,7 +118,7 @@ fn void a_prop_follows_its_hand() @test
 	Matrix4f[] palette = rig::joint_palette(mem, &skeleton, pose)!!;
 	defer alloc::free(mem, palette);
 	crig::PropFrame posed = crig::prop_frame(&skeleton, palette, WRIST_R, prop);
-	Vec3 want = joint_at(&skeleton, pose, WRIST_R) + swing.rotate_vec3(prop.offset * skeleton.height());
+	Vec3 want = helpers::joint_at(&skeleton, pose, WRIST_R) + swing.rotate_vec3(prop.offset * skeleton.height());
 	test::@check((posed.at - want).length() < 1.0e-4f, "the grip is %.4f off the posed hand", (posed.at - want).length());
 	Vec3 tip = posed.turn.rotate_vec3({ 0, 1, 0 });
 	test::@check((tip - swing.rotate_vec3(blade)).length() < 1.0e-4f, "the blade did not turn with the hand");

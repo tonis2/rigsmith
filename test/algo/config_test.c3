@@ -95,6 +95,8 @@ fn void a_first_run_has_defaults() @test
 		&& config.ghost_future == crig::DEFAULT_GHOST_SIDE && config.ghost_step == 1
 		&& config.ghost_opacity == crig::DEFAULT_GHOST_OPACITY && config.ghost_spread == crig::DEFAULT_GHOST_SPREAD
 		&& config.ghost_direction == 0, "ghosts start off with their usual settings");
+	test::@check(config.anim_layers_ratio == 0.0f && config.joint_panel_tab == 0 && config.folded_sections == 0,
+		"a first run remembers nothing about the layout");
 	test::@check(config.directory.len > 0, "and the config knows where it would save");
 }
 
@@ -165,158 +167,50 @@ fn void settings_survive_a_restart() @test
 	test::@check(read.folded_sections == 0b101000, "and its folded sections");
 }
 
-<*
- A divider ratio the dock cannot draw reads as never dragged, and a first run has
- none: the dock then takes its default share.
-*>
-fn void an_impossible_dock_ratio_reads_as_the_default() @test
-{
-	String file_path = fresh("silly-ratio");
-	defer done(file_path);
-
-	crig::CrigConfig first = crig::load_config();
-	test::@check(first.anim_layers_ratio == 0.0f && first.joint_panel_tab == 0 && first.folded_sections == 0,
-		"a first run remembers nothing about the layout");
-	first.free();
-
-	if (catch file::save(file_path, `{ "version": 1, "anim_layers_ratio": 0.95, "joint_panel_tab": 40 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig config = crig::load_config();
-	defer config.free();
-	test::@check(config.anim_layers_ratio == 0.0f, "a ratio of 0.95 was adopted (%.2f)", config.anim_layers_ratio);
-	test::@check(config.joint_panel_tab == 0, "a tab 40 was adopted");
-}
-
-// Numbers out of range read as defaults.
-fn void impossible_ghost_settings_read_as_defaults() @test
-{
-	String file_path = fresh("ghost-range");
-	defer done(file_path);
-
-	if (catch file::save(file_path, `{ "version": 1, "ghost_past": 99, "ghost_future": -1, "ghost_step": 0, "ghost_opacity": 4, "ghost_spread": 3, "ghost_direction": 9 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig silly = crig::load_config();
-	test::@check(silly.ghost_past == crig::DEFAULT_GHOST_SIDE && silly.ghost_future == crig::DEFAULT_GHOST_SIDE
-		&& silly.ghost_step == 1 && silly.ghost_opacity == crig::DEFAULT_GHOST_OPACITY
-		&& silly.ghost_spread == crig::DEFAULT_GHOST_SPREAD && silly.ghost_direction == 0,
-		"impossible ghost settings were adopted");
-	silly.free();
-}
+// Each row holds only values a hand-edited file could hold by mistake: none is adopted.
+const String[*] IMPOSSIBLE @local = {
+	`{ "version": 1, "anim_layers_ratio": 0.95, "joint_panel_tab": 40, "ui_scale": 0, "rig_overlay_strength": 0,
+		"self_collision": 1, "ghost_past": 99, "ghost_future": -1, "ghost_step": 0, "ghost_opacity": 4,
+		"ghost_spread": 3, "ghost_direction": 9 }`,
+	`{ "version": 1, "ui_scale": -2, "rig_overlay_strength": -1, "self_collision": "yes" }`,
+	`{ "version": 1, "ui_scale": 12.5, "rig_overlay_strength": 2, "self_collision": null }`,
+};
 
 <*
- The switch is a bool or nothing: a hand-written 1 or "yes" is not read as
- on, the rule every field follows, and the system stays off.
+ A value the file has no business holding reads as no setting at all, and a fair
+ one is taken. A typo'd 12 is not 3 either, so the answer is the default, not the
+ nearest legal value; a ui_scale of 0 would lay the interface out in no space. The
+ self-collision switch is a bool or nothing: a hand-written 1 or "yes" is not on.
 *>
-fn void the_self_collision_switch_reads_only_a_bool() @test
+fn void an_impossible_setting_reads_as_the_default() @test
 {
-	String file_path = fresh("self-collision");
+	String file_path = fresh("impossible");
 	defer done(file_path);
 
-	String[3] refused = {
-		`{ "version": 1, "self_collision": 1 }`,
-		`{ "version": 1, "self_collision": "yes" }`,
-		`{ "version": 1, "self_collision": null }`,
-	};
-	foreach (text : refused)
+	foreach (text : IMPOSSIBLE)
 	{
-		if (catch file::save(file_path, text[..])) continue;
-		crig::CrigConfig config = crig::load_config();
-		test::@check(!config.self_collision, "%s switched the system on", text);
-		config.free();
-	}
-	if (catch file::save(file_path, `{ "version": 1, "self_collision": true }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig on = crig::load_config();
-	defer on.free();
-	test::@check(on.self_collision, "true did not switch the system on");
-}
-
-<*
- A scale the file has no business holding reads as no setting at all.
-
- The clamp lives everywhere the program itself writes this, so the only way an
- absurd one arrives is a hand-edited file — and there the honest answer is the
- default rather than the nearest legal value: a 12 in the file is a typo, and 3
- is not what whoever typed it meant either. A zero matters most of the three,
- since it is the one that would lay the whole interface out in an infinite space
- and leave a window with nothing in it.
-*>
-fn void an_impossible_ui_scale_reads_as_the_default() @test
-{
-	String file_path = fresh("silly-scale");
-	defer done(file_path);
-	io::printn("a config asking for scales that are not scales:");
-
-	String[3] refused = {
-		`{ "version": 1, "ui_scale": 0 }`,
-		`{ "version": 1, "ui_scale": -2 }`,
-		`{ "version": 1, "ui_scale": 12.5 }`,
-	};
-
-	foreach (text : refused)
-	{
-		if (catch file::save(file_path, text[..]))
-		{
-			test::@check(false, "SKIPPED — could not write the fixture");
-			return;
-		}
-
+		file::save(file_path, text[..])!!;
 		crig::CrigConfig config = crig::load_config();
 		defer config.free();
-		test::@check(config.ui_scale == crig::DEFAULT_UI_SCALE,
-			"%s is not adopted (%.2f)", text, config.ui_scale);
-	}
-
-	// And the other half of the promise: one inside the range is taken, written
-	// as a bare integer, which is what a person editing the file by hand types.
-	if (catch file::save(file_path, `{ "version": 1, "ui_scale": 2 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-
-	crig::CrigConfig config = crig::load_config();
-	defer config.free();
-	test::@check(config.ui_scale == 2.0f, "an integer 2 is 2× (%.2f)", config.ui_scale);
-}
-
-fn void rig_overlay_strength_accepts_its_floor_and_refuses_outside_values() @test
-{
-	String file_path = fresh("rig-overlay-strength");
-	defer done(file_path);
-
-	if (catch file::save(file_path, `{ "version": 1, "rig_overlay_strength": 0.1 }`[..]))
-	{
-		test::@check(false, "SKIPPED — could not write the fixture");
-		return;
-	}
-	crig::CrigConfig at_floor = crig::load_config();
-	test::@check(math::abs(at_floor.rig_overlay_strength - crig::MIN_RIG_OVERLAY_STRENGTH) < 0.001f,
-		"the slider floor survives JSON (%.3f)", at_floor.rig_overlay_strength);
-	at_floor.free();
-
-	String[3] refused = {
-		`{ "version": 1, "rig_overlay_strength": 0 }`,
-		`{ "version": 1, "rig_overlay_strength": -1 }`,
-		`{ "version": 1, "rig_overlay_strength": 2 }`,
-	};
-	foreach (text : refused)
-	{
-		if (catch file::save(file_path, text[..])) continue;
-		crig::CrigConfig config = crig::load_config();
+		test::@check(config.anim_layers_ratio == 0.0f && config.joint_panel_tab == 0, "%s: a layout was adopted", text);
+		test::@check(config.ui_scale == crig::DEFAULT_UI_SCALE, "%s: ui scale %.2f was adopted", text, config.ui_scale);
 		test::@check(config.rig_overlay_strength == crig::DEFAULT_RIG_OVERLAY_STRENGTH,
-			"%s falls back to the restrained default (%.2f)", text, config.rig_overlay_strength);
-		config.free();
+			"%s: overlay strength %.2f was adopted", text, config.rig_overlay_strength);
+		test::@check(!config.self_collision, "%s switched self-collision on", text);
+		test::@check(config.ghost_past == crig::DEFAULT_GHOST_SIDE && config.ghost_future == crig::DEFAULT_GHOST_SIDE
+			&& config.ghost_step == 1 && config.ghost_opacity == crig::DEFAULT_GHOST_OPACITY
+			&& config.ghost_spread == crig::DEFAULT_GHOST_SPREAD && config.ghost_direction == 0,
+			"%s: impossible ghost settings were adopted", text);
 	}
+
+	// A bare integer scale, as a person types it, the slider's floor, and a real bool.
+	file::save(file_path, `{ "version": 1, "ui_scale": 2, "rig_overlay_strength": 0.1, "self_collision": true }`[..])!!;
+	crig::CrigConfig fair = crig::load_config();
+	defer fair.free();
+	test::@check(fair.ui_scale == 2.0f, "an integer 2 is 2x (%.2f)", fair.ui_scale);
+	test::@check(math::abs(fair.rig_overlay_strength - crig::MIN_RIG_OVERLAY_STRENGTH) < 0.001f,
+		"the slider floor survives JSON (%.3f)", fair.rig_overlay_strength);
+	test::@check(fair.self_collision, "true did not switch self-collision on");
 }
 
 <*

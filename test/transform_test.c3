@@ -1,6 +1,7 @@
 module crig_tests::transform;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import gltf;
 import std::core::test;
@@ -9,8 +10,6 @@ import std::io::file;
 import std::math;
 import std::math::quaternion;
 
-fn bool near(float a, float b) => math::abs(a - b) < 1.0e-5f;
-fn bool near_vec(Vec3 a, Vec3 b) => (a - b).length_sq() < 1.0e-10f;
 fn bool near_vec2(Vec2 a, Vec2 b) => (a - b).length_sq() < 1.0e-10f;
 
 struct TransformRig
@@ -84,14 +83,14 @@ fn void model_transform_is_non_destructive_undoable_and_persistent() @test
 	test::@check(fixture.app.doc.find(fixture.root).position == local_root
 		&& fixture.app.doc.find(fixture.child).position == local_child,
 		"moving the model rewrote local rig coordinates");
-	test::@check(near_vec(fixture.app.doc.model_transform.point(local_root), { 2, 3, 4 })
-		&& near_vec(fixture.app.doc.model_transform.point(local_child), { 3, 3, 4 }),
+	test::@check(helpers::near3(fixture.app.doc.model_transform.point(local_root), { 2, 3, 4 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.model_transform.point(local_child), { 3, 3, 4 }, 1e-5f),
 		"the model placement does not carry mesh-space points together");
 
 	test::@check(fixture.app.undo(), "the model move did not undo");
 	test::@check(fixture.app.doc.model_transform.is_identity(), "undo left the model displaced");
 	test::@check(fixture.app.redo(), "the model move did not redo");
-	test::@check(near_vec(fixture.app.doc.model_transform.location, { 2, 3, 4 }),
+	test::@check(helpers::near3(fixture.app.doc.model_transform.location, { 2, 3, 4 }, 1e-5f),
 		"redo did not restore the model placement");
 
 	String text = crig::session_text(tmem, &fixture.app.doc, "model.glb");
@@ -141,7 +140,7 @@ fn void a_placed_model_reopens_in_view() @test
 	crig::AppState reopened = crig::new_app({});
 	defer reopened.free();
 	reopened.load_mesh(rig::load_gltf(mem, saved)!!, saved);
-	test::@check(near_vec(reopened.doc.model_transform.location, { 5, 0, 0 }),
+	test::@check(helpers::near3(reopened.doc.model_transform.location, { 5, 0, 0 }, 1e-5f),
 		"the session did not bring the placement back");
 	Vec3 centre = reopened.world_bounds().center();
 	test::@check((reopened.camera.target - centre).length() < 1.0e-3f,
@@ -160,10 +159,10 @@ fn void model_rotation_keeps_the_character_center_fixed() @test
 	test::@check(fixture.app.begin_transform(crig::TransformOperation.ROTATE_TRANSFORM),
 		"the model turn did not begin");
 	fixture.app.update_transform_rotation_axis({ 0, 1, 0 }, (float)math::PI);
-	test::@check(near_vec(fixture.app.doc.model_transform.point(center), center),
+	test::@check(helpers::near3(fixture.app.doc.model_transform.point(center), center, 1e-5f),
 		"the model rotated around the origin instead of its median pivot");
-	test::@check(near_vec(fixture.app.doc.model_transform.point({ 1, 0, 0 }),
-		{ -1.0f / 3.0f, 0, 2.0f / 3.0f }),
+	test::@check(helpers::near3(fixture.app.doc.model_transform.point({ 1, 0, 0 }),
+		{ -1.0f / 3.0f, 0, 2.0f / 3.0f }, 1e-5f),
 		"the mesh/rig model-space rotation was not applied around the pivot");
 	test::@check(fixture.app.commit_transform(), "the model turn did not commit");
 }
@@ -179,8 +178,8 @@ fn void transform_updates_are_absolute_and_cancel_exactly() @test
 	test::@check(fixture.app.begin_transform(crig::TransformOperation.MOVE_TRANSFORM), "the skeleton move did not begin");
 	test::@check(fixture.app.update_transform_translation({ 2, 0, 0 }), "the first preview was refused");
 	test::@check(fixture.app.update_transform_translation({ 3, 0, 0 }), "the second preview was refused");
-	test::@check(near_vec(fixture.app.doc.find(fixture.root).position, before_root + (Vec3){ 3, 0, 0 })
-		&& near_vec(fixture.app.doc.find(fixture.child).position, before_child + (Vec3){ 3, 0, 0 }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.root).position, before_root + (Vec3){ 3, 0, 0 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.find(fixture.child).position, before_child + (Vec3){ 3, 0, 0 }, 1e-5f),
 		"preview deltas accumulated instead of being measured from the snapshot");
 	test::@check(fixture.app.cancel_transform(), "the move would not cancel");
 	test::@check(fixture.app.doc.find(fixture.root).position == before_root
@@ -204,8 +203,8 @@ fn void local_space_uses_the_active_joints_bone_frame() @test
 
 	test::@check(fixture.app.begin_transform(crig::TransformOperation.MOVE_TRANSFORM), "the local move did not begin");
 	fixture.app.update_transform_translation({ 0, 1, 0 });
-	test::@check(near_vec(fixture.app.doc.find(fixture.root).position, { 1, 0, 0 })
-		&& near_vec(fixture.app.doc.find(fixture.child).position, { 2, 0, 0 }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.root).position, { 1, 0, 0 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.find(fixture.child).position, { 2, 0, 0 }, 1e-5f),
 		"local +Y did not follow the active bone along world +X");
 	test::@check(fixture.app.commit_transform(), "the local move did not commit");
 }
@@ -221,16 +220,16 @@ fn void active_and_median_pivots_are_explicit() @test
 	fixture.app.transform_pivot = crig::TransformPivot.ACTIVE_PIVOT;
 	test::@check(fixture.app.begin_transform(crig::TransformOperation.ROTATE_TRANSFORM), "the active-pivot turn did not begin");
 	fixture.app.update_transform_rotation_axis({ 0, 1, 0 }, (float)math::PI);
-	test::@check(near_vec(fixture.app.doc.find(fixture.root).position, { 0, 0, 0 })
-		&& near_vec(fixture.app.doc.find(fixture.child).position, { -1, 0, 0 }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.root).position, { 0, 0, 0 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.find(fixture.child).position, { -1, 0, 0 }, 1e-5f),
 		"the active joint was not the rotation pivot");
 	fixture.app.cancel_transform();
 
 	fixture.app.transform_pivot = crig::TransformPivot.MEDIAN_PIVOT;
 	test::@check(fixture.app.begin_transform(crig::TransformOperation.ROTATE_TRANSFORM), "the median-pivot turn did not begin");
 	fixture.app.update_transform_rotation_axis({ 0, 1, 0 }, (float)math::PI);
-	test::@check(near_vec(fixture.app.doc.find(fixture.root).position, { 1, 0, 0 })
-		&& near_vec(fixture.app.doc.find(fixture.child).position, { 0, 0, 0 }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.root).position, { 1, 0, 0 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.find(fixture.child).position, { 0, 0, 0 }, 1e-5f),
 		"the selection midpoint was not the rotation pivot");
 	fixture.app.cancel_transform();
 }
@@ -254,7 +253,7 @@ fn void skeleton_rotation_is_one_undo_step_and_carries_limit_frames() @test
 	test::@check(fixture.app.undo_stack.can_undo(), "the turn entered no history");
 
 	Vec3 frame_x = fixture.app.doc.rotation_limits_of(fixture.child).saved_frame.rotate_vec3({ 1, 0, 0 });
-	test::@check(near(frame_x.x, -1.0f) && near(frame_x.z, 0.0f),
+	test::@check(math::is_approx(frame_x.x, -1.0f, 1e-5f) && math::is_approx(frame_x.z, 0.0f, 1e-5f),
 		"the saved limit frame did not rotate with the rig");
 
 	test::@check(fixture.app.undo(), "the turn did not undo");
@@ -266,8 +265,8 @@ fn void skeleton_rotation_is_one_undo_step_and_carries_limit_frames() @test
 	test::@check(!fixture.app.undo_stack.can_undo(), "the transform split into more than one undo step");
 
 	test::@check(fixture.app.redo(), "the turn did not redo");
-	test::@check(near_vec(fixture.app.doc.find(fixture.child).position,
-		{ -1.0f / 3.0f, 0, 2.0f / 3.0f }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.child).position,
+		{ -1.0f / 3.0f, 0, 2.0f / 3.0f }, 1e-5f),
 		"redo did not restore the rotated joints");
 }
 
@@ -290,8 +289,8 @@ fn void moving_joints_with_saved_limit_frames_does_not_snapshot_them() @test
 	test::@check(fixture.app.transform_transaction.limits.len == 0, "a move snapshotted the limit frames");
 	fixture.app.update_transform_translation({ 0, 1, 0 });
 	test::@check(fixture.app.commit_transform(), "the move did not commit");
-	test::@check(near_vec(fixture.app.doc.find(fixture.child).position, { 1, 1, 0 })
-		&& near_vec(fixture.app.doc.find(fixture.side).position, { 0, 1, 1 }),
+	test::@check(helpers::near3(fixture.app.doc.find(fixture.child).position, { 1, 1, 0 }, 1e-5f)
+		&& helpers::near3(fixture.app.doc.find(fixture.side).position, { 0, 1, 1 }, 1e-5f),
 		"the selected joints did not move together");
 }
 
@@ -326,7 +325,7 @@ fn void model_transform_exports_as_a_shared_mesh_and_rig_parent() @test
 	test::@check(placed < (usz)stream.gltf.nodes.len(), "the export has no shared transform parent");
 	if (placed >= (usz)stream.gltf.nodes.len()) return;
 	gltf::Node* parent = &stream.gltf.nodes[(sz)placed];
-	test::@check(near_vec(parent.translation, placement.location)
+	test::@check(helpers::near3(parent.translation, placement.location, 1e-5f)
 		&& parent.rotation.v == placement.orientation().v,
 		"the exported parent does not carry the project placement");
 	test::@check(parent.children.len() == 2,
@@ -334,7 +333,7 @@ fn void model_transform_exports_as_a_shared_mesh_and_rig_parent() @test
 
 	rig::TriMesh reopened_mesh = rig::load_gltf(mem, PATH)!!;
 	defer reopened_mesh.free(mem);
-	test::@check(near_vec(reopened_mesh.positions[0], placement.location),
+	test::@check(helpers::near3(reopened_mesh.positions[0], placement.location, 1e-5f),
 		"the exported model placement was not visible to a glTF mesh reader");
 	String[] reopened_names;
 	rig::Skeleton reopened_rig = crig::read_rest_skeleton(mem, &stream, &reopened_names)!!;
@@ -344,7 +343,7 @@ fn void model_transform_exports_as_a_shared_mesh_and_rig_parent() @test
 		foreach (name : reopened_names) name.free(mem);
 		if (reopened_names.len > 0) alloc::free(mem, reopened_names);
 	}
-	test::@check(near_vec(reopened_rig.joints[0], placement.location),
+	test::@check(helpers::near3(reopened_rig.joints[0], placement.location, 1e-5f),
 		"the exported model placement was not visible to a glTF skeleton reader");
 
 	crig::RigDocument project;
@@ -359,7 +358,7 @@ fn void model_transform_exports_as_a_shared_mesh_and_rig_parent() @test
 	reopened.adopt_source_rig();
 	test::@check(reopened.source_has_model_transform,
 		"the project did not recognize its placement as baked into the export");
-	test::@check(near_vec(reopened.geometry.positions[0], { 0, 0, 0 })
+	test::@check(helpers::near3(reopened.geometry.positions[0], { 0, 0, 0 }, 1e-5f)
 		&& reopened.doc.model_transform.same(placement),
 		"reopening a transformed export would apply its placement twice");
 	reopened.free();
@@ -428,10 +427,10 @@ fn void saving_an_export_that_carries_its_placement_brings_it_to_the_origin() @t
 	Matrix4f bind = rig::skin_bind_matrix(&stream, 0);
 	Matrix4f identity = matrix::IDENTITY4{float};
 	bool unplaced = true;
-	for (usz i = 0; i < 16; i++) unplaced = unplaced && near(bind.m[i], identity.m[i]);
+	for (usz i = 0; i < 16; i++) unplaced = unplaced && math::is_approx(bind.m[i], identity.m[i], 1e-5f);
 	test::@check(unplaced, "the saved skin still binds the mesh at the placement: %s", bind.m);
 	Matrix4f root = stream.gltf.nodes[(sz)stream.gltf.skins[0].joints[0]].global_matrix();
-	test::@check(near_vec({ root.m[12], root.m[13], root.m[14] }, { 0, 0, 0 }),
+	test::@check(helpers::near3({ root.m[12], root.m[13], root.m[14] }, { 0, 0, 0 }, 1e-5f),
 		"the saved root joint is not at the model's origin");
 
 	// Reopened, the model is at its origin and the project still places it.
@@ -444,7 +443,7 @@ fn void saving_an_export_that_carries_its_placement_brings_it_to_the_origin() @t
 	test::@check(again.doc.model_transform.same(placement), "the save lost the placement");
 	foreach (usz i, p : positions)
 	{
-		test::@check(near_vec(again.geometry.positions[i], p), "vertex %s reopened at %s, not %s",
+		test::@check(helpers::near3(again.geometry.positions[i], p, 1e-5f), "vertex %s reopened at %s, not %s",
 			i, again.geometry.positions[i], p);
 	}
 }
@@ -479,10 +478,10 @@ fn void model_projection_and_queries_share_the_render_transform() @test
 		"the rig overlay and transformed mesh do not project to the same pixel");
 
 	Vec3 local_eye = fixture.app.model_eye(&camera);
-	test::@check(near_vec(fixture.app.doc.model_transform.point(local_eye), camera.eye()),
+	test::@check(helpers::near3(fixture.app.doc.model_transform.point(local_eye), camera.eye(), 1e-5f),
 		"picking and occlusion do not query from the rendered camera position");
 	Vec3 world_direction = (camera.target - camera.eye()).normalize();
-	test::@check(near_vec(
+	test::@check(helpers::near3(
 		fixture.app.doc.model_transform.direction(fixture.app.model_direction(world_direction)),
-		world_direction), "collision rays do not share the rendered model orientation");
+		world_direction, 1e-5f), "collision rays do not share the rendered model orientation");
 }

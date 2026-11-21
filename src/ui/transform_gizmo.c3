@@ -145,7 +145,7 @@ fn float? transform_numeric_value(TransformInteraction* interaction) @private
 	return transform_numeric_text(interaction).to_float();
 }
 
-faultdef NO_TRANSFORM_NUMBER;
+excuse NO_TRANSFORM_NUMBER;
 
 fn String transform_axis_label(TransformInteraction* interaction) @private
 {
@@ -233,7 +233,7 @@ fn Vec3? ray_plane(collision::Ray ray, Vec3 point, Vec3 normal) @private
 	return ray.origin + ray.direction * distance;
 }
 
-faultdef TRANSFORM_PLANE_EDGE_ON;
+excuse TRANSFORM_PLANE_EDGE_ON;
 
 fn Vec3 interaction_view_axis(AppState* app) @private
 {
@@ -813,7 +813,7 @@ fn TransformGizmoFrame? Viewport.transform_gizmo_frame(&self, Element* elem)
 	return frame;
 }
 
-faultdef NO_TRANSFORM_GIZMO;
+excuse NO_TRANSFORM_GIZMO;
 
 <*
  What a press on the tool's gizmo starts, for the tool that is up.

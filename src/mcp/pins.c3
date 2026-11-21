@@ -26,7 +26,7 @@ import std::collections::object;
 import std::math;
 import std::math::vector;
 
-faultdef PINS_REFUSED;
+excuse PINS_REFUSED;
 
 const String GET_PINS_SCHEMA = `{"type":"object","properties":{}}`;
 

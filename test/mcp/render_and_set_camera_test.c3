@@ -139,9 +139,10 @@ fn void render_says_when_there_is_nothing_to_photograph() @test
 	test::@check(frames == 0, "and nothing was drawn on the way to refusing");
 }
 
-// render_poses reads all of its arguments before it looks for a renderer, so a
-// wrong one is named even with no window; and with no window it says so.
-fn void render_poses_names_a_bad_argument_and_a_missing_window() @test
+// render_poses and render_studio read all of their arguments before they look
+// for a renderer, so a wrong one is named even with no window; and with no
+// window they say so.
+fn void the_offline_renderers_name_a_bad_argument_and_a_missing_window() @test
 {
 	Fixture fixture;
 	fixture.open_authored();
@@ -158,25 +159,11 @@ fn void render_poses_names_a_bad_argument_and_a_missing_window() @test
 		"a framing whose least is past its most is refused");
 	test::@check(f.refuses_tool("render_poses", `{"out":"set"}`, "headless"),
 		"with no renderer it says so");
-}
-
-// render_studio, like render_poses, reads its arguments before it looks for a
-// renderer.
-fn void render_studio_names_a_bad_argument_and_a_missing_window() @test
-{
-	Fixture fixture;
-	fixture.open_authored();
-	defer fixture.close();
-	Fixture* f = &fixture;
 
 	test::@check(f.refuses_tool("render_studio", `{}`, "out"),
 		"a picture with nowhere to go is refused, naming out");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","width":1281}`, "1281", "even"),
 		"an odd width, which video encoders refuse, is refused");
-	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1344}`, "width", "height"),
-		"a reference width without its height is refused");
-	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1345,"height":768}`, "even"),
-		"an odd reference width is refused");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","ground_row":100}`, "ground_row", "360"),
 		"a floor above the middle of the picture is refused against the range");
 	test::@check(f.refuses_tool("render_studio", `{"out":"studio","front_width":1250}`, "front_width"),
@@ -202,6 +189,10 @@ fn void capture_names_what_it_cannot_do() @test
 	test::@check(f.refuses_tool("capture", `{"action":"use_finder","finder":"/no/such.safetensors"}`, "not there"), "a missing finder is refused");
 	test::@check(f.refuses_tool("capture", `{"action":"animate"}`, "video"), "animate needs a video");
 	test::@check(f.refuses_tool("capture", `{"action":"reads"}`, "no animate run"), "reads needs a run to have finished");
+	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1344}`, "width", "height"),
+		"a reference width without its height is refused");
+	test::@check(f.refuses_tool("capture", `{"action":"reference","width":1345,"height":768}`, "even"),
+		"an odd reference width is refused");
 }
 
 // capture's reads says where the last run kept its files, and gives its report.
@@ -264,8 +255,8 @@ fn void plugins_lists_the_folder_and_refuses_what_it_should() @test
 }
 
 // `keys` photographs the poses a clip was written as, which is the question an
-// agent has right after writing them: not "what happens at 0.3 s" but "did the
-// five keys I sent come out as five sensible poses".
+// agent has right after writing them: did the keys I sent come out as sensible
+// poses. All of them, or the ones named by number.
 fn void render_photographs_a_clip_at_its_keys() @test
 {
 	Fixture fixture;
@@ -300,38 +291,25 @@ fn void render_photographs_a_clip_at_its_keys() @test
 	test::@check(caption.contains("keys 0, 1") && caption.contains("t = 0, 0.5"),
 		"and the caption says which key each tile is and when it falls: %s", caption);
 	test::@check(caption.contains("labelled"), "and that the tiles carry their own labels");
-}
 
-fn void render_picks_keys_by_number() @test
-{
-	Fixture fixture;
-	fixture.open_authored();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	int frames = 0;
-	f.app.screenshot = &wide_grab;
-	f.app.screenshot_ctx = &frames;
-
-	Object*? root = f.request(
+	frames = 0;
+	Object*? one = f.request(
 		`{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"render","arguments":{"clip":"bend","keys":[1]}}}`);
-	if (catch root)
+	if (catch one)
 	{
 		test::@check(false, "render answers for one key");
 		return;
 	}
-	defer root.free();
+	defer one.free();
 
-	String mime;
-	String data;
-	String caption;
-	if (!(screenshot_body(root, &mime, &data, &caption) ?? false))
+	String one_caption;
+	if (!(screenshot_body(one, &mime, &data, &one_caption) ?? false))
 	{
 		test::@check(false, "render of one key answers with an image block and a caption");
 		return;
 	}
 	test::@check(frames == 1, "only the key asked for is drawn, %d drawn", frames);
-	test::@check(caption.contains("keys 1 (t = 0.5"), "and it is key 1, at 0.5 s: %s", caption);
+	test::@check(one_caption.contains("keys 1 (t = 0.5"), "and it is key 1, at 0.5 s: %s", one_caption);
 
 	frames = 0;
 	test::@check(f.refuses_tool("render", `{"clip":"bend","keys":[2]}`, "2 key(s)", "key 1 at 0.5 s"),
@@ -468,7 +446,7 @@ fn void set_camera_aims_down_a_named_axis() @test
 		"and it arrives at once rather than easing, since a render happens now");
 }
 
-fn void set_camera_names_a_view_it_does_not_have() @test
+fn void set_camera_names_what_it_will_not_take() @test
 {
 	Fixture fixture;
 	fixture.open();
@@ -479,6 +457,10 @@ fn void set_camera_names_a_view_it_does_not_have() @test
 		"a view that is not one of the six names the value and lists what there is");
 	test::@check(f.refuses_tool("set_camera", `{"camera":{"distance":0}}`, "distance", "cannot be at"),
 		"an eye at the point it is looking at is refused rather than divided by");
+	// Refused rather than ignored: a camera that quietly stayed put is a picture
+	// of the wrong thing with nothing in the answer to explain it.
+	test::@check(f.refuses_tool("set_camera", `{"frame":"yes"}`, "frame", "true or false"),
+		"a frame that is not a boolean is named rather than passed over");
 }
 
 <*
@@ -573,18 +555,4 @@ fn void set_camera_frames_a_placed_character_where_it_stands() @test
 	test::@check(reported != null && reported.get_len() == 3
 		&& math::abs(reported.get_float_at(0) ?? 99) < 0.001,
 		"and reported back in the model space it was given in");
-}
-
-fn void set_camera_will_not_read_a_frame_that_is_not_a_flag() @test
-{
-	Fixture fixture;
-	fixture.open();
-	defer fixture.close();
-	Fixture* f = &fixture;
-
-	// Refused rather than ignored. A caller writing "yes" has said what it wants
-	// plainly enough, and a camera that quietly stayed where it was is a picture
-	// of the wrong thing with nothing in the answer to explain it.
-	test::@check(f.refuses_tool("set_camera", `{"frame":"yes"}`, "frame", "true or false"),
-		"a frame that is not a boolean is named rather than passed over");
 }

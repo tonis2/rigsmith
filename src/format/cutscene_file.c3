@@ -55,19 +55,6 @@ fn String cutscene_file_name(Allocator allocator, String name, bool binary = tru
 	return out.copy_str(allocator);
 }
 
-// A `.gltf` path is written as text; anything else as a `.glb`.
-fn bool cut_text_path(String path) @local
-{
-	if (path.len < 5) return false;
-	String tail = path[^5..];
-	foreach (i, c : ".gltf")
-	{
-		char have = tail[i] >= 'A' && tail[i] <= 'Z' ? (char)(tail[i] + 32) : tail[i];
-		if (have != c) return false;
-	}
-	return true;
-}
-
 <*
  Write `cutscene` to `path` through `save_safely`, a `.gltf` as text and anything else as a `.glb`.
  A strip's `animation` indexes `animations`, written as glTF animations on stub nodes.
@@ -81,7 +68,7 @@ fn bool cut_text_path(String path) @local
 *>
 fn void? write_cutscene_file(String path, Cutscene* cutscene, DString* why = null, CutAnimation[] animations = {})
 {
-	bool text_form = cut_text_path(path);
+	bool text_form = has_extension(path, ".gltf");
 	char[] binary;
 	String text = cutscene_gltf_text(mem, cutscene, why, animations, text_form ? null : &binary)!;
 	defer text.free(mem);
@@ -841,11 +828,16 @@ fn float[]? cut_read_floats(Allocator allocator, Object* doc, long index, char[]
 	usz elements = type == "SCALAR" ? 1 : type == "VEC3" ? 3 : type == "VEC4" ? 4 : 0;
 	if (elements != width) return CUTSCENE_MALFORMED~;
 	Object* view = views.get_at((sz)view_index);
-	usz count = (usz)(accessor.get_long("count") ?? 0);
-	usz at = (usz)(view.get_long("byteOffset") ?? 0) + (usz)(accessor.get_long("byteOffset") ?? 0);
-	usz stride = (usz)(view.get_long("byteStride") ?? 0);
-	if ((stride != 0 && stride != width * 4) || at + count * width * 4 > buffer.len) return CUTSCENE_MALFORMED~;
-	float[] out = alloc::new_array(allocator, float, (sz)(count * width));
+	long count = accessor.get_long("count") ?? 0;
+	long view_offset = view.get_long("byteOffset") ?? 0;
+	long offset = accessor.get_long("byteOffset") ?? 0;
+	long stride = view.get_long("byteStride") ?? 0;
+	if (count < 0 || view_offset < 0 || offset < 0 || (stride != 0 && stride != (long)width * 4)) return CUTSCENE_MALFORMED~;
+	// Checked by division, so a huge count cannot wrap past the buffer's end.
+	if ((usz)view_offset > buffer.len || (usz)offset > buffer.len - (usz)view_offset) return CUTSCENE_MALFORMED~;
+	usz at = (usz)view_offset + (usz)offset;
+	if ((usz)count > (buffer.len - at) / (width * 4)) return CUTSCENE_MALFORMED~;
+	float[] out = alloc::new_array(allocator, float, (sz)count * (sz)width);
 	foreach (usz k, &v : out) *v = bitcast(bitorder::read(buffer[at + k * 4:4], UIntLE), float);
 	return out;
 }

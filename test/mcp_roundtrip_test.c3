@@ -9,6 +9,7 @@ module crig_tests::mcp_roundtrip;
 
 import crig;
 import crig_tests::mcp;
+import crig_tests::helpers;
 import std::collections::object;
 import std::encoding::json;
 import std::core::test;
@@ -145,12 +146,6 @@ fn void a_layer_replace_with_only_keys_keeps_its_name() @test
 	test::@check(angle > 0.19f && angle < 0.21f, "the new key did not land (angle %f)", angle);
 }
 
-fn uint dot_named(mcp::Fixture* f, String name)
-{
-	foreach (dot : f.app.doc.dots.array_view()) if (dot.name == name) return dot.id;
-	return 0;
-}
-
 <*
  A stale limit table on a finger is a fault of the rig: it is listed after the
  clip's own issues, the clip's keys still read clip_verdict usable, and its fix
@@ -167,8 +162,8 @@ fn void a_stale_finger_table_is_the_rigs_fault_and_mended_alone() @test
 	if (!f.open_model(HUMANOID)) return;
 	defer f.close();
 
-	uint finger = dot_named(&f, "index_1_L");
-	uint neck = dot_named(&f, "neck");
+	uint finger = helpers::dot_named(&f.app, "index_1_L");
+	uint neck = helpers::dot_named(&f.app, "neck");
 	test::@check(finger != 0 && neck != 0, "the humanoid has no index_1_L or neck");
 	if (finger == 0 || neck == 0) return;
 	// A table pinned to the rest axes: the finger's bone runs along X, so Y is a

@@ -74,26 +74,6 @@ fn float AppState.lock_rotation_residual(&self, uint dot_id)
 	return i >= 0 ? self.position_locks[(usz)i].turn_residual : 0.0f;
 }
 
-// Drop the entry at `at`, compacting the list.
-fn void AppState.drop_lock_at(&self, usz at)
-{
-	if (self.position_locks.len <= 1)
-	{
-		if (self.position_locks.len > 0) alloc::free(mem, self.position_locks);
-		self.position_locks = {};
-		return;
-	}
-	PositionLock[] rest = alloc::new_array(mem, PositionLock, self.position_locks.len - 1);
-	usz w = 0;
-	foreach (usz i, lock : self.position_locks)
-	{
-		if (i == at) continue;
-		rest[w++] = lock;
-	}
-	alloc::free(mem, self.position_locks);
-	self.position_locks = rest;
-}
-
 <*
  The joint's world orientation right now, out of the current pose — what a
  rotation anchor captures and holds. Identity when there is no rig to read it
@@ -144,7 +124,7 @@ fn void AppState.set_anchor(&self, uint dot_id, bool position, bool rotation)
 	sz found = self.lock_index(dot_id);
 	if (!position && !rotation)
 	{
-		if (found >= 0) self.drop_lock_at((usz)found);
+		if (found >= 0) slice_remove_at(mem, &self.position_locks, (usz)found);
 		return;
 	}
 
@@ -164,7 +144,7 @@ fn void AppState.set_anchor(&self, uint dot_id, bool position, bool rotation)
 	lock.rotation = rotation;
 
 	if (found >= 0) { self.position_locks[(usz)found] = lock; }
-	else { self.position_locks = grow_locks(self.position_locks, lock); }
+	else { slice_push(mem, &self.position_locks, lock); }
 }
 
 <*

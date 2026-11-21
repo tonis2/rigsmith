@@ -9,22 +9,12 @@
 module crig_tests::joint_layers;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::math;
 import std::math::vector;
 import std::math::quaternion;
-
-// root
-//  |- a - b - c
-//  `- d
-Vec3[5] rig_joints @local = {
-	{ 0, 1, 0 }, { 0, 0.8f, 0 }, { 0, 0.6f, 0 }, { 0, 0.4f, 0 }, { 0.3f, 0.9f, 0 },
-};
-int[5] rig_parents @local = { -1, 0, 1, 2, 0 };
-String[5] rig_names @local = { "root", "a", "b", "c", "d" };
-
-fn rig::Skeleton small_rig() @local => { .joints = rig_joints[..], .parents = rig_parents[..] };
 
 const Vec3 X @local = { 1, 0, 0 };
 const Vec3 Y @local = { 0, 1, 0 };
@@ -115,7 +105,7 @@ fn bool keys_joint(AnimTemplate* clip, String joint) @local
 *>
 fn void moving_joints_to_an_override_layer_keeps_the_pose() @test
 {
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	String[2] joints = { "b", "c" };
 	String[1] mask = { "b" };
 	foreach (variant : (int[]) { 0, 1, 2 })
@@ -142,9 +132,9 @@ fn void moving_joints_to_an_override_layer_keeps_the_pose() @test
 
 		for (float t = 0.0f; t <= 2.5f; t += 0.05f)
 		{
-			rig::Pose before = clip.pose(mem, &skeleton, rig_names[..], t, false);
+			rig::Pose before = clip.pose(mem, &skeleton, helpers::small_rig_names[..], t, false);
 			defer before.free(mem);
-			rig::Pose after = moved.pose(mem, &skeleton, rig_names[..], t, false);
+			rig::Pose after = moved.pose(mem, &skeleton, helpers::small_rig_names[..], t, false);
 			defer after.free(mem);
 			test::@check(same_pose(&before, &after), "variant %d: the pose changed at %.2f s", variant, t);
 		}
@@ -202,7 +192,7 @@ fn void stripping_joints_drops_empty_keyframes_and_refuses_an_empty_base() @test
 *>
 fn void a_layer_bone_matching_the_rig_plays_as_written() @test
 {
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	Vec3[] bones = skeleton.bone_directions(mem);
 	defer alloc::free(mem, bones);
 	rig::Pose[2] poses;
@@ -218,7 +208,7 @@ fn void a_layer_bone_matching_the_rig_plays_as_written() @test
 		AnimTemplate clip = { .name = "lift".copy(mem), .duration = 1.0f, .keyframes = base, .owned = true };
 		clip.layers = alloc::new_array(mem, AnimLayer, 1);
 		clip.layers[0] = layer;
-		poses[i] = clip.pose(mem, &skeleton, rig_names[..], 0.3f, false);
+		poses[i] = clip.pose(mem, &skeleton, helpers::small_rig_names[..], 0.3f, false);
 		clip.free(mem);
 	}
 	defer { poses[0].free(mem); poses[1].free(mem); }
@@ -267,7 +257,7 @@ fn bool keys_in_order(AnimKeyframe[] keys, float duration) @local
 *>
 fn void trimming_a_clip_trims_its_keyed_layers() @test
 {
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	AnimTemplate take = layered_take(3.0f, 0.1f);
 	defer take.free(mem);
 
@@ -277,9 +267,9 @@ fn void trimming_a_clip_trims_its_keyed_layers() @test
 	test::@check(keys_in_order(part.layers[0].keyframes, part.duration), "the cropped layer's keys are out of order");
 	foreach (t : (float[]) { 0.0f, 0.3f, 0.77f, 1.1f })
 	{
-		rig::Pose was = take.pose(mem, &skeleton, rig_names[..], 1.25f + t, false);
+		rig::Pose was = take.pose(mem, &skeleton, helpers::small_rig_names[..], 1.25f + t, false);
 		defer was.free(mem);
-		rig::Pose now = part.pose(mem, &skeleton, rig_names[..], t, false);
+		rig::Pose now = part.pose(mem, &skeleton, helpers::small_rig_names[..], t, false);
 		defer now.free(mem);
 		test::@check(1.0f - math::abs(was.rotations[2].v.dot(now.rotations[2].v)) < 1.0e-5f,
 			"the layer's joint moved differently at %.2f s into the crop", t);
@@ -299,7 +289,7 @@ fn void trimming_a_clip_trims_its_keyed_layers() @test
 *>
 fn void a_cycle_cut_from_a_take_cuts_its_keyed_layers() @test
 {
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	AnimTemplate take = layered_take(4.0f, 1.0f / 60.0f);
 	defer take.free(mem);
 	crig::CycleCut cut;
@@ -309,9 +299,9 @@ fn void a_cycle_cut_from_a_take_cuts_its_keyed_layers() @test
 	test::@check(keys_in_order(cycle.layers[0].keyframes, cycle.duration), "the cycle's layer keys are out of order");
 	foreach (t : (float[]) { 0.1f, 0.4f, 0.7f })
 	{
-		rig::Pose was = take.pose(mem, &skeleton, rig_names[..], cut.start + t, false);
+		rig::Pose was = take.pose(mem, &skeleton, helpers::small_rig_names[..], cut.start + t, false);
 		defer was.free(mem);
-		rig::Pose now = cycle.pose(mem, &skeleton, rig_names[..], t, false);
+		rig::Pose now = cycle.pose(mem, &skeleton, helpers::small_rig_names[..], t, false);
 		defer now.free(mem);
 		test::@check(1.0f - math::abs(was.rotations[2].v.dot(now.rotations[2].v)) < 1.0e-4f,
 			"the layer's joint in the cycle does not follow the take at %.2f s", t);
@@ -342,8 +332,8 @@ fn AnimTemplate fitted_clip(AnimLayerFit fit, bool loop = false) @local
 
 fn float b_turn(AnimTemplate* clip, float time) @local
 {
-	rig::Skeleton skeleton = small_rig();
-	rig::Pose pose = clip.pose(mem, &skeleton, rig_names[..], time, false);
+	rig::Skeleton skeleton = helpers::small_rig();
+	rig::Pose pose = clip.pose(mem, &skeleton, helpers::small_rig_names[..], time, false);
 	defer pose.free(mem);
 	Quaternionf q = pose.rotations[2];
 	if (q.v.w < 0.0f) q = -q;
@@ -382,12 +372,12 @@ fn void an_own_clock_layer_fits_by_stretch_keep_or_repeat() @test
 *>
 fn void flattening_or_unlinking_a_fitted_layer_keeps_the_motion() @test
 {
-	rig::Skeleton skeleton = small_rig();
+	rig::Skeleton skeleton = helpers::small_rig();
 	foreach (fit : (AnimLayerFit[]) { STRETCH, KEEP, REPEAT })
 	{
 		AnimTemplate clip = fitted_clip(fit, loop: true);
 		defer clip.free(mem);
-		AnimTemplate flat = crig::clip_flattened(mem, clip, &skeleton, rig_names[..]);
+		AnimTemplate flat = crig::clip_flattened(mem, clip, &skeleton, helpers::small_rig_names[..]);
 		defer flat.free(mem);
 		flat.compile_tracks(mem);
 		AnimTemplate plain = crig::clip_copy(mem, clip);

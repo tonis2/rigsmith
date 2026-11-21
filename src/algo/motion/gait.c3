@@ -45,7 +45,7 @@ import std::collections::object;
 import std::math;
 import std::math::quaternion;
 
-faultdef GAIT_NO_LEGS, GAIT_BAD_LEG, GAIT_NO_OFFSET;
+excuse GAIT_NO_LEGS, GAIT_BAD_LEG, GAIT_NO_OFFSET;
 
 // Bones between the leg root and the foot. More and the root is the fourth joint
 // above the foot, which leaves the higher ones where they are.

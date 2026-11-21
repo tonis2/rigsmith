@@ -50,29 +50,6 @@ fn bool is_finger(String name)
 	return false;
 }
 
-fn void digits_are_the_finger_chains() @test
-{
-	io::printn("the digits of the humanoid are its forty finger joints");
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_binder(&app, &mesh, DIGIT_COPY);
-	defer close_binder(&app, &mesh, DIGIT_COPY);
-
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	bool[] digits = view.skeleton.digits(mem);
-	defer alloc::free(mem, digits);
-	usz marked = 0;
-	foreach (b, digit : digits)
-	{
-		crig::Dot* dot = app.doc.find(view.dot_ids[b]);
-		String name = dot ? dot.name : "";
-		test::@check(digit == is_finger(name), "%s is %s a digit", name, digit ? "wrongly" : "not");
-		if (digit) marked++;
-	}
-	test::eq(marked, (usz)40);
-}
-
 <*
  The middle of a finger segment moves with its own joint. Measured over the
  vertices nearest the segment that project into its middle 40%: the binder's
@@ -80,6 +57,8 @@ fn void digits_are_the_finger_chains() @test
  segment is as long as the finger is thick. Cut at the knuckles they hold 0.98
  on average. The weakest is the thumb's first segment, at 0.88, beside the palm,
  where the wrist keeps the share the binder never gave the thumb.
+
+ The digits are the humanoid's forty finger joints, and nothing else.
 
  *Re-introduce:* drop `rig::band_digits` from `AppState.shape_bind`, and the
  segments hold about half of their middles.
@@ -101,6 +80,15 @@ fn void a_finger_joint_holds_the_middle_of_its_segment() @test
 	defer alloc::free(mem, tails);
 	bool[] digits = view.skeleton.digits(mem);
 	defer alloc::free(mem, digits);
+	usz marked = 0;
+	foreach (b, digit : digits)
+	{
+		crig::Dot* dot = app.doc.find(view.dot_ids[b]);
+		String name = dot ? dot.name : "";
+		test::@check(digit == is_finger(name), "%s is %s a digit", name, digit ? "wrongly" : "not");
+		if (digit) marked++;
+	}
+	test::eq(marked, (usz)40);
 
 	// Each vertex's nearest segment, and where along it the vertex projects.
 	Vec3[] joints = view.skeleton.joints;
@@ -252,14 +240,16 @@ fn bool is_hand_joint(rig::DigitBands* bands, rig::DigitFork fork, usz joint)
  and that lies behind its finger's first knuckle by more than the blend, has a
  finger joint for its strongest. The binder's falloff alone gave 122 of the
  humanoid's 294 such vertices to a finger's first bone, which then moved the
- palm whenever the finger bent.
+ palm whenever the finger bent. Past the first knuckle a vertex of the hand is
+ shared by at most two of the hand's joints, the two either side of the knuckle
+ it is nearest, where the falloff spread nearly every one over three or more.
 
  *Re-introduce:* drop `rig::band_digits` from `AppState.shape_bind`, and 122 palm
- vertices are a finger's.
+ vertices are a finger's, and 786 of the 787 finger vertices hold a third joint.
 *>
-fn void the_palm_behind_the_knuckles_belongs_to_the_wrist() @test
+fn void the_palm_is_the_wrists_and_a_knuckle_blends_only_its_two_joints() @test
 {
-	io::printn("the palm behind the knuckles belongs to the wrist");
+	io::printn("the palm behind the knuckles belongs to the wrist, and a knuckle to its two joints");
 	crig::AppState app;
 	rig::TriMesh mesh;
 	open_binder(&app, &mesh, DIGIT_COPY);
@@ -277,50 +267,6 @@ fn void the_palm_behind_the_knuckles_belongs_to_the_wrist() @test
 	float[64] along;
 	usz behind = 0;
 	usz taken = 0;
-	foreach (usz v, p : app.geometry.positions)
-	{
-		float[] row = bound[v * bones : bones];
-		float sum = 0.0f;
-		foreach (w : row) sum += w;
-		foreach (fork : bands.forks)
-		{
-			if (hand_share(&bands, fork, row) < 0.5f * sum) continue;
-			bands.weights(bands.nearest_chain(fork, p), p, app.doc.knuckle_blend_fraction(), along[..]);
-			if (along[0] < 1.0f) continue;
-			behind++;
-			sz owner = crig::row_owner(row);
-			if (owner >= 0 && bands.digit[(usz)owner]) taken++;
-		}
-	}
-	test::@check(behind >= 100, "only %d vertices lie behind the knuckles", behind);
-	test::@check(taken == 0, "%d of the %d palm vertices behind the knuckles are a finger's", taken, behind);
-}
-
-<*
- Past the first knuckle a vertex of the hand is shared by at most two of the
- hand's joints — the two either side of the knuckle it is nearest — where the
- binder's falloff spread nearly every one of them over three or more.
-
- *Re-introduce:* drop `rig::band_digits` from `AppState.shape_bind`, and 786 of
- the humanoid's 787 finger vertices hold a third joint.
-*>
-fn void a_knuckle_blends_only_its_two_joints() @test
-{
-	io::printn("a finger vertex is shared by at most two of the hand's joints");
-	crig::AppState app;
-	rig::TriMesh mesh;
-	open_binder(&app, &mesh, DIGIT_COPY);
-	defer close_binder(&app, &mesh, DIGIT_COPY);
-
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	usz bones = view.len();
-	float[] bound = app.weights(mem, &view, AUTOMATIC);
-	defer alloc::free(mem, bound);
-	rig::DigitBands bands = rig::digit_bands(mem, &view.skeleton);
-	defer bands.free(mem);
-
-	float[64] along;
 	usz past = 0;
 	usz crowded = 0;
 	foreach (usz v, p : app.geometry.positions)
@@ -333,6 +279,12 @@ fn void a_knuckle_blends_only_its_two_joints() @test
 			float hand = hand_share(&bands, fork, row);
 			if (hand < 0.5f * sum) continue;
 			bands.weights(bands.nearest_chain(fork, p), p, app.doc.knuckle_blend_fraction(), along[..]);
+			if (along[0] >= 1.0f)
+			{
+				behind++;
+				sz owner = crig::row_owner(row);
+				if (owner >= 0 && bands.digit[(usz)owner]) taken++;
+			}
 			if (along[0] > 0.0f) continue;
 			past++;
 			usz holding = 0;
@@ -343,6 +295,8 @@ fn void a_knuckle_blends_only_its_two_joints() @test
 			if (holding > 2) crowded++;
 		}
 	}
+	test::@check(behind >= 100, "only %d vertices lie behind the knuckles", behind);
+	test::@check(taken == 0, "%d of the %d palm vertices behind the knuckles are a finger's", taken, behind);
 	test::@check(past >= 500, "only %d vertices lie past the first knuckles", past);
 	test::@check(crowded == 0, "%d of %d finger vertices hold a third joint of the hand", crowded, past);
 }

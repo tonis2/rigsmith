@@ -70,10 +70,12 @@ fn void animation_multikey_ui_shift_copy_paste_delete_are_grouped() @test
 	test::eq(f.app.clip(f.app.editing).keyframes.len, (sz)5);
 	test::eq(f.app.undo_stack.cursor, history + 1);
 	test::eq(multi_selected_marks(&f), (usz)2);
+	usz dots = (usz)f.app.doc.dots.len();
 	f.feed(point, keys: { Key.DELETE });
 	f.feed(point);
 	test::eq(f.app.clip(f.app.editing).keyframes.len, (sz)3);
 	test::eq(f.app.undo_stack.cursor, history + 2);
+	test::@check((usz)f.app.doc.dots.len() == dots, "Delete on the sheet removed rig data");
 	test::@check(f.app.undo() && f.app.clip(f.app.editing).keyframes.len == 5,
 		"group delete did not undo together");
 	test::@check(f.app.undo() && f.app.clip(f.app.editing).keyframes.len == 3,

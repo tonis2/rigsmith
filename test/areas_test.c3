@@ -4,6 +4,7 @@
 module crig_tests::areas;
 
 import crig;
+import crig_tests::helpers;
 import rig;
 import std::core::test;
 import std::io;
@@ -11,13 +12,6 @@ import std::io::file;
 import std::math;
 
 const String AREA_COPY = "build/areas-humanoid.glb";
-
-fn void copy_fixture(String path)
-{
-	char[] original = file::load(mem, "assets/animations/humanoid.glb")!!;
-	defer alloc::free(mem, original);
-	file::save(path, original)!!;
-}
 
 fn void remove_fixture(String path)
 {
@@ -31,15 +25,6 @@ fn void remove_fixture(String path)
 	String copy_sidecar = crig::session_path(mem, copy);
 	defer copy_sidecar.free(mem);
 	(void)file::delete(copy_sidecar);
-}
-
-fn uint named(crig::AppState* app, String name)
-{
-	foreach (dot : app.doc.dots.array_view())
-	{
-		if (dot.name == name) return dot.id;
-	}
-	return 0;
 }
 
 // Each vertex's share of one joint in the bind as shown, normalised.
@@ -88,15 +73,6 @@ fn float[] weights_of(crig::AppState* app, uint dot_id)
 	return app.column_of(mem, &view, dot_id);
 }
 
-// The whole matrix as the views show it, unnormalised; `bones` weights to a vertex.
-fn float[] shown_matrix(crig::AppState* app, usz* bones)
-{
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	*bones = view.len();
-	return app.weights(mem, &view);
-}
-
 // The automatic weights every unheld joint follows; `bones` weights to a vertex.
 fn float[] automatic_matrix(crig::AppState* app, usz* bones)
 {
@@ -143,7 +119,7 @@ fn usz count_of(bool[] mask)
 fn void a_part_takes_exactly_what_it_names() @test
 {
 	io::printn("own bone, with children and whole piece take exactly what they name");
-	copy_fixture(AREA_COPY);
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -152,8 +128,8 @@ fn void a_part_takes_exactly_what_it_names() @test
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 
-	uint head = named(&app, "head");
-	uint head_top = named(&app, "head_top");
+	uint head = helpers::dot_named(&app, "head");
+	uint head_top = helpers::dot_named(&app, "head_top");
 	test::@check(head != 0 && head_top != 0, "the humanoid has no head and head_top");
 
 	uint[] owners = owners_of(&app);
@@ -183,7 +159,7 @@ fn void a_part_takes_exactly_what_it_names() @test
 
 	// The humanoid's head_top holds no skin of its own, so the subtree is shown
 	// growing on the hand: the wrist with its fingers.
-	uint wrist = named(&app, "wrist_L");
+	uint wrist = helpers::dot_named(&app, "wrist_L");
 	bool[] palm = app.area_part_mask(mem, wrist, OWN);
 	defer alloc::free(mem, palm);
 	bool[] hand = app.area_part_mask(mem, wrist, WITH_CHILDREN);
@@ -230,7 +206,7 @@ fn void a_part_takes_exactly_what_it_names() @test
 fn void applying_a_part_writes_its_band_and_undoes_in_one_step() @test
 {
 	io::printn("apply writes a rigid or banded column in one undo step, and reset restores");
-	copy_fixture(AREA_COPY);
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -242,9 +218,9 @@ fn void applying_a_part_writes_its_band_and_undoes_in_one_step() @test
 	(void)app.release_all_recorded();
 	app.undo_stack.clear();
 
-	uint head = named(&app, "head");
+	uint head = helpers::dot_named(&app, "head");
 	usz bones;
-	float[] before = shown_matrix(&app, &bones);
+	float[] before = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, before);
 	usz h = joint_index(&app, head);
 	test::eq(app.doc.pins.len(), (sz)0);
@@ -261,7 +237,7 @@ fn void applying_a_part_writes_its_band_and_undoes_in_one_step() @test
 		test::@check(family[pin.vertex], "a head weight landed outside the part");
 		test::@check(pin.share == 1.0f, "a rigid part wrote %f", pin.share);
 	}
-	float[] rigid = shown_matrix(&app, &bones);
+	float[] rigid = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, rigid);
 	foreach (usz v, on : family)
 	{
@@ -328,7 +304,7 @@ fn void applying_a_part_writes_its_band_and_undoes_in_one_step() @test
 	test::@check(app.release_recorded(head), "reset changed nothing");
 	app.undo_stack.commit();
 	test::eq(app.doc.pins.len(), (sz)0);
-	float[] after = shown_matrix(&app, &bones);
+	float[] after = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, after);
 	test::eq(others_moved(before, after, bones, -1), (usz)0);
 	test::@check(app.undo(), "reset left nothing to undo");
@@ -347,7 +323,7 @@ fn void applying_a_part_writes_its_band_and_undoes_in_one_step() @test
 fn void a_part_mirrors_and_survives_the_session() @test
 {
 	io::printn("a part mirrors onto the twin and survives save and reload");
-	copy_fixture(AREA_COPY);
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -359,9 +335,9 @@ fn void a_part_mirrors_and_survives_the_session() @test
 	(void)app.release_all_recorded();
 	app.undo_stack.clear();
 
-	uint wrist = named(&app, "wrist_L");
+	uint wrist = helpers::dot_named(&app, "wrist_L");
 	uint twin = app.mirror_twin(wrist);
-	test::@check(twin == named(&app, "wrist_R"), "wrist_L's twin is not wrist_R");
+	test::@check(twin == helpers::dot_named(&app, "wrist_R"), "wrist_L's twin is not wrist_R");
 
 	bool[] hand = app.area_part_mask(mem, wrist, WITH_CHILDREN);
 	defer alloc::free(mem, hand);
@@ -425,7 +401,7 @@ fn void a_part_mirrors_and_survives_the_session() @test
 fn void applying_a_joint_leaves_every_other_joint_alone() @test
 {
 	io::printn("applying a joint leaves every other joint's weights alone");
-	copy_fixture(AREA_COPY);
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -434,8 +410,8 @@ fn void applying_a_joint_leaves_every_other_joint_alone() @test
 	defer app.free();
 	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
 
-	uint first = named(&app, "index_2_L");
-	uint second = named(&app, "index_1_L");
+	uint first = helpers::dot_named(&app, "index_2_L");
+	uint second = helpers::dot_named(&app, "index_1_L");
 	test::@check(first != 0 && second != 0, "the humanoid has no index finger");
 	bool[] first_part = app.area_part_mask(mem, first, OWN);
 	defer alloc::free(mem, first_part);
@@ -443,41 +419,15 @@ fn void applying_a_joint_leaves_every_other_joint_alone() @test
 		"the first joint's part wrote nothing");
 
 	usz bones;
-	float[] before = shown_matrix(&app, &bones);
+	float[] before = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, before);
 	bool[] second_part = app.area_part_mask(mem, second, OWN);
 	defer alloc::free(mem, second_part);
 	test::@check(app.apply_area(second, second_part, app.area_scale(second) * 0.25f) > 0,
 		"the second joint's part wrote nothing");
-	float[] after = shown_matrix(&app, &bones);
+	float[] after = helpers::shown_weights(&app, &bones);
 	defer alloc::free(mem, after);
 	test::eq(others_moved(before, after, bones, (sz)joint_index(&app, second)), (usz)0);
-}
-
-<*
- Applying the part a joint already moves changes nothing and records nothing, so
- the card can say so.
-*>
-fn void applying_the_same_part_twice_writes_nothing() @test
-{
-	io::printn("applying the same part twice writes nothing the second time");
-	copy_fixture(AREA_COPY);
-	defer remove_fixture(AREA_COPY);
-
-	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
-	defer mesh.free(mem);
-	crig::AppState app = crig::new_app(mesh, AREA_COPY);
-	defer app.free();
-	test::@check(app.import_rig_from_source(), "the humanoid rig must import");
-
-	uint finger = named(&app, "index_1_L");
-	bool[] part = app.area_part_mask(mem, finger, OWN);
-	defer alloc::free(mem, part);
-	float soft = app.area_scale(finger) * 0.25f;
-	test::@check(app.apply_area(finger, part, soft) > 0, "the first apply wrote nothing");
-	usz revision = (usz)app.undo_stack.edits.len();
-	test::eq(app.apply_area(finger, part, soft), (usz)0);
-	test::eq((usz)app.undo_stack.edits.len(), revision);
 }
 
 <*
@@ -492,7 +442,7 @@ fn void applying_the_same_part_twice_writes_nothing() @test
 fn void resetting_a_joint_lets_it_go_and_spares_its_neighbours() @test
 {
 	io::printn("resetting a joint lets it go and spares its neighbours");
-	copy_fixture(AREA_COPY);
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -508,8 +458,8 @@ fn void resetting_a_joint_lets_it_go_and_spares_its_neighbours() @test
 		app.undo_stack.commit();
 		app.mark_rig_stale();
 
-		uint first = named(&app, "index_1_L");
-		uint second = named(&app, "index_2_L");
+		uint first = helpers::dot_named(&app, "index_1_L");
+		uint second = helpers::dot_named(&app, "index_2_L");
 		test::@check(first != 0 && second != 0, "the humanoid has no index finger");
 		usz bones;
 		float[] automatic = automatic_matrix(&app, &bones);
@@ -523,13 +473,13 @@ fn void resetting_a_joint_lets_it_go_and_spares_its_neighbours() @test
 		defer alloc::free(mem, second_part);
 		test::@check(app.apply_area(second, second_part, app.area_scale(second) * 0.25f) > 0, "the second joint's part wrote nothing");
 
-		float[] before = shown_matrix(&app, &bones);
+		float[] before = helpers::shown_weights(&app, &bones);
 		defer alloc::free(mem, before);
 		test::@check(app.release_recorded(second), "the reset changed nothing");
 		app.undo_stack.commit();
 		test::@check(!app.weights_held(second) && app.weights_held(first), "the reset let go of the wrong joint");
 
-		float[] after = shown_matrix(&app, &bones);
+		float[] after = helpers::shown_weights(&app, &bones);
 		defer alloc::free(mem, after);
 		test::eq(others_moved(before, after, bones, (sz)b), (usz)0);
 		usz off = 0;
@@ -542,13 +492,14 @@ fn void resetting_a_joint_lets_it_go_and_spares_its_neighbours() @test
 }
 
 <*
- A second Reset of the same joint finds nothing to let go of and records
- nothing; the card says the joint already uses automatic weights.
+ Applying the part a joint already moves, or a second Reset of the same joint,
+ changes nothing and records nothing; the card says the joint already uses
+ automatic weights.
 *>
-fn void resetting_twice_writes_nothing() @test
+fn void applying_or_resetting_twice_writes_nothing() @test
 {
-	io::printn("resetting the same joint twice writes nothing the second time");
-	copy_fixture(AREA_COPY);
+	io::printn("applying or resetting the same joint twice writes nothing the second time");
+	helpers::copy_humanoid(AREA_COPY);
 	defer remove_fixture(AREA_COPY);
 
 	rig::TriMesh mesh = rig::load_gltf(mem, AREA_COPY)!!;
@@ -559,10 +510,14 @@ fn void resetting_twice_writes_nothing() @test
 	// From the automatic weights: the import holds every joint with the file's.
 	(void)app.release_all_recorded();
 
-	uint finger = named(&app, "index_2_L");
+	uint finger = helpers::dot_named(&app, "index_2_L");
 	bool[] part = app.area_part_mask(mem, finger, OWN);
 	defer alloc::free(mem, part);
-	test::@check(app.apply_area(finger, part, app.area_scale(finger) * 0.25f) > 0, "the apply wrote nothing");
+	float soft = app.area_scale(finger) * 0.25f;
+	test::@check(app.apply_area(finger, part, soft) > 0, "the apply wrote nothing");
+	usz applied = (usz)app.undo_stack.edits.len();
+	test::eq(app.apply_area(finger, part, soft), (usz)0);
+	test::eq((usz)app.undo_stack.edits.len(), applied);
 
 	app.select(finger);
 	test::eq(app.reset_joint_area(), (usz)1);

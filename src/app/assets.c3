@@ -25,6 +25,7 @@ module crig;
 import gltf_edit;
 import cui;
 import cui::widgets;
+import std::hash::fnv32a;
 
 
 
@@ -100,23 +101,31 @@ fn String AppState.asset_group_name(&self)
 *>
 fn uint AppState.bound_signature(&self)
 {
-	uint hash = 2166136261u;
-	hash = (hash ^ self.id) * 16777619u;
-	hash = fnv_text(hash, self.asset_group_name());
-	hash = fnv_text(hash, self.source_path);
+	Fnv32a hash;
+	hash.init();
+	hash.mix(self.id);
+	hash.text(self.asset_group_name());
+	hash.text(self.source_path);
 	foreach (bound : self.doc.animations.array_view())
 	{
-		hash = fnv_text(hash, bound.file);
-		hash = fnv_text(hash, bound.clip);
+		hash.text(bound.file);
+		hash.text(bound.clip);
 	}
-	return hash;
+	return (uint)hash;
 }
 
-// One string into an FNV-1a hash, ended by a byte UTF-8 never holds.
-fn uint fnv_text(uint hash, String text) @local
+// Change keys: a value folded into the hash byte by byte.
+macro void Fnv32a.mix(&self, value)
 {
-	foreach (ch : text) hash = (hash ^ ch) * 16777619u;
-	return (hash ^ 0xFFu) * 16777619u;
+	var v = value;
+	self.update(@as_char_view(v));
+}
+
+// A string, ended by a byte UTF-8 never holds, so "ab", "c" and "a", "bc" differ.
+fn void Fnv32a.text(&self, String text)
+{
+	self.update(text);
+	self.update_byte(0xFF);
 }
 
 <*

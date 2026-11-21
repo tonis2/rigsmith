@@ -45,31 +45,22 @@ fn void only_what_changed_becomes_an_offset() @test
 	test::@check(offsets[1].joint == "head" && offsets[1].moves && !offsets[1].rotates, "the move");
 	test::@check(math::abs(offsets[1].move.y - 0.5f) < NEAR, "a move is a fraction of the height");
 	test::@check(turns && moves, "the summary");
-}
 
-fn void a_joint_left_out_gives_no_offset() @test
-{
-	rig::Pose before = rig::rest_pose(mem, 4);
-	defer before.free(mem);
-	rig::Pose after = rig::rest_pose(mem, 4);
-	defer after.free(mem);
-	after.turn(1, { 0, 1, 0 }, 0.5f);
+	// A channel left out of the filter gives no offset, even where it changed.
 	after.move(1, { 0, 1, 0 });
 	bool[4] none;
 	bool[4] moves_only = { false, true, false, false };
-
-	List{crig::KeyOffset} offsets;
-	offsets.init(mem);
-	defer offsets.free();
-	bool turns, moves;
-	crig::key_offsets_of(&offsets, rig_names[..], before, after, 1.0f, none[..], moves_only[..], &turns, &moves);
-	test::@check(offsets.len() == 1 && !offsets[0].rotates && offsets[0].moves, "the channel filter failed");
-	test::@check(!turns && moves, "the summary");
+	offsets.clear();
+	bool turned, moved;
+	crig::key_offsets_of(&offsets, rig_names[..], before, after, 1.0f, none[..], moves_only[..], &turned, &moved);
+	test::@check(offsets.len() == 1 && offsets[0].joint == "spine" && !offsets[0].rotates && offsets[0].moves,
+		"the channel filter failed");
+	test::@check(!turned && moved, "the filtered summary");
 }
 
 // ---- aims
 
-fn void a_new_target_goes_in_front_of_the_root_with_nothing_picked() @test
+fn void a_new_target_goes_in_front_of_the_root_or_the_picked_joint() @test
 {
 	crig::RigView view = small_view();
 	rig::Pose pose = rig::rest_pose(mem, 4);
@@ -79,19 +70,13 @@ fn void a_new_target_goes_in_front_of_the_root_with_nothing_picked() @test
 	float height = view.skeleton.height();
 	test::@check(math::abs(at.z - crig::AIM_FRONT_REACH) < NEAR, "not in front: %f", at.z);
 	test::@check(math::abs(at.y - (1.0f + 0.2f * height) / height) < NEAR, "not at chest height: %f", at.y);
-}
 
-fn void an_upright_joint_looks_out_its_front() @test
-{
-	crig::RigView view = small_view();
-	rig::Pose pose = rig::rest_pose(mem, 4);
-	defer pose.free(mem);
+	// With the upright head picked, the target goes out its front.
 	uint[1] dots = { 23 };
 	Vec3[1] positions = { { 0, 2, 0 } };
 	Quaternionf[1] worlds = { quaternion::IDENTITY };
-	Vec3 at;
-	test::@check(crig::aim_spot_for(&view, pose, dots[..], positions[..], worlds[..], &at), "no spot");
-	test::@check(math::abs(at.z - crig::AIM_FRONT_REACH) < NEAR && math::abs(at.x) < NEAR, "not in front: %s", at);
+	test::@check(crig::aim_spot_for(&view, pose, dots[..], positions[..], worlds[..], &at), "no spot for the head");
+	test::@check(math::abs(at.z - crig::AIM_FRONT_REACH) < NEAR && math::abs(at.x) < NEAR, "not in front of the head: %s", at);
 }
 
 fn void an_existing_lock_keeps_its_settings_on_a_new_target() @test
@@ -139,18 +124,15 @@ fn void a_foot_pin_stands_on_the_floor_and_runs_back_by_the_travel() @test
 	test::@check(math::abs(pin.blend - 0.2f) < NEAR, "the blend is capped at half the window: %f", pin.blend);
 	test::@check(math::abs(pin.travel.x + 1.0f / height) < NEAR, "the travel: %f", pin.travel.x);
 	test::@check(!pin.rotation, "a pin not asked to be flat held the angle");
-}
 
-fn void a_flat_pin_keeps_only_the_yaw() @test
-{
-	crig::RigView view = small_view();
-	rig::Pose pose = rig::rest_pose(mem, 4);
-	defer pose.free(mem);
-	pose.turn(3, { 1, 0, 0 }, 0.4f);
-	crig::AnimPin pin = crig::foot_pin_at(mem, &view.skeleton, pose, 3, "foot", 0, 1, 0, 0, {}, true)!!;
-	defer pin.free(mem);
-	test::@check(pin.rotation, "the angle isn't held");
-	test::@check(math::abs(pin.orient.v.x) < NEAR, "the tilt was kept");
+	// A flat pin holds the angle, and only its yaw.
+	rig::Pose tilted = rig::rest_pose(mem, 4);
+	defer tilted.free(mem);
+	tilted.turn(3, { 1, 0, 0 }, 0.4f);
+	crig::AnimPin flat = crig::foot_pin_at(mem, &view.skeleton, tilted, 3, "foot", 0, 1, 0, 0, {}, true)!!;
+	defer flat.free(mem);
+	test::@check(flat.rotation, "the angle isn't held");
+	test::@check(math::abs(flat.orient.v.x) < NEAR, "the tilt was kept");
 }
 
 fn void a_window_past_the_end_of_a_loop_wraps_as_a_contact() @test
@@ -227,7 +209,9 @@ fn crig::LayerKeyAsk layer_ask(crig::RigView* view, crig::AnimTemplate* clip, cr
 	};
 }
 
-fn void a_sparse_layer_keys_only_the_joint_that_differs() @test
+// A sparse layer keys only the joint that differs; a selected scope keys the
+// selection whatever moved; a half-weight layer holds twice the gap.
+fn void a_layer_key_holds_what_the_layer_must_add() @test
 {
 	crig::RigView view = small_view();
 	crig::AnimTemplate clip = { .duration = 1.0f };
@@ -244,42 +228,22 @@ fn void a_sparse_layer_keys_only_the_joint_that_differs() @test
 	defer key.free(mem);
 	test::@check(key.dots.len == 1 && key.dots[0].joint_name == "head", "%d dots", key.dots.len);
 	test::@check(math::abs(key.dots[0].angle - 0.5f) < 1.0e-3f, "the turn was %f", key.dots[0].angle);
-}
 
-fn void a_selected_scope_keys_the_selection_whatever_moved() @test
-{
-	crig::RigView view = small_view();
-	crig::AnimTemplate clip = { .duration = 1.0f };
-	crig::AnimLayer layer = { .weight = 1.0f, .mode = ADDITIVE, .kind = KEYED };
-	rig::Pose below = rig::rest_pose(mem, 4);
-	defer below.free(mem);
-	rig::Pose wanted = rig::rest_pose(mem, 4);
-	defer wanted.free(mem);
-	wanted.turn(2, { 0, 1, 0 }, 0.5f);
-	bool[4] selected = { false, true, false, false };
+	bool[4] spine = { false, true, false, false };
+	crig::LayerKeyAsk picked = layer_ask(&view, &clip, &layer, below, wanted, spine[..]);
+	picked.scope = SELECTED;
+	crig::AnimKeyframe chosen = crig::layer_key_for(&picked);
+	defer chosen.free(mem);
+	test::@check(chosen.dots.len == 1 && chosen.dots[0].joint_name == "spine", "%d dots for the selection", chosen.dots.len);
 
-	crig::LayerKeyAsk ask = layer_ask(&view, &clip, &layer, below, wanted, selected[..]);
-	ask.scope = SELECTED;
-	crig::AnimKeyframe key = crig::layer_key_for(&ask);
-	defer key.free(mem);
-	test::@check(key.dots.len == 1 && key.dots[0].joint_name == "spine", "%d dots", key.dots.len);
-}
-
-fn void a_half_weight_layer_holds_twice_the_gap() @test
-{
-	crig::RigView view = small_view();
-	crig::AnimTemplate clip = { .duration = 1.0f };
-	crig::AnimLayer layer = { .weight = 0.5f, .mode = ADDITIVE, .kind = KEYED };
-	rig::Pose below = rig::rest_pose(mem, 4);
-	defer below.free(mem);
-	rig::Pose wanted = rig::rest_pose(mem, 4);
-	defer wanted.free(mem);
-	wanted.turn(2, { 0, 1, 0 }, 0.25f);
-	bool[4] selected;
-
-	crig::LayerKeyAsk ask = layer_ask(&view, &clip, &layer, below, wanted, selected[..]);
-	ask.gain = 0.5f;
-	crig::AnimKeyframe key = crig::layer_key_for(&ask);
-	defer key.free(mem);
-	test::@check(key.dots.len == 1 && math::abs(key.dots[0].angle - 0.5f) < 1.0e-3f, "held %f", key.dots.len > 0 ? key.dots[0].angle : 0.0f);
+	crig::AnimLayer half = { .weight = 0.5f, .mode = ADDITIVE, .kind = KEYED };
+	rig::Pose nearer = rig::rest_pose(mem, 4);
+	defer nearer.free(mem);
+	nearer.turn(2, { 0, 1, 0 }, 0.25f);
+	crig::LayerKeyAsk weak = layer_ask(&view, &clip, &half, below, nearer, selected[..]);
+	weak.gain = 0.5f;
+	crig::AnimKeyframe doubled = crig::layer_key_for(&weak);
+	defer doubled.free(mem);
+	test::@check(doubled.dots.len == 1 && math::abs(doubled.dots[0].angle - 0.5f) < 1.0e-3f,
+		"a half-weight layer held %f", doubled.dots.len > 0 ? doubled.dots[0].angle : 0.0f);
 }

@@ -40,7 +40,7 @@ import std::io::file;
 import std::io::path;
 import std::math;
 
-faultdef RENDER_REFUSED, CAMERA_REFUSED;
+excuse RENDER_REFUSED, CAMERA_REFUSED;
 
 const String RENDER_SCHEMA = `{"type":"object","properties":{
 	"clip":{"type":"string","description":"Clip to photograph, or \"Pack/Clip\". Omit to photograph whatever is on screen now, which is what the camera and crop arguments are still worth."},
@@ -720,7 +720,7 @@ fn image::Image? clean_frame(AppState* app, DString* detail) @local
 	three::SceneView[] none = { };
 	pass.set_extra_views(none);
 	pass.follow = {};
-	pass.camera = pose_scene_camera(&app.camera);
+	pass.camera = scene_camera(&app.camera);
 	pass.view_rect = { 0, 0, 1, 1 };
 
 	three::Renderer* renderer = stage_renderer();

@@ -4,26 +4,12 @@
 *>
 module crig_tests::ui;
 import crig;
+import crig_tests::helpers;
 import cui;
 import cui::widgets;
 import std::core::test;
 import std::math;
 import std::math::quaternion;
-
-// The Animations dock in a pane under the model, showing the first cutscene, one frame later.
-fn void strips_tab(Fixture* f) @local
-{
-	crig::show_pane_view(f.ui, crig::ANIMATION_VIEW, SplitAxis.VERTICAL, 0.5f);
-	(void)f.app.show_cutscene(0);
-	f.ui.flush();
-	f.feed(f.ui.input.mouse);
-}
-
-fn Vec2 strips_centre(Fixture* f, String id) @local
-{
-	Element* elem = f.ui.find_id(id)!!;
-	return elem.absolute + elem.size * 0.5f;
-}
 
 // A point of the timeline: time `t` on a lane of actor `actor`, `nudge` pixels to the right.
 fn Vec2 lane_point(Fixture* f, usz actor, CutLane lane, float t, float nudge = 0.0f) @local
@@ -43,8 +29,6 @@ fn float seconds_per_pixel(Fixture* f) @local
 	Cutscene* c = f.app.cutscene();
 	return 1.0f / (drawn.x_of(timeline, c, 1.0f) - drawn.x_of(timeline, c, 0.0f));
 }
-
-fn usz cut_undo_steps(Fixture* f) @local => (usz)f.app.cut_history.undo.len();
 
 fn CutStrip* hero_strip(Fixture* f, usz k) @local
 {
@@ -70,8 +54,6 @@ fn bool click_menu_row(Fixture* f, String list_id, String label) @local
 	return false;
 }
 
-fn bool near_time(float a, float b, float eps = 1e-4f) @local => math::abs(a - b) <= eps;
-
 fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 {
 	Fixture f;
@@ -93,9 +75,9 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	free(two.actors);
 	two.actors = actors;
 	f.app.replace_cutscene(0, two);
-	strips_tab(&f);
+	show_cutscene_tab(&f);
 	test::@check(cut_bin_has(&f, wave) && cut_bin_has(&f, "Turn"), "no %s and Turn pieces", wave);
-	usz steps = cut_undo_steps(&f);
+	usz steps = helpers::cut_steps(&f.app);
 
 	// The clip's piece: a click lays it at the playhead, one pass long.
 	f.click(cut_bin_row(&f, wave));
@@ -106,10 +88,10 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 		test::@check(false, "the menu added no strip");
 		return;
 	}
-	test::@check(s.kind == PLAY && s.clip == wave && near_time(s.start, 0) && near_time(s.end, 1.0f) && !s.loop,
+	test::@check(s.kind == PLAY && s.clip == wave && math::is_approx(s.start, 0, 1e-4f) && math::is_approx(s.end, 1.0f, 1e-4f) && !s.loop,
 		"the play is %s %f-%f", s.clip, s.start, s.end);
 	test::@check(f.app.cut_selected == s.id, "the new strip is not picked");
-	test::eq(cut_undo_steps(&f), steps + 1);
+	test::eq(helpers::cut_steps(&f.app), steps + 1);
 	test::@check(has_id(&f, crig::CUT_CARD_ID), "no card for the picked strip");
 
 	// A click on an empty lane drops the pick; one on the strip picks it again.
@@ -120,7 +102,7 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	f.click(lane_point(&f, 0, WHAT, 0.5f));
 	f.feed(f.ui.input.mouse);
 	test::@check(f.app.cut_selected == hero_strip(&f, 0).id, "the click did not pick the strip");
-	test::eq(cut_undo_steps(&f), steps + 1);
+	test::eq(helpers::cut_steps(&f.app), steps + 1);
 
 	// Drag the body: the preview follows while the button is down; the drop is one step.
 	test::@check(f.app.set_cutscene_preview(true), "preview");
@@ -129,20 +111,20 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	f.feed(grab);
 	f.feed(grab, left: true);
 	f.feed(lane_point(&f, 0, WHAT, 1.0f), left: true);
-	test::@check(near_time(hero_strip(&f, 0).start, 0.5f), "mid-drag the strip is at %f", hero_strip(&f, 0).start);
-	test::@check(near_time(f.app.anim_time, 0.5f, 1e-3f), "the preview shows %f s of the wave, not half a second in", f.app.anim_time);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 0.5f, 1e-4f), "mid-drag the strip is at %f", hero_strip(&f, 0).start);
+	test::@check(math::is_approx(f.app.anim_time, 0.5f, 1e-3f), "the preview shows %f s of the wave, not half a second in", f.app.anim_time);
 	Vec2 drop = lane_point(&f, 0, WHAT, 2.5f);
 	f.feed(drop, left: true);
 	f.feed(drop);
 	f.feed(drop);
-	test::@check(near_time(hero_strip(&f, 0).start, 2.0f) && near_time(hero_strip(&f, 0).end, 3.0f), "the drop put it at %f", hero_strip(&f, 0).start);
-	test::eq(cut_undo_steps(&f), steps + 2);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 2.0f, 1e-4f) && math::is_approx(hero_strip(&f, 0).end, 3.0f, 1e-4f), "the drop put it at %f", hero_strip(&f, 0).start);
+	test::eq(helpers::cut_steps(&f.app), steps + 2);
 	crig::menu_undo(f.ui);
 	f.feed(f.ui.input.mouse);
-	test::@check(near_time(hero_strip(&f, 0).start, 0.0f), "one undo takes back the whole drag, not to %f", hero_strip(&f, 0).start);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 0.0f, 1e-4f), "one undo takes back the whole drag, not to %f", hero_strip(&f, 0).start);
 	crig::menu_redo(f.ui);
 	f.feed(f.ui.input.mouse);
-	test::@check(near_time(hero_strip(&f, 0).start, 2.0f), "redo");
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 2.0f, 1e-4f), "redo");
 
 	// Near the playhead the start snaps onto it, off the frames.
 	f.app.show_cutscene_at(3.31f);
@@ -151,22 +133,22 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	drop = lane_point(&f, 0, WHAT, 2.5f + 1.31f, nudge);
 	f.drag(grab, drop);
 	f.feed(drop);
-	test::@check(near_time(hero_strip(&f, 0).start, 3.31f, 1e-5f), "the start is %f, not on the playhead", hero_strip(&f, 0).start);
-	test::eq(cut_undo_steps(&f), steps + 3);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 3.31f, 1e-5f), "the start is %f, not on the playhead", hero_strip(&f, 0).start);
+	test::eq(helpers::cut_steps(&f.app), steps + 3);
 
 	// Resize: the end, then the start, whose clip stays where it was in time.
 	grab = lane_point(&f, 0, WHAT, hero_strip(&f, 0).end);
 	f.drag(grab, lane_point(&f, 0, WHAT, 5.0f));
 	f.feed(f.ui.input.mouse);
-	test::@check(near_time(hero_strip(&f, 0).end, 5.0f) && near_time(hero_strip(&f, 0).start, 3.31f, 1e-5f), "the end is %f", hero_strip(&f, 0).end);
-	test::eq(cut_undo_steps(&f), steps + 4);
+	test::@check(math::is_approx(hero_strip(&f, 0).end, 5.0f, 1e-4f) && math::is_approx(hero_strip(&f, 0).start, 3.31f, 1e-5f), "the end is %f", hero_strip(&f, 0).end);
+	test::eq(helpers::cut_steps(&f.app), steps + 4);
 	grab = lane_point(&f, 0, WHAT, hero_strip(&f, 0).start);
 	f.drag(grab, lane_point(&f, 0, WHAT, 3.81f));
 	f.feed(f.ui.input.mouse);
-	test::@check(near_time(hero_strip(&f, 0).start, 3.8f, 1e-4f), "the start is %f, not on frame 3.8", hero_strip(&f, 0).start);
-	test::@check(near_time(hero_strip(&f, 0).offset, 3.8f - 3.31f, 1e-4f), "the offset is %f", hero_strip(&f, 0).offset);
-	test::@check(near_time(hero_strip(&f, 0).end, 5.0f), "the end stayed");
-	test::eq(cut_undo_steps(&f), steps + 5);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, 3.8f, 1e-4f), "the start is %f, not on frame 3.8", hero_strip(&f, 0).start);
+	test::@check(math::is_approx(hero_strip(&f, 0).offset, 3.8f - 3.31f, 1e-4f), "the offset is %f", hero_strip(&f, 0).offset);
+	test::@check(math::is_approx(hero_strip(&f, 0).end, 5.0f, 1e-4f), "the end stayed");
+	test::eq(helpers::cut_steps(&f.app), steps + 5);
 
 	// Esc while dragging puts the strip back and leaves no step.
 	float before = hero_strip(&f, 0).start;
@@ -174,12 +156,12 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	f.feed(grab);
 	f.feed(grab, left: true);
 	f.feed(lane_point(&f, 0, WHAT, 6.0f), left: true);
-	test::@check(!near_time(hero_strip(&f, 0).start, before), "the drag did not move the strip");
+	test::@check(!math::is_approx(hero_strip(&f, 0).start, before, 1e-4f), "the drag did not move the strip");
 	f.feed(lane_point(&f, 0, WHAT, 6.0f), left: true, keys: { Key.ESCAPE });
 	f.feed(lane_point(&f, 0, WHAT, 6.0f));
 	f.feed(f.ui.input.mouse);
-	test::@check(near_time(hero_strip(&f, 0).start, before), "Esc left the strip at %f", hero_strip(&f, 0).start);
-	test::eq(cut_undo_steps(&f), steps + 5);
+	test::@check(math::is_approx(hero_strip(&f, 0).start, before, 1e-4f), "Esc left the strip at %f", hero_strip(&f, 0).start);
+	test::eq(helpers::cut_steps(&f.app), steps + 5);
 
 	// The Turn piece: the menu of the other actors; the turn faces the one picked.
 	f.app.show_cutscene_at(1.0f);
@@ -187,9 +169,9 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	f.feed(f.ui.input.mouse);
 	test::@check(click_menu_row(&f, crig::CUT_TURN_LIST_ID, "guide"), "no guide in the turn menu");
 	CutStrip* turned = f.app.cut_selected_strip();
-	test::@check(turned && turned.kind == TURN && turned.target_row == "guide" && near_time(turned.start, 1.0f)
-		&& near_time(turned.end - turned.start, crig::CUT_TURN_LENGTH), "the turn toward the guide");
-	test::eq(cut_undo_steps(&f), steps + 6);
+	test::@check(turned && turned.kind == TURN && turned.target_row == "guide" && math::is_approx(turned.start, 1.0f, 1e-4f)
+		&& math::is_approx(turned.end - turned.start, crig::CUT_TURN_LENGTH, 1e-4f), "the turn toward the guide");
+	test::eq(helpers::cut_steps(&f.app), steps + 6);
 	test::@check(has_id(&f, crig::CUT_CARD_TARGET_ID) && has_id(&f, crig::CUT_CARD_PICK_ID), "the turn's card has no target");
 
 	// Delete takes the picked strip; Ctrl+Z brings it back.
@@ -200,7 +182,7 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	test::@check(f.app.cutscene().actors[0].strips.len == count - 1, "Delete did not take the turn");
 	test::@check(f.app.doc.dots.len() == joints, "Delete took a joint too");
 	test::@check(f.app.cut_selected == 0, "the pick outlived its strip");
-	test::eq(cut_undo_steps(&f), steps + 7);
+	test::eq(helpers::cut_steps(&f.app), steps + 7);
 	crig::menu_undo(f.ui);
 	f.feed(f.ui.input.mouse);
 	test::@check(f.app.cutscene().actors[0].strips.len == count, "undo did not bring the turn back");
@@ -209,23 +191,23 @@ fn void strips_are_added_picked_dragged_and_deleted_with_the_mouse() @test
 	f.click(lane_point(&f, 0, WHAT, 4.5f));
 	f.feed(f.ui.input.mouse);
 	Element* speed = f.ui.find_id(crig::CUT_CARD_SPEED_ID)!!;
-	usz at = cut_undo_steps(&f);
+	usz at = helpers::cut_steps(&f.app);
 	speed.widget_as(TextField).set_text(speed, "");
 	f.type_into(speed, "2");
 	f.feed_key(Key.RETURN);
 	f.feed(f.ui.input.mouse);
 	CutStrip* played = f.app.cut_selected_strip();
-	test::@check(played && played.kind == PLAY && near_time(played.speed, 2.0f), "the speed field did not set the speed");
-	test::eq(cut_undo_steps(&f), at + 1);
-	f.click(strips_centre(&f, crig::CUT_CARD_LOOP_ID));
+	test::@check(played && played.kind == PLAY && math::is_approx(played.speed, 2.0f, 1e-4f), "the speed field did not set the speed");
+	test::eq(helpers::cut_steps(&f.app), at + 1);
+	f.click(id_centre(&f, crig::CUT_CARD_LOOP_ID));
 	f.feed(f.ui.input.mouse);
 	played = f.app.cut_selected_strip();
 	test::@check(played && played.loop, "the loop switch did not loop the clip");
-	test::eq(cut_undo_steps(&f), at + 2);
+	test::eq(helpers::cut_steps(&f.app), at + 2);
 	crig::menu_undo(f.ui);
 	f.feed(f.ui.input.mouse);
 	played = f.app.cut_selected_strip();
-	test::@check(played && !played.loop && near_time(played.speed, 2.0f), "one undo took back more than the loop");
+	test::@check(played && !played.loop && math::is_approx(played.speed, 2.0f, 1e-4f), "one undo took back more than the loop");
 
 	// The strips and the actors are parts the agent tools can find.
 	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
@@ -258,7 +240,7 @@ fn void the_timeline_zooms_pans_and_scrolls_its_actors() @test
 	free(many.actors);
 	many.actors = actors;
 	f.app.replace_cutscene(0, many);
-	strips_tab(&f);
+	show_cutscene_tab(&f);
 	Element* timeline = f.ui.find_id(crig::CUT_TIMELINE_ID)!!;
 	CutsceneTimeline* drawn = timeline.widget_as(CutsceneTimeline);
 	Vec2 over = lane_point(&f, 0, WHERE, 5.0f);

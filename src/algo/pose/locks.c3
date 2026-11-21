@@ -38,16 +38,6 @@ struct PositionLock
 *>
 const usz LOCK_SNAPSHOT = 32;
 
-// One longer, with `add` on the end. The old storage is released.
-fn PositionLock[] grow_locks(PositionLock[] locks, PositionLock add)
-{
-	PositionLock[] grown = alloc::new_array(mem, PositionLock, locks.len + 1);
-	foreach (usz i, lock : locks) grown[i] = lock;
-	grown[locks.len] = add;
-	if (locks.len > 0) alloc::free(mem, locks);
-	return grown;
-}
-
 <*
  The feet, by the canonical names every body plan and `pin_feet` use.
  @return `How many of the two there are.`

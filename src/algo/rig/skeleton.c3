@@ -4,7 +4,7 @@
 
  Extracted from SkinTokens' rig_tokens.c3, which is mostly transformer token
  machinery M1 has no use for. What is kept is the part a rig actually needs —
- the struct, and `tails()` — plus the faultdef that lives in a file crig does
+ the struct, and `tails()` — plus the excuses that live in a file crig does
  not vendor and would otherwise be stranded.
 
  In crig, unlike SkinTokens, joints are in model space — there is no encoder and
@@ -26,7 +26,7 @@ import std::math::vector;
 
  Re-homed from skin_vae.c3, which crig does not vendor.
 *>
-faultdef SKIN_SHAPE_MISMATCH;
+excuse SKIN_SHAPE_MISMATCH;
 
 <*
  A skeleton: a joint per bone, and the index of the bone it hangs from.
@@ -280,7 +280,7 @@ fn usz Skeleton.ancestor_run(&self, usz joint, usz[] out) {
         if (parent < 0 || (usz)parent >= count) break;
 
         usz children = 0;
-        foreach (usz i, int of : self.parents) {
+        foreach (int of : self.parents) {
             if (of == parent) children++;
         }
         if (children != 1) break;

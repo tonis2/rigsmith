@@ -30,12 +30,14 @@ uint[36] box_indices @local = {
 fn rig::TriMesh box() => { .positions = box_positions[..], .indices = box_indices[..] };
 
 <*
- One dot limited sizes every other one with `default_reach`.
+ With no dot limited the rule is off: `reach_joints` answers an empty array,
+ which `bind_geodesic` reads as "unlimited from here on". One dot limited sizes
+ every other one with `default_reach`.
 
  `loose` is unconnected on purpose: it is the only dot that reaches the
  bounding-box fallback.
 *>
-fn void a_mixed_rig_sizes_every_dot() @test
+fn void one_limited_dot_sizes_every_dot() @test
 {
 	crig::AppState app = crig::new_app(box());
 	defer app.free();
@@ -46,6 +48,12 @@ fn void a_mixed_rig_sizes_every_dot() @test
 	app.doc.connect(hips, knee);
 	app.doc.connect(knee, foot);
 	app.doc.add_dot({ 0.5, 0.25, 0 }, "loose");
+
+	{
+		crig::RigView unlimited = app.open_rig(mem)!!;
+		defer unlimited.free(mem);
+		assert(unlimited.reaches.len == 0, "reach_joints sized an unlimited rig");
+	}
 
 	app.doc.set_reach(knee, 0.4f);
 
@@ -60,24 +68,6 @@ fn void a_mixed_rig_sizes_every_dot() @test
 		assert(math::abs(view.reaches[j] - want) < 1.0e-5f,
 			"joint %d (%s): reach_joints says %f, default_reach %f", j, view.names[j], view.reaches[j], want);
 	}
-}
-
-<*
- With no dot limited, the rule is off: `reach_joints` answers an empty array,
- which `bind_geodesic` reads as "unlimited from here on".
-*>
-fn void an_unlimited_rig_stays_unlimited() @test
-{
-	crig::AppState app = crig::new_app(box());
-	defer app.free();
-
-	uint hips = app.doc.add_dot({ 0, 1, 0 }, "hips");
-	uint knee = app.doc.add_dot({ 0, 0.5, 0 }, "knee");
-	app.doc.connect(hips, knee);
-
-	crig::RigView view = app.open_rig(mem)!!;
-	defer view.free(mem);
-	assert(view.reaches.len == 0, "reach_joints sized an unlimited rig");
 }
 
 <*
