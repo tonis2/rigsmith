@@ -725,7 +725,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 		return NO_ANIM;
 	}
 
-	AnimTemplate full_clip = clip_with_layer_key(mem, clip, (usz)at, key, time);
+	AnimTemplate full_clip = clip_with_layer_key(mem, clip, (usz)at, key, time, self.crowd_window());
 
 	// As `key_here` does: the draft belongs to this editing transaction, not to
 	// the playback restart the landing causes.
@@ -887,7 +887,7 @@ fn usz AppState.key_covered_into_layers(&self, AnimRef ref, AnimTemplate* clip, 
 		}
 		String first = key.dots[0].joint_name.tcopy();
 		usz joints = key.dots.len;
-		AnimTemplate next = clip_with_layer_key(mem, built, at, key, time);
+		AnimTemplate next = clip_with_layer_key(mem, built, at, key, time, self.crowd_window());
 		built.free(mem);
 		*built = next;
 		keyed += joints;

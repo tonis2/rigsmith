@@ -1,5 +1,5 @@
 <*
- Curve clean-up: five tools that tidy the channels a clip keys, each one undo
+ Curve clean-up: six tools that tidy the channels a clip keys, each one undo
  step, each acting on the same set of channel keys.
 
  **Fix flips** (Euler filter): a rotation key stores a quaternion, so the same
@@ -25,6 +25,10 @@
 
  **Match loop seam**: the last key of each channel takes the first key's value,
  so a cycle meets itself.
+
+ **Fix twitches**: of two keys closer than a quarter frame, the one off the frame
+ goes; then a segment straying more than a quarter turn from its keys has its
+ stored tangents put back to Auto (`clip_twitches_fixed`).
 
  Which channels: see `AppState.cleanup_picks`. The transforms below are plain
  functions over `AnimChannelKey` lists so they need no open app.
@@ -102,6 +106,18 @@ fn AnimChannelKey[] AppState.cleanup_picks(&self, AnimRef ref)
 	return picks.to_array(tmem);
 }
 
+// How many channel keys a clip holds: a rotation and a slide in one entry are two.
+fn usz channel_key_count(AnimTemplate* clip) @local
+{
+	usz count;
+	foreach (frame : clip.keyframes) foreach (dot : frame.dots)
+	{
+		if (dot.keys_rotation()) count++;
+		if (dot.keys_translation()) count++;
+	}
+	return count;
+}
+
 <*
  Run one clean-up on the clip being edited and land it as one undo step.
 
@@ -131,7 +147,7 @@ fn bool AppState.curve_cleanup(&self, AnimRef ref, CurveCleanup op)
 			return false;
 		}
 		usz changed;
-		AnimTemplate cleaned = clip_curve_cleaned(mem, *clip, picks, op, &changed);
+		AnimTemplate cleaned = clip_curve_cleaned(mem, *clip, picks, op, &changed, self.frame_seconds());
 		if (changed == 0)
 		{
 			cleaned.free(mem);
@@ -142,11 +158,12 @@ fn bool AppState.curve_cleanup(&self, AnimRef ref, CurveCleanup op)
 				case SIMPLIFY: self.@notice("No keys to lose: the selected curves are already as simple as they get.");
 				case FLATTEN: self.@notice("The selected keys are already flat.");
 				case LOOP_SEAM: self.@notice("Nothing to match: the selected channels already end where they start.");
+				case FIX_TWITCHES: self.@notice("No twitches: every selected curve stays within a quarter turn of its keys, and no two keys crowd each other.");
 			}
 			return false;
 		}
 		bool landed;
-		if (op == SIMPLIFY)
+		if (op == SIMPLIFY || channel_key_count(&cleaned) != channel_key_count(clip))
 		{
 			// Whole keys may be gone, so the picked times may name nothing now.
 			AnimRef next = self.land_key_edit(ref, cleaned);
@@ -169,6 +186,7 @@ fn bool AppState.curve_cleanup(&self, AnimRef ref, CurveCleanup op)
 			case SIMPLIFY: self.@notice("Removed %d keys the curves do not need · Ctrl+Z undoes it", changed);
 			case FLATTEN: self.@notice("Flattened %d keys · Ctrl+Z undoes it", changed);
 			case LOOP_SEAM: self.@notice("Matched the seam on %d channels · Ctrl+Z undoes it", changed);
+			case FIX_TWITCHES: self.@notice("Fixed twitches on %d key%s · Ctrl+Z undoes it", changed, changed == 1 ? "" : "s");
 		}
 		return true;
 	};

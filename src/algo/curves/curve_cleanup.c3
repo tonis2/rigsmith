@@ -13,6 +13,7 @@ enum CurveCleanup
 	SIMPLIFY,
 	FLATTEN,
 	LOOP_SEAM,
+	FIX_TWITCHES,
 }
 
 // One channel's keys in the clip, in time order.
@@ -300,6 +301,36 @@ fn usz keys_smoothed(AnimTemplate* clip, CleanupKeys keys, bool rotation) @local
 	return changed;
 }
 
+// Each channel the picks name, once, in the order they first name it: the index of that first pick.
+fn usz[] picked_channels(AnimChannelKey[] picks) @local
+{
+	List{usz} firsts;
+	firsts.init(tmem);
+	for (usz p = 0; p < picks.len; p++)
+	{
+		if (picks[p].channel == BOTH) continue;
+		bool seen = false;
+		foreach (q : firsts)
+		{
+			if (picks[q].channel == picks[p].channel && picks[q].joint == picks[p].joint) { seen = true; break; }
+		}
+		if (!seen) firsts.push(p);
+	}
+	return firsts.to_array(tmem);
+}
+
+// The picked times of the channel pick `first` names.
+fn float[] picked_times(AnimChannelKey[] picks, usz first) @local
+{
+	List{float} times;
+	times.init(tmem);
+	foreach (pick : picks)
+	{
+		if (pick.channel == picks[first].channel && pick.joint == picks[first].joint) times.push(pick.time);
+	}
+	return times.to_array(tmem);
+}
+
 <*
  `source` with one clean-up applied to the channel keys `picks` name.
 
@@ -309,41 +340,24 @@ fn usz keys_smoothed(AnimTemplate* clip, CleanupKeys keys, bool rotation) @local
  ends: Smooth leaves a run's first and last key alone and Simplify keeps them.
 
  @param changed : `Receives how many keys were rewritten (Simplify: removed).`
+ @param frame : `Seconds per frame at the sheet's rate: what Fix twitches calls crowded.`
  @return `A copy; with nothing changed, one equal to the source. The caller owns it.`
 *>
 fn AnimTemplate clip_curve_cleaned(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks,
-	CurveCleanup op, usz* changed)
+	CurveCleanup op, usz* changed, float frame = 1.0f / 30.0f)
 {
 	*changed = 0;
+	if (op == FIX_TWITCHES) return clip_twitches_fixed(allocator, source, picks, frame, changed);
 	AnimTemplate clip = clip_copy(allocator, source);
 	@pool()
 	{
 		usz[] base = entry_bases(&clip);
 		bool[] gone_rotation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
 		bool[] gone_translation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
-		// Each channel once, in the order the picks first name it.
-		List{usz} firsts;
-		firsts.init(tmem);
-		for (usz p = 0; p < picks.len; p++)
-		{
-			if (picks[p].channel == BOTH) continue;
-			bool seen = false;
-			foreach (q : firsts)
-			{
-				if (picks[q].channel == picks[p].channel && picks[q].joint == picks[p].joint) { seen = true; break; }
-			}
-			if (!seen) firsts.push(p);
-		}
-		foreach (p : firsts)
+		foreach (p : picked_channels(picks))
 		{
 			bool rotation = picks[p].channel == ROTATION;
-			List{float} times;
-			times.init(tmem);
-			foreach (pick : picks)
-			{
-				if (pick.channel == picks[p].channel && pick.joint == picks[p].joint) times.push(pick.time);
-			}
-			CleanupKeys keys = cleanup_keys(&clip, picks[p].joint, rotation, times.array_view());
+			CleanupKeys keys = cleanup_keys(&clip, picks[p].joint, rotation, picked_times(picks, p));
 			switch (op)
 			{
 				case EULER_FILTER: if (rotation) *changed += flips_fixed(&clip, keys);
@@ -351,6 +365,7 @@ fn AnimTemplate clip_curve_cleaned(Allocator allocator, AnimTemplate source, Ani
 				case SIMPLIFY: *changed += keys_thinned(&clip, keys, rotation, rotation ? gone_rotation : gone_translation, base);
 				case FLATTEN: *changed += keys_flattened(&clip, keys, rotation);
 				case LOOP_SEAM: *changed += seam_matched(&clip, keys, rotation);
+				case FIX_TWITCHES: unreachable();
 			}
 		}
 		if (op == SIMPLIFY && *changed > 0)
@@ -361,4 +376,166 @@ fn AnimTemplate clip_curve_cleaned(Allocator allocator, AnimTemplate source, Ani
 		}
 	};
 	return clip;
+}
+
+<*
+ Fix twitches: of two picked keys of a channel closer than a quarter frame, the
+ one farther from a whole frame goes; then each segment with a picked end that
+ strays past `swing_limit` has its Free and Broken ends put back to Auto. A key
+ a hair from another snaps the joint back past it, and a stored tangent too
+ steep for its segment spins the joint between its keys.
+*>
+fn AnimTemplate clip_twitches_fixed(Allocator allocator, AnimTemplate source, AnimChannelKey[] picks, float frame,
+	usz* changed) @local
+{
+	AnimTemplate clip = clip_copy(allocator, source);
+	@pool()
+	{
+		usz[] channels = picked_channels(picks);
+		// Crowded keys first, so a spin is read on the keys that stay.
+		usz[] base = entry_bases(&clip);
+		bool[] gone_rotation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
+		bool[] gone_translation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
+		usz removed;
+		foreach (p : channels)
+		{
+			bool rotation = picks[p].channel == ROTATION;
+			CleanupKeys keys = cleanup_keys(&clip, picks[p].joint, rotation, picked_times(picks, p));
+			removed += keys_uncrowded(&clip, keys, frame, rotation ? gone_rotation : gone_translation, base);
+		}
+		if (removed > 0)
+		{
+			AnimTemplate thinned = clip_without_flagged(allocator, &clip, gone_rotation, gone_translation, base);
+			clip.free(allocator);
+			clip = thinned;
+		}
+		*changed += removed;
+		foreach (p : channels)
+		{
+			bool rotation = picks[p].channel == ROTATION;
+			CleanupKeys keys = cleanup_keys(&clip, picks[p].joint, rotation, picked_times(picks, p));
+			*changed += spins_settled(&clip, keys, rotation);
+		}
+	};
+	return clip;
+}
+
+// How far `time` is from the nearest whole frame.
+fn float off_frame(float time, float frame) @local => math::abs(time - math::round(time / frame) * frame);
+
+// Mark in `gone` the key of each crowded pair that sits farther from a whole frame.
+fn usz keys_uncrowded(AnimTemplate* clip, CleanupKeys keys, float frame, bool[] gone, usz[] base) @local
+{
+	if (!(frame > 0.0f)) return 0;
+	usz removed;
+	sz kept = -1; // the last key that stays
+	for (usz i = 0; i < keys.frames.len; i++)
+	{
+		if (kept < 0 || !keys.picked[i] || !keys.picked[(usz)kept]) { kept = (sz)i; continue; }
+		float earlier = clip.keyframes[keys.frames[(usz)kept]].time;
+		float later = clip.keyframes[keys.frames[i]].time;
+		if (later - earlier >= frame * 0.25f) { kept = (sz)i; continue; }
+		usz drop = off_frame(later, frame) >= off_frame(earlier, frame) ? i : (usz)kept;
+		gone[base[keys.frames[drop]] + keys.dots[drop]] = true;
+		removed++;
+		if (drop == (usz)kept) kept = (sz)i;
+	}
+	return removed;
+}
+
+fn bool stores_rate(AnimKeyDot* dot, bool rotation) @local
+{
+	AnimTangent mode = dot.tangents(rotation).mode;
+	return mode == FREE || mode == BROKEN;
+}
+
+// Put back to Auto the stored ends of every segment that strays past the limit.
+fn usz spins_settled(AnimTemplate* clip, CleanupKeys keys, bool rotation) @local
+{
+	usz changed;
+	for (usz i = 0; i + 1 < keys.frames.len; i++)
+	{
+		if (!keys.picked[i] && !keys.picked[i + 1]) continue;
+		AnimKeyDot* from = keys.at(clip, i);
+		AnimKeyDot* to = keys.at(clip, i + 1);
+		bool reset_from = keys.picked[i] && stores_rate(from, rotation);
+		bool reset_to = keys.picked[i + 1] && stores_rate(to, rotation);
+		if (!reset_from && !reset_to) continue;
+		String joint = from.joint_name;
+		float t0 = clip.keyframes[keys.frames[i]].time;
+		float t1 = clip.keyframes[keys.frames[i + 1]].time;
+		if (segment_swing(clip, joint, rotation, t0, t1) <= swing_limit(rotation)) continue;
+		if (reset_from && set_tangent_mode(clip, keys.frames[i], joint, rotation, AUTO)) changed++;
+		if (reset_to && set_tangent_mode(clip, keys.frames[i + 1], joint, rotation, AUTO)) changed++;
+	}
+	return changed;
+}
+
+<*
+ The channels a key writes, each as a channel key at the key's time. Names are
+ copied to the temp allocator, so they outlive the key being taken over.
+*>
+fn AnimChannelKey[] written_channels(AnimKeyframe* key)
+{
+	List{AnimChannelKey} written;
+	written.init(tmem);
+	foreach (dot : key.dots)
+	{
+		bool rotation = dot.keys_rotation();
+		bool translation = dot.keys_translation();
+		if (!rotation && !translation) continue;
+		written.push({ .time = key.time, .joint = dot.joint_name.tcopy(),
+			.channel = rotation && translation ? BOTH : (rotation ? ROTATION : TRANSLATION) });
+	}
+	return written.to_array(tmem);
+}
+
+<*
+ Drop from `clip` every other key, within `window` of `time`, of the channels
+ `written` names: a key made at the playhead must not land a hair from one
+ already there and snap back past it. An entry keying other channels keeps
+ them, and a keyframe left empty goes.
+
+ @param [&inout] clip : `Owned; replaced when a key goes.`
+ @return `How many channel keys went.`
+*>
+fn usz uncrowd_clip(Allocator allocator, AnimTemplate* clip, float time, AnimChannelKey[] written, float window)
+{
+	if (!(window > ANIM_SAME_TIME) || written.len == 0) return 0;
+	usz removed;
+	@pool()
+	{
+		usz[] base = entry_bases(clip);
+		bool[] gone_rotation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
+		bool[] gone_translation = alloc::new_array(tmem, bool, (sz)base[clip.keyframes.len]);
+		foreach (usz f, frame : clip.keyframes)
+		{
+			float gap = math::abs(frame.time - time);
+			if (gap < ANIM_SAME_TIME || gap >= window) continue;
+			foreach (usz d, dot : frame.dots)
+			{
+				foreach (key : written)
+				{
+					if (key.joint != dot.joint_name) continue;
+					if (key.channel != TRANSLATION && dot.keys_rotation() && !gone_rotation[base[f] + d])
+					{
+						gone_rotation[base[f] + d] = true;
+						removed++;
+					}
+					if (key.channel != ROTATION && dot.keys_translation() && !gone_translation[base[f] + d])
+					{
+						gone_translation[base[f] + d] = true;
+						removed++;
+					}
+				}
+			}
+		}
+		if (removed > 0)
+		{
+			AnimTemplate thinned = clip_without_flagged(allocator, clip, gone_rotation, gone_translation, base);
+			clip.free(allocator);
+			*clip = thinned;
+		}
+	};
+	return removed;
 }

@@ -171,6 +171,84 @@ fn void gap_base_keying_keys_an_overridden_joint_into_its_layer() @test
 		keyed.keyframes.len, keyed.layers[0].keyframes.len, base_keys, layer_keys);
 }
 
+// Pose `id` turned `angle` about X at `time`, and key what changed.
+fn void gap_key_turn(Fixture* f, uint id, float time, float angle)
+{
+	f.app.edit_time = time;
+	test::@check(f.app.pose_from_clip(f.app.editing, time), "could not open a pose draft at %f", time);
+	test::@check(f.app.set_working_pose(id, quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, angle), {}),
+		"could not pose at %f", time);
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(CHANGED), "keying at %f failed", time);
+}
+
+<*
+ A key made 3 ms after one already there replaces it for the channels it
+ writes, so the joint does not snap back past it; other joints keep their keys
+ there, and a key a whole frame away stays.
+*>
+fn void gap_keying_beside_a_base_key_replaces_it() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	gap_workspace(&f);
+	String root = gap_root_name(&f);
+	defer root.free(mem);
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	usz posed = view.dot_ids[0] == f.app.doc.root_id ? 1 : 0;
+	String name = view.names[posed];
+	usz keys = f.app.clip(f.app.editing).keyframes.len;
+
+	// Under a quarter frame at 30 fps.
+	gap_key_turn(&f, view.dot_ids[posed], 2.003f, 0.3f);
+	AnimTemplate* keyed = f.app.clip(f.app.editing);
+	test::@check(gap_dot_at(keyed.keyframes, 2.003f, name).joint_name.len > 0, "no key at the playhead");
+	test::@check(gap_dot_at(keyed.keyframes, 2.0f, name).joint_name.len == 0, "the key 3 ms before stayed");
+	test::@check(gap_dot_at(keyed.keyframes, 2.0f, root).joint_name.len > 0, "another joint's key at 2 s went");
+
+	// A frame away is not crowded.
+	gap_key_turn(&f, view.dot_ids[posed], 1.0333333f, 0.2f);
+	test::@check(gap_dot_at(f.app.clip(f.app.editing).keyframes, 1.0f, name).joint_name.len > 0, "a key a frame away went");
+
+	test::@check(f.app.undo() && f.app.undo(), "the keys did not undo");
+	keyed = f.app.clip(f.app.editing);
+	test::@check(keyed.keyframes.len == keys && gap_dot_at(keyed.keyframes, 2.0f, name).joint_name.len > 0,
+		"undo did not bring the crowded key back");
+}
+
+<*
+ The same in a keyed layer: with the layer active, and with the base active and
+ the joint hidden by the layer, which keys it into the layer.
+*>
+fn void gap_keying_beside_a_layer_key_replaces_it() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	AnimRef clip = gap_workspace(&f);
+	test::@check(f.app.add_clip_layer(clip, KEYED, OVERRIDE) >= 0, "no override layer");
+	String root = gap_root_name(&f);
+	defer root.free(mem);
+	uint id = f.app.doc.root_id;
+
+	gap_key_turn(&f, id, 0.7f, 0.3f);
+	test::@check(gap_dot_at(f.app.clip(f.app.editing).layers[0].keyframes, 0.7f, root).joint_name.len > 0, "no layer key at 0.7 s");
+	gap_key_turn(&f, id, 0.703f, 0.4f);
+	AnimTemplate* keyed = f.app.clip(f.app.editing);
+	test::@check(gap_dot_at(keyed.layers[0].keyframes, 0.703f, root).joint_name.len > 0, "no layer key at the playhead");
+	test::@check(gap_dot_at(keyed.layers[0].keyframes, 0.7f, root).joint_name.len == 0, "the layer key 3 ms before stayed");
+
+	// The base active: the hidden root is keyed into the layer, and crowds nothing there either.
+	f.app.set_active_layer(f.app.editing, -1);
+	gap_key_turn(&f, id, 0.706f, 0.5f);
+	keyed = f.app.clip(f.app.editing);
+	test::@check(gap_dot_at(keyed.layers[0].keyframes, 0.706f, root).joint_name.len > 0, "the hidden root was not keyed into the layer");
+	test::@check(gap_dot_at(keyed.layers[0].keyframes, 0.703f, root).joint_name.len == 0, "the layer key 3 ms before stayed");
+	test::@check(gap_dot_at(keyed.keyframes, 0.706f, root).joint_name.len == 0, "the root was keyed into the base");
+}
+
 // ---------------------------------------------------------------------------
 // 2. The Curves view follows the active layer
 

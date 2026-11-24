@@ -21,6 +21,7 @@
  on the curve's own slope at the key. Handles are drawn for selected keys only,
  and not on a side whose segment holds or is linear. A drag reads only the
  slope off the handle and writes it as the key's tangent (`set_graph_tangent`).
+ A curve grabbed between keys bends through the pointer (`bend_graph_segment`).
 *>
 module crig;
 
@@ -257,12 +258,14 @@ fn bool AppState.set_graph_key_value(&self, AnimRef ref, String joint, bool rota
 
  A key that is not Free or Broken becomes Free first, so the other side follows
  the drag (`set_tangent_rate` realigns it), or Broken with `broken`, which also
- breaks a Free key: the other side stays where it was.
+ breaks a Free key: the other side stays where it was. The slope is held at what
+ keeps both segments within a quarter turn (`set_capped_tangent_rate`).
 
  @param incoming : `The tangent arriving at the key, else the one leaving it.`
+ @param held : `Set when the slope was held at the swing limit.`
 *>
 fn bool AppState.set_graph_tangent(&self, AnimRef ref, String joint, bool rotation, float time,
-	Vec3 shown, int axis, bool incoming, float slope, float unit = 1.0f, bool broken = false)
+	Vec3 shown, int axis, bool incoming, float slope, float unit = 1.0f, bool broken = false, bool* held = null)
 {
 	AnimTemplate* clip = self.key_clip(ref);
 	if (!clip || self.procedural_layer_of(ref) || self.pose_edit_pending || axis < 0 || axis > 2
@@ -270,31 +273,180 @@ fn bool AppState.set_graph_tangent(&self, AnimRef ref, String joint, bool rotati
 	sz key = self.key_near(ref, time, ANIM_SAME_TIME);
 	if (key < 0) return false;
 	AnimTemplate changed = clip_copy(mem, *clip);
-	AnimKeyDot* dot = channel_entry(&changed.keyframes[key], joint, rotation);
-	if (!dot) { changed.free(mem); return false; }
+	if (!channel_entry(&changed.keyframes[key], joint, rotation)) { changed.free(mem); return false; }
 
-	AnimTangent mode = dot.tangents(rotation).mode;
-	if (broken ? mode != BROKEN : (mode != FREE && mode != BROKEN))
-	{
-		set_tangent_mode(&changed, (usz)key, joint, rotation, broken ? BROKEN : FREE);
-	}
+	free_for_drag(&changed, (usz)key, joint, rotation, broken);
 	Vec3 rate = effective_tangent(changed, (usz)key, joint, rotation, incoming);
-	if (rotation)
-	{
-		Vec3 euler_rate = euler_rate_of_angular_rate(shown, rate);
-		euler_rate[axis] = slope;
-		rate = angular_rate_of_euler_rate(shown, euler_rate);
-	}
-	else
-	{
-		rate[axis] = slope / math::max(unit, 1.0e-6f);
-	}
-	if (!set_tangent_rate(&changed, (usz)key, joint, rotation, incoming, rate))
+	rate = with_display_slope(rate, rotation, shown, axis, slope, unit);
+	bool capped;
+	if (!set_capped_tangent_rate(&changed, (usz)key, joint, rotation, incoming, rate, &capped))
 	{
 		changed.free(mem);
 		return false;
 	}
+	if (held) *held = capped;
 	return self.land_keeping_selection(ref, changed, true);
+}
+
+// A key about to take a dragged tangent: Free, or Broken with `broken`. `curve`
+// as `set_tangent_mode`: a linear segment leaving the key turns smooth.
+fn void free_for_drag(AnimTemplate* clip, usz key, String joint, bool rotation, bool broken, bool curve = true) @local
+{
+	AnimKeyDot* dot = channel_entry(&clip.keyframes[key], joint, rotation);
+	if (!dot) return;
+	AnimTangent mode = dot.tangents(rotation).mode;
+	if (broken ? mode != BROKEN : (mode != FREE && mode != BROKEN))
+	{
+		set_tangent_mode(clip, key, joint, rotation, broken ? BROKEN : FREE, curve);
+	}
+}
+
+// `rate` with one displayed axis's slope set: degrees per second on an Euler
+// angle, or model units per second on a position.
+fn Vec3 with_display_slope(Vec3 rate, bool rotation, Vec3 shown, int axis, float slope, float unit) @local
+{
+	if (rotation) return rate_with_euler_slope(shown, rate, axis, slope);
+	rate[axis] = slope / math::max(unit, 1.0e-6f);
+	return rate;
+}
+
+// A rate's slope on one displayed axis, in the units `with_display_slope` takes.
+fn float display_slope(Vec3 rate, bool rotation, Vec3 shown, int axis, float unit) @local
+{
+	if (rotation) return euler_rate_of_angular_rate(shown, rate)[axis];
+	return rate[axis] * unit;
+}
+
+<*
+ Bend the segment of a channel that holds `at`, so the displayed `axis` passes
+ through `value` there. The first key's outgoing slope and the second's incoming
+ one move by the same amount in opposite senses, which lifts the middle most;
+ the amount is solved on the played curve. Both keys become Free (Broken with
+ `broken`), each slope held as a handle drag is. One clip swap.
+
+ @param shown_from : `The first key's displayed components, as the graph drew them.`
+ @param shown_to : `The second key's.`
+ @param held : `Set when a slope was held at the swing limit.`
+ @return `False, with a notice, when there is no segment there to bend.`
+*>
+fn bool AppState.bend_graph_segment(&self, AnimRef ref, String joint, bool rotation, int axis, float at, float value,
+	Vec3 shown_from, Vec3 shown_to, float unit = 1.0f, bool broken = false, bool* held = null)
+{
+	AnimTemplate* clip = self.key_clip(ref);
+	if (!clip || self.procedural_layer_of(ref) || self.pose_edit_pending || axis < 0 || axis > 2
+		|| !math::is_finite(value) || !math::is_finite(at)) return false;
+	sz from = -1;
+	sz to = -1;
+	foreach (usz f, frame : clip.keyframes)
+	{
+		AnimKeyDot ignored;
+		if (!frame.channel_dot(joint, rotation, &ignored)) continue;
+		if (frame.time < at - ANIM_SAME_TIME) from = (sz)f;
+		if (frame.time > at + ANIM_SAME_TIME) { to = (sz)f; break; }
+	}
+	if (from < 0 || to < 0)
+	{
+		self.@notice("Grab the curve between two keys to bend it.");
+		return false;
+	}
+	AnimKeyDot first;
+	clip.keyframes[from].channel_dot(joint, rotation, &first);
+	if (first.interpolation(rotation, clip.blend) == HOLD)
+	{
+		self.@notice("A held segment can't bend: set it to Smooth first.");
+		return false;
+	}
+
+	// Both keys free, the segment smooth; the key at the far end keeps its own next segment.
+	AnimTemplate base = clip_copy(mem, *clip);
+	defer base.free(mem);
+	free_for_drag(&base, (usz)from, joint, rotation, broken);
+	free_for_drag(&base, (usz)to, joint, rotation, broken, false);
+	AnimKeyDot* leaving = channel_entry(&base.keyframes[from], joint, rotation);
+	if (leaving.interpolation(rotation, base.blend) == LINEAR)
+	{
+		if (rotation) { leaving.rotation_interpolation = AUTO; } else { leaving.translation_interpolation = AUTO; }
+	}
+	Bend bend = {
+		.base = &base, .from = (usz)from, .to = (usz)to, .joint = joint, .rotation = rotation, .axis = axis,
+		.shown_from = shown_from, .shown_to = shown_to, .unit = unit,
+		.out_rate = effective_tangent(base, (usz)from, joint, rotation, false),
+		.in_rate = effective_tangent(base, (usz)to, joint, rotation, true),
+	};
+	float t0 = base.keyframes[from].time;
+	float t1 = base.keyframes[to].time;
+	float u = (at - t0) / (t1 - t0);
+	Vec3 near = shown_from + (shown_to - shown_from) * u;
+	near[axis] = value;
+	float tolerance = rotation ? 0.1f : 1.0e-4f * unit;
+
+	// The lift per unit of slope at `at`, from the cubic: span · u(1 − u).
+	float lift = (t1 - t0) * u * (1.0f - u);
+	float error_a = graph_value(&base, joint, rotation, at, near, unit)[axis] - value;
+	float slope_a = 0.0f;
+	float slope_b = lift > 1.0e-6f ? -error_a / lift : 0.0f;
+	bool capped;
+	AnimTemplate best = bend.at(slope_b, &capped);
+	float error_b = graph_value(&best, joint, rotation, at, near, unit)[axis] - value;
+	float best_error = math::abs(error_b);
+	// The secant on the played value: a rotation is not a cubic in its Euler angles.
+	for (int step = 0; step < 6 && best_error > tolerance && math::abs(error_b - error_a) > 1.0e-6f; step++)
+	{
+		float next = slope_b - error_b * (slope_b - slope_a) / (error_b - error_a);
+		if (!math::is_finite(next)) break;
+		bool next_capped;
+		AnimTemplate tried = bend.at(next, &next_capped);
+		float error = graph_value(&tried, joint, rotation, at, near, unit)[axis] - value;
+		slope_a = slope_b;
+		error_a = error_b;
+		slope_b = next;
+		error_b = error;
+		if (math::abs(error) < best_error)
+		{
+			best.free(mem);
+			best = tried;
+			best_error = math::abs(error);
+			capped = next_capped;
+		}
+		else
+		{
+			tried.free(mem);
+		}
+	}
+	if (held) *held = capped;
+	return self.land_keeping_selection(ref, best, true);
+}
+
+// A segment being bent: its two keys freed, and their slopes before the bend.
+struct Bend @local
+{
+	AnimTemplate* base;
+	usz from;
+	usz to;
+	String joint;
+	bool rotation;
+	int axis;
+	Vec3 shown_from;
+	Vec3 shown_to;
+	float unit;
+	Vec3 out_rate;
+	Vec3 in_rate;
+}
+
+// The clip with the segment bent by `slope`: added leaving the first key, taken off arriving at the second.
+fn AnimTemplate Bend.at(&self, float slope, bool* held)
+{
+	AnimTemplate bent = clip_copy(mem, *self.base);
+	float out_slope = display_slope(self.out_rate, self.rotation, self.shown_from, self.axis, self.unit) + slope;
+	float in_slope = display_slope(self.in_rate, self.rotation, self.shown_to, self.axis, self.unit) - slope;
+	bool out_held;
+	bool in_held;
+	set_capped_tangent_rate(&bent, self.from, self.joint, self.rotation, false,
+		with_display_slope(self.out_rate, self.rotation, self.shown_from, self.axis, out_slope, self.unit), &out_held);
+	set_capped_tangent_rate(&bent, self.to, self.joint, self.rotation, true,
+		with_display_slope(self.in_rate, self.rotation, self.shown_to, self.axis, in_slope, self.unit), &in_held);
+	*held = out_held || in_held;
+	return bent;
 }
 
 <*

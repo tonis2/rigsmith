@@ -234,15 +234,20 @@ fn AnimKeyframe layer_key_for(LayerKeyAsk* ask)
  seconds: the key goes where the playhead falls among them, and a kept layer grows
  to hold one past its end.
 
+ @param crowd : `Seconds either side within which the layer's keys of the same channels give way (uncrowd_clip).`
  @return `Owned by the caller.`
 *>
-fn AnimTemplate clip_with_layer_key(Allocator allocator, AnimTemplate* clip, usz at, AnimKeyframe key, float time)
+fn AnimTemplate clip_with_layer_key(Allocator allocator, AnimTemplate* clip, usz at, AnimKeyframe key, float time,
+	float crowd = 0.0f)
 {
 	AnimLayer* layer = &clip.layers[at];
 	key.time = layer.key_time(clip, time);
 	AnimTemplate keys = layer.keys_view(clip);
 	key.ease_new_channels(&keys);
+	float key_time = key.time;
+	AnimChannelKey[] fresh = crowd > 0.0f ? written_channels(&key) : {};
 	AnimTemplate grown = clip_with_key(allocator, keys, key);
+	uncrowd_clip(allocator, &grown, key_time, fresh, crowd);
 	AnimTemplate full_clip = clip_copy(allocator, *clip);
 	AnimLayer* target = &full_clip.layers[at];
 	foreach (&frame : target.keyframes) frame.free(allocator);

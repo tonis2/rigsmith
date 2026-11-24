@@ -628,6 +628,13 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 	return written;
 }
 
+// Seconds per frame at the sheet's rate.
+fn float AppState.frame_seconds(&self) => 1.0f / (float)(self.anim_fps > 0 ? self.anim_fps : 30);
+
+// How near a new key a key of the same channels gives way to it: a quarter frame.
+// Not half: a 60 fps clip's keys are half a frame apart at 30.
+fn float AppState.crowd_window(&self) => self.frame_seconds() * 0.25f;
+
 <*
  Write the pose the document is holding into a clip at `time`.
 
@@ -636,8 +643,9 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
  ALL keys every named joint, including rest. SELECTED keys both channels of
  selected joints even when unchanged. CHANGED compares the draft with the
  ungrounded sample and keys only changed channels. Same-time insertion merges
- channels through `clip_with_key`; `land_clip` supplies grouped undo and forks
- a library clip on first edit.
+ channels through `clip_with_key`, and a key of the same channels within a
+ quarter frame gives way (`uncrowd_clip`); `land_clip` supplies grouped undo and
+ forks a library clip on first edit.
 
  @return `The reference to hold afterwards, or NO_ANIM when nothing was written.`
 *>
@@ -677,7 +685,11 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	if (base)
 	{
 		written.ease_new_channels(clip);
+		float at = written.time;
+		AnimChannelKey[] fresh = written_channels(&written);
 		keyed = clip_with_key(mem, *clip, written);
+		// The key stays at the playhead, and a key of its channels a hair away gives way.
+		uncrowd_clip(mem, &keyed, at, fresh, self.crowd_window());
 	}
 	else
 	{

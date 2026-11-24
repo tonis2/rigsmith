@@ -302,6 +302,146 @@ fn bool set_tangent_rate(AnimTemplate* clip, usz key, String joint, bool rotatio
 }
 
 // ---------------------------------------------------------------------------
+// How far a segment strays
+
+// The most a segment may stray from the straight path between its keys: a
+// quarter turn, or a quarter of the rig's height for a slide.
+const float TURN_SWING_LIMIT = (float)math::PI * 0.5f;
+const float SLIDE_SWING_LIMIT = 0.25f;
+const int SWING_SAMPLES @local = 16;
+const int SWING_ARC_STEPS @local = 32;
+
+fn float swing_limit(bool rotation) => rotation ? TURN_SWING_LIMIT : SLIDE_SWING_LIMIT;
+
+<*
+ How far a channel's played segment from `from` to `to` strays from the straight
+ path between its ends: for a turn, the largest angle from the shortest arc; for
+ a slide, the largest distance from the line, in move units. Measured to the
+ path, not at the same fraction, so an ease does not count.
+*>
+fn float segment_swing(AnimTemplate* clip, String joint, bool rotation, float from, float to)
+{
+	if (!(to > from)) return 0.0f;
+	float worst;
+	if (rotation)
+	{
+		Quaternionf a = clip.rotation_at(joint, from);
+		Quaternionf b = hemisphere_of(clip.rotation_at(joint, to), a);
+		for (int s = 1; s <= SWING_SAMPLES; s++)
+		{
+			Quaternionf q = clip.rotation_at(joint, from + (to - from) * (float)s / (float)(SWING_SAMPLES + 1));
+			float nearest = math::min(angle_between_turns(q, a), angle_between_turns(q, b));
+			for (int k = 1; k < SWING_ARC_STEPS; k++)
+			{
+				nearest = math::min(nearest, angle_between_turns(q, a.slerp(b, (float)k / (float)SWING_ARC_STEPS)));
+			}
+			worst = math::max(worst, nearest);
+		}
+		return worst;
+	}
+	Vec3 start = clip.translation_at(joint, from);
+	Vec3 line = clip.translation_at(joint, to) - start;
+	float length_sq = line.length_sq();
+	for (int s = 1; s <= SWING_SAMPLES; s++)
+	{
+		Vec3 p = clip.translation_at(joint, from + (to - from) * (float)s / (float)(SWING_SAMPLES + 1)) - start;
+		float u = length_sq > 1.0e-12f ? math::clamp(p.dot(line) / length_sq, 0.0f, 1.0f) : 0.0f;
+		worst = math::max(worst, (p - line * u).length());
+	}
+	return worst;
+}
+
+// The times of the channel's keys either side of keyframe `key`; a side with none is left false.
+fn void channel_neighbours(AnimTemplate* clip, usz key, String joint, bool rotation,
+	float* before, bool* has_before, float* after, bool* has_after) @local
+{
+	*has_before = false;
+	*has_after = false;
+	foreach (usz f, frame : clip.keyframes)
+	{
+		if (f == key) continue;
+		AnimKeyDot ignored;
+		if (!frame.channel_dot(joint, rotation, &ignored)) continue;
+		if (f < key) { *before = frame.time; *has_before = true; }
+		else if (!*has_after) { *after = frame.time; *has_after = true; }
+	}
+}
+
+<*
+ Set one end of a channel key's tangent as `set_tangent_rate` does, held to the
+ largest share of `rate` that leaves neither segment at the key straying past
+ `swing_limit`, or past what it strayed already. What a dragged handle and a bent
+ curve write: a handle on a one-frame segment otherwise spins the joint.
+
+ @param [&out] held : `Whether the rate was cut down.`
+ @return `False when the key does not key the channel or the rate is not finite.`
+*>
+fn bool set_capped_tangent_rate(AnimTemplate* clip, usz key, String joint, bool rotation, bool incoming, Vec3 rate, bool* held)
+{
+	*held = false;
+	if (!math::is_finite(rate.x) || !math::is_finite(rate.y) || !math::is_finite(rate.z)) return false;
+	AnimKeyDot* dot = tangent_entry(clip, key, joint, rotation);
+	if (!dot) return false;
+	float at = clip.keyframes[key].time;
+	float before, after;
+	bool has_before, has_after;
+	channel_neighbours(clip, key, joint, rotation, &before, &has_before, &after, &has_after);
+	SwingCheck check = {
+		.clip = clip, .key = key, .joint = joint, .rotation = rotation, .incoming = incoming,
+		.at = at, .before = before, .after = after, .has_before = has_before, .has_after = has_after,
+	};
+	float limit = swing_limit(rotation);
+	check.limit_before = has_before ? math::max(limit, segment_swing(clip, joint, rotation, before, at)) : 0.0f;
+	check.limit_after = has_after ? math::max(limit, segment_swing(clip, joint, rotation, at, after)) : 0.0f;
+
+	float scale = 1.0f;
+	if (!check.fits(rate))
+	{
+		// Halved down to the largest share that fits; a flat end almost always does.
+		float low = 0.0f;
+		float high = 1.0f;
+		for (int i = 0; i < 12; i++)
+		{
+			float mid = (low + high) * 0.5f;
+			if (check.fits(rate * mid)) { low = mid; } else { high = mid; }
+		}
+		scale = low;
+		*held = true;
+	}
+	return set_tangent_rate(clip, key, joint, rotation, incoming, rate * scale);
+}
+
+// One trial of `set_capped_tangent_rate`: the rate set, both segments measured, the key put back.
+struct SwingCheck @local
+{
+	AnimTemplate* clip;
+	usz key;
+	String joint;
+	bool rotation;
+	bool incoming;
+	float at;
+	float before;
+	float after;
+	bool has_before;
+	bool has_after;
+	float limit_before;
+	float limit_after;
+}
+
+fn bool SwingCheck.fits(&self, Vec3 rate)
+{
+	AnimKeyDot* dot = tangent_entry(self.clip, self.key, self.joint, self.rotation);
+	AnimKeyDot kept = *dot;
+	defer *dot = kept;
+	if (!set_tangent_rate(self.clip, self.key, self.joint, self.rotation, self.incoming, rate)) return false;
+	// A little over the limit is sampling noise, not a spin.
+	float slack = self.rotation ? 1.0e-3f : 1.0e-5f;
+	if (self.has_before && segment_swing(self.clip, self.joint, self.rotation, self.before, self.at) > self.limit_before + slack) return false;
+	if (self.has_after && segment_swing(self.clip, self.joint, self.rotation, self.at, self.after) > self.limit_after + slack) return false;
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // Angular rate and Euler rates
 
 <*
@@ -353,6 +493,15 @@ fn Vec3 angular_rate_of_euler_rate(Vec3 euler, Vec3 degrees_per_second)
 		rate.x * sc * cb + rate.y * cc,
 		-rate.x * sb + rate.z,
 	};
+}
+
+// `rate` with one displayed Euler angle's rate set to `slope` (degrees per
+// second) and the other two kept, at the turn `shown` names.
+fn Vec3 rate_with_euler_slope(Vec3 shown, Vec3 rate, int axis, float slope)
+{
+	Vec3 euler_rate = euler_rate_of_angular_rate(shown, rate);
+	euler_rate[axis] = slope;
+	return angular_rate_of_euler_rate(shown, euler_rate);
 }
 
 // ---------------------------------------------------------------------------

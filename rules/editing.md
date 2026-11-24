@@ -38,3 +38,13 @@
 - **Rule:** keying a pose with the base active keys each channel a full-weight override layer hides into that layer, and the rest into the base, as one undo step. Only the hidden channels go in: a layer that hides a joint's turn takes no slide. A generated layer or a linked piece can't take keys, so its joints are named and their base keys are left as they were.
 - **Why:** gait authoring puts the arms in its "Body motion" override layer, so turning a wrist in pose mode keyed the hidden base, and nothing changed on screen.
 - **Tests:** `gap_base_keying_keys_an_overridden_joint_into_its_layer` in `test/layer_edit_gaps_test.c3`.
+
+## A handle never spins its segment
+- **Rule:** a tangent handle drag, or a curve bent between keys, leaves no segment at the key straying more than a quarter turn from the straight path between its keys (a quarter of the rig's height for a position), unless it strayed that far already. The slope is held at the most that fits, and the notice says so. Curve tools › Fix twitches puts the stored tangents of any segment past that limit back to Auto.
+- **Why:** wrist_L's frame 1 handle on a one-frame segment stored about 3400 rad/s, which spun the hand between frames 1 and 2, and no dot sat at the bottom of the drop to drag.
+- **Tests:** `a_handle_drag_cannot_spin_its_segment` in `test/graph_editor_test.c3`; `fix_twitches_resets_a_spinning_tangent` in `test/curve_cleanup_test.c3`.
+
+## A key made at the playhead doesn't crowd its neighbour
+- **Rule:** keying a pose at the playhead removes the same channels' other keys within a quarter frame of it, in the base and in a keyed layer. The new key stays at the playhead. Curve tools › Fix twitches removes, of two keys that close, the one farther from a whole frame.
+- **Why:** frame 2 (0.0667 s) on a layer keyed every 0.0225 s landed 0.0008 s before the key at 0.0675 s, so the hand snapped back right after it.
+- **Tests:** `gap_keying_beside_a_base_key_replaces_it` and `gap_keying_beside_a_layer_key_replaces_it` in `test/layer_edit_gaps_test.c3`; `fix_twitches_drops_the_crowded_key_off_the_frame` in `test/curve_cleanup_test.c3`.

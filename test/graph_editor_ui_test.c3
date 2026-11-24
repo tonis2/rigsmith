@@ -826,3 +826,56 @@ fn void the_key_fields_apply_an_exact_value() @test
 	z = f.ui.find_id(crig::ANIM_CURVE_VALUE_IDS[2])!!;
 	test::@check(z.widget_as(TextField).value() == "25.0", "the Z field now reads '%s'", z.widget_as(TextField).value());
 }
+
+<*
+ A press on a curve between two keys, dragged up, bends that segment through
+ the pointer as one undo step: the keys either side turn Free, and the curve at
+ the grab reads where the pointer let go.
+*>
+fn void dragging_a_curve_between_keys_bends_it() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	open_rotation_curves(&f);
+	float[] times = curve_times(&f);
+	test::@check(times.len == 3, "%d keys drawn", times.len);
+	if (times.len != 3) return;
+	Element* elem = curve_plot(&f);
+	CurvePlot* plot = elem.widget_as(CurvePlot);
+
+	// Halfway between the last two keys, on whichever line the plot finds there.
+	float x = (times[1] + times[2]) * 0.5f;
+	Vec2 on_z = plot.series[2].points[0];
+	foreach (p : plot.series[2].points) if (p.x <= x) on_z = p;
+	Vec2 local = plot.pixel_of(elem, { x, on_z.y });
+	Vec2 on;
+	int series = plot.series_at(elem, local, &on);
+	test::@check(series != 0, "no line under the grab");
+	if (series == 0) return;
+	usz axis = (usz)(series - 1);
+	Vec2 from = elem.absolute + plot.pixel_of(elem, on);
+	Vec2 to = from - (Vec2){ 0, 30 };
+	float want = plot.data_of(elem, to - elem.absolute).y;
+	sz history = f.app.undo_stack.cursor;
+
+	f.drag(from, to);
+	f.ui.flush();
+	test::eq(f.app.undo_stack.cursor, history + 1);
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	String joint = f.app.anim_channel_key_selection.len() > 0 ? f.app.anim_channel_key_selection[0].joint : "";
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	foreach (usz j, id : view.dot_ids) if (id == f.app.doc.root_id) joint = view.names[j];
+	Vec3 near = crig::euler_of(clip.rotation_at(joint, on.x), {});
+	near[axis] = want;
+	float got = crig::graph_value(clip, joint, true, on.x, near, 1.0f)[axis];
+	test::@check(math::abs(got - want) < 1.0f, "the curve reads %f at the grab, the pointer let go at %f", got, want);
+	sz a = f.app.key_near(f.app.editing, times[1], crig::ANIM_SAME_TIME);
+	sz b = f.app.key_near(f.app.editing, times[2], crig::ANIM_SAME_TIME);
+	AnimKeyDot da;
+	AnimKeyDot db;
+	test::@check(a >= 0 && b >= 0 && clip.keyframes[a].channel_dot(joint, true, &da) && clip.keyframes[b].channel_dot(joint, true, &db)
+		&& da.rotation_tangents.mode == FREE && db.rotation_tangents.mode == FREE, "the keys either side are not Free");
+	test::@check(f.app.undo(), "the bend did not undo");
+}

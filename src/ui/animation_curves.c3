@@ -5,7 +5,8 @@
  shows, hides and solos curves. A key is dragged up and down to change that
  component, sideways to move it in time, and the selected keys go with it; a box
  picks keys (animation_curve_edit.c3); a selected key's two tangent handles set the
- slope the curve leaves and arrives with. Each drag is one undo step. The data is `app/graph.c3`'s; this file is the
+ slope the curve leaves and arrives with, and a curve grabbed between keys bends
+ through the pointer. Each drag is one undo step. The data is `app/graph.c3`'s; this file is the
  wiring.
 
  Rotation and position have different units, so while both are drawn the plot
@@ -339,6 +340,7 @@ fn Element* AnimCurves.build(&self, Element* elem) @dynamic
 				.on_copy = &anim_curve_copy,
 				.on_paste = &anim_paste_key_clicked,
 				.on_handle_drag = &anim_curve_handle_dragged,
+				.on_bend = &anim_curve_bent,
 				.on_scrub = &anim_seek,
 				.on_view = &anim_timeline_view_changed,
 				.on_context = &anim_curve_context,
@@ -457,9 +459,11 @@ fn void anim_curve_point_dragged(Ui* ui, usz index, Vec2 to, bool done) @private
  A tangent handle dragged: the line from its key to the pointer is the slope the
  curve leaves (or arrives at) the key with. Only that slope counts: the handle
  stays a third of its segment from the key, so a drag along time changes nothing
- but the slope's steepness, and the pointer crossing the key is held off at a
- quarter of the handle's length. Nothing is written until the release; the plot
- draws the handle under the pointer meanwhile, and the release is one undo step.
+ but the slope's steepness. Near the key the run is held off at a quarter of the
+ handle's length, and past it the slope reads at the handle's own length. The
+ slope is held where a segment would stray past a quarter turn. Nothing is
+ written until the release; the plot draws the handle under the pointer
+ meanwhile, and the release is one undo step.
 
  A key that was not Free becomes Free, its other handle following; with Alt held
  it becomes Broken and the other handle stays. A Free key dragged with Alt is
@@ -482,17 +486,73 @@ fn void anim_curve_handle_dragged(Ui* ui, usz index, Vec2 to, bool done) @privat
 	GraphCurve curve = curves.graph.curves[key.curve];
 	curve.joint = curve.joint.tcopy();
 	float run = handle.incoming ? key.time - to.x : to.x - key.time;
-	run = math::max(run, handle.length * 0.25f);
+	// Past the key the slope reads at the handle's own length, so crossing it doesn't explode.
+	run = run <= 0.0f ? handle.length : math::max(run, handle.length * 0.25f);
 	float rise = curve.real(to.y) - key.value;
 	float slope = (handle.incoming ? -rise : rise) / run;
 	bool broken = curves.break_tangent;
 	curves.break_tangent = false;
+	bool held;
 	if (!app.set_graph_tangent(app.editing, curve.joint, curve.rotation, key.time, key.shown, curve.axis,
-		handle.incoming, slope, curves.graph.unit, broken)) return;
-	app.@notice("%s %s tangent %s this key: %.2f %s per second%s", curve.joint, curve.rotation ? "rotation" : "position",
+		handle.incoming, slope, curves.graph.unit, broken, &held)) return;
+	app.@notice("%s %s tangent %s this key: %.2f %s per second%s%s", curve.joint, curve.rotation ? "rotation" : "position",
 		handle.incoming ? "arriving at" : "leaving", slope, curve.rotation ? "degrees" : "units",
-		broken ? ", handles apart" : "");
+		broken ? ", handles apart" : "", held ? anim_swing_held_note(curve.rotation) : "");
 	app.show_edited();
+}
+
+<*
+ A curve grabbed between keys and dragged: on release its segment bends so the
+ curve passes through the pointer there (`bend_graph_segment`), one undo step.
+ Alt keeps the two keys' handles apart. `to.y` is in the plot's space.
+*>
+fn void anim_curve_bent(Ui* ui, usz series, float x, Vec2 to, bool done) @private
+{
+	AnimCurves* curves = anim_curves(ui);
+	if (!curves || series >= curves.graph.curves.len) return;
+	if (!done)
+	{
+		curves.break_tangent = ui.input.key_down(Key.LEFT_ALT) || ui.input.key_down(Key.RIGHT_ALT);
+		return;
+	}
+	AppState* app = ui.inherit(AppState)!!;
+	if (!anim_can_rewrite(ui)) return;
+	GraphCurve curve = curves.graph.curves[series];
+	curve.joint = curve.joint.tcopy();
+	// The keys either side as the graph drew them, so the bend reads the drawing's Euler angles.
+	Vec3 shown_from;
+	Vec3 shown_to;
+	float from_time = -1.0e30f;
+	float to_time = 1.0e30f;
+	foreach (key : curves.graph.keys)
+	{
+		if (key.curve != series) continue;
+		if (key.time < x && key.time > from_time) { from_time = key.time; shown_from = key.shown; }
+		if (key.time > x && key.time < to_time) { to_time = key.time; shown_to = key.shown; }
+	}
+	float value = curve.real(to.y);
+	bool broken = curves.break_tangent;
+	curves.break_tangent = false;
+	bool held;
+	if (!app.bend_graph_segment(app.editing, curve.joint, curve.rotation, curve.axis, x, value, shown_from, shown_to,
+		curves.graph.unit, broken, &held)) return;
+	String[3] axes = { "X", "Y", "Z" };
+	String note = held ? anim_swing_held_note(curve.rotation) : "";
+	if (curve.rotation)
+	{
+		app.@notice("%s rotation %s bent through %.1f° at %.2f s%s", curve.joint, axes[curve.axis], value, x, note);
+	}
+	else
+	{
+		app.@notice("%s position %s bent through %.3f at %.2f s%s", curve.joint, axes[curve.axis], value, x, note);
+	}
+	app.show_edited();
+}
+
+// What a notice adds when a slope was held at the swing limit.
+fn String anim_swing_held_note(bool rotation) @private
+{
+	return rotation ? ", held at a quarter turn" : ", held at a quarter of the rig's height";
 }
 
 fn void anim_curve_context(Ui* ui, sz point, float x, Vec2 pixel) @private

@@ -251,6 +251,159 @@ fn void the_loop_seam_takes_the_first_value_per_channel() @test
 }
 
 // ---------------------------------------------------------------------------
+// Fix twitches
+
+const Vec3 WRIST_BONE = { 0.98454785f, -0.10939402f, 0.13674277f };
+
+fn AnimKeyframe wrist_key(float time, Vec3 axis, float angle, AnimInterpolation curve, AnimTangents tangents = {})
+{
+	AnimKeyDot[] dots = alloc::new_array(mem, AnimKeyDot, 1);
+	dots[0] = { .joint_name = "hip".copy(mem), .axis = axis, .angle = angle, .channels = ROTATION,
+		.rotation_interpolation = curve, .rotation_tangents = tangents };
+	return { .time = time, .dots = dots };
+}
+
+<*
+ The clip that twitched: a layer holding one turn every 0.0225 s, with two keys
+ made at frames 1 and 2. The frame 1 key leaves with a tangent of about 3400
+ rad/s, and the frame 2 key sits 0.0008 s before the layer's key at 0.0675 s.
+*>
+fn AnimTemplate twitchy_wrist()
+{
+	List{AnimKeyframe} frames;
+	frames.init(mem);
+	for (int i = 0; i <= 40; i++)
+	{
+		// The key at 0.045 s is gone in the clip that twitched.
+		if (i == 2) continue;
+		frames.push(wrist_key((float)i * 0.0225f, WRIST_BONE, 1.4492079f, LINEAR));
+		if (i != 1) continue;
+		frames.push(wrist_key(0.033333335f, { 0.782364f, -0.6187511f, 0.071090035f }, 1.4771988f, AUTO,
+			{ .mode = FREE, .incoming = { -22.26562f, 12.640174f, -22.88774f }, .outgoing = { -2182.8745f, 1239.2161f, -2243.866f } }));
+		frames.push(wrist_key(0.06666667f, WRIST_BONE, 0.5764096f, AUTO,
+			{ .mode = FREE, .incoming = { -331.46408f, -32.940224f, -29.839108f } }));
+	}
+	AnimTemplate clip = { .name = "walk".copy(mem), .duration = 0.9f, .keyframes = frames.to_array(mem), .loop = true, .owned = true };
+	frames.free();
+	clip.compile_tracks(mem);
+	return clip;
+}
+
+// Every keyframe's time, for finding a key after keys went.
+fn sz key_at_time(AnimTemplate* clip, float time)
+{
+	foreach (usz i, frame : clip.keyframes) if (math::abs(frame.time - time) < 1.0e-5f) return (sz)i;
+	return -1;
+}
+
+// Whether the hip's turn is keyed at `time`.
+fn bool turns_at(AnimTemplate* clip, float time)
+{
+	sz at = key_at_time(clip, time);
+	AnimKeyDot dot;
+	return at >= 0 && clip.keyframes[at].channel_dot("hip", true, &dot);
+}
+
+// The largest swing over every segment of the hip's turn.
+fn float worst_swing(AnimTemplate* clip)
+{
+	float worst;
+	for (usz i = 0; i + 1 < clip.keyframes.len; i++)
+	{
+		worst = math::max(worst, crig::segment_swing(clip, "hip", true, clip.keyframes[i].time, clip.keyframes[i + 1].time));
+	}
+	return worst;
+}
+
+fn void fix_twitches_resets_a_spinning_tangent() @test
+{
+	AnimTemplate clip = twitchy_wrist();
+	defer clip.free(mem);
+	float before = crig::segment_swing(&clip, "hip", true, 0.033333335f, 0.06666667f);
+	test::@check(before > crig::TURN_SWING_LIMIT, "the fixture does not spin (%f)", before);
+
+	usz changed;
+	AnimTemplate fixed = crig::clip_curve_cleaned(mem, clip, hip_picks(&clip, ROTATION), FIX_TWITCHES, &changed, 1.0f / 30.0f);
+	defer fixed.free(mem);
+	// The crowded key, and both stored ends of the spinning segment.
+	test::@check(changed == 3, "fixed %d, wanted 3", changed);
+	sz one = key_at_time(&fixed, 0.033333335f);
+	sz two = key_at_time(&fixed, 0.06666667f);
+	test::@check(one >= 0 && two >= 0, "a hand key went");
+	if (one < 0 || two < 0) return;
+	test::@check(fixed.keyframes[one].dots[0].rotation_tangents.mode == AUTO
+		&& fixed.keyframes[two].dots[0].rotation_tangents.mode == AUTO, "a spinning end kept its stored tangent");
+	float after = worst_swing(&fixed);
+	test::@check(after <= crig::TURN_SWING_LIMIT, "a segment still swings %f", after);
+	// The values stay: only tangents and the crowded key changed.
+	foreach (frame : clip.keyframes)
+	{
+		sz kept = key_at_time(&fixed, frame.time);
+		if (kept < 0) continue;
+		test::@check(helpers::same_rotation(fixed.keyframes[kept].rotation_of("hip"), frame.rotation_of("hip"), 1.0e-6f),
+			"the key at %f moved", frame.time);
+	}
+
+	// Fixed: nothing left to fix.
+	usz again;
+	AnimTemplate twice = crig::clip_curve_cleaned(mem, fixed, hip_picks(&fixed, ROTATION), FIX_TWITCHES, &again, 1.0f / 30.0f);
+	defer twice.free(mem);
+	test::@check(again == 0, "a second pass fixed %d", again);
+}
+
+fn void fix_twitches_drops_the_crowded_key_off_the_frame() @test
+{
+	AnimTemplate clip = twitchy_wrist();
+	defer clip.free(mem);
+	usz changed;
+	AnimTemplate fixed = crig::clip_curve_cleaned(mem, clip, hip_picks(&clip, ROTATION), FIX_TWITCHES, &changed, 1.0f / 30.0f);
+	defer fixed.free(mem);
+	test::@check(key_at_time(&fixed, 0.0675f) < 0, "the key a hair after frame 2 stayed");
+	test::@check(fixed.keyframes.len == clip.keyframes.len - 1, "%d keys went", clip.keyframes.len - fixed.keyframes.len);
+
+	// The earlier of a pair goes when it is the one off the frame.
+	float[4] angles = { 0.0f, 0.2f, 0.4f, 0.6f };
+	float[4] slides = { 0, 0, 0, 0 };
+	AnimTemplate pair = hip_run(angles[..], slides[..]);
+	defer pair.free(mem);
+	// Frame 8 is 0.2667 s; the key before it sits 0.0008 s off the frame.
+	pair.keyframes[1].time = 0.2659f;
+	pair.keyframes[2].time = 0.26666667f;
+	AnimTemplate settled = crig::clip_curve_cleaned(mem, pair, hip_picks(&pair, ROTATION), FIX_TWITCHES, &changed, 1.0f / 30.0f);
+	defer settled.free(mem);
+	test::@check(changed == 1 && turns_at(&settled, 0.26666667f) && !turns_at(&settled, 0.2659f),
+		"%d changed; kept the key off the frame", changed);
+	test::@check(settled.channel_count("hip", false) == 4, "the slide lost a key it was not asked about");
+}
+
+fn void fix_twitches_leaves_a_clean_curve() @test
+{
+	float[5] angles = { 0.0f, 0.5f, 1.0f, 0.5f, 0.0f };
+	float[5] slides = { 0.0f, 0.1f, 0.3f, 0.1f, 0.0f };
+	AnimTemplate clip = hip_run(angles[..], slides[..], AUTO);
+	defer clip.free(mem);
+	usz changed;
+	AnimTemplate same = crig::clip_curve_cleaned(mem, clip, hip_all_picks(&clip), FIX_TWITCHES, &changed, 1.0f / 30.0f);
+	defer same.free(mem);
+	test::@check(changed == 0 && same.keyframes.len == clip.keyframes.len, "a clean curve had %d twitches", changed);
+}
+
+fn void fix_twitches_keeps_a_wide_authored_arc() @test
+{
+	float[3] angles = { 0.0f, 0.5f, 1.0f };
+	float[3] slides = { 0, 0, 0 };
+	AnimTemplate clip = hip_run(angles[..], slides[..], AUTO);
+	defer clip.free(mem);
+	clip.keyframes[1].dots[0].rotation_tangents = { .mode = FREE, .incoming = { 10.0f, 0, 2.0f }, .outgoing = { 10.0f, 0, 2.0f } };
+	float swing = crig::segment_swing(&clip, "hip", true, 0.25f, 0.5f);
+	test::@check(swing > 0.1f && swing < crig::TURN_SWING_LIMIT, "the arc swings %f, not a wide one under the limit", swing);
+	usz changed;
+	AnimTemplate same = crig::clip_curve_cleaned(mem, clip, hip_picks(&clip, ROTATION), FIX_TWITCHES, &changed, 1.0f / 30.0f);
+	defer same.free(mem);
+	test::@check(changed == 0 && same.keyframes[1].dots[0].rotation_tangents.mode == FREE, "an arc under the limit was reset");
+}
+
+// ---------------------------------------------------------------------------
 // On the app
 
 struct CleanupFixture
@@ -372,4 +525,21 @@ fn void picked_keys_decide_which_channels_a_tool_acts_on() @test
 		test::@check(dot.rotation_tangents.mode == FLAT && dot.translation_tangents.mode == FLAT, "the column was not flattened");
 		test::@check(f.app.clip(f.app.editing).keyframes[1].dots[0].rotation_tangents.mode == AUTO, "another column was flattened");
 	}
+}
+
+// On the app: one undo step, and the key that went comes back with it.
+fn void fix_twitches_is_one_undo_step() @test
+{
+	CleanupFixture f;
+	f.open(twitchy_wrist());
+	defer f.close();
+	usz keys = f.app.clip(f.app.editing).keyframes.len;
+	sz history = f.app.undo_stack.cursor;
+	test::@check(f.app.curve_cleanup(f.app.editing, FIX_TWITCHES), "Fix twitches was refused");
+	test::@check(f.app.undo_stack.cursor == history + 1, "Fix twitches was %d undo steps", f.app.undo_stack.cursor - history);
+	AnimTemplate* fixed = f.app.clip(f.app.editing);
+	test::@check(fixed.keyframes.len == keys - 1 && worst_swing(fixed) <= crig::TURN_SWING_LIMIT, "the clip is not fixed");
+	test::@check(f.app.undo(), "Fix twitches did not undo");
+	AnimTemplate* back = f.app.clip(f.app.editing);
+	test::@check(back.keyframes.len == keys && worst_swing(back) > crig::TURN_SWING_LIMIT, "undo did not bring the clip back");
 }

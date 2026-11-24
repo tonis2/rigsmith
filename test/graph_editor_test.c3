@@ -501,6 +501,123 @@ fn void dragging_a_tangent_handle_frees_or_breaks_the_key() @test
 	test::@check(math::is_approx(crig::euler_rate_of_angular_rate(key.shown, own.incoming).z, slope.z + 30.0f, 0.05f), "the incoming slope is wrong");
 }
 
+// The drawn key of the hip's rotation or position `axis` at `time`.
+fn GraphKey drawn_key(Graph* graph, bool rotation, int axis, float time)
+{
+	foreach (key : graph.keys)
+	{
+		GraphCurve curve = graph.curves[key.curve];
+		if (curve.rotation == rotation && curve.axis == axis && math::abs(key.time - time) < EPS) return key;
+	}
+	return {};
+}
+
+<*
+ A handle dragged far too steep is held where neither segment at the key strays
+ past a quarter turn, as close to that as it gets, and says it was held. A sane
+ slope is not held.
+*>
+fn void a_handle_drag_cannot_spin_its_segment() @test
+{
+	GraphFixture f;
+	f.open(AUTO);
+	defer f.close();
+	select_hip_keys(&f, { 0.5f });
+	Graph graph = f.app.build_graph(f.app.editing);
+	defer graph.free();
+	GraphKey key = drawn_key(&graph, true, 0, 0.5f);
+
+	bool held;
+	test::@check(f.app.set_graph_tangent(f.app.editing, "hip", true, key.time, key.shown, 0, false, 200000.0f, 1.0f, false, &held),
+		"the steep drag was refused");
+	test::@check(held, "a slope of 200000 degrees per second was not held");
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	float leaving = crig::segment_swing(clip, "hip", true, 0.5f, 1.0f);
+	float arriving = crig::segment_swing(clip, "hip", true, 0.0f, 0.5f);
+	test::@check(leaving <= crig::TURN_SWING_LIMIT + 1.0e-3f && arriving <= crig::TURN_SWING_LIMIT + 1.0e-3f,
+		"the segments swing %f and %f", leaving, arriving);
+	test::@check(leaving > 0.5f, "held further than it had to be: the segment swings %f", leaving);
+
+	test::@check(f.app.undo(), "the drag did not undo");
+	test::@check(f.app.set_graph_tangent(f.app.editing, "hip", true, key.time, key.shown, 0, false, 30.0f, 1.0f, false, &held)
+		&& !held, "a gentle slope was held");
+}
+
+<*
+ A rotation curve grabbed between keys bends through the pointer on the axis
+ grabbed, off the turn's plane (X) and along it (Z): the two keys turn Free, the
+ keys keep their values, and one undo puts it back.
+*>
+fn void bending_a_rotation_segment_puts_the_curve_under_the_pointer() @test
+{
+	GraphFixture f;
+	f.open(AUTO);
+	defer f.close();
+	Graph graph = f.app.build_graph(f.app.editing);
+	defer graph.free();
+	float unit = graph.unit;
+	int[2] axes = { 0, 2 };
+	foreach (axis : axes)
+	{
+		GraphKey from = drawn_key(&graph, true, axis, 0.5f);
+		GraphKey to = drawn_key(&graph, true, axis, 1.0f);
+		Vec3 near = (from.shown + to.shown) * 0.5f;
+		float now = crig::graph_value(f.app.clip(f.app.editing), "hip", true, 0.75f, near, unit)[axis];
+		float want = now + 20.0f;
+		sz history = f.app.undo_stack.cursor;
+		bool held;
+		test::@check(f.app.bend_graph_segment(f.app.editing, "hip", true, axis, 0.75f, want, from.shown, to.shown, unit, false, &held),
+			"the bend on axis %d was refused", axis);
+		test::@check(f.app.undo_stack.cursor == history + 1 && !held, "the bend was %d steps, held %s",
+			f.app.undo_stack.cursor - history, held);
+		AnimTemplate* clip = f.app.clip(f.app.editing);
+		near[axis] = want;
+		float got = crig::graph_value(clip, "hip", true, 0.75f, near, unit)[axis];
+		test::@check(math::abs(got - want) < 0.5f, "axis %d bent to %f, wanted %f", axis, got, want);
+		test::@check(clip.keyframes[1].dots[0].rotation_tangents.mode == FREE && clip.keyframes[2].dots[0].rotation_tangents.mode == FREE,
+			"the keys either side are not Free");
+		test::@check(math::is_approx(clip.keyframes[1].dots[0].angle, 1.0f, EPS) && math::is_approx(clip.keyframes[2].dots[0].angle, 0.5f, EPS),
+			"a key's value moved");
+		test::@check(f.app.undo(), "the bend did not undo");
+		float back = crig::graph_value(f.app.clip(f.app.editing), "hip", true, 0.75f, near, unit)[axis];
+		test::@check(math::abs(back - now) < 1.0e-3f, "undo left the curve at %f, not %f", back, now);
+	}
+}
+
+fn void bending_a_position_segment_is_exact() @test
+{
+	GraphFixture f;
+	f.open(AUTO);
+	defer f.close();
+	Graph graph = f.app.build_graph(f.app.editing);
+	defer graph.free();
+	float unit = graph.unit;
+	GraphKey from = drawn_key(&graph, false, 0, 0.0f);
+	GraphKey to = drawn_key(&graph, false, 0, 0.5f);
+	float now = crig::graph_value(f.app.clip(f.app.editing), "hip", false, 0.2f, {}, unit).x;
+	float want = now + 0.05f * unit;
+	test::@check(f.app.bend_graph_segment(f.app.editing, "hip", false, 0, 0.2f, want, from.shown, to.shown, unit),
+		"the position bend was refused");
+	AnimTemplate* clip = f.app.clip(f.app.editing);
+	float got = crig::graph_value(clip, "hip", false, 0.2f, {}, unit).x;
+	test::@check(math::abs(got - want) < 1.0e-4f * unit, "the slide bent to %f, wanted %f", got, want);
+	test::@check(clip.keyframes[0].dots[0].translation_tangents.mode == FREE
+		&& clip.keyframes[0].dots[0].rotation_tangents.mode == AUTO, "the wrong channel was freed");
+}
+
+fn void a_held_segment_refuses_a_bend() @test
+{
+	GraphFixture f;
+	f.open(HOLD);
+	defer f.close();
+	sz history = f.app.undo_stack.cursor;
+	test::@check(!f.app.bend_graph_segment(f.app.editing, "hip", true, 2, 0.75f, 40.0f, {}, {}), "a held segment bent");
+	// On a key, or past the last one, there is no segment to bend.
+	test::@check(!f.app.bend_graph_segment(f.app.editing, "hip", true, 2, 0.5f, 40.0f, {}, {}), "a key bent");
+	test::@check(!f.app.bend_graph_segment(f.app.editing, "hip", true, 2, 1.0f, 40.0f, {}, {}), "the end bent");
+	test::@check(f.app.undo_stack.cursor == history, "a refused bend left an undo step");
+}
+
 <*
  The mode menu's call: every selected channel key takes the mode as one undo
  step, Auto to Free changes nothing that plays, Flat and Linear do what they say,
