@@ -2167,6 +2167,37 @@ fn void settings_adds_a_library_and_the_browser_sees_it() @test
 	fixture.ui.flush();
 }
 
+// Whether the Assets pane draws the libraries and categories the last rescan made.
+fn bool assets_pane_is_current(Fixture* f, usz libraries) @local
+{
+	Select*? chooser = f.ui.get_widget_id(crig::ASSETS_LIBRARY_ID, Select);
+	Tree*? sidebar = f.ui.get_widget_id(crig::ASSETS_TREE_ID, Tree);
+	if (catch chooser) return false;
+	if (catch sidebar) return false;
+	return chooser.options.ptr == f.app.library_labels.ptr && chooser.options.len == libraries + 1
+		&& sidebar.rows.ptr == f.app.category_rows.ptr;
+}
+
+// The chooser and the sidebar borrow what a rescan frees; the folder added with the pane up crashed.
+fn void changing_the_libraries_rebuilds_the_assets_pane() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	crig::show_pane_view(f.ui, crig::LIBRARY_VIEW, SplitAxis.HORIZONTAL, 0.5f);
+	f.ui.flush();
+	test::@check(assets_pane_is_current(&f, 1), "the Assets pane is not up");
+
+	crig::add_asset_library(f.ui, library::ready_second());
+	f.ui.flush();
+	test::@check(assets_pane_is_current(&f, 2), "an added folder left the pane on the freed labels");
+
+	test::@check(f.app.config.remove_library(1), "the folder could not be removed");
+	f.app.scan_libraries();
+	f.ui.flush();
+	test::@check(assets_pane_is_current(&f, 1), "a removed folder left the pane on the freed labels");
+}
+
 <*
  How big the interface is drawn: the keys walk it, the ends hold, and the panel
  follows.

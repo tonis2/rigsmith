@@ -59,6 +59,8 @@ fn void AppState.rescan_assets(&self)
 	self.library_labels = labels;
 
 	self.refresh_visible_assets();
+	// The chooser and the sidebar borrow what was just freed.
+	self.refresh_asset_sidebar();
 }
 
 <*

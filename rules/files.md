@@ -34,3 +34,8 @@
 - **Rule:** `save_project {path}` copies the opened model to the path, a .glb or .gltf, writes the rig into the copy with its sidecar beside it naming it, and the project follows the copy. It never writes over the model that was opened unless Rigsmith made that model, and it never replaces another file without `overwrite`. `open {path}` replaces the scene with the model, and is refused while any character has unsaved changes unless `discard_unsaved` says to let them go.
 - **Why:** saving the goblin wrote `goblin_copy.glb` and a sidecar naming it, and renaming the pair meant editing the sidecar by hand. Reopening a file changed outside Rigsmith took four calls: add a second model, remove the first, add it back, remove the second.
 - **Tests:** `test/save_as_test.c3`.
+
+## Changing the libraries redraws the Assets pane
+- **Rule:** adding or removing a library folder rescans it at once, and `rescan_assets` rebuilds every Assets pane before it is drawn again: the library chooser and the sidebar borrow what the rescan frees.
+- **Why:** adding a folder in the settings with the Assets pane up crashed: the chooser drew labels the rescan had freed.
+- **Tests:** `changing_the_libraries_rebuilds_the_assets_pane` in `test/ui/workspace_areas_test.c3`.
