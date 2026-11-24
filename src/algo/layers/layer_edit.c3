@@ -92,6 +92,9 @@ struct LayerKeyAsk
 	rig::Pose wanted;  // the pose the stack has to reach
 	AnimKeyScope scope;
 	bool[] selected;   // per joint
+	// Per joint, the channels the key may write; empty allows all.
+	bool[] may_turn;
+	bool[] may_move;
 }
 
 <*
@@ -209,6 +212,8 @@ fn AnimKeyframe layer_key_for(LayerKeyAsk* ask)
 					rotation = 1.0f - math::abs(wanted.rotations[(usz)j].v.dot(incl.rotations[(usz)j].v)) > 1.0e-7f;
 					translation = (wanted.offsets[(usz)j] - incl.offsets[(usz)j]).length_sq() > 1.0e-12f;
 			}
+			if (ask.may_turn.len > 0) rotation = rotation && ask.may_turn[(usz)j];
+			if (ask.may_move.len > 0) translation = translation && ask.may_move[(usz)j];
 		}
 		if (!rotation && !translation)
 		{

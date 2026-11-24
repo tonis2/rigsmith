@@ -33,3 +33,8 @@
 - **Rule:** after a rig edit commits, `AppState.finish_rig_edit` marks the rig stale, drops selected ids that no longer exist, marks the plan's targets and refreshes.
 - **Why:** seven callers each listed their own steps, and they differed.
 - **Tests:** `test/rules/rig_edit_test.c3`.
+
+## A pose edit shows, whichever layer hides the joint
+- **Rule:** keying a pose with the base active keys each channel a full-weight override layer hides into that layer, and the rest into the base, as one undo step. Only the hidden channels go in: a layer that hides a joint's turn takes no slide. A generated layer or a linked piece can't take keys, so its joints are named and their base keys are left as they were.
+- **Why:** gait authoring puts the arms in its "Body motion" override layer, so turning a wrist in pose mode keyed the hidden base, and nothing changed on screen.
+- **Tests:** `gap_base_keying_keys_an_overridden_joint_into_its_layer` in `test/layer_edit_gaps_test.c3`.

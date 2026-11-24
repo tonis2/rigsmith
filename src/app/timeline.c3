@@ -526,11 +526,11 @@ fn String AppState.unused_clip_name(&self, Allocator allocator, String name)
  `scope` to the channels it names. Empty `dots` when there is nothing to key.
  `ref` must be the clip `clip` points to, with no layer active.
 
- @param notify : `Say why a narrowed scope keyed nothing.`
+ @param cover : `Filled with the layers that hide joints from the base, when given; the caller frees it.`
  @return `The key; the caller owns it.`
  @return? RIG_EMPTY : `There is no rig to read a pose off.`
 *>
-fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, float time, AnimKeyScope scope, bool notify)
+fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, float time, AnimKeyScope scope, BaseCover* cover = null)
 {
 	AnimKeyframe? key;
 	bool parked = !self.pose_edit_active && self.animating && self.anim_paused
@@ -542,7 +542,7 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 	{
 		// The pose on screen carries the layers; the base gets it with them
 		// taken back out, or they would play twice (layer_edit.c3).
-		key = self.keyframe_under_layers(ref, clip, time, parked);
+		key = self.keyframe_under_layers(ref, clip, time, parked, cover);
 	}
 	else if (parked)
 	{
@@ -578,6 +578,9 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 		foreach (dot : written.dots)
 		{
 			bool keep = false;
+			// Narrowed only: a channel a layer hides stays out of the base.
+			bool can_turn = dot.keys_rotation();
+			bool can_move = dot.keys_translation();
 			foreach (usz j, name : names)
 			{
 				if (name != dot.joint_name || j >= view.dot_ids.len) continue;
@@ -588,8 +591,8 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 					foreach (selected : self.anim_channel_key_selection)
 					{
 						if (selected.joint != dot.joint_name) continue;
-						if (selected.channel == ROTATION) rotation = true;
-						if (selected.channel == TRANSLATION) translation = true;
+						if (selected.channel == ROTATION) rotation = can_turn;
+						if (selected.channel == TRANSLATION) translation = can_move;
 					}
 					keep = rotation || translation;
 					dot.channels = rotation && translation ? BOTH
@@ -598,8 +601,8 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 				else if (scope == SELECTED) { keep = self.is_selected(view.dot_ids[j]); }
 				else
 				{
-					bool rotation = 1.0f - math::abs(current.rotations[j].v.dot(baseline.rotations[j].v)) > 1.0e-7f;
-					bool translation = (current.offsets[j] - baseline.offsets[j]).length_sq() > 1.0e-12f;
+					bool rotation = can_turn && 1.0f - math::abs(current.rotations[j].v.dot(baseline.rotations[j].v)) > 1.0e-7f;
+					bool translation = can_move && (current.offsets[j] - baseline.offsets[j]).length_sq() > 1.0e-12f;
 					keep = rotation || translation;
 					dot.channels = rotation && translation ? BOTH : (rotation ? ROTATION : TRANSLATION);
 				}
@@ -610,11 +613,6 @@ fn AnimKeyframe? AppState.draft_key(&self, AnimRef ref, AnimTemplate* clip, floa
 		}
 		if (written.dots.len > 0) alloc::free(mem, written.dots);
 		written.dots = filtered.to_array(mem);
-		// Nothing left: the caller keys a moved target alone, or says so.
-		if (written.dots.len == 0 && notify && self.aim_draft.len == 0)
-		{
-			self.@notice(scope == SELECTED ? "select joints to key" : "no changed channels to key");
-		}
 	}
 	// Stated in the clip's own bone frame, with any layers taken back out, so it
 	// plays as posed and moves no joint it leaves alone.
@@ -665,18 +663,35 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 		return NO_ANIM;
 	}
 
-	AnimKeyframe? drafted = self.draft_key(ref, clip, time, scope, true);
+	BaseCover cover;
+	defer cover.free();
+	AnimKeyframe? drafted = self.draft_key(ref, clip, time, scope, &cover);
 	if (catch drafted)
 	{
 		self.@notice("there is no rig to key a pose from");
 		return NO_ANIM;
 	}
 	AnimKeyframe written = drafted;
-	if (written.dots.len == 0)
+	bool base = written.dots.len > 0;
+	AnimTemplate keyed;
+	if (base)
+	{
+		written.ease_new_channels(clip);
+		keyed = clip_with_key(mem, *clip, written);
+	}
+	else
 	{
 		written.free(mem);
+		keyed = clip_copy(mem, *clip);
+	}
+	// Joints a full override hides go into that layer, or the pose made would not show.
+	usz into_layers = self.key_covered_into_layers(ref, clip, &keyed, time, scope, &cover);
+	if (!base && into_layers == 0)
+	{
+		keyed.free(mem);
 		// Only a target moved: it is keyed alone, with nothing said about the pose.
 		if (self.aim_draft.len > 0) return self.key_aims_only(ref, time);
+		if (scope != ALL) self.@notice(scope == SELECTED ? "select joints to key" : "no changed channels to key");
 		return NO_ANIM;
 	}
 	// Restarting the watched clip releases draft state. The draft belongs to
@@ -688,10 +703,8 @@ fn AnimRef AppState.key_here(&self, AnimRef ref, float time, AnimKeyScope scope 
 	self.pose_edit_draft = {};
 	self.pose_edit_active = false;
 	self.pose_edit_pending = false;
-	written.ease_new_channels(clip);
-	// The pose and any moved target land as one entry, so one Ctrl+Z takes back both.
-	AnimTemplate keyed = self.with_aim_keys(clip_with_key(mem, *clip, written), time);
-	AnimRef landed = self.land_clip(ref, keyed);
+	// The pose, its layer keys and any moved target land as one entry, so one Ctrl+Z takes back all.
+	AnimRef landed = self.land_clip(ref, self.with_aim_keys(keyed, time));
 	self.pose_edit_draft = draft;
 	self.pose_edit_active = active;
 	self.pose_edit_pending = pending;

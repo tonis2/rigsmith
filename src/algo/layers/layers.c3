@@ -715,6 +715,7 @@ struct ActiveLayer
 	AnimLayerMode mode;
 	float gain; // weight times the time window and fades
 	LayerSample[] samples;
+	usz index; // its place in the clip's stack
 }
 
 // The layers of one clip at one instant, sampled per joint.
@@ -1003,7 +1004,7 @@ fn LayerStack AnimTemplate.layer_stack(&self, Allocator allocator, rig::Skeleton
 
 	ActiveLayer[] active = alloc::new_array(allocator, ActiveLayer, (sz)playing);
 	usz used = 0;
-	foreach (&layer : self.layers)
+	foreach (usz i, &layer : self.layers)
 	{
 		if (!layer.plays(self.layers, honor_solo)) continue;
 		float gain = layer.gain_at(clock, self.duration);
@@ -1012,6 +1013,7 @@ fn LayerStack AnimTemplate.layer_stack(&self, Allocator allocator, rig::Skeleton
 			.mode = layer.mode,
 			.gain = gain,
 			.samples = alloc::new_array(allocator, LayerSample, (sz)skeleton.len()),
+			.index = i,
 		};
 		layer.sample(allocator, self, skeleton, names, time, active[used].samples);
 		used++;

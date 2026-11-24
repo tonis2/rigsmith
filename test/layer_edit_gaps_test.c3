@@ -118,6 +118,59 @@ fn void gap_base_keying_leaves_an_overridden_joint_alone() @test
 	test::@check(gap_dot_at(keyed.keyframes, 1.0f, root).joint_name.len > 0, "the existing base keys were lost");
 }
 
+// With the base active, a joint a full override covers is keyed into that layer, the rest into the base, in one step.
+fn void gap_base_keying_keys_an_overridden_joint_into_its_layer() @test
+{
+	Fixture f;
+	f.open()!!;
+	defer f.close();
+	AnimRef clip = gap_workspace(&f);
+	test::@check(f.app.add_clip_layer(clip, KEYED, OVERRIDE) >= 0, "no override layer");
+	f.app.set_active_layer(f.app.editing, -1);
+	String root = gap_root_name(&f);
+	defer root.free(mem);
+	RigView view = f.app.open_rig(mem)!!;
+	defer view.free(mem);
+	// A joint the layer leaves to the base: the layer keys only the root.
+	usz other = view.dot_ids[0] == f.app.doc.root_id ? 1 : 0;
+	uint other_id = view.dot_ids[other];
+	String other_name = view.names[other];
+	usz base_keys = f.app.clip(f.app.editing).keyframes.len;
+	usz layer_keys = f.app.clip(f.app.editing).layers[0].keyframes.len;
+
+	float time = 0.7f;
+	f.app.edit_time = time;
+	test::@check(f.app.pose_from_clip(f.app.editing, time), "could not open a pose draft");
+	test::@check(f.app.set_working_pose(f.app.doc.root_id, quaternion::from_axis_angle{float}((Vec3){ 0, 0, 1 }, 0.4f), {}),
+		"could not pose the root");
+	test::@check(f.app.set_working_pose(other_id, quaternion::from_axis_angle{float}((Vec3){ 1, 0, 0 }, 0.3f), {}),
+		"could not pose %s", other_name);
+	Quaternionf wanted_root = f.app.working_pose(f.app.doc.root_id).rotation;
+	Quaternionf wanted_other = f.app.working_pose(other_id).rotation;
+	f.app.pose_edit_pending = true;
+	test::@check(f.app.key_pose_edit(CHANGED), "keying failed");
+
+	AnimTemplate* keyed = f.app.clip(f.app.editing);
+	test::@check(gap_dot_at(keyed.layers[0].keyframes, time, root).joint_name.len > 0, "the root was not keyed into its layer");
+	test::@check(gap_dot_at(keyed.keyframes, time, root).joint_name.len == 0, "the root was keyed into the base");
+	test::@check(gap_dot_at(keyed.keyframes, time, other_name).joint_name.len > 0, "%s was not keyed into the base", other_name);
+	rig::Pose played = f.app.evaluated_clip_pose(mem, &view, *keyed, f.app.editing, time, false);
+	defer played.free(mem);
+	foreach (usz j, id : view.dot_ids)
+	{
+		if (id == f.app.doc.root_id) test::@check(gap_between(played.rotations[j], wanted_root) < 2.0e-3f,
+			"the root plays %f rad off the pose", gap_between(played.rotations[j], wanted_root));
+		if (id == other_id) test::@check(gap_between(played.rotations[j], wanted_other) < 2.0e-3f,
+			"%s plays %f rad off the pose", other_name, gap_between(played.rotations[j], wanted_other));
+	}
+
+	test::@check(f.app.undo(), "undo failed");
+	keyed = f.app.clip(f.app.editing);
+	test::@check(keyed.keyframes.len == base_keys && keyed.layers[0].keyframes.len == layer_keys,
+		"one undo left %d base and %d layer keys, not %d and %d",
+		keyed.keyframes.len, keyed.layers[0].keyframes.len, base_keys, layer_keys);
+}
+
 // ---------------------------------------------------------------------------
 // 2. The Curves view follows the active layer
 

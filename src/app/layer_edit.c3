@@ -717,64 +717,7 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	}
 	RigView view = opened;
 	defer view.free(mem);
-	String[] names = self.names_for(&view, ref);
-
-	// The stack as it is on screen, and the two stacks keying cares about: the
-	// layers below the active one, and those up to and including it. Solo is an
-	// auditioning aid, so the two are sampled without it.
-	rig::Pose full = self.evaluated_clip_pose(mem, &view, *clip, ref, time, false);
-	defer full.free(mem);
-	AnimLayer[] stripped = alloc::new_array(mem, AnimLayer, (sz)clip.layers.len);
-	defer alloc::free(mem, stripped);
-	bool soloed = false;
-	foreach (usz i, &other : clip.layers)
-	{
-		stripped[i] = *other;
-		stripped[i].solo = false;
-		if (other.solo && !other.mute) soloed = true;
-	}
-	AnimTemplate below_clip = *clip;
-	below_clip.layers = stripped[:(usz)at];
-	rig::Pose below = self.evaluated_clip_pose(mem, &view, below_clip, ref, time, false);
-	defer below.free(mem);
-	AnimTemplate incl_clip = *clip;
-	incl_clip.layers = stripped[:(usz)at + 1];
-	rig::Pose incl = self.evaluated_clip_pose(mem, &view, incl_clip, ref, time, false);
-	defer incl.free(mem);
-
-	// The pose the person made, with the layers above this one taken back out.
-	rig::Pose drafted;
-	if (!self.pose_edit_active && self.animating && self.anim_paused && self.current_ref.same(ref))
-	{
-		drafted = full.copy(mem);
-	}
-	else
-	{
-		drafted = self.draft_pose(mem, &view);
-	}
-	defer drafted.free(mem);
-	rig::Pose wanted = drafted.copy(mem);
-	defer wanted.free(mem);
-	if (soloed || (usz)at + 1 < clip.layers.len) take_out_layers_above(&wanted, drafted, full, incl);
-
-	bool[] selected = alloc::new_array(mem, bool, (sz)view.dot_ids.len);
-	defer alloc::free(mem, selected);
-	foreach (usz k, dot : view.dot_ids) selected[k] = self.is_selected(dot);
-	LayerKeyAsk ask = {
-		.skeleton = &view.skeleton,
-		.names = names,
-		.clip = clip,
-		.below_clip = &below_clip,
-		.layer = layer,
-		.time = time,
-		.gain = gain,
-		.below = below,
-		.incl = incl,
-		.wanted = wanted,
-		.scope = scope,
-		.selected = selected,
-	};
-	AnimKeyframe key = layer_key_for(&ask);
+	AnimKeyframe key = self.layer_key_at(&view, ref, clip, (usz)at, time, gain, scope);
 	if (key.dots.len == 0)
 	{
 		key.free(mem);
@@ -802,8 +745,185 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
 	return landed;
 }
 
+<*
+ The key that takes layer `at` to the pose on screen at `time`, narrowed by
+ `scope` and, when given, to the channels `may_turn` and `may_move` allow per joint.
+
+ @return `On mem, owned by the caller; empty dots when nothing differs.`
+*>
+fn AnimKeyframe AppState.layer_key_at(&self, RigView* view, AnimRef ref, AnimTemplate* clip, usz at, float time, float gain,
+	AnimKeyScope scope, bool[] may_turn = {}, bool[] may_move = {})
+{
+	String[] names = self.names_for(view, ref);
+	AnimLayer* layer = &clip.layers[at];
+
+	// The stack as it is on screen, and the two stacks keying cares about: the
+	// layers below the active one, and those up to and including it. Solo is an
+	// auditioning aid, so the two are sampled without it.
+	rig::Pose full = self.evaluated_clip_pose(mem, view, *clip, ref, time, false);
+	defer full.free(mem);
+	AnimLayer[] stripped = alloc::new_array(mem, AnimLayer, (sz)clip.layers.len);
+	defer alloc::free(mem, stripped);
+	bool soloed = false;
+	foreach (usz i, &other : clip.layers)
+	{
+		stripped[i] = *other;
+		stripped[i].solo = false;
+		if (other.solo && !other.mute) soloed = true;
+	}
+	AnimTemplate below_clip = *clip;
+	below_clip.layers = stripped[:at];
+	rig::Pose below = self.evaluated_clip_pose(mem, view, below_clip, ref, time, false);
+	defer below.free(mem);
+	AnimTemplate incl_clip = *clip;
+	incl_clip.layers = stripped[:at + 1];
+	rig::Pose incl = self.evaluated_clip_pose(mem, view, incl_clip, ref, time, false);
+	defer incl.free(mem);
+
+	// The pose the person made, with the layers above this one taken back out.
+	rig::Pose drafted;
+	if (!self.pose_edit_active && self.animating && self.anim_paused && self.current_ref.same(ref))
+	{
+		drafted = full.copy(mem);
+	}
+	else
+	{
+		drafted = self.draft_pose(mem, view);
+	}
+	defer drafted.free(mem);
+	rig::Pose wanted = drafted.copy(mem);
+	defer wanted.free(mem);
+	if (soloed || at + 1 < clip.layers.len) take_out_layers_above(&wanted, drafted, full, incl);
+
+	bool[] selected = alloc::new_array(mem, bool, (sz)view.dot_ids.len);
+	defer alloc::free(mem, selected);
+	foreach (usz k, dot : view.dot_ids) selected[k] = self.is_selected(dot);
+	LayerKeyAsk ask = {
+		.skeleton = &view.skeleton,
+		.names = names,
+		.clip = clip,
+		.below_clip = &below_clip,
+		.layer = layer,
+		.time = time,
+		.gain = gain,
+		.below = below,
+		.incl = incl,
+		.wanted = wanted,
+		.scope = scope,
+		.selected = selected,
+		.may_turn = may_turn,
+		.may_move = may_move,
+	};
+	return layer_key_for(&ask);
+}
+
 // ---------------------------------------------------------------------------
 // Keying into the base under a layer stack
+
+// Per joint, the layer whose full override hides the base's turn or slide, or -1.
+struct BaseCover
+{
+	sz[] turn;
+	sz[] slide;
+}
+
+fn BaseCover base_cover(usz joints)
+{
+	BaseCover cover = { alloc::new_array(mem, sz, (sz)joints), alloc::new_array(mem, sz, (sz)joints) };
+	foreach (usz j, &at : cover.turn) { *at = -1; cover.slide[j] = -1; }
+	return cover;
+}
+
+fn void BaseCover.free(&self)
+{
+	if (self.turn.len > 0) alloc::free(mem, self.turn);
+	if (self.slide.len > 0) alloc::free(mem, self.slide);
+	*self = {};
+}
+
+<*
+ Key the channels `cover` says a layer hides from the base into that layer, onto
+ `built` (the clip with the base already keyed), so the pose made shows. A
+ generated layer or a linked piece can't take keys: its joints are named instead.
+
+ @return `How many joints went into layers.`
+*>
+fn usz AppState.key_covered_into_layers(&self, AnimRef ref, AnimTemplate* clip, AnimTemplate* built, float time,
+	AnimKeyScope scope, BaseCover* cover)
+{
+	if (cover.turn.len == 0) return 0;
+	RigView? opened = self.open_rig(mem);
+	if (catch opened) return 0;
+	RigView view = opened;
+	defer view.free(mem);
+	String[] names = self.names_for(&view, ref);
+	bool[] may_turn = alloc::new_array(mem, bool, (sz)cover.turn.len);
+	defer alloc::free(mem, may_turn);
+	bool[] may_move = alloc::new_array(mem, bool, (sz)cover.turn.len);
+	defer alloc::free(mem, may_move);
+
+	usz keyed;
+	foreach (usz at, &layer : clip.layers)
+	{
+		bool hides;
+		foreach (usz j, turn : cover.turn)
+		{
+			may_turn[j] = turn == (sz)at;
+			may_move[j] = cover.slide[j] == (sz)at;
+			hides = hides || may_turn[j] || may_move[j];
+		}
+		if (!hides) continue;
+		if (layer.kind != KEYED || layer.source.len > 0)
+		{
+			self.say_covered(clip, layer, names, may_turn, may_move, time);
+			continue;
+		}
+		float gain = layer.gain_at(clip.layer_clock(time), clip.duration);
+		AnimKeyframe key = self.layer_key_at(&view, ref, clip, at, time, gain, scope, may_turn, may_move);
+		if (key.dots.len == 0)
+		{
+			key.free(mem);
+			continue;
+		}
+		String first = key.dots[0].joint_name.tcopy();
+		usz joints = key.dots.len;
+		AnimTemplate next = clip_with_layer_key(mem, built, at, key, time);
+		built.free(mem);
+		*built = next;
+		keyed += joints;
+		if (joints == 1)
+		{
+			self.@notice("%s keyed into layer \"%s\", which overrides it", first, layer.name);
+		}
+		else
+		{
+			self.@notice("%d joints keyed into layer \"%s\", which overrides them", joints, layer.name);
+		}
+	}
+	return keyed;
+}
+
+// Name the base-keyed joints a layer that can't take keys hides, whose keys are left as they were.
+fn void AppState.say_covered(&self, AnimTemplate* clip, AnimLayer* layer, String[] names, bool[] may_turn, bool[] may_move, float time)
+{
+	DString list;
+	list.init(mem);
+	defer list.free();
+	usz covered;
+	foreach (usz j, name : names)
+	{
+		if (j >= may_turn.len) break;
+		bool base_keyed = (may_turn[j] && clip.channel_count(name, true) > 0) || (may_move[j] && clip.channel_count(name, false) > 0);
+		if (!base_keyed) continue;
+		if (covered > 0 && covered < 4) list.append(", ");
+		if (covered < 4) list.append(name);
+		if (covered == 4) list.append(", …");
+		covered++;
+	}
+	if (covered == 0) return;
+	self.@notice("%d joint%s hidden by layer \"%s\" at %.2fs (%s), which can't be keyed from here: the base keys are left as they were",
+		covered, covered == 1 ? " is" : "s are", layer.name, time, list.str_view());
+}
 
 <*
  The base keyframe for the pose on screen, with the layers that are playing
@@ -818,15 +938,16 @@ fn AnimRef AppState.key_into_layer(&self, AnimRef ref, float time, AnimKeyScope 
  - OVERRIDE with weight below 1: the blend toward the layer's values is undone.
  - OVERRIDE covering the joint (weight 1 here, inside its mask): the base shows
    through nowhere, so there is nothing to recover. That channel is left out of
-   the key — the base keeps whatever it had — and named in a notice.
+   the key, and `cover` names the layer, which `key_here` keys it into.
 
  The turns are left as on screen here: `draft_key` takes the layers back out of
  them in the clip's own bone frame (`AnimTemplate.key_onto_clip`).
 
  @param sampled : `Take the pose from the clip at the time (a parked, unedited frame) instead of the open draft.`
+ @param cover : `Filled with the covering layers when given; the caller frees it.`
  @return? RIG_EMPTY : `There is no rig to read a pose off.`
 *>
-fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate* clip, float time, bool sampled)
+fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate* clip, float time, bool sampled, BaseCover* cover = null)
 {
 	RigView view = self.open_rig(mem)!;
 	defer view.free(mem);
@@ -837,13 +958,9 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 		: self.draft_pose(mem, &view);
 	defer base.free(mem);
 	usz count = base.rotations.len;
-	bool[] lost_rotation = alloc::new_array(mem, bool, (sz)count);
-	bool[] lost_slide = alloc::new_array(mem, bool, (sz)count);
-	defer
-	{
-		alloc::free(mem, lost_rotation);
-		alloc::free(mem, lost_slide);
-	}
+	BaseCover found = base_cover(count);
+	defer if (!cover) found.free();
+	if (cover) *cover = found;
 
 	LayerStack stack = clip.layer_stack(mem, &view.skeleton, names, time);
 	defer stack.free(mem);
@@ -855,8 +972,8 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 			ActiveLayer* layer = &stack.layers[(usz)l];
 			if (j >= layer.samples.len) continue;
 			LayerSample s = layer.samples[j];
-			if (s.rot && layer.mode == OVERRIDE && layer.gain >= OVERRIDE_COVERS) lost_rotation[j] = true;
-			if (s.move && !lost_slide[j])
+			if (s.rot && layer.mode == OVERRIDE && layer.gain >= OVERRIDE_COVERS && found.turn[j] < 0) found.turn[j] = (sz)layer.index;
+			if (s.move && found.slide[j] < 0)
 			{
 				Vec3 slide = s.offset * height;
 				if (layer.mode == ADDITIVE)
@@ -865,7 +982,7 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 				}
 				else if (layer.gain >= OVERRIDE_COVERS)
 				{
-					lost_slide[j] = true;
+					found.slide[j] = (sz)layer.index;
 				}
 				else
 				{
@@ -879,30 +996,15 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 	defer if (bones.len > 0) alloc::free(mem, bones);
 	AnimKeyframe key = keyframe_of_pose(mem, base, names, bones, height, time);
 
-	// Channels an override hides are not keyed: the base's own value stands.
+	// Channels an override hides are not keyed here: the base's own value stands.
 	AnimDotList kept;
 	kept.init(mem);
 	defer kept.free();
-	DString list;
-	list.init(mem);
-	defer list.free();
-	usz covered;
 	foreach (dot : key.dots)
 	{
 		sz j = array::index_of(names, dot.joint_name) ?? -1;
-		bool rotation = j < 0 || !lost_rotation[(usz)j];
-		bool slide = j < 0 || !lost_slide[(usz)j];
-		// Only a joint the base keys itself has keys to leave as they were; one an
-		// override layer alone drives (a tail moved into one) is not news.
-		bool base_keyed = (!rotation && clip.channel_count(dot.joint_name, true) > 0)
-			|| (!slide && clip.channel_count(dot.joint_name, false) > 0);
-		if (base_keyed)
-		{
-			if (covered > 0 && covered < 4) list.append(", ");
-			if (covered < 4) list.append(dot.joint_name);
-			if (covered == 4) list.append(", …");
-			covered++;
-		}
+		bool rotation = j < 0 || found.turn[(usz)j] < 0;
+		bool slide = j < 0 || found.slide[(usz)j] < 0;
 		if (!rotation && !slide)
 		{
 			if (dot.joint_name.len > 0) alloc::free(mem, dot.joint_name.ptr);
@@ -915,10 +1017,5 @@ fn AnimKeyframe? AppState.keyframe_under_layers(&self, AnimRef ref, AnimTemplate
 	}
 	if (key.dots.len > 0) alloc::free(mem, key.dots);
 	key.dots = kept.to_array(mem);
-	if (covered > 0)
-	{
-		self.@notice("%d joint%s fully overridden by a layer at %.2fs (%s): the base keys there are left as they were", covered,
-			covered == 1 ? " is" : "s are", time, list.str_view());
-	}
 	return key;
 }

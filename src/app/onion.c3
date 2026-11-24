@@ -102,7 +102,7 @@ fn bool AppState.onion_drafted_clip(&self, AnimTemplate* clip, AnimTemplate* out
 	if (!self.pose_edit_active || !self.editing.valid()) return false;
 	if (self.active_layer_ptr(self.editing) || clip.plays_layers()) return false;
 	float time = self.edit_time;
-	AnimKeyframe? drafted = self.draft_key(self.editing, clip, time, CHANGED, false);
+	AnimKeyframe? drafted = self.draft_key(self.editing, clip, time, CHANGED);
 	if (catch drafted) return false;
 	AnimKeyframe key = drafted;
 	if (key.dots.len == 0)
