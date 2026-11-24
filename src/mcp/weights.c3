@@ -424,11 +424,13 @@ fn String? tool_paint_weights(Object* args, void* user_data, DString* detail) @p
 	uint[] chosen = paint_selection(app, dot, args, detail)!;
 	defer if (chosen.len > 0) alloc::free(mem, chosen);
 
+	bool was_held = app.weights_held(dot);
 	PaintResult did = app.paint_share(dot, chosen, (float)asked);
 	app.undo_stack.commit();
 	app.refresh_ui();
 
-	return painted_json(app, named, (float)asked, chosen.len, did);
+	String answer = painted_json(app, named, (float)asked, chosen.len, did);
+	return with_held_note(answer, app, dot, was_held);
 }
 
 <*
@@ -459,6 +461,15 @@ fn String released_json(AppState* app, uint dot, bool all) @private
  there — so the emptiness is reported in the response rather than raised here.
 *>
 fn uint[]? paint_selection(AppState* app, uint dot, Object* args, DString* detail) @private
+{
+	// Where the vertices are narrows whichever way they were named.
+	VertexRegion region;
+	if (!read_region(app, args, &region, detail)) return WEIGHTS_BAD_ARGS~;
+	uint[] chosen = named_selection(app, dot, args, detail)!;
+	return in_region(app, chosen, &region);
+}
+
+fn uint[]? named_selection(AppState* app, uint dot, Object* args, DString* detail) @private
 {
 	if (try Object* listed = args.get("vertices"))
 	{
@@ -491,6 +502,25 @@ fn uint[]? paint_selection(AppState* app, uint dot, Object* args, DString* detai
 	if (try double ceiling = args.get_float("at_most")) pick.at_most = (float)ceiling;
 
 	return app.pick_vertices(mem, dot, pick);
+}
+
+<*
+ The answer with a word on the joint the edit newly held: every hand edit holds
+ the joint's whole column (`replace_column`), so it stops following the rig
+ everywhere, not only where it was painted. Takes the answer over.
+*>
+fn String with_held_note(String answer, AppState* app, uint dot, bool was_held) @private
+{
+	if (was_held || !app.weights_held(dot)) return answer;
+	defer answer.free(mem);
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.append_string(answer[:answer.len - 1]);
+	Dot* held = app.doc.find(dot);
+	out.append_string(`,"held":["`);
+	append_bone_name(&out, dot, held ? held.name : "");
+	out.append_string(`"],"held_means":"this joint's weights are now held as written on every vertex, not only the painted ones: moving it or its neighbours no longer re-weights it. reset:true puts it back on the automatic weights."}`);
+	return out.copy_str(mem);
 }
 
 <*
@@ -562,10 +592,11 @@ fn String? tool_pin_weights(Object* args, void* user_data, DString* detail) @pri
 	uint[] chosen = paint_selection(app, dot, args, detail)!;
 	defer if (chosen.len > 0) alloc::free(mem, chosen);
 
+	bool was_held = app.weights_held(dot);
 	usz changed = app.set_weight_vertices(chosen, dot, (float)asked);
 	app.refresh_ui();
 
-	return pinned_json(app, named, (float)asked, chosen.len, changed);
+	return with_held_note(pinned_json(app, named, (float)asked, chosen.len, changed), app, dot, was_held);
 }
 
 <*

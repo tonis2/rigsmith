@@ -40,6 +40,7 @@ fn String ClipIssueKind.words(self)
 		case LIMITS_BLOCKED: return "Joint limits keep it from bending";
 		case LIMITS_STALE: return "Joint limits no longer follow the bone";
 		case AIM_STARE: return "Looks at a fixed point";
+		case SKIN_STRETCH: return "Skin stretches";
 		default: return "Issue";
 	}
 }

@@ -19,3 +19,8 @@
 - **Rule:** how many keys an imported clip keeps is a deliberate setting. The humanoid's Walk_slow imports with 6,435 joint keys.
 - **Why:** tidying an angle helper cut that to 2,099 and no test noticed, because the pose barely moved. Fewer keys changes what a user edits.
 - **Tests:** `an_imported_clip_keeps_its_keys`.
+
+## A gait can be asked for at a speed
+- **Rule:** `author_gait {speed}` chooses the stride and duration so `ground_speed` comes out at that speed. The cycle is 2.3 leg heights times the Froude number to the 0.3, and the stride is the duty's share of it. A given stride or duration is kept and the other worked out. A walk past a Froude number of 0.5, reading model units as metres, carries a warning that a figure that size runs.
+- **Why:** the game moves a character one 1 m tile per 0.6 s, and matching the goblin's walk to it was worked out by hand from `ground_speed` and the model's scale.
+- **Tests:** `test/gait_speed_test.c3`.

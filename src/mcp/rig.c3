@@ -38,12 +38,17 @@ excuse RIG_REFUSED;
 *>
 const String EDIT_RIG_SCHEMA = `{"type":"object","properties":{
 	"ops":{"type":"array","description":"Applied in order, as one undo step. An op that fails takes the whole call back with it.","items":{"type":"object","properties":{
-		"op":{"type":"string","enum":["place","move","name","name_all","remove","connect","disconnect","root","reach","grow","sharpness","knuckle_blend","attach","detach","limits","exclude","include","symmetry","plan_limits","suggest_limits"],"description":"place: a new dot. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. grow: push a joint's weight region out past its automatic edge, or pull it in, and set how far it blends — the Weights card's Grow, Shrink and Soft edge; writes that joint's weights and no other's, and holds them. sharpness: how crisp every blend is, for the whole model. knuckle_blend: how wide the blend at each knuckle of every finger is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan. Every joint, a limit taken off on purpose included, unless joints narrows it. suggest_limits: limits read off the rig itself, for a creature with no body plan — a joint bent at rest is a hinge folding the way it bends, a limb's base or a straight joint a cone; each range is narrowed to where the mesh meets the parent's, made the same across matching limbs, and widened to what the bound clips use. Without joints it fills only joints with no table; with joints it overwrites those."},
+		"op":{"type":"string","enum":["place","chain","move","name","name_all","remove","connect","disconnect","root","reach","grow","sharpness","knuckle_blend","attach","detach","limits","exclude","include","symmetry","plan_limits","suggest_limits"],"description":"place: a new dot. chain: a run of new dots from a base to a tip, each hung off the one before and centred in the limb's cross-section across the run — a finger from its knuckle to its tip, a tail. move: an existing one. name: what clips address it by. name_all: name every dot at once, by matching the rig's shape against a body plan. remove: it and its bones. connect/disconnect: a bone between two dots. root: which joint the skeleton hangs from. reach: how far a dot's influence carries. grow: push a joint's weight region out past its automatic edge, or pull it in, and set how far it blends — the Weights card's Grow, Shrink and Soft edge; writes that joint's weights and no other's, and holds them. sharpness: how crisp every blend is, for the whole model. knuckle_blend: how wide the blend at each knuckle of every finger is, for the whole model. attach/detach: make a piece of the mesh ride one dot rigidly, or stop. limits: edit the joint's bone-local rotation limits (x and z the swing across the bone, y the twist about it). exclude/include: tell the self-collision check never to test the skin regions of two joints against each other, or to test them again — for a cape meant to hang through the arm, not for an ordinary rig, whose adjacent regions and modelled contacts are already left alone. symmetry: set the plane the mirror reflects across, for a mesh whose bounding-box centre is not the body's midline. plan_limits: put the body plan's joint limits back on every joint, read against the rig as it stands, carry every table still pinned to where its bone pointed before the joint moved onto the bone, then check every knee, elbow, thigh and toe against the way it moves and put right any table that refuses it (a row read the wrong way round, two swing rows traded, a frame rolled off its rows) — the fix for get_scene's rig_issues and measure_clip's limits_inverted / limits_blocked / limits_stale, on a rig with or without a body plan. Every joint, a limit taken off on purpose included, unless joints narrows it. suggest_limits: limits read off the rig itself, for a creature with no body plan — a joint bent at rest is a hinge folding the way it bends, a limb's base or a straight joint a cone; each range is narrowed to where the mesh meets the parent's, made the same across matching limbs, and widened to what the bound clips use. Without joints it fills only joints with no table; with joints it overwrites those."},
 		"joints":{"type":"array","items":{"type":"string"},"description":"plan_limits: re-plan and mend only these joints' tables, leaving every other joint's as it is. suggest_limits: suggest (and overwrite) only these. Omit for every joint."},
 		"joint":{"type":"string","description":"Which dot, by the name get_skeleton reports; bone_<id> reaches an unnamed one. Used by move, name, remove, root, reach, attach and limits."},
 		"name":{"type":"string","description":"The name to give a dot — place and name. Empty un-names it, which is the hand-placed state; only named dots can be animated."},
 		"position":{"type":"array","description":"[x,y,z] in model space, the space get_skeleton reports positions in — not a fraction of anything. Used by place and move.","items":{"type":"number"}},
 		"connect_to":{"type":"string","description":"place only: hang the new dot off this one, so it arrives with its bone already made."},
+		"base":{"description":"chain only: where the run starts — a joint it hangs from, by name (the first new dot is one step along from it), or [x,y,z] (the first new dot is there).","anyOf":[{"type":"string"},{"type":"array","items":{"type":"number"}}]},
+		"tip":{"type":"array","items":{"type":"number"},"description":"chain only: [x,y,z] where the run ends — the last dot is placed exactly there, the fingertip."},
+		"names":{"type":"array","items":{"type":"string"},"description":"chain only: the new dots' names, base to tip."},
+		"count":{"type":"integer","description":"chain only: how many dots, 1 to 16. Default the number of names."},
+		"centre":{"type":"boolean","description":"chain only: move each dot but the tip to the middle of the limb's cross-section, square to the run (get_sections' loop centre). Default true."},
 		"a":{"type":"string","description":"connect/disconnect: one end of the bone. exclude/include: one of the two joints."},
 		"b":{"type":"string","description":"connect/disconnect: the other end. exclude/include: the other joint."},
 		"grow":{"type":"number","description":"grow only: how far the joint's region is pushed out past where the automatic weights put its edge, in model units — negative pulls it in, 0 is the automatic edge. Written into the joint's own weights at once (get_weights reads them); they stay as written when the dot moves, until grow is set again or the weights are reset."},
@@ -97,10 +102,11 @@ fn String? edit_rig(AppState* app, Object* args, DString* detail)
 	// a rollback that itself gives up part-way.
 	sz mark = app.undo_stack.cursor;
 	usz done = 0;
+	SnapLog snaps;
 
 	for (usz i = 0; i < count; i++)
 	{
-		if (!apply_op(app, ops.get_at((sz)i), i, snap, detail))
+		if (!apply_op(app, ops.get_at((sz)i), i, snap, detail, &snaps))
 		{
 			// Committed first: the group is still open, and `undo` walks a chain
 			// back from a closed edit. Then back to where the batch started.
@@ -114,7 +120,117 @@ fn String? edit_rig(AppState* app, Object* args, DString* detail)
 
 	app.undo_stack.commit();
 	app.finish_rig_edit();
-	return rig_json(app, done);
+	String answer = rig_json(app, done);
+	if (snaps.count == 0 && !snaps.moved && snaps.held_over_count == 0) return answer;
+	defer answer.free(mem);
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.append_string(answer[:answer.len - 1]);
+	append_snaps(&out, app, &snaps);
+	if (snaps.moved) append_stale_after_moves(&out, app);
+	append_held_over(&out, app, &snaps);
+	out.append_char('}');
+	return out.copy_str(mem);
+}
+
+<*
+ Where a batch's snap moved a dot it placed or moved, so a caller who measured a
+ spot learns the dot is not there. Only moves past a hundredth of a millimetre.
+*>
+struct SnapLog
+{
+	SnapNote[64] notes;
+	usz count;
+	usz more;   // snaps past what `notes` holds
+	bool moved; // a dot moved, so a limit table may now point off its bone
+	// Pieces attached while held joints still hold some of them: a held column
+	// keeps its weights whatever an attach says, so the piece is not yet rigid.
+	HeldOver[16] held_over;
+	usz held_over_count;
+}
+
+struct HeldOver
+{
+	uint shell;
+	uint dot;
+}
+
+struct SnapNote
+{
+	uint id;
+	Vec3 asked;
+	Vec3 at;
+}
+
+fn void SnapLog.note(&self, uint id, Vec3 asked, Vec3 at)
+{
+	if ((at - asked).length() <= 1.0e-5f) return;
+	if (self.count >= self.notes.len)
+	{
+		self.more++;
+		return;
+	}
+	self.notes[self.count++] = { .id = id, .asked = asked, .at = at };
+}
+
+fn void append_snaps(DString* out, AppState* app, SnapLog* snaps) @local
+{
+	if (snaps.count == 0) return;
+	out.append_string(`,"snapped":[`);
+	for (usz i = 0; i < snaps.count; i++)
+	{
+		SnapNote note = snaps.notes[i];
+		if (i > 0) out.append_char(',');
+		Dot* dot = app.doc.find(note.id);
+		out.append_string(`{"joint":"`);
+		append_bone_name(out, note.id, dot ? dot.name : "");
+		out.appendf(`","asked":%s,"at":%s,"moved":%s}`, (JsonVec3)note.asked, (JsonVec3)note.at,
+			(JsonFloat)(note.at - note.asked).length());
+	}
+	out.append_char(']');
+	if (snaps.more > 0) out.appendf(`,"snapped_omitted":%d`, snaps.more);
+	out.append_string(`,"snap_note":"these dots are not where they were asked for: a placed or moved dot outside the mesh by its voxels went to the nearest point inside it (send \"snap\": false to put it exactly there), and a chain's dots went to the middle of the limb's cross-section (send \"centre\": false to keep the straight line)."`);
+}
+
+// The attached pieces held joints still hold part of, and the call that takes each off.
+fn void append_held_over(DString* out, AppState* app, SnapLog* snaps) @local
+{
+	if (snaps.held_over_count == 0) return;
+	out.append_string(`,"attach_held":[`);
+	for (usz i = 0; i < snaps.held_over_count; i++)
+	{
+		HeldOver row = snaps.held_over[i];
+		if (i > 0) out.append_char(',');
+		Dot* dot = app.doc.find(row.dot);
+		out.appendf(`{"shell":%d,"joint":"`, row.shell);
+		append_bone_name(out, row.dot, dot ? dot.name : "");
+		out.appendf(`","fix":{"tool":"paint_weights","args":{"dot":"`);
+		append_bone_name(out, row.dot, dot ? dot.name : "");
+		out.appendf(`","weight":0,"shell":%d}}}`, row.shell);
+	}
+	out.append_string(`],"attach_note":"these joints' weights are held (a paint or blend wrote them), and a held column keeps its weights whatever an attach says, so the piece still bends with them; each fix takes that joint off the piece."`);
+}
+
+// The limit tables the batch's moves left pointing off their bones: owed a
+// plan_limits, which carries each onto its bone, before any clip is judged.
+fn void append_stale_after_moves(DString* out, AppState* app) @local
+{
+	RigView? opened = app.open_rig(mem);
+	if (catch opened) return;
+	RigView view = opened;
+	defer view.free(mem);
+	StaleFrame[STALE_FRAME_MOST] stale;
+	usz drifted = stale_limit_frames(&app.doc, &view.skeleton, view.names, view.dot_ids, stale[..]);
+	if (drifted == 0) return;
+	out.append_string(`,"limits_stale":[`);
+	for (usz i = 0; i < drifted; i++)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_char('"');
+		json_escape_into(out, stale[i].joint);
+		out.append_char('"');
+	}
+	out.append_string(`],"limits_note":"the moves turned these joints' bones away from the frames their limit tables are pinned to, so a clip would play them clamped. Finish placing the joints, then edit_rig {\"op\":\"plan_limits\"} carries every table onto its bone."`);
 }
 
 <*
@@ -122,7 +238,7 @@ fn String? edit_rig(AppState* app, Object* args, DString* detail)
 
  @return `False when the op was refused, in which case detail names the op's index and what was wrong.`
 *>
-fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detail) @local
+fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detail, SnapLog* snaps) @local
 {
 	if (!op.is_keyable())
 	{
@@ -139,8 +255,9 @@ fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detai
 
 	switch (kind)
 	{
-		case "place": return op_place(app, op, index, snap, detail);
-		case "move": return op_move(app, op, index, snap, detail);
+		case "place": return op_place(app, op, index, snap, detail, snaps);
+		case "chain": return op_chain(app, op, index, snap, detail, snaps);
+		case "move": return op_move(app, op, index, snap, detail, snaps);
 		case "name": return op_name(app, op, index, detail);
 		case "name_all": return op_name_all(app, index, detail);
 		case "remove": return op_remove(app, op, index, detail);
@@ -151,8 +268,8 @@ fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detai
 		case "grow": return op_grow(app, op, index, detail);
 		case "sharpness": return op_sharpness(app, op, index, detail);
 		case "knuckle_blend": return op_knuckle_blend(app, op, index, detail);
-		case "attach": return op_pin(app, op, index, true, detail);
-		case "detach": return op_pin(app, op, index, false, detail);
+		case "attach": return op_pin(app, op, index, true, detail, snaps);
+		case "detach": return op_pin(app, op, index, false, detail, snaps);
 		case "limits": return op_limits(app, op, index, detail);
 		case "exclude": return op_exclusion(app, op, index, true, detail);
 		case "include": return op_exclusion(app, op, index, false, detail);
@@ -167,13 +284,15 @@ fn bool apply_op(AppState* app, Object* op, usz index, bool snap, DString* detai
 	}
 }
 
-fn bool op_place(AppState* app, Object* op, usz index, bool snap, DString* detail) @local
+fn bool op_place(AppState* app, Object* op, usz index, bool snap, DString* detail, SnapLog* snaps) @local
 {
 	Vec3 at;
-	if (!op_position(app, op, index, snap, &at, detail)) return false;
+	Vec3 asked;
+	if (!op_position(app, op, index, snap, &at, detail, &asked)) return false;
 
 	String name = op.get_string("name") ?? "";
 	uint id = app.add_recorded(at, name);
+	snaps.note(id, asked, at);
 
 	Object* anchor = member(op, "connect_to");
 	if (anchor != null)
@@ -193,16 +312,95 @@ fn bool op_place(AppState* app, Object* op, usz index, bool snap, DString* detai
 	return true;
 }
 
-fn bool op_move(AppState* app, Object* op, usz index, bool snap, DString* detail) @local
+// As many dots as one chain lays: a finger is three or four, a tail a dozen.
+const usz CHAIN_MOST = 16;
+
+<*
+ A run of new dots from a base to a tip, each hung off the one before: the
+ finger a hand drawn in a picture has, placed in one op rather than read off
+ renders a joint at a time. Every dot but the tip goes to the middle of the
+ limb's cross-section square to the run, so a chain laid along a finger's top
+ sits in the finger.
+*>
+fn bool op_chain(AppState* app, Object* op, usz index, bool snap, DString* detail, SnapLog* snaps) @local
+{
+	Vec3 tip;
+	if (!as_vec3(member(op, "tip"), &tip))
+	{
+		detail.appendf(`ops[%d] is a chain and needs "tip": [x,y,z], where the run ends.`, index);
+		return false;
+	}
+	Vec3 start;
+	uint parent = 0;
+	Object* base = member(op, "base");
+	if (base && base.is_string())
+	{
+		String named = op.get_string("base") ?? "";
+		parent = op_dot(app, named, index, "base", detail);
+		if (parent == 0) return false;
+		start = app.doc.find(parent).position;
+	}
+	else if (!as_vec3(base, &start))
+	{
+		detail.appendf(`ops[%d] is a chain and needs "base": the joint it hangs from, or [x,y,z] where it starts.`, index);
+		return false;
+	}
+	Object* names = member(op, "names");
+	usz named_count = names && names.is_array() ? (usz)names.get_len() : 0;
+	long count = op.get_int("count") ?? (long)named_count;
+	if (count < 1 || count > (long)CHAIN_MOST || (named_count > 0 && (usz)count != named_count))
+	{
+		detail.appendf(`ops[%d] is a chain of 1 to %d dots, and "names" (when given) names each one: it has %d names and asks for %d.`,
+			index, CHAIN_MOST, named_count, count);
+		return false;
+	}
+	Vec3 run = tip - start;
+	float length = run.length();
+	if (length <= 0.0f)
+	{
+		detail.appendf(`ops[%d]: the chain's base and tip are the same point.`, index);
+		return false;
+	}
+	bool centre = op.get_bool("centre") ?? true;
+	int[] shell_of = app.shells.of.len == app.geometry.positions.len ? app.shells.of : (int[]){};
+	float step = length / (float)count;
+
+	uint before = parent;
+	for (long i = 0; i < count; i++)
+	{
+		// From a joint, the first dot is a step along; from a point, it is there.
+		float t = parent != 0 ? (float)(i + 1) / (float)count : (count == 1 ? 1.0f : (float)i / (float)(count - 1));
+		Vec3 asked = start + run * t;
+		Vec3 at = asked;
+		bool last = i == count - 1;
+		bool centred = false;
+		if (centre && !last && app.has_mesh())
+		{
+			centred = section_centre_near(app.geometry, shell_of, asked, run, step * 0.75f, &at);
+		}
+		if (!centred && !last && snap) at = snapped_inside(&app.voxels.grid, at);
+		String name = named_count > 0 ? names.get_string_at((sz)i) ?? "" : "";
+		uint id = app.add_recorded(at, name);
+		snaps.note(id, asked, at);
+		if (before != 0) app.connect_recorded(before, id);
+		before = id;
+	}
+	app.select(before);
+	return true;
+}
+
+fn bool op_move(AppState* app, Object* op, usz index, bool snap, DString* detail, SnapLog* snaps) @local
 {
 	uint id = op_joint(app, op, index, detail);
 	if (id == 0) return false;
 
 	Vec3 at;
-	if (!op_position(app, op, index, snap, &at, detail)) return false;
+	Vec3 asked;
+	if (!op_position(app, op, index, snap, &at, detail, &asked)) return false;
 
 	Dot* dot = app.doc.find(id);
-	app.move_recorded(id, dot.position, at);
+	if (app.move_recorded(id, dot.position, at)) snaps.moved = true;
+	snaps.note(id, asked, at);
 	return true;
 }
 
@@ -651,7 +849,7 @@ fn bool op_symmetry(AppState* app, Object* op, usz index, DString* detail) @loca
 	return true;
 }
 
-fn bool op_pin(AppState* app, Object* op, usz index, bool pinning, DString* detail) @local
+fn bool op_pin(AppState* app, Object* op, usz index, bool pinning, DString* detail, SnapLog* snaps) @local
 {
 	String verb = pinning ? "attach" : "detach";
 
@@ -688,7 +886,29 @@ fn bool op_pin(AppState* app, Object* op, usz index, bool pinning, DString* deta
 	if (id == 0) return false;
 
 	app.attach_recorded((uint)shell, id);
+	note_held_over(app, (uint)shell, id, snaps);
 	return true;
+}
+
+// Every held joint but the rider still holding some of the piece.
+fn void note_held_over(AppState* app, uint shell, uint rider, SnapLog* snaps) @local
+{
+	usz vertices = app.geometry.positions.len;
+	if (app.shells.of.len != vertices) return;
+	foreach (dot : app.doc.dots.array_view())
+	{
+		if (dot.id == rider || !app.weights_held(dot.id)) continue;
+		float[] column = app.stored_column(mem, dot.id);
+		defer if (column.len > 0) alloc::free(mem, column);
+		if (column.len != vertices) continue;
+		bool holds = false;
+		foreach (usz v, weight : column)
+		{
+			if (app.shells.of[v] == (int)shell && weight > 0.0f) { holds = true; break; }
+		}
+		if (!holds || snaps.held_over_count >= snaps.held_over.len) continue;
+		snaps.held_over[snaps.held_over_count++] = { .shell = shell, .dot = dot.id };
+	}
 }
 
 <*
@@ -976,7 +1196,7 @@ fn uint op_dot(AppState* app, String named, usz index, String field, DString* de
  it, and a dot outside the mesh binds nothing. `snap: false` is for a caller that
  has a position it means literally.
 *>
-fn bool op_position(AppState* app, Object* op, usz index, bool snap, Vec3* into, DString* detail) @local
+fn bool op_position(AppState* app, Object* op, usz index, bool snap, Vec3* into, DString* detail, Vec3* asked) @local
 {
 	Object* given = member(op, "position");
 	if (given == null || !as_vec3(given, into))
@@ -987,6 +1207,7 @@ fn bool op_position(AppState* app, Object* op, usz index, bool snap, Vec3* into,
 		return false;
 	}
 
+	*asked = *into;
 	if (snap) *into = snapped_inside(&app.voxels.grid, *into);
 	return true;
 }
@@ -1067,8 +1288,18 @@ fn String? apply_plan(AppState* app, Object* args, DString* detail)
 		case "front": facing = FORWARD;
 		case "back": facing = REVERSED;
 		default:
-			detail.appendf(`"facing" is "auto", "front" or "back", not "%s"`, asked);
+			detail.appendf(`"facing" is "auto", "front" or "back", not "%s". A model facing +X or -X is turned first: turn_model {"facing": "+x"}.`, asked);
 			return RIG_REFUSED~;
+	}
+
+	// A plan fits a figure facing +Z or -Z. One whose feet point along X would be
+	// fitted sideways, with every joint where the body is not.
+	MeshFacing sideways = app.mesh_facing();
+	if (facing == AUTO && (sideways == PLUS_X || sideways == MINUS_X))
+	{
+		detail.appendf(`the feet point along %s, so the model faces sideways and a plan would fit across it. Turn it first: turn_model {"facing": "%s"}, then apply_plan again.`,
+			sideways.label, sideways.label);
+		return RIG_REFUSED~;
 	}
 
 	int index = app.plan_pack(named);
@@ -1081,7 +1312,37 @@ fn String? apply_plan(AppState* app, Object* args, DString* detail)
 
 	app.plan_targets_stale = true;
 	app.refresh_ui();
-	return rig_json(app, 1);
+
+	// How well it fits, so a plan laid across the wrong body says so here rather
+	// than in a notice the caller never reads.
+	String answer = rig_json(app, 1);
+	defer answer.free(mem);
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.append_string(answer[:answer.len - 1]);
+	uint[64] outside;
+	usz count = dots_off_mesh(&app.doc, &app.voxels.grid, outside[..]);
+	usz joints = (usz)app.doc.dots.len();
+	out.appendf(`,"fit":{"facing":"%s","joints":%d,"outside_mesh":[`, app.fit_reversed ? "-z" : "+z", joints);
+	for (usz i = 0; i < count; i++)
+	{
+		if (i > 0) out.append_char(',');
+		out.append_char('"');
+		Dot* dot = app.doc.find(outside[i]);
+		append_bone_name(&out, outside[i], dot ? dot.name : "");
+		out.append_char('"');
+	}
+	// A quarter of the joints off the body is a plan fitted to the wrong shape.
+	bool poor = count * 4 > joints;
+	out.appendf(`],"verdict":"%s"`, count == 0 ? "fits" : (poor ? "poor" : "some_outside"));
+	if (count > 0)
+	{
+		out.append_string(poor
+			? `,"note":"the plan's proportions don't match this body (a big head, short limbs), so its joints landed off the mesh. Place each from the mesh instead: get_sections finds the limbs, the neck and the legs, edit_rig move puts the joints there, then edit_rig plan_limits."`
+			: `,"note":"these joints landed off the mesh and bind nothing near them: move them in with edit_rig, or render to see where they are."`);
+	}
+	out.append_string("}}");
+	return out.copy_str(mem);
 }
 
 // The plans that could have been asked for. Only packs carrying a body: a
@@ -1231,6 +1492,82 @@ fn String? scale_model_tool(AppState* app, Object* args, DString* detail)
 	return out.copy_str(mem);
 }
 
+<*
+ turn_model: turn the whole model about +Y by quarter turns, to face +Z.
+
+ The same `AppState.turn_model_by` a Turn model menu item calls, so one undo
+ takes either back.
+*>
+fn String? turn_model_tool(AppState* app, Object* args, DString* detail)
+{
+	if (!takes_object(args, detail, `turn_model takes an object: {"facing": "+x"} (the way it faces now) or {"degrees": 90}.`)) return RIG_REFUSED~;
+
+	String? named = args.get_string("facing");
+	double? degrees = args.get_float("degrees");
+	if (try named && try degrees)
+	{
+		detail.append_string(`give "facing" or "degrees", not both — they are two ways of saying one turn.`);
+		return RIG_REFUSED~;
+	}
+
+	MeshFacing before = app.mesh_facing();
+	MeshFacing read = UNDECIDED;
+	TurnModelResult result;
+	int quarters;
+	if (try degrees)
+	{
+		double steps = degrees / 90.0;
+		if (!math::is_finite(steps) || math::abs(steps - math::round(steps)) > 1.0e-6)
+		{
+			detail.appendf(`"degrees" turns by whole quarter turns: 90, 180, -90 — not %s.`, (JsonFloat)degrees);
+			return RIG_REFUSED~;
+		}
+		quarters = quarter_turns((int)math::round(steps));
+		result = app.turn_model_by(quarters);
+	}
+	else
+	{
+		String asked = named ?? "auto";
+		MeshFacing facing = asked == "auto" ? MeshFacing.UNDECIDED : mesh_facing_named(asked);
+		if (asked != "auto" && facing == UNDECIDED)
+		{
+			detail.appendf(`"facing" is "auto", "+x", "-x", "+z" or "-z" (the way the model faces now), not "%s".`, asked);
+			return RIG_REFUSED~;
+		}
+		result = app.turn_model_to_front(facing, &read);
+		quarters = read.to_front;
+		if (result == REFUSED && app.has_mesh() && read == UNDECIDED)
+		{
+			detail.append_string(`the feet don't say which way the model faces (no toes reaching past the shins along X or Z). Look at it — render from Front and Left — then give "facing": "+x", "-x" or "-z".`);
+			return RIG_REFUSED~;
+		}
+	}
+
+	switch (result)
+	{
+		case TURNED:
+		case UNCHANGED:
+			break;
+		case LOCKED:
+			detail.append_string(`a pose edit is open; finish it first, the same as turning by hand.`);
+			return RIG_REFUSED~;
+		case REFUSED:
+			detail.append_string(`there is nothing to turn: no mesh and no joints.`);
+			return RIG_REFUSED~;
+	}
+	app.refresh_ui();
+
+	int signed = quarters == 3 ? -1 : quarters;
+	DString out = dstring::new(mem);
+	defer out.free();
+	out.appendf(`{"turned":%s,"degrees":%d,"facing_before":"%s","facing":"%s","unsaved":%s}`,
+		result == TURNED ? "true" : "false", signed * 90,
+		before == UNDECIDED ? "unknown" : before.label,
+		app.mesh_facing() == UNDECIDED ? "unknown" : app.mesh_facing().label,
+		app.mesh_resized ? "true" : "false");
+	return out.copy_str(mem);
+}
+
 // Every `op` edit_rig answers to, for the refusals that list them. Keep it in
 // step with the schema's enum and the switch in `apply_op`.
-const String RIG_OPS = "place, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, knuckle_blend, attach, detach, limits, exclude, include, symmetry, plan_limits, suggest_limits";
+const String RIG_OPS = "place, chain, move, name, name_all, remove, connect, disconnect, root, reach, sharpness, knuckle_blend, attach, detach, limits, exclude, include, symmetry, plan_limits, suggest_limits";

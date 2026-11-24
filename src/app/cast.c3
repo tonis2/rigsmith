@@ -635,3 +635,35 @@ fn void AppState.service_pending_add(&self)
 	}
 	self.refresh_ui();
 }
+
+<*
+ Open a model as the scene: this model the only character, no level and no
+ scene file until it is saved as one. What File › Open does (`service_open`)
+ and the MCP's open.
+
+ A file that will not load leaves a notice and the model that was already there:
+ dropping a working rig because a second file was mistyped is the worse outcome.
+
+ @return `Whether it loaded.`
+*>
+fn bool AppState.open_model_file(&self, String path)
+{
+	rig::TriMesh? loaded = rig::load_gltf(mem, path);
+	if (catch error = loaded)
+	{
+		self.@notice("could not open %s: %s", base_name(path), error);
+		self.refresh_ui();
+		return false;
+	}
+
+	self.reset_cutscenes();
+	self.drop_other_characters();
+	self.close_level();
+	self.load_mesh(loaded, path);
+	self.set_scene_path("");
+	// A model that loaded is a project whether or not the GPU takes it: the
+	// document is real either way, and the recent list is how it is reached again.
+	self.remember_project(path);
+	self.refresh_ui();
+	return true;
+}

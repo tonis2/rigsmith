@@ -466,6 +466,35 @@ fn bool preset_stands(Preset preset) @private
 *>
 fn int feet_facing(rig::TriMesh mesh, rig::Bounds box)
 {
+	float strength;
+	return feet_along(mesh, box, 2, &strength);
+}
+
+<*
+ Which of the four level directions the feet point: `feet_facing` read along X
+ as well as Z. A figure facing +X has its toes past its shins along X, and
+ along Z its feet sit side by side, as wide as its shins — so only one axis
+ answers. When both do, the one the feet reach further along wins.
+
+ What tells a model that faces sideways (a generator's output often faces +X)
+ from one a body plan can be fitted to as it stands.
+*>
+fn MeshFacing feet_heading(rig::TriMesh mesh, rig::Bounds box)
+{
+	float along_z;
+	float along_x;
+	int z = feet_along(mesh, box, 2, &along_z);
+	int x = feet_along(mesh, box, 0, &along_x);
+	if (x != 0 && (z == 0 || along_x > along_z)) return x > 0 ? PLUS_X : MINUS_X;
+	if (z != 0) return z > 0 ? PLUS_Z : MINUS_Z;
+	return UNDECIDED;
+}
+
+// `feet_facing` along one axis (0 for X, 2 for Z): +1, -1 or 0, and how far past
+// the shins the winning side reaches, as a fraction of the height.
+fn int feet_along(rig::TriMesh mesh, rig::Bounds box, usz axis, float* strength) @private
+{
+	*strength = 0.0f;
 	float height = box.extent().y;
 	if (mesh.triangle_count() == 0 || height <= 0.0f) return 0;
 
@@ -481,21 +510,29 @@ fn int feet_facing(rig::TriMesh mesh, rig::Bounds box)
 			mesh.positions[mesh.indices[t + 1]],
 			mesh.positions[mesh.indices[t + 2]],
 		};
-		slab_reach(corner, box.min.y - height, feet_top, &feet);
-		slab_reach(corner, shin_low, shin_high, &shins);
+		slab_reach(corner, box.min.y - height, feet_top, axis, &feet);
+		slab_reach(corner, shin_low, shin_high, axis, &shins);
 	}
 	if (feet[0] > feet[1] || shins[0] > shins[1]) return 0;
 
 	float ahead = (feet[1] - shins[1]) / height;
 	float behind = (shins[0] - feet[0]) / height;
-	if (ahead >= FEET_REACH && ahead >= FEET_MARGIN * math::max(behind, 0.0f)) return 1;
-	if (behind >= FEET_REACH && behind >= FEET_MARGIN * math::max(ahead, 0.0f)) return -1;
+	if (ahead >= FEET_REACH && ahead >= FEET_MARGIN * math::max(behind, 0.0f))
+	{
+		*strength = ahead;
+		return 1;
+	}
+	if (behind >= FEET_REACH && behind >= FEET_MARGIN * math::max(ahead, 0.0f))
+	{
+		*strength = behind;
+		return -1;
+	}
 	return 0;
 }
 
-// Widen `reach` (low and high Z) by the part of a triangle between two heights:
-// its corners inside them, and where its edges cross either one.
-fn void slab_reach(Vec3[3] corner, float low, float high, float[2]* reach) @private
+// Widen `reach` (low and high along `axis`) by the part of a triangle between two
+// heights: its corners inside them, and where its edges cross either one.
+fn void slab_reach(Vec3[3] corner, float low, float high, usz axis, float[2]* reach) @private
 {
 	for (usz i = 0; i < 3; i++)
 	{
@@ -503,16 +540,16 @@ fn void slab_reach(Vec3[3] corner, float low, float high, float[2]* reach) @priv
 		Vec3 b = corner[(i + 1) % 3];
 		if (a.y >= low && a.y <= high)
 		{
-			(*reach)[0] = math::min((*reach)[0], a.z);
-			(*reach)[1] = math::max((*reach)[1], a.z);
+			(*reach)[0] = math::min((*reach)[0], a[axis]);
+			(*reach)[1] = math::max((*reach)[1], a[axis]);
 		}
 		float[2] planes = { low, high };
 		foreach (plane : planes)
 		{
 			if ((a.y - plane) * (b.y - plane) >= 0.0f) continue;
-			float z = a.z + (b.z - a.z) * (plane - a.y) / (b.y - a.y);
-			(*reach)[0] = math::min((*reach)[0], z);
-			(*reach)[1] = math::max((*reach)[1], z);
+			float along = a[axis] + (b[axis] - a[axis]) * (plane - a.y) / (b.y - a.y);
+			(*reach)[0] = math::min((*reach)[0], along);
+			(*reach)[1] = math::max((*reach)[1], along);
 		}
 	}
 }
@@ -752,6 +789,30 @@ fn Vec3 snapped_inside(collision::VoxelGrid* grid, Vec3 position, bool* landed =
 		math::clamp(offset.y, -half, half),
 		math::clamp(offset.z, -half, half),
 	};
+}
+
+<*
+ The dots standing off the mesh: outside it, and not even one cell from its
+ surface. A joint there binds nothing near it, and a plan whose fit leaves many
+ there was fitted to the wrong body (a chibi's hands at its ears).
+
+ Tips sit on the surface, where the inside test is a coin flip, so the cell of
+ slack keeps them out of it.
+
+ @return `How many were written to the front of into; counting stops when it is full.`
+*>
+fn usz dots_off_mesh(RigDocument* doc, collision::VoxelGrid* grid, uint[] into)
+{
+	if (grid == null || !grid.usable()) return 0;
+	usz count = 0;
+	foreach (dot : doc.dots.array_view())
+	{
+		if (count >= into.len) break;
+		if (grid.inside(dot.position)) continue;
+		if (grid.nearest_cell(dot.position, 1) >= 0) continue;
+		into[count++] = dot.id;
+	}
+	return count;
 }
 
 // How far into its cell, as a fraction of the cell, a snapped point may sit from

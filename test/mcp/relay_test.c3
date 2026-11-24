@@ -139,7 +139,7 @@ fn bool? resources_list_body(Object* root)
 // The version every reply carries. Asserted rather than read out of the source so
 // that a change to the conventions has to be a deliberate bump, which is the only
 // thing that tells a caller working from memory that the two have diverged.
-const int DOCS_VERSION = 61;
+const int DOCS_VERSION = 62;
 
 fn bool? resources_read_body(Object* root)
 {

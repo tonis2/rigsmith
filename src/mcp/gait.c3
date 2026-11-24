@@ -27,6 +27,7 @@ const String AUTHOR_GAIT_SCHEMA = `{"type":"object","properties":{
 	"duration":{"type":"number","description":"Seconds for one cycle. Default 1.","default":1},
 	"loop":{"type":"boolean","description":"Whether the clip loops. Default true; a looping cycle keys no closing frame, since it is the opening one.","default":true},
 	"gait":{"type":"string","enum":["walk","trot","pace","gallop","custom"],"description":"walk is the lateral sequence (left hind, left fore, right hind, right fore) with each foot down 62% of the cycle; trot lands the diagonal pairs together, 45%; pace the lateral pairs, 45%; gallop the rotary order, 35%. A two-legged figure alternates its feet half a cycle apart whichever is named (a walk is down 60%). custom takes every foot's offset from feet. Default walk."},
+	"speed":{"type":"number","description":"How fast the figure is to travel, in model units a second: the stride and duration are chosen for it from the legs' height, so ground_speed comes out at this. Give stride or duration too and only the other is chosen. The answer warns when a figure this size would run at this speed (model units read as metres, so scale_model to the real height first)."},
 	"duty":{"type":"number","description":"How long each foot is on the floor, as a fraction of the cycle, 0.1 to 0.9. Default by gait."},
 	"stride":{"type":"number","description":"How far the stance foot slides back, in model units — with duty and duration, the treadmill speed. Default about 0.6 of the leg's height for a walk, more for faster gaits."},
 	"lift":{"type":"number","description":"How high the swinging foot clears the floor, as a fraction of the leg's height. Default 0.12 for a walk, more for faster gaits."},
@@ -76,6 +77,21 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 			return GAIT_REFUSED~;
 		}
 		spec.duration = (float)given;
+		spec.duration_set = true;
+	}
+	if (try given = args.get_float("speed"))
+	{
+		if (!(given > 0.0) || given > 1000.0)
+		{
+			detail.appendf(`"speed" is %.9g. It is model units a second, more than zero.`, given);
+			return GAIT_REFUSED~;
+		}
+		if (spec.duration_set && (args.get_float("stride") ?? 0.0) > 0.0)
+		{
+			detail.append_string(`give "speed" with "stride" or "duration", or alone — all three over-determine the cycle, since speed is stride over duty times duration.`);
+			return GAIT_REFUSED~;
+		}
+		spec.speed = (float)given;
 	}
 	if (try given = args.get_bool("loop")) spec.loop = given;
 	if (try given = args.get_float("duty"))
@@ -248,6 +264,16 @@ fn String? author_gait_json(AppState* app, Object* args, DString* detail)
 	out.append_string(`,"travel":[0,0,`);
 	out.appendf(`%s]`, (JsonFloat)report.speed);
 	out.append_string(`,"note":"ground_speed is the treadmill the figure stands on, in model units per second: the stance foot runs backward at it, so move the character forward by it. travel is the same as a pin_feet argument."`);
+	if (report.froude > 0.0f)
+	{
+		out.appendf(`,"duration":%s,"froude":%s`, (JsonFloat)report.duration, (JsonFloat)report.froude);
+		bool walking = spec.kind == WALK || spec.kind == CUSTOM;
+		if (walking && report.froude > GAIT_WALK_FROUDE)
+		{
+			out.appendf(`,"warning":"at this speed a figure with legs %s tall runs: walks end near a Froude number of %s and this is %s, so the cycle is a scurry. gait trot gives a run; a slower speed keeps the walk."`,
+				(JsonFloat)report.leg_height, (JsonFloat)GAIT_WALK_FROUDE, (JsonFloat)report.froude);
+		}
+	}
 	out.appendf(`,"pinned":%s,"slide_before_pins":%s`, authored_pinned ? "true" : "false", (JsonFloat)slide_before);
 	if (result.kept_layers > 0) out.appendf(`,"kept_layers":%d`, result.kept_layers);
 	// The feet follow paths the viewport (and set_path) can reshape; get_paths lists them.

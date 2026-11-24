@@ -178,7 +178,7 @@ fn ToolTable new_tool_table(AppState* app)
 	});
 	server.add_tool({
 		.name = "measure_clip",
-		.description = "Whether a clip is fit to ship, and what to call to make it so. Answers verdict usable or needs_work, clip_verdict (the same with the rig's own faults, marked of_rig, left out: whether this clip's keys are done), an issues list that localizes each fault to a joint, a phase and (for a pop on a key) the key, the rig's faults last, and fixes: one call per kind of fault with its arguments filled in. Measured as the clip plays and exports — the keys held inside the rig's joint limits, grounded, pinned and aimed. Faults (each marked blocks:false is reported without making the verdict needs_work): limits_inverted / limits_blocked (the rig's knee or elbow limits refuse the natural fold — every clip plays clamped until edit_rig plan_limits mends it), limits_stale (a joint's limit table still pinned to where its bone pointed before it moved; its fix carries that one table onto its bone), pop (a joint snapping: a leftover partial key, a limit clamp flipping, a loop whose end jumps to its start — found by walking every key and 120 instants a second, so a snap between frames is still seen), root_pop (the body's height jumping where the floor solve changes feet), foot_slide (a planted foot skating; a clip with no ground spec is measured by the feet its motion plants), floor_penetration, limit_saturation (keys turning a joint past its limits, read before the limits hold them; never blocks, since what plays is the held pose), loop_position / loop_velocity (the seam), and aim_stare (a note: a look-at on one still point). Beside them the aggregates: foot_slide, ground_speed (how fast the figure must travel for an in-place cycle not to skate), floor_penetration, stride, root bob, and every joint's travel and height range, as fractions of rig height. Every tool that writes a clip answers with these numbers under metrics; get_crig_docs topic quality is the loop to follow.",
+		.description = "Whether a clip is fit to ship, and what to call to make it so. Answers verdict usable or needs_work, clip_verdict (the same with the rig's own faults, marked of_rig, left out: whether this clip's keys are done), an issues list that localizes each fault to a joint, a phase and (for a pop on a key) the key, the rig's faults last, and fixes: one call per kind of fault with its arguments filled in. Measured as the clip plays and exports — the keys held inside the rig's joint limits, grounded, pinned and aimed. Faults (each marked blocks:false is reported without making the verdict needs_work): limits_inverted / limits_blocked (the rig's knee or elbow limits refuse the natural fold — every clip plays clamped until edit_rig plan_limits mends it), limits_stale (a joint's limit table still pinned to where its bone pointed before it moved; its fix carries that one table onto its bone), pop (a joint snapping: a leftover partial key, a limit clamp flipping, a loop whose end jumps to its start — found by walking every key and 120 instants a second, so a snap between frames is still seen), root_pop (the body's height jumping where the floor solve changes feet), foot_slide (a planted foot skating; a clip with no ground spec is measured by the feet its motion plants), floor_penetration, limit_saturation (keys turning a joint past its limits, read before the limits hold them; never blocks, since what plays is the held pose), loop_position / loop_velocity (the seam), and aim_stare (a note: a look-at on one still point), and skin_stretch (an edge of the mesh pulled past three times its rest length as the clip plays, between the two joints named — a knot split between a thigh and the hips, a skirt weighted half to each thigh; the skin block says where, and fixes pins a small piece or paints a large one). Beside them the aggregates: foot_slide, ground_speed (how fast the figure must travel for an in-place cycle not to skate), floor_penetration, stride, root bob, and every joint's travel and height range, as fractions of rig height. Every tool that writes a clip answers with these numbers under metrics; get_crig_docs topic quality is the loop to follow.",
 		.input_schema = `{"type":"object","properties":{"clip":{"type":"string","description":"Clip name, or \"Pack/Clip\" to say which pack. A bare name two packs share is an error."},"samples":{"type":"number","description":"Even instants for the slide, seam and travel measurements. Default: sixty a second of clip, 32 to 256. Pops are always walked at every key and 120 a second."}},"required":["clip"]}`,
 		.handler = &tool_measure_clip,
 		.user_data = app,
@@ -315,6 +315,14 @@ fn ToolTable new_tool_table(AppState* app)
 		.hidden = true,
 	});
 	server.add_tool({
+		.name = "turn_model",
+		.description = "Turn the whole model about +Y by quarter turns, so it faces +Z — the mesh and its normals, the joints, the limit tables' frames, held props, saved poses and the authored clips, as one undo step. For a model that faces +X or -X, as many generators make them: apply_plan fits a figure facing +Z or -Z, and refuses one whose feet point along X. Give the way it faces now (\"auto\" reads which way the toes point), or degrees counter-clockwise seen from above. save_project then writes the turned positions and normals into the model with the skin.",
+		.input_schema = `{"type":"object","properties":{"facing":{"type":"string","enum":["auto","+x","-x","+z","-z"],"description":"The way the model faces now; it is turned to face +Z. auto (the default) reads the feet, and refuses when they don't say."},"degrees":{"type":"number","description":"Instead of facing: how far to turn it, a multiple of 90, counter-clockwise seen from above."}}}`,
+		.handler = &tool_turn_model,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
 		.name = "redo",
 		.description = "Step the rig's history forward again. Anything recorded after an undo discards what was undone, which is what makes this worth calling promptly or not at all. history \"cutscene\" steps the scene's cutscene history instead.",
 		.input_schema = `{"type":"object","properties":{"steps":{"type":"number","description":"How many edits to put back. Default 1; stops early when there is nothing left to redo.","default":1},"history":{"type":"string","enum":["rig","cutscene"],"description":"Which history: the character's rig (default) or the scene's cutscenes."}}}`,
@@ -373,7 +381,7 @@ fn ToolTable new_tool_table(AppState* app)
 	server.add_tool({
 		.name = "paint_weights",
 		.description = "Correct the bind by hand: set one dot's own weight on some vertices — the same edit the brush makes. Only that dot's weights change: every other dot keeps exactly what it holds, so a vertex's share is this weight over its row's total, raising a dot blends it with the others there, and taking a dot off a vertex nobody else holds leaves it unused (it follows the root; emptied counts them). The dot is held from then on — its weights stay as written whatever the rig does, until reset. The vertices are named the way get_weights names them — 'the ones hip owns that knee still pulls on' is a shared row from that tool with a target on the end. One call is one undo step.",
-		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Whose weight is being set, by the name get_skeleton reports."},"weight":{"type":"number","description":"0 to 1: this dot's own weight on each vertex. 0 takes it off them; 1 is full. Other dots are untouched."},"owned_by":{"type":"string","description":"Only vertices this dot owns outright — the 'name' of a shared row from get_weights. Omit for every vertex the bounds match."},"at_least":{"type":"number","description":"Only where the painted dot already holds at least this share. 0.05 is the floor get_weights reports at, so it selects exactly the vertices that tool listed."},"at_most":{"type":"number","description":"Only where it holds at most this share. Default 1."},"vertices":{"type":"array","items":{"type":"number"},"description":"Explicit vertex indices instead of a selection. For a caller that already knows which ones — get_weights reports them, and a script can compute them."},"reset":{"type":"boolean","description":"Put the dot back on the automatic weights — its stored weights, grow and soft edge dropped — and ignore everything else."},"all":{"type":"boolean","description":"With reset: every dot, not only the named one."}},"required":["dot"]}`,
+		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Whose weight is being set, by the name get_skeleton reports."},"weight":{"type":"number","description":"0 to 1: this dot's own weight on each vertex. 0 takes it off them; 1 is full. Other dots are untouched."},"owned_by":{"type":"string","description":"Only vertices this dot owns outright — the 'name' of a shared row from get_weights. Omit for every vertex the bounds match."},"at_least":{"type":"number","description":"Only where the painted dot already holds at least this share. 0.05 is the floor get_weights reports at, so it selects exactly the vertices that tool listed."},"at_most":{"type":"number","description":"Only where it holds at most this share. Default 1."},"vertices":{"type":"array","items":{"type":"number"},"description":"Explicit vertex indices instead of a selection. For a caller that already knows which ones — get_weights reports them, and a script can compute them."},` +++ REGION_SCHEMA_KEYS +++ `,"reset":{"type":"boolean","description":"Put the dot back on the automatic weights — its stored weights, grow and soft edge dropped — and ignore everything else."},"all":{"type":"boolean","description":"With reset: every dot, not only the named one."}},"required":["dot"]}`,
 		.handler = &tool_paint_weights,
 		.user_data = app,
 		.hidden = true,
@@ -381,7 +389,7 @@ fn ToolTable new_tool_table(AppState* app)
 	server.add_tool({
 		.name = "pin_weights",
 		.description = "Give vertices to a dot outright: set its own weight there, off its limb too — the lasso, shift+T. Like paint_weights it changes this dot's weights and no other's, so where other dots hold the vertex too the two blend; the dot is held from then on. Vertices are selected the way paint_weights selects them. One call is one undo step; reset puts the dot back on the automatic weights.",
-		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Which dot the vertices are given to, by the name get_skeleton reports."},"weight":{"type":"number","description":"0 to 1: this dot's own weight on each vertex. 0 takes it off them. Default 1."},"owned_by":{"type":"string","description":"Only vertices this dot owns outright — the 'name' of a shared row from get_weights. Omit for every vertex the bounds match."},"at_least":{"type":"number","description":"Only where the pinned dot already holds at least this share."},"at_most":{"type":"number","description":"Only where it holds at most this share. Default 1."},"vertices":{"type":"array","items":{"type":"number"},"description":"Explicit vertex indices instead of a selection. For a caller that already knows which ones — get_weights reports them, and a script can compute them."},"reset":{"type":"boolean","description":"Put the dot back on the automatic weights and ignore everything else."},"all":{"type":"boolean","description":"With reset: every dot, not only the named one."}},"required":["dot"]}`,
+		.input_schema = `{"type":"object","properties":{"dot":{"type":"string","description":"Which dot the vertices are given to, by the name get_skeleton reports."},"weight":{"type":"number","description":"0 to 1: this dot's own weight on each vertex. 0 takes it off them. Default 1."},"owned_by":{"type":"string","description":"Only vertices this dot owns outright — the 'name' of a shared row from get_weights. Omit for every vertex the bounds match."},"at_least":{"type":"number","description":"Only where the pinned dot already holds at least this share."},"at_most":{"type":"number","description":"Only where it holds at most this share. Default 1."},"vertices":{"type":"array","items":{"type":"number"},"description":"Explicit vertex indices instead of a selection. For a caller that already knows which ones — get_weights reports them, and a script can compute them."},` +++ REGION_SCHEMA_KEYS +++ `,"reset":{"type":"boolean","description":"Put the dot back on the automatic weights and ignore everything else."},"all":{"type":"boolean","description":"With reset: every dot, not only the named one."}},"required":["dot"]}`,
 		.handler = &tool_pin_weights,
 		.user_data = app,
 		.hidden = true,
@@ -407,6 +415,30 @@ fn ToolTable new_tool_table(AppState* app)
 		.description = "The mesh's separate pieces: id, how many vertices, where it sits, how big it is, and which dot it has been pinned to. A piece is a run of surface nothing joins to the rest, so a hard-surface model — an animatronic, a mech, anything panelled — arrives as dozens of them. Pinning one to a dot with edit_rig's attach makes it move rigidly with that dot however the falloff would have weighted it, which is the answer for a part that should not deform at all. A piece also carries auto when the binder froze it onto a bone by itself — a prop the flood never reached, or a piece that turned out to be one bone's outright — so a part that is already rigid does not get pinned twice; the field is absent when there is no such choice and while the rig has moved since the last bind. Largest first, so the body and the head are the first rows.",
 		.input_schema = `{"type":"object","properties":{"limit":{"type":"number","description":"How many pieces to list, largest first. Default 40; a shattered mesh can hold thousands and the small ones are rivets."}}}`,
 		.handler = &tool_get_shells,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "blend_weights",
+		.description = "Weight a region of the mesh as cloth, in one undo step: the top joint takes it whole at the top, the side joints come in toward the bottom and toward each side, least at the middle, and every other joint holding some of it is taken off. What a skirt needs — the binder weights cloth as body, so a hem goes to the knees and the middle is shared by two thighs and splits on every step. The region is given with the same keys as get_vertices: a shell and a height range for a skirt below its belt. Each joint written is held from then on, and the answer lists the ones newly held.",
+		.input_schema = BLEND_WEIGHTS_SCHEMA,
+		.handler = &tool_blend_weights,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "get_vertices",
+		.description = "The vertices of a region of the mesh — a piece (shell), a box, a height range, a side of the body, or any of them together — with their indices, positions and shells, and with owners the joint holding most of each. What a script reads the mesh through, so weights can be worked out from where vertices are. The same region keys narrow paint_weights and pin_weights directly: the skirt is {\"shell\": 3, \"height\": [0.1, 0.3]}, and its left half adds \"side\": \"left\".",
+		.input_schema = GET_VERTICES_SCHEMA,
+		.handler = &tool_get_vertices,
+		.user_data = app,
+		.hidden = true,
+	});
+	server.add_tool({
+		.name = "get_sections",
+		.description = "Where planes across the mesh cut it: each plane's loops, left to right, with the middle of each (where a bone through it runs), its extent as a box and a size, its length round, the shell it cuts and whether it closes. For placing joints from the mesh rather than from a picture: slices across x find the arm's line and the elbow's thickening, the narrowest y slice between head and chest is the neck, y slices below a skirt show each leg as its own loop beside the skirt's, and a box narrows the cut to one hand. Planes are given as a list (at) or as from, to and step along the axis; edit_rig move then places each joint at a loop's centre.",
+		.input_schema = GET_SECTIONS_SCHEMA,
+		.handler = &tool_get_sections,
 		.user_data = app,
 		.hidden = true,
 	});
@@ -477,7 +509,7 @@ fn ToolTable new_tool_table(AppState* app)
 	server.add_tool({
 		.name = "save_project",
 		.description = "Save the open project in place: the rig written into the model, and the rest — dot ids, reaches, pins, mirror plane, pose, paint — into the model's .rigsmith.json sidecar beside it, which is what a later open reads back. This is the project, not the library: save_pack publishes reusable clips into the animation library and leaves the project's own editable copies and their bindings untouched, and this does the opposite. Answers with the file written and whether authored changes remain unsaved; get_scene reports the same authored_dirty flag without writing. A model Rigsmith did not author is copied to <stem>_copy.glb on the first save, so a source asset is never overwritten.",
-		.input_schema = `{"type":"object","properties":{}}`,
+		.input_schema = `{"type":"object","properties":{"path":{"type":"string","description":"Save a copy of the model here instead, a .glb or .gltf, with its sidecar beside it naming it; the project follows the copy from then on. Never the model that was opened, until Rigsmith has made one of its own."},"overwrite":{"type":"boolean","description":"With path: replace a file already there."}}}`,
 		.handler = &tool_save_project,
 		.user_data = app,
 		.hidden = true,
@@ -791,7 +823,18 @@ fn String? tool_get_scene(Object* args, void* user_data, DString* detail) @priva
 	=> scene_json((AppState*)user_data);
 
 fn String? tool_save_project(Object* args, void* user_data, DString* detail) @private
-	=> save_project_json((AppState*)user_data);
+{
+	AppState* app = (AppState*)user_data;
+	String path = args.is_keyable() ? args.get_string("path") ?? "" : "";
+	bool overwrite = args.is_keyable() ? args.get_bool("overwrite") ?? false : false;
+	String refused = app.save_as_refusal(path, overwrite);
+	if (refused.len > 0)
+	{
+		detail.append_string(refused);
+		return RIG_REFUSED~;
+	}
+	return save_project_json(app, path);
+}
 
 fn String? tool_solve_targets(Object* args, void* user_data, DString* detail) @private
 	=> solve_targets_json((AppState*)user_data, args, detail);
@@ -963,6 +1006,18 @@ fn String? tool_redo(Object* args, void* user_data, DString* detail) @private
 fn String? tool_scale_model(Object* args, void* user_data, DString* detail) @private
 	=> scale_model_tool((AppState*)user_data, args, detail);
 
+fn String? tool_turn_model(Object* args, void* user_data, DString* detail) @private
+	=> turn_model_tool((AppState*)user_data, args, detail);
+
+fn String? tool_get_sections(Object* args, void* user_data, DString* detail) @private
+	=> get_sections_tool((AppState*)user_data, args, detail);
+
+fn String? tool_get_vertices(Object* args, void* user_data, DString* detail) @private
+	=> get_vertices_tool((AppState*)user_data, args, detail);
+
+fn String? tool_blend_weights(Object* args, void* user_data, DString* detail) @private
+	=> blend_weights_tool((AppState*)user_data, args, detail);
+
 fn String? tool_screenshot(Object* args, void* user_data, DString* detail) @private
 	=> screenshot_content((AppState*)user_data, detail);
 
@@ -1119,7 +1174,7 @@ fn String scene_json(AppState* app)
  open project is a refusal in the reply rather than a fault — a missing path is a
  state a caller asks about, not an error in the asking.
 *>
-fn String save_project_json(AppState* app)
+fn String save_project_json(AppState* app, String path = "")
 {
 	DString out = dstring::new(mem);
 	defer out.free();
@@ -1132,7 +1187,7 @@ fn String save_project_json(AppState* app)
 		return out.copy_str(mem);
 	}
 
-	app.save_session();
+	app.save_session(path);
 
 	out.append_string(`{"saved":"`);
 	json_escape_into(&out, base_name(app.source_path));
@@ -1258,11 +1313,53 @@ fn void append_rig_issues(DString* out, AppState* app, bool always) @private
 		defer view.free(mem);
 		drifted = stale_limit_frames(&app.doc, &view.skeleton, view.names, view.dot_ids, stale[..]);
 	}
-	if (count == 0 && drifted == 0 && !always) return;
-	out.append_string(`,"rig_issues":[`);
+	uint[64] outside;
+	usz off = dots_off_mesh(&app.doc, &app.voxels.grid, outside[..]);
+	LooseShell[LOOSE_SHELLS_MOST] loose;
+	usz split = 0;
+	if (try view = app.open_rig(mem))
+	{
+		defer view.free(mem);
+		split = app.loose_shells(&view, loose[..]);
+		if (count == 0 && drifted == 0 && off == 0 && split == 0 && !always) return;
+		out.append_string(`,"rig_issues":[`);
+		for (usz i = 0; i < split; i++)
+		{
+			if (i > 0) out.append_char(',');
+			LooseShell piece = loose[i];
+			out.append_string(`{"kind":"loose_shell","joint":"`);
+			json_escape_into(out, view.names[(usz)piece.owner]);
+			out.appendf(`","shell":%d,"held_by":[{"joint":"`, piece.shell);
+			json_escape_into(out, view.names[(usz)piece.owner]);
+			out.appendf(`","share":%s},{"joint":"`, (JsonFloat)piece.share);
+			json_escape_into(out, view.names[(usz)piece.second]);
+			int rider = skeleton_common_ancestor(&view.skeleton, piece.owner, piece.second);
+			if (rider < 0) rider = piece.owner;
+			out.appendf(`","share":%s}],"note":"a small separate piece split between two joints, smaller than the gap between them: it stretches whenever they move apart. Pinned to the joint both hang from, it rides that joint rigidly.","fix":{"tool":"edit_rig","args":{"ops":[{"op":"attach","shell":%d,"joint":"`,
+				(JsonFloat)piece.second_share, piece.shell);
+			json_escape_into(out, view.names[(usz)rider]);
+			out.append_string(`"}]}}}`);
+		}
+	}
+	else
+	{
+		if (count == 0 && drifted == 0 && off == 0 && !always) return;
+		out.append_string(`,"rig_issues":[`);
+	}
+	for (usz i = 0; i < off; i++)
+	{
+		if (i > 0 || split > 0) out.append_char(',');
+		Dot* dot = app.doc.find(outside[i]);
+		out.append_string(`{"kind":"outside_mesh","joint":"`);
+		append_bone_name(out, outside[i], dot ? dot.name : "");
+		// No fix with its arguments filled in: where the joint belongs is read off
+		// the mesh, which is the caller's to do.
+		out.appendf(`","position":%s,"note":"the joint stands off the mesh, so it binds nothing near it. get_sections shows where its limb runs; edit_rig move puts it at a loop's centre."}`,
+			(JsonVec3)(dot ? dot.position : (Vec3){}));
+	}
 	for (usz i = 0; i < drifted; i++)
 	{
-		if (i > 0) out.append_char(',');
+		if (i > 0 || off > 0 || split > 0) out.append_char(',');
 		out.append_string(`{"kind":"limits_stale","joint":"`);
 		json_escape_into(out, stale[i].joint);
 		// The fix carries this joint's own table onto its bone and touches no
@@ -1274,7 +1371,7 @@ fn void append_rig_issues(DString* out, AppState* app, bool always) @private
 	}
 	for (usz i = 0; i < count; i++)
 	{
-		if (i > 0 || drifted > 0) out.append_char(',');
+		if (i > 0 || drifted > 0 || off > 0 || split > 0) out.append_char(',');
 		bool inverted = found[i].kind == INVERTED;
 		out.appendf(`{"kind":"%s","joint":"`, inverted ? "limits_inverted" : "limits_blocked");
 		json_escape_into(out, found[i].joint);
@@ -1529,6 +1626,11 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 	ClipMetrics numbers = clip_metrics(mem, &view.skeleton, view.names, *template, samples,
 		&app.doc, view.dot_ids, owned ? contacts : (AnimGround){});
 	defer numbers.free(mem);
+	// The skin as it plays, which the joints cannot show: an edge pulled to several
+	// times its rest length between joints that move apart.
+	SkinStretch[] skin = app.clip_skin_faults(mem, &view, *template, ref);
+	defer if (skin.len > 0) alloc::free(mem, skin);
+	numbers.add_skin_faults(mem, skin, view.names);
 
 	DString out = dstring::new(mem);
 	defer out.free();
@@ -1574,6 +1676,12 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 		{
 			out.appendf(`,"axis":"%c"`, "xyz"[(usz)issue.axis]);
 		}
+		if (issue.other.len > 0)
+		{
+			out.append_string(`,"other":"`);
+			json_escape_into(&out, issue.other);
+			out.append_char('"');
+		}
 		if (issue.key > 0)
 		{
 			usz k = (usz)(issue.key - 1);
@@ -1585,8 +1693,9 @@ fn String? metrics_json(AppState* app, String clip_name, usz samples, DString* d
 	}
 	out.append_char(']');
 	if (numbers.rig_omitted > 0) out.appendf(`,"rig_issues_omitted":%d`, numbers.rig_omitted);
+	append_skin_faults(&out, app, &view, skin);
 	out.append_string(`,"fixes":`);
-	append_fixes(&out, *template, numbers);
+	append_fixes(&out, *template, numbers, app, &view, skin);
 	out.appendf(`,"tolerances":{"foot_slide":%.6g,"floor_penetration":%.6g,"limit_saturation":%.6g,"loop_position":%.6g,"loop_velocity":%.6g,"pop":%.6g,"root_pop":%.6g,"note":"an issue is reported only past its tolerance; foot_slide/floor_penetration/loop_position/root_pop are fractions of rig height, limit_saturation and pop are radians, loop_velocity is rig heights per second. A pop is a joint turning more than %.6g radians faster than %.6g radians a second, or an instant standing that far off the path its neighbours set within %.6g s — read from a walk of every key and %.6g instants a second, so a snap between the even samples is still seen. Loop faults are measured with the root's horizontal travel removed, so intended locomotion is not flagged; they need a looping clip and at least four samples. Every number is of the clip as it plays and exports: held inside the rig's joint limits, grounded, pinned and aimed; limit_saturation alone reads the keys before the limits hold them. limits_inverted and limits_blocked are faults of the rig, not the clip: every clip on it plays wrong until they are mended. An issue marked blocks:false is reported and does not make the verdict needs_work: a note, or a limit overshoot — what the limits hold is what plays and is what every other number measures; the overshoot says the keys ask for more than the rig allows, and past %.6g radians a fix is offered."}`,
 		ISSUE_SLIDE_TOLERANCE, ISSUE_PENETRATION_TOLERANCE, ISSUE_LIMIT_TOLERANCE,
 		ISSUE_LOOP_POSITION_TOLERANCE, ISSUE_LOOP_VELOCITY_TOLERANCE, ISSUE_POP_TOLERANCE, ROOT_POP_STEP,
@@ -1609,6 +1718,7 @@ fn String issue_unit(ClipIssueKind kind) @private
 			return "radians";
 		case LOOP_VELOCITY: return "heights_per_second";
 		case AIM_STARE: return "influence";
+		case SKIN_STRETCH: return "times_rest_length";
 		default: return "height";
 	}
 }
@@ -1643,7 +1753,8 @@ fn bool key_partial(AnimTemplate clip, usz k) @private
  Rig faults lead, since no clip edit mends them and every other number on the
  rig is measured through them.
 *>
-fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @private
+fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers, AppState* app = null, RigView* view = null,
+	SkinStretch[] skin = {}) @private
 {
 	out.append_char('[');
 	usz written = 0;
@@ -1701,6 +1812,8 @@ fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @priv
 					root_pop = true;
 				}
 			case AIM_STARE: stare = true;
+			// Its fix needs the shell and the joints holding it: append_skin_fix_rows.
+			case SKIN_STRETCH: break;
 			case POP:
 				// A snap at the seam of a loop is the cycle not running into its
 				// own start, whichever key sits there: cut the cycle again.
@@ -1826,6 +1939,7 @@ fn void append_fixes(DString* out, AnimTemplate clip, ClipMetrics numbers) @priv
 		fix_open(out, &written, "aim_stare", "set_aim");
 		out.append_string(`{"remove":true},"why":"a look-at locked on one still point freezes the head while the body moves; fine for a figure watching something, wrong for locomotion — remove it or key the target to move"}`);
 	}
+	if (app && view) append_skin_fix_rows(out, &written, app, view, skin);
 	out.append_char(']');
 }
 

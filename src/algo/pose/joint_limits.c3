@@ -165,16 +165,19 @@ fn JointRotationLimits RigDocument.rotation_limits_of(&self, uint dot_id)
  quaternions are normalized at the boundary so every reader receives an
  orthonormal basis.
 
+ @param normalize : `False to keep the frame's bits, for undo putting back a table the document already held.`
  @return `True when the document changed. Invalid data and exact no-ops return false.`
 *>
-fn bool RigDocument.set_rotation_limits(&self, uint dot_id, JointRotationLimits limits)
+fn bool RigDocument.set_rotation_limits(&self, uint dot_id, JointRotationLimits limits, bool normalize = true)
 {
 	if (dot_id == 0 || !self.find(dot_id)) return false;
 	limits.dot_id = dot_id;
 	if (!limits.valid()) return false;
 	if (limits.primary_child == dot_id) return false;
 	if (limits.primary_child != 0 && !self.find(limits.primary_child)) return false;
-	if (limits.has_saved_frame) limits.saved_frame = limits.saved_frame.normalize();
+	// Undo puts back a table exactly as it was held: normalizing a frame again
+	// moves its last bit, and a file's frames arrive normalized only to its digits.
+	if (limits.has_saved_frame && normalize) limits.saved_frame = limits.saved_frame.normalize();
 
 	JointRotationLimits reset = unconstrained_rotation(dot_id);
 	bool default_axes = true;

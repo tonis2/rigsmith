@@ -488,6 +488,40 @@ fn float gait_default_duty(GaitKind kind, usz feet)
 	}
 }
 
+// Gravity in model units a second squared, reading a unit as a metre as glTF does.
+const float GAIT_GRAVITY = 9.81f;
+// Past this Froude number a legged figure runs rather than walks, whatever its size.
+const float GAIT_WALK_FROUDE = 0.5f;
+
+<*
+ Stride and duration for a ground speed: the stride a legged animal takes at
+ that speed (Alexander's relation, a cycle's length 2.3 leg heights times the
+ Froude number to the 0.3), and the cycle as long as covering it takes. A given
+ stride or duration is kept and the other worked out from the speed.
+
+ @require spec.speed > 0.0f && leg_height > 0.0f : "A speed and a leg"
+ @return "The Froude number, which says whether a figure this size walks at this speed"
+*>
+fn float gait_for_speed(GaitSpec* spec, float leg_height)
+{
+	float froude = spec.speed * spec.speed / (GAIT_GRAVITY * leg_height);
+	if (spec.stride > 0.0f)
+	{
+		spec.duration = spec.stride / (spec.duty * spec.speed);
+	}
+	else if (spec.duration_set)
+	{
+		spec.stride = spec.speed * spec.duty * spec.duration;
+	}
+	else
+	{
+		float cycle = 2.3f * math::pow(froude, 0.3f) * leg_height;
+		spec.stride = spec.duty * cycle;
+		spec.duration = cycle / spec.speed;
+	}
+	return froude;
+}
+
 // How far the stride reaches, as a fraction of leg height, by gait.
 fn float gait_default_stride(GaitKind kind)
 {
@@ -582,6 +616,12 @@ struct GaitSpec
 	float stride;
 	float lift;
 	float duration;
+	// How fast the figure is to travel, in model units a second, or 0 to leave it to
+	// the stride and duration. With neither of those given, both are chosen for it
+	// (`gait_for_speed`); with one, the other follows. `duration_set` says whether
+	// the duration above was given or is only the default.
+	float speed;
+	bool duration_set;
 	bool loop;
 	usz samples;
 	// Key the legs and the hips' drop and nothing else. Off, a two-legged figure
@@ -629,6 +669,8 @@ struct GaitReport
 	float drop;
 	float floor;
 	float speed;   // model units per second the treadmill runs
+	float froude;  // speed squared over gravity times leg height; 0 when no speed was asked for
+	float duration; // the cycle's length, as given or as a speed chose it
 }
 
 // One foot's path and leg, ready to be solved per instant.
@@ -870,6 +912,7 @@ fn AnimTemplate? gait_clip(
 
 	if (!(spec.duty > 0.0f)) spec.duty = gait_default_duty(spec.kind, feet.len);
 	spec.duty = math::clamp(spec.duty, 0.1f, 0.9f);
+	float froude = spec.speed > 0.0f ? gait_for_speed(&spec, leg_height) : 0.0f;
 	if (!(spec.stride > 0.0f)) spec.stride = gait_default_stride(spec.kind) * leg_height;
 	if (!(spec.lift > 0.0f)) spec.lift = gait_default_lift(spec.kind) * leg_height;
 	if (spec.samples < 8) spec.samples = 8;
@@ -1008,6 +1051,8 @@ fn AnimTemplate? gait_clip(
 		.drop = drop,
 		.floor = floor,
 		.speed = spec.stride / (spec.duty * spec.duration),
+		.froude = froude,
+		.duration = spec.duration,
 	};
 	return {
 		.name = name.copy(allocator),

@@ -67,6 +67,7 @@ enum ClipIssueKind : int
 	LIMITS_BLOCKED,
 	LIMITS_STALE,
 	AIM_STARE,
+	SKIN_STRETCH,
 }
 
 fn String ClipIssueKind.tag(self)
@@ -84,6 +85,7 @@ fn String ClipIssueKind.tag(self)
 		case LIMITS_BLOCKED: return "limits_blocked";
 		case LIMITS_STALE: return "limits_stale";
 		case AIM_STARE: return "aim_stare";
+		case SKIN_STRETCH: return "skin_stretch";
 		default: return "";
 	}
 }
@@ -92,6 +94,7 @@ struct ClipIssue
 {
 	ClipIssueKind kind;
 	String joint;    // borrowed from names; empty when the fault names no one joint
+	String other;    // a skin stretch's second joint, the one across the edge; borrowed
 	float phase;     // where in the cycle, 0 to 1
 	float magnitude; // the unit is the kind's; see ClipIssueKind
 	int axis;        // 0/1/2 = the bone-local X/Y/Z a limit was hit on; -1 otherwise
@@ -194,6 +197,20 @@ struct ClipMetrics
 	ClipIssue[] issues;      // localized faults, worst kept per foot/joint/axis
 	usz samples;
 	usz rig_omitted;         // faults of the rig past RIG_ISSUE_MOST, counted only
+}
+
+<*
+ More faults laid after the ones found, such as the skin's (`AppState.skin_issues`).
+ The issues are reallocated with `allocator`, which must be the one they were made with.
+*>
+fn void ClipMetrics.add_issues(&self, Allocator allocator, ClipIssue[] more)
+{
+	if (more.len == 0) return;
+	ClipIssue[] grown = alloc::new_array(allocator, ClipIssue, (sz)(self.issues.len + more.len));
+	grown[:self.issues.len] = self.issues[..];
+	grown[self.issues.len..] = more[..];
+	if (self.issues.len > 0) alloc::free(allocator, self.issues);
+	self.issues = grown;
 }
 
 fn void ClipMetrics.free(&self, Allocator allocator)

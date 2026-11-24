@@ -103,6 +103,12 @@ fn ContextRow[] scene_context_rows(AppState* app) @private
 				.on_select = &scene_context_move_by, .id = "viewport-context-move-by" };
 			rows[n++] = { .label = "Scale model…",
 				.on_select = &scene_context_scale_model, .id = "viewport-context-scale" };
+			rows[n++] = { .label = "Turn model to face front",
+				.on_select = &scene_context_turn_front, .id = "viewport-context-turn-front" };
+			rows[n++] = { .label = "Turn model 90° left",
+				.on_select = &scene_context_turn_left, .id = "viewport-context-turn-left" };
+			rows[n++] = { .label = "Turn model 90° right",
+				.on_select = &scene_context_turn_right, .id = "viewport-context-turn-right" };
 			if (app.doc.dots.len() > 0)
 			{
 				rows[n++] = { .label = "Select skeleton", .separator_before = true,
@@ -498,6 +504,47 @@ fn void apply_move_by(Ui* ui)
 			app.@notice("finish animation posing before editing the rest skeleton");
 		case REFUSED:
 			app.@notice("select the model, skeleton, or joints to move");
+	}
+	app.refresh_ui();
+}
+
+// ---------------------------------------------------------------------------
+// Turn model
+//
+// Whole quarter turns about +Y, the mesh and the rig together. To the front
+// reads the feet; the other two turn the way the figure itself would.
+
+fn void scene_context_turn_front(Ui* ui)
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	MeshFacing read;
+	switch (app.turn_model_to_front(UNDECIDED, &read))
+	{
+		case TURNED: app.@notice("turned the model from facing %s to face +Z · Ctrl+Z turns it back", read.label);
+		case UNCHANGED: app.@notice("the model already faces +Z");
+		case LOCKED: app.@notice("finish the pose edit first");
+		case REFUSED:
+			app.@notice(app.has_mesh()
+				? "the feet don't say which way the model faces · turn it 90° left or right instead"
+				: "open a model to turn");
+	}
+	app.refresh_ui();
+}
+
+fn void scene_context_turn_left(Ui* ui) => turn_model_quarter(ui, 1);
+fn void scene_context_turn_right(Ui* ui) => turn_model_quarter(ui, -1);
+
+fn void turn_model_quarter(Ui* ui, int quarters) @private
+{
+	close_scene_context(ui);
+	AppState* app = ui.inherit(AppState)!!;
+	switch (app.turn_model_by(quarters))
+	{
+		case TURNED: app.@notice("turned the model 90° %s · Ctrl+Z turns it back", quarters > 0 ? "left" : "right");
+		case UNCHANGED: break;
+		case LOCKED: app.@notice("finish the pose edit first");
+		case REFUSED: app.@notice("open a model to turn");
 	}
 	app.refresh_ui();
 }

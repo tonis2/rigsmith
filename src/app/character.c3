@@ -186,6 +186,14 @@ struct Character
 	bool mesh_resized;
 
 	<*
+	 Quarter turns the mesh has been turned in crig (Turn model) since the file at
+	 `source_path` was written, 0..3. While it is not zero, Save writes the
+	 normals with the positions, and the file's tangents go, since they no longer
+	 run along the surface; a reader derives them again.
+	*>
+	int mesh_turns;
+
+	<*
 	 The mesh's own inside, for measuring distance through it (M3).
 
 	 Built once beside the picker, because it depends on the mesh and nothing

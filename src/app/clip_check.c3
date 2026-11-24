@@ -48,6 +48,9 @@ fn usz AppState.check_clip(&self, AnimRef ref)
 	ClipMetrics numbers = clip_metrics(mem, &view.skeleton, names, *clip, CHECK_SAMPLES,
 		&self.doc, view.dot_ids, owned ? contacts : (AnimGround){});
 	defer numbers.free(mem);
+	SkinStretch[] skin = self.clip_skin_faults(mem, &view, *clip, ref);
+	defer if (skin.len > 0) alloc::free(mem, skin);
+	numbers.add_skin_faults(mem, skin, names);
 
 	CheckIssue[] issues = alloc::new_array(mem, CheckIssue, numbers.issues.len);
 	foreach (usz i, found : numbers.issues)
@@ -57,7 +60,9 @@ fn usz AppState.check_clip(&self, AnimRef ref)
 			.kind = found.kind,
 			.time = at,
 			.magnitude = found.magnitude,
-			.label = found.joint.len > 0 ? string::format(mem, "%s · %s", found.kind.words(), found.joint)
+			.label = found.other.len > 0 && found.other != found.joint
+				? string::format(mem, "%s · %s / %s", found.kind.words(), found.joint, found.other)
+				: found.joint.len > 0 ? string::format(mem, "%s · %s", found.kind.words(), found.joint)
 				: found.kind.words().copy(mem),
 			.trailing = string::format(mem, "f %d · %.2f s", (int)math::round(at * (float)self.anim_fps), at),
 		};

@@ -172,6 +172,34 @@
         redo: spec("redo"),
     };
 
+    // Every other tool in the table, under its camelCase name, so a tool added on
+    // the C3 side is never missing here: the wrappers above keep their short
+    // forms, and the rest take the argument object as the wire does —
+    // crig.ops.turnModel({facing: "+x"}), crig.ops.getVertices({shell: 3}).
+    const camel = (name) => name.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+    try {
+        for (const tool of JSON.parse(__crig_help("")).tools ?? []) {
+            const key = camel(tool.name);
+            if (!(key in crig.ops)) crig.ops[key] = spec(tool.name);
+        }
+    } catch {
+        // An index that will not read leaves the wrappers above; crig.call still
+        // reaches every tool by name.
+    }
+
+    // Waiting inside a script, which has no setTimeout: crig.wait(2) returns after
+    // two seconds, and crig.wait(60, () => crig.call("generate_motion").state !== "running")
+    // returns as soon as the check is true, or false after sixty. The motion job
+    // is pumped while it waits (`js_crig_sleep`); the window does not draw.
+    crig.wait = (seconds, until) => {
+        const end = Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
+        for (;;) {
+            if (typeof until === "function" && until()) return true;
+            if (Date.now() >= end) return typeof until === "function" ? false : true;
+            __crig_sleep(Math.min(250, Math.max(1, end - Date.now())));
+        }
+    };
+
     // The conventions and the tool reference. `crig.help()` is the index — every
     // tool, whether or not a client was told about it — `crig.help("apply_clip")`
     // is one tool's description and its JSON Schema off the registration itself,

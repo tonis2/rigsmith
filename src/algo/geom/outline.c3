@@ -38,6 +38,28 @@ fn int outline_by_edge(OutlineSide a, OutlineSide b) @local
 }
 
 <*
+ One index per place: for every vertex, the lowest vertex standing exactly where
+ it does. A mesh split along its uv seams is one surface again through this.
+ The caller owns the result.
+*>
+fn uint[] welded_vertices(Allocator allocator, Vec3[] positions)
+{
+	uint[] weld = alloc::new_array(allocator, uint, (sz)positions.len);
+	if (positions.len == 0) return weld;
+	OutlineVertex[] order = alloc::new_array(mem, OutlineVertex, (sz)positions.len);
+	defer alloc::free(mem, order);
+	foreach (usz i, at : positions) order[i] = { .at = at, .index = (uint)i };
+	sort::quicksort(order, &outline_by_position);
+	uint first = 0;
+	foreach (usz i, v : order)
+	{
+		if (i == 0 || !outline_same(v.at, order[i - 1].at)) first = v.index;
+		weld[v.index] = first;
+	}
+	return weld;
+}
+
+<*
  Every edge one triangle owns, and every edge whose two triangles meet at more
  than `crease`, as pairs of indices into `positions`. Vertices at one place are
  welded first, so an uv seam is no outline. The caller owns the result.
@@ -52,19 +74,8 @@ fn uint[] outline_edges(Allocator allocator, Vec3[] positions, uint[] triangles,
 	usz count = triangles.len / 3;
 	if (count == 0 || positions.len == 0) return {};
 
-	// One index per place: the lowest vertex standing there.
-	uint[] weld = alloc::new_array(mem, uint, (sz)positions.len);
+	uint[] weld = welded_vertices(mem, positions);
 	defer alloc::free(mem, weld);
-	OutlineVertex[] order = alloc::new_array(mem, OutlineVertex, (sz)positions.len);
-	defer alloc::free(mem, order);
-	foreach (usz i, at : positions) order[i] = { .at = at, .index = (uint)i };
-	sort::quicksort(order, &outline_by_position);
-	uint first = 0;
-	foreach (usz i, v : order)
-	{
-		if (i == 0 || !outline_same(v.at, order[i - 1].at)) first = v.index;
-		weld[v.index] = first;
-	}
 
 	Vec3[] normals = alloc::new_array(mem, Vec3, (sz)count);
 	defer alloc::free(mem, normals);

@@ -37,6 +37,8 @@ import three;
 import fastjs::js;
 import std::collections::object;
 import std::io;
+import std::math;
+import std::thread;
 
 <*
  Install the `crig` scripting surface into three's runtime.
@@ -52,6 +54,7 @@ import std::io;
 fn void install_crig_script(three::JsRuntime* runtime, AppState* app)
 {
 	ensure_tools(app);
+	script_app = app;
 
 	js::Engine* js = runtime.js;
 	if (catch bind_natives(js, runtime))
@@ -72,6 +75,28 @@ fn void? bind_natives(js::Engine* js, three::JsRuntime* runtime) @local
 {
 	js.@bind(js.global(), "__crig_call", &js_crig_call, runtime)!;
 	js.@bind(js.global(), "__crig_help", &js_crig_help, runtime)!;
+	js.@bind(js.global(), "__crig_sleep", &js_crig_sleep)!;
+}
+
+// The app a script drives, for the natives that need more than the tool table.
+AppState* script_app @local;
+
+<*
+ `__crig_sleep(ms)`: the step under `crig.wait`. A script runs on the frame's
+ thread, so while it waits nothing else pumps the motion job it may be waiting
+ for — this does, between short sleeps, so a generation started from the script
+ finishes inside it.
+*>
+fn void js_crig_sleep(double ms)
+{
+	long left = (long)math::clamp(ms, 0.0, 1000.0);
+	while (left > 0)
+	{
+		long step = math::min(left, (long)20);
+		(void)thread::sleep_ms(step);
+		left -= step;
+		if (script_app) script_app.tick_motion_job();
+	}
 }
 
 // The prelude, carried in the binary. Evaluated as a classic script — no

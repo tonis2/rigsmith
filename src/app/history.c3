@@ -48,6 +48,7 @@ fn void AppState.apply_one(&self, Edit edit)
 		case SET_JOINT_MAPS: self.replay_joint_maps(edit, forwards: true);
 		case SET_POSES: self.replay_poses(edit, forwards: true);
 		case SCALE_MODEL: self.apply_model_scale(edit.scale);
+		case TURN_MODEL: self.apply_model_turn(edit.quarters, edit.sym_after);
 		default: self.doc.apply_edit(edit);
 	}
 }
@@ -71,6 +72,7 @@ fn void AppState.revert_one(&self, Edit edit)
 		case SET_JOINT_MAPS: self.replay_joint_maps(edit, forwards: false);
 		case SET_POSES: self.replay_poses(edit, forwards: false);
 		case SCALE_MODEL: self.apply_model_scale(1.0f / edit.scale);
+		case TURN_MODEL: self.apply_model_turn(-edit.quarters, edit.sym_before);
 		default: self.doc.revert_edit(edit);
 	}
 }
@@ -96,7 +98,7 @@ fn void AppState.replay_rotation_limits(&self, Edit edit, bool forwards)
 {
 	RotationLimitSwap swap = self.undo_stack.rotation_limits[(usz)edit.id];
 	JointRotationLimits value = forwards ? swap.after : swap.before;
-	self.doc.set_rotation_limits(value.dot_id, value);
+	self.doc.set_rotation_limits(value.dot_id, value, normalize: false);
 }
 
 <*
@@ -505,6 +507,7 @@ fn void AppState.export_rig(&self, String destination = "", AnimTemplate[] clips
 		self.retarget_source(path);
 		// The export wrote the resized positions, and it is the file followed now.
 		self.mesh_resized = false;
+		self.mesh_turns = 0;
 	}
 	String lossy = whole ? "" : " · no UVs/materials, so Ctrl+S keeps saving the original";
 	if (unused > 0) lossy = string::tformat(" · %d vertices no joint holds follow the root%s", unused, lossy);
@@ -755,7 +758,7 @@ fn void AppState.export_clips_only(&self, String destination, AnimTemplate[] cli
  open reads first — its existence beside a model is also what raises
  `saves_in_place` on that open. See `format/session.c3` and `adopt_source_rig`.
 *>
-fn void AppState.save_session(&self)
+fn void AppState.save_session(&self, String as_path = "")
 {
 	if (self.level_read)
 	{
@@ -763,10 +766,33 @@ fn void AppState.save_session(&self)
 		return;
 	}
 	// A one-off being edited is the cutscene's: the save writes the character's own state.
-	self.@as_own_character() { self.save_own_session(); };
+	self.@as_own_character() { self.save_own_session(as_path); };
 }
 
-fn void AppState.save_own_session(&self)
+<*
+ Whether a save may go to `path`: a model file of crig's choosing that is not
+ the one the user opened unless crig made that one, and nothing else's unless
+ `overwrite` says so.
+
+ @return `Empty when it may; otherwise why not, in temp memory.`
+*>
+fn String AppState.save_as_refusal(&self, String path, bool overwrite)
+{
+	if (path.len == 0) return "";
+	String lower = path.to_lower_tcopy();
+	if (!lower.ends_with(".glb") && !lower.ends_with(".gltf")) return "the path has to name a .glb or .gltf model";
+	if (path == self.source_path && !self.saves_in_place)
+	{
+		return "that is the model you opened, which a save never writes over until Rigsmith has made a copy of its own; give another path";
+	}
+	if (path != self.source_path && io::file::is_file(path) && !overwrite)
+	{
+		return string::tformat("%s is already there; pass overwrite to replace it", base_name(path));
+	}
+	return "";
+}
+
+fn void AppState.save_own_session(&self, String as_path = "")
 {
 	if (self.source_path.len == 0)
 	{
@@ -775,14 +801,19 @@ fn void AppState.save_own_session(&self)
 	}
 
 	// Where this save is allowed to write. `saves_in_place` is the whole question:
-	// crig writes over a file it produced and copies one it did not.
-	String target = self.saves_in_place
-		? self.source_path.copy(mem)
-		: copy_path(mem, self.source_path);
+	// crig writes over a file it produced and copies one it did not. A path asked
+	// for is always a copy of the model, unless it is the model crig already owns.
+	bool asked_for = as_path.len > 0 && as_path != self.source_path;
+	bool in_place = self.saves_in_place && !asked_for;
+	String target = asked_for
+		? as_path.copy(mem)
+		: in_place ? self.source_path.copy(mem) : copy_path(mem, self.source_path);
 	defer target.free(mem);
+	// A file there already was cleared by the caller's overwrite (`save_as_refusal`).
+	if (asked_for && io::file::is_file(target)) (void)file::delete(target);
 
 	bool copied = false;
-	if (!self.saves_in_place && !io::file::is_file(target))
+	if (!in_place && !io::file::is_file(target))
 	{
 		// A byte copy first, and only then the two writes. Both of them *edit* a
 		// model — they grow its buffer and repoint its JSON — so there has to be a
@@ -848,6 +879,7 @@ fn void AppState.save_own_session(&self)
 		self.retarget_source(target, placed_in_file);
 		// The file the document now follows holds the resized positions.
 		self.mesh_resized = false;
+		self.mesh_turns = 0;
 
 		// The model just gained this character's animations; if it sits in a
 		// library, the browser is re-read so they appear without a restart. Only

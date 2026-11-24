@@ -1237,6 +1237,7 @@ fn void AppState.load_mesh(&self, rig::TriMesh geometry, String path, bool refra
 
 	self.swap_mesh(geometry);
 	self.mesh_resized = false;
+	self.mesh_turns = 0;
 
 	if (self.source_path.len > 0 && self.owns_path) alloc::free(mem, self.source_path.ptr);
 	// Only when there is one to copy. Both the release above and the one in

@@ -82,17 +82,7 @@ fn void AppState.apply_model_scale(&self, float factor)
 			normals = alloc::new_array(mem, Vec3, (sz)self.geometry.normals.len);
 			normals[..] = self.geometry.normals[..];
 		}
-		uint[] indices = alloc::new_array(mem, uint, (sz)self.geometry.indices.len);
-		indices[..] = self.geometry.indices[..];
-
-		// `replace_geometry` is written for a body swapped under a rig, and treats
-		// the file the rig came from as no longer this model's. A resize is the same
-		// model: whether crig may save over it, and how it is placed, both stay.
-		bool in_place = self.saves_in_place;
-		bool placed = self.source_has_model_transform;
-		self.replace_geometry({ .positions = positions, .normals = normals, .indices = indices });
-		self.saves_in_place = in_place;
-		self.source_has_model_transform = placed;
+		self.replace_mesh_vertices(positions, normals);
 		self.mesh_resized = true;
 	}
 
@@ -128,4 +118,27 @@ fn void AppState.apply_model_scale(&self, float factor)
 	self.plan_targets_stale = true;
 	self.mark_rig_stale();
 	self.refresh_pose_display();
+}
+
+<*
+ The same mesh with its vertices moved: new positions and normals (taken over),
+ the triangles kept.
+
+ `replace_geometry` is written for a body swapped under a rig, and treats the
+ file the rig came from as no longer this model's, and the mirror plane as the
+ new body's middle. A resize or a turn is the same model: whether crig may save
+ over it, how it is placed and where its plane is all stay, for the caller to
+ move.
+*>
+fn void AppState.replace_mesh_vertices(&self, Vec3[] positions, Vec3[] normals)
+{
+	uint[] indices = alloc::new_array(mem, uint, (sz)self.geometry.indices.len);
+	indices[..] = self.geometry.indices[..];
+	bool in_place = self.saves_in_place;
+	bool placed = self.source_has_model_transform;
+	float sym_x = self.doc.sym_x;
+	self.replace_geometry({ .positions = positions, .normals = normals, .indices = indices });
+	self.saves_in_place = in_place;
+	self.source_has_model_transform = placed;
+	self.doc.sym_x = sym_x;
 }

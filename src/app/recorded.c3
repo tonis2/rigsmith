@@ -60,6 +60,18 @@ fn bool AppState.move_recorded(&self, uint id, Vec3 from, Vec3 to)
 const float LIMIT_FRAME_ROLL_JUMP = 0.1f;
 
 <*
+ The angle between two frames that share their Y, in radians: the roll a derived
+ frame took about its bone, measured against where the old frame was carried.
+*>
+fn float limit_frame_roll(Quaternionf now, Quaternionf carried)
+{
+	float[<4>] roll = now.invert().mul(carried).normalize().v;
+	float half = math::atan2(math::sqrt(roll.x * roll.x + roll.y * roll.y + roll.z * roll.z),
+		math::abs(roll.w));
+	return 2.0f * half;
+}
+
+<*
  Keeps every limit table's axes where they were across a move of dot `id`.
 
  A frame that is not saved is derived from its bone, and a near-vertical bone
@@ -105,11 +117,7 @@ fn void AppState.keep_limit_frames_recorded(&self, uint id, Vec3 from, Vec3 to)
 			Vec3 was_y = was.axis(Y);
 			Vec3 now_y = now.axis(Y);
 			Quaternionf carried = bone_carry(was_y, now_y).mul(was.rotation).normalize();
-			// The two frames share Y, so what is left between them is a roll.
-			float[<4>] roll = now.rotation.invert().mul(carried).normalize().v;
-			float half = math::atan2(math::sqrt(roll.x * roll.x + roll.y * roll.y + roll.z * roll.z),
-				math::abs(roll.w));
-			if (2.0f * half <= LIMIT_FRAME_ROLL_JUMP) continue;
+			if (limit_frame_roll(now.rotation, carried) <= LIMIT_FRAME_ROLL_JUMP) continue;
 			limits.has_saved_frame = true;
 			limits.saved_frame = carried;
 			rows[count++] = limits;

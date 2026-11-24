@@ -59,6 +59,7 @@ import std::encoding::base64;
 import std::io;
 import libc;
 import std::math;
+import std::sort;
 import std::math::vector;
 import gltf_edit;
 import rig;
@@ -98,26 +99,37 @@ fn void ProjectSession.free(&self, Allocator allocator)
 // rules/files.md. Adding a key does not need it.
 const uint SESSION_VERSION = 33;
 
+fn int pin_by_vertex(VertexPin a, VertexPin b) @private => a.vertex < b.vertex ? -1 : (a.vertex > b.vertex ? 1 : 0);
+
 <*
  One held dot's column as a session entry: `{"dot":id,"vertices":"…","values":"…"}`,
  its vertex indices and weights as little-endian u32 and f32 arrays in base64,
- in the order the document holds them, zero weights left out.
+ by vertex, zero weights left out.
+
+ By vertex rather than in the order the document holds them: the pins are a set,
+ and undo puts one it took off back at the end of the list, so the same column
+ would otherwise write differently after an edit and its undo.
 *>
 fn void append_held_column(DString* text, RigDocument* doc, uint dot_id) @private
 {
 	usz entries = 0;
 	foreach (pin : doc.pins.array_view()) if (pin.dot_id == dot_id && pin.share > 0.0f) entries++;
+	VertexPin[] column = alloc::new_array(mem, VertexPin, (sz)entries);
+	defer alloc::free(mem, column);
+	usz kept = 0;
+	foreach (pin : doc.pins.array_view())
+	{
+		if (pin.dot_id == dot_id && pin.share > 0.0f) column[kept++] = pin;
+	}
+	sort::quicksort(column, &pin_by_vertex);
 	char[] vertices = alloc::new_array(mem, char, (sz)entries * 4);
 	defer alloc::free(mem, vertices);
 	char[] values = alloc::new_array(mem, char, (sz)entries * 4);
 	defer alloc::free(mem, values);
-	usz at = 0;
-	foreach (pin : doc.pins.array_view())
+	foreach (usz at, pin : column)
 	{
-		if (pin.dot_id != dot_id || pin.share <= 0.0f) continue;
 		put_le32(vertices[at * 4:4], pin.vertex);
 		put_le32(values[at * 4:4], bitcast(pin.share, uint));
-		at++;
 	}
 	String vertex_text = base64::encode(mem, vertices);
 	defer vertex_text.free(mem);

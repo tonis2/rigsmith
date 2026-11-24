@@ -410,7 +410,7 @@ fn void initialize() @test
 // Every tool the surface registers, listed or not. The length is asserted as well
 // as the contents, so a tool added without a line here fails rather than passing
 // unnoticed — which is what makes this table worth keeping by hand.
-String[88] tool_names = {
+String[93] tool_names = {
 	"get_scene", "get_skeleton", "get_pose", "get_weights", "paint_weights",
 	"pin_weights", "fix_strays", "fix_tears", "set_prop",
 	"get_shells", "measure_clip", "get_clip", "apply_clip", "bake_physics",
@@ -421,8 +421,8 @@ String[88] tool_names = {
 	"close_loop", "smooth_clip", "make_loop", "remove_keys", "list_poses", "get_saved_pose",
 	"save_pose", "delete_pose", "tween_poses", "get_annotations",
 	"generate_motion", "unbind_clip", "delete_model_clip", "author_gait", "set_layer", "get_paths", "set_path", "merge_layers",
-	"get_pins", "set_pins", "pin_feet", "find_contacts", "pose_joint", "scale_model", "get_aims", "set_aim_target", "set_aim",
-	"focus_character", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
+	"get_pins", "set_pins", "pin_feet", "find_contacts", "pose_joint", "scale_model", "turn_model", "get_sections", "get_vertices", "blend_weights", "get_aims", "set_aim_target", "set_aim",
+	"focus_character", "open", "add_character", "remove_character", "save_scene", "open_scene", "export_scene",
 	"import_clip", "render_poses", "render_studio", "capture", "plugins", "duplicate_clip", "blend_in",
 	"open_level", "close_level", "get_level", "ground_at",
 	"get_cutscenes", "get_cutscene", "set_cutscene", "select_cutscene", "set_cutscene_time", "add_actor", "export_cutscene",

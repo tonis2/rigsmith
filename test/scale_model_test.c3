@@ -74,6 +74,9 @@ fn void scaling_the_model_resizes_mesh_and_rig_as_one_undo_step() @test
 	crig::Dot* reaching = app.dot_named("head");
 	test::@check(reaching != null, "the humanoid has no head");
 	reaching.reach = 0.1f;
+	// A plane off the body's middle, so a resize that measured it again from the
+	// mesh, or scaled it twice, would show.
+	app.doc.sym_x = 0.05f;
 
 	float target = height * 0.55f;
 	test::@check(app.scale_model_to_height(target) == crig::ScaleModelResult.SCALED, "the scale was refused");
@@ -82,6 +85,7 @@ fn void scaling_the_model_resizes_mesh_and_rig_as_one_undo_step() @test
 	test::@check((dot_at(app, "wrist_L") - wrist * factor).length() < 1.0e-5f, "the wrist did not move with the mesh");
 	test::@check((app.geometry.positions[vertices / 2] - vertex * factor).length() < 1.0e-5f, "a vertex did not scale");
 	test::@check(math::abs(app.dot_named("head").reach - 0.1f * factor) < 1.0e-6f, "the reach kept its old length");
+	test::@check(math::abs(app.doc.sym_x - 0.05f * factor) < 1.0e-6f, "the mirror plane is at %f, not %f", app.doc.sym_x, 0.05f * factor);
 	test::@check(app.geometry.positions.len == vertices, "the vertex count changed");
 	test::@check(app.mesh_resized, "the model does not know its file is the old size");
 

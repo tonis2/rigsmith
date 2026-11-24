@@ -219,6 +219,8 @@ fn bool AppState.write_rig_into_model(&self, String path, AnimTemplate[]* chosen
 		// positions are already the mesh's, and rewriting them would grow nothing
 		// but the chance of drift.
 		.positions = self.mesh_resized ? self.geometry.positions : (Vec3[]){},
+		// And the normals once it has been turned, which a resize leaves alone.
+		.normals = self.mesh_turns != 0 ? self.geometry.normals : (Vec3[]){},
 	}))
 	{
 		self.@notice("could not write the rig into %s (%s)", base_name(path), error);

@@ -1413,6 +1413,11 @@ enum EditKind
 	// slot, so `carries_payload` stays false for it.
 	SCALE_MODEL,
 
+	// The whole model turned about +Y by whole quarter turns, on SCALE_MODEL's
+	// terms: the mesh and the joints replay here, exactly, and everything that
+	// holds an orientation rides in the same group as swaps of its own.
+	TURN_MODEL,
+
 	// The three that carry a payload too big to sit in an `Edit`, and so replay
 	// through `AppState.apply_one` rather than through `RigDocument.apply_edit` —
 	// the stores hang off the undo stack, which the document cannot see. See
@@ -1544,6 +1549,11 @@ struct Edit
 	// SCALE_MODEL: the factor applied going forward; undo applies its reciprocal.
 	// Its own field by the rule above: a factor is not a distance or a power.
 	float scale;
+
+	// TURN_MODEL: quarter turns about +Y going forward, counter-clockwise from
+	// above; undo turns back by as many. The mirror plane rides in sym_before and
+	// sym_after.
+	int quarters;
 
 	// True when this edit undoes together with the one after it. A mirrored
 	// placement is two dots the user thinks of as one action, so one Ctrl+Z has

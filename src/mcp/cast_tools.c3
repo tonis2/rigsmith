@@ -131,6 +131,14 @@ fn void add_cast_tools(ToolTable* table, AppState* app)
 		.user_data = app,
 	});
 	table.add_tool({
+		.name = "open",
+		.description = "Open a model as the whole scene, in place of whatever is open — File › Open. The rig comes from its sidecar or its file. Opening the file already open reads it again from disk, for a file changed outside Rigsmith. Refused while any character has unsaved changes, unless discard_unsaved says to let them go. A level file is refused for open_level, a cutscene file is refused. Answers the cast.",
+		.input_schema = `{"type":"object","properties":{"path":{"type":"string"},"discard_unsaved":{"type":"boolean","description":"Open even though changes are unsaved; they are lost."}},"required":["path"]}`,
+		.handler = &tool_open,
+		.user_data = app,
+		.hidden = true,
+	});
+	table.add_tool({
 		.name = "add_character",
 		.description = "Load a model beside the ones already open, as another character with its own rig, clips, poses and undo — the rig comes from its sidecar or its file, as on open. It becomes the one being edited. A file already loaded is focused instead. A level file (a collider outside a rig, or two or more rigged armatures) is refused for open_level, and a cutscene file is refused. Answers the cast.",
 		.input_schema = `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`,
@@ -255,6 +263,52 @@ fn String? tool_add_character(Object* args, void* user_data, DString* detail) @p
 	app.request_add_character(path);
 	app.service_pending_add();
 	if (app.character_count() == before && app.source_path != path)
+	{
+		detail.appendf("%s did not load: %s", path, app.notice())!!;
+		return TOOL_REFUSED~;
+	}
+	return cast_json(app);
+}
+
+<*
+ open: a model as the whole scene, in place of what is open — File › Open's
+ door (`AppState.open_model_file`). Reopening the file already open reads it
+ again from disk, which is what a file changed outside Rigsmith wants. Unsaved
+ work is refused unless the caller says to let it go.
+*>
+fn String? tool_open(Object* args, void* user_data, DString* detail) @private
+{
+	AppState* app = (AppState*)user_data;
+	if (!takes_object(args, detail, "open takes {\"path\": \"model.glb\", \"discard_unsaved\": false}")) return TOOL_REFUSED~;
+	String path;
+	if (!required_string(args, "path", &path, detail, "open needs the model's path")) return TOOL_REFUSED~;
+	if (!file::is_file(path))
+	{
+		detail.appendf("there is no file at %s", path)!!;
+		return TOOL_REFUSED~;
+	}
+	GlbCensus census;
+	GlbKind kind = glb_kind(path, &census) ?? GlbKind.CHARACTER;
+	if (kind == LEVEL)
+	{
+		detail.appendf("%s is a level: open_level opens it", path)!!;
+		return TOOL_REFUSED~;
+	}
+	if (kind == CUTSCENE)
+	{
+		detail.appendf("%s is a cutscene file: Rigsmith writes these and doesn't open them", path)!!;
+		return TOOL_REFUSED~;
+	}
+	bool discard = args.get_bool("discard_unsaved") ?? false;
+	usz unsaved = 0;
+	for (usz i = 0; i < app.character_count(); i++) if (app.character(i).unsaved()) unsaved++;
+	if (unsaved > 0 && !discard)
+	{
+		detail.appendf("%d character%s %s unsaved changes: save_project first, or pass \"discard_unsaved\": true to let them go",
+			unsaved, unsaved == 1 ? "" : "s", unsaved == 1 ? "has" : "have")!!;
+		return TOOL_REFUSED~;
+	}
+	if (!app.open_model_file(path))
 	{
 		detail.appendf("%s did not load: %s", path, app.notice())!!;
 		return TOOL_REFUSED~;

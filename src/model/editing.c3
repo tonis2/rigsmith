@@ -550,6 +550,7 @@ fn void RigDocument.apply_edit(&self, Edit edit)
 		case SET_SYM_X: self.set_sym_x(edit.sym_after);
 		case SET_MODEL_TRANSFORM: self.model_transform = edit.transform_after;
 		case SCALE_MODEL:
+		case TURN_MODEL:
 		case SET_ROTATION_LIMITS:
 		case SET_JOINT_MAPS:
 		case SET_POSES:
@@ -633,6 +634,7 @@ fn void RigDocument.revert_edit(&self, Edit edit)
 		case SET_MODEL_TRANSFORM:
 			self.model_transform = edit.transform_before;
 		case SCALE_MODEL:
+		case TURN_MODEL:
 		case SET_ROTATION_LIMITS:
 		case SET_JOINT_MAPS:
 		case SET_POSES:

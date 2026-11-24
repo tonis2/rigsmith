@@ -352,6 +352,15 @@ struct Reskin
 	 one change this exists for is a uniform scale, which leaves them alone.
 	*>
 	Vec3[] positions;
+
+	<*
+	 New vertex normals, in the caller's space and the same rows as `positions`,
+	 or empty to keep the file's. What a model turned in crig needs: a turn moves
+	 the normals as well as the positions. They go in through the bind's inverse
+	 transpose, and the parts' tangents are dropped, since they no longer run
+	 along the surface; a reader derives them again.
+	*>
+	Vec3[] normals;
 }
 
 // The extension the limits are written as, and the one the compaction knows.
@@ -408,6 +417,7 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 		if (part.base + part.count > input.vertices) return RESKIN_SHAPE~;
 	}
 	if (input.positions.len > 0 && input.positions.len != input.vertices) return RESKIN_SHAPE~;
+	if (input.normals.len > 0 && input.normals.len != input.vertices) return RESKIN_SHAPE~;
 
 	// A curve is one value per key time of its clip, and it drives a joint this
 	// skeleton has. Checked rather than clamped: either is a caller that built the
@@ -449,19 +459,21 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 	// effective offset to be a multiple of its component size, and the largest
 	// component here is four bytes.
 	usz positions_len = input.positions.len * 12;
+	usz normals_len = input.normals.len * 12;
 
 	usz ibm_at = 0;
 	usz joints_at = align4(ibm_at + ibm_len);
 	usz weights_at = align4(joints_at + joints_len);
 	usz positions_at = align4(weights_at + weights_len);
-	usz anim_at = align4(positions_at + positions_len);
+	usz normals_at = align4(positions_at + positions_len);
+	usz anim_at = align4(normals_at + normals_len);
 
 	AnimBlock[] blocks = plan_anim_blocks(allocator, input.clips, anim_at);
 	defer if (blocks.len > 0) alloc::free(allocator, blocks);
 
 	usz added_len = blocks.len > 0
 		? blocks[^1].at + blocks[^1].len()
-		: positions_at + positions_len;
+		: normals_at + normals_len;
 
 	// The new positions in the file's own space: the caller's, taken back through
 	// the bind the loader will apply to them again.
@@ -472,6 +484,21 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 		Matrix4f unbind = input.bind.inverse() ?? matrix::IDENTITY4;
 		file_positions = alloc::new_array(allocator, Vec3, (sz)input.positions.len);
 		foreach (usz v, p : input.positions) file_positions[v] = (unbind * (Vec4){ p.x, p.y, p.z, 1 }).xyz;
+	}
+	// A normal goes through the inverse transpose of what the positions go
+	// through, which for the inverse of `bind` is `bind` transposed.
+	Vec3[] file_normals;
+	defer if (file_normals.len > 0) alloc::free(allocator, file_normals);
+	if (input.normals.len > 0)
+	{
+		Matrix4f lift = input.bind.transpose();
+		file_normals = alloc::new_array(allocator, Vec3, (sz)input.normals.len);
+		foreach (usz v, n : input.normals)
+		{
+			Vec3 turned = (lift * (Vec4){ n.x, n.y, n.z, 0 }).xyz;
+			float length = turned.length();
+			file_normals[v] = length > 0.0f ? turned / length : turned;
+		}
 	}
 
 	char[] added = alloc::new_array(allocator, char, (sz)added_len);
@@ -515,6 +542,13 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 		blob_f32(added, at, p.x);
 		blob_f32(added, at + 4, p.y);
 		blob_f32(added, at + 8, p.z);
+	}
+	foreach (usz v, n : file_normals)
+	{
+		usz at = normals_at + v * 12;
+		blob_f32(added, at, n.x);
+		blob_f32(added, at + 4, n.y);
+		blob_f32(added, at + 8, n.z);
 	}
 
 	write_anim_bytes(added, blocks);
@@ -566,6 +600,8 @@ fn void? reskin_glb(Allocator allocator, String path, Reskin input)
 		.weights_len = weights_len,
 		.positions_at = positions_at,
 		.positions = file_positions,
+		.normals_at = normals_at,
+		.normals = file_normals,
 		.joint_stride = joint_stride,
 		.wide = wide,
 		.blocks = blocks,
@@ -992,13 +1028,19 @@ fn void? mark_mesh_accessors(Allocator allocator, String meshes_text, Reskin inp
 			if (replaced)
 			{
 				// Mark every attribute except the ones being replaced: the two skin
-				// attributes always, and POSITION when the positions are rewritten too.
-				JsonEdit[3] drops = {
-					{ .path = (JsonStep[]){ { .key = "JOINTS_0" } }, .value = "" },
-					{ .path = (JsonStep[]){ { .key = "WEIGHTS_0" } }, .value = "" },
-					{ .path = (JsonStep[]){ { .key = "POSITION" } }, .value = "" },
-				};
-				String scrubbed = patch_gltf_text(allocator, attributes, drops[:(usz)(input.positions.len > 0 ? 3 : 2)])!;
+				// attributes always, POSITION when the positions are rewritten too,
+				// and NORMAL and TANGENT when the normals are.
+				JsonEdit[5] drops;
+				usz dropping = 0;
+				drops[dropping++] = { .path = (JsonStep[]){ { .key = "JOINTS_0" } }, .value = "" };
+				drops[dropping++] = { .path = (JsonStep[]){ { .key = "WEIGHTS_0" } }, .value = "" };
+				if (input.positions.len > 0) drops[dropping++] = { .path = (JsonStep[]){ { .key = "POSITION" } }, .value = "" };
+				if (input.normals.len > 0)
+				{
+					drops[dropping++] = { .path = (JsonStep[]){ { .key = "NORMAL" } }, .value = "" };
+					drops[dropping++] = { .path = (JsonStep[]){ { .key = "TANGENT" } }, .value = "" };
+				}
+				String scrubbed = patch_gltf_text(allocator, attributes, drops[:dropping])!;
 				defer alloc::free(allocator, scrubbed.ptr);
 				mark_attribute_object(allocator, scrubbed, live)!;
 			}
@@ -1460,6 +1502,9 @@ struct Layout @local
 	// Borrowed for the length of the write, like the blocks below.
 	usz positions_at;
 	Vec3[] positions;
+	// The same for the normals; rewritten normals drop the parts' tangents.
+	usz normals_at;
+	Vec3[] normals;
 	usz joint_stride;
 	bool wide;
 
@@ -1598,12 +1643,19 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 	views.appendf(`,{"buffer":0,"byteOffset":%d,"byteLength":%d,"target":%d}`,
 		at.buffer_at + at.weights_at, at.weights_len, gltf::ARRAY_BUFFER_TARGET)!;
 	bool moved = at.positions.len > 0;
+	bool turned = at.normals.len > 0;
 	if (moved)
 	{
 		views.appendf(`,{"buffer":0,"byteOffset":%d,"byteLength":%d,"target":%d}`,
 			at.buffer_at + at.positions_at, at.positions.len * 12, gltf::ARRAY_BUFFER_TARGET)!;
 	}
-	usz anim_view = view_base + (usz)(moved ? 4 : 3);
+	if (turned)
+	{
+		views.appendf(`,{"buffer":0,"byteOffset":%d,"byteLength":%d,"target":%d}`,
+			at.buffer_at + at.normals_at, at.normals.len * 12, gltf::ARRAY_BUFFER_TARGET)!;
+	}
+	usz normal_view = view_base + (usz)(moved ? 4 : 3);
+	usz anim_view = normal_view + (usz)(turned ? 1 : 0);
 
 	// Animation data declares no target either: a sampler reads it, nothing binds
 	// it as a vertex array.
@@ -1633,7 +1685,15 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 			at.wide ? COMPONENT_USHORT : COMPONENT_UBYTE, part.count)!;
 		reads.appendf(`,{"bufferView":%d,"byteOffset":%d,"componentType":%d,"count":%d,"type":"VEC4"}`,
 			view_base + 2, part.base * 16, COMPONENT_FLOAT, part.count)!;
-		if (!moved) continue;
+		if (!moved)
+		{
+			if (turned)
+			{
+				reads.appendf(`,{"bufferView":%d,"byteOffset":%d,"componentType":%d,"count":%d,"type":"VEC3"}`,
+					normal_view, part.base * 12, COMPONENT_FLOAT, part.count)!;
+			}
+			continue;
+		}
 
 		// glTF requires a POSITION accessor to state its bounds, and a reader culls
 		// by them — so they are the part's own, measured from what is written.
@@ -1646,8 +1706,13 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 		}
 		reads.appendf(`,{"bufferView":%d,"byteOffset":%d,"componentType":%d,"count":%d,"type":"VEC3","min":%s,"max":%s}`,
 			view_base + 3, part.base * 12, COMPONENT_FLOAT, part.count, (JsonVec3)low, (JsonVec3)high)!;
+		if (turned)
+		{
+			reads.appendf(`,{"bufferView":%d,"byteOffset":%d,"componentType":%d,"count":%d,"type":"VEC3"}`,
+				normal_view, part.base * 12, COMPONENT_FLOAT, part.count)!;
+		}
 	}
-	usz per_part = (usz)(moved ? 3 : 2);
+	usz per_part = (usz)(2 + (moved ? 1 : 0) + (turned ? 1 : 0));
 
 	foreach (usz b, block : at.blocks)
 	{
@@ -1701,7 +1766,8 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 	// --- the clips ---------------------------------------------------------
 
 	// Where the animation accessors start: after the inverse bind matrices and the
-	// two (or three, with positions) per part that precede them in the array built above.
+	// two per part that precede them in the array built above, plus one for
+	// positions and one for normals when those are rewritten.
 	usz anim_accessor = accessor_base + 1 + input.parts.len * per_part;
 
 	if (at.blocks.len == 0)
@@ -1807,6 +1873,26 @@ fn String? write_document(Allocator allocator, String text, Reskin input, Rewrit
 				{ .key = "attributes" }, { .key = "POSITION" },
 			};
 			working = set_number(allocator, working, position_path[..], accessor_base + 3 + p * per_part)!;
+		}
+		if (turned)
+		{
+			JsonStep[6] normal_path = {
+				{ .key = "meshes" }, { .at = (usz)part.mesh },
+				{ .key = "primitives" }, { .at = (usz)part.primitive },
+				{ .key = "attributes" }, { .key = "NORMAL" },
+			};
+			usz normal_accessor = accessor_base + 3 + (usz)(moved ? 1 : 0) + p * per_part;
+			working = set_number(allocator, working, normal_path[..], normal_accessor)!;
+			// The tangents ran along the surface as it faced before.
+			JsonStep[6] tangent_path = {
+				{ .key = "meshes" }, { .at = (usz)part.mesh },
+				{ .key = "primitives" }, { .at = (usz)part.primitive },
+				{ .key = "attributes" }, { .key = "TANGENT" },
+			};
+			JsonEdit[1] drop = { { .path = tangent_path[..], .value = "" } };
+			String trimmed = patch_gltf_text(allocator, working, drop[..])!;
+			alloc::free(allocator, working.ptr);
+			working = trimmed;
 		}
 		working = set_number(allocator, working, skin_path[..], skin_index)!;
 	}

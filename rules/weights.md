@@ -60,3 +60,24 @@
 - **Rule:** brush, area and lasso never overlap, and whichever is open owns a press on the mesh, whatever transform tool was left on. Read it through `AppState.weight_tool`.
 - **Why:** each mode had this fixed separately (`bcbb7a2`, `25975bf`, `00a32ef`): grow, island click and lasso drag quietly orbited.
 - **Tests:** `one_weight_mode_at_a_time`.
+
+## A clip's check measures the skin
+- **Rule:** `measure_clip` and the Check panel pose the mesh by its own weights through the clip, and an edge of the mesh pulled past three times its rest length is a `skin_stretch` fault, which makes the verdict needs_work. It also needs to grow past 4% of rig height, or 2% on a piece with at most 5% of the vertices, since a piece should not stretch at all. Each fault names its shell and the two joints holding its ends. A small separate piece split between two joints, and smaller than the gap between them, is a `loose_shell` rig issue whose fix attaches it to the joint both of its holders hang from (a knot between a thigh and the hips goes to the hips).
+- **Why:** on a goblin's walk `measure_clip` said usable while a belt knot stretched into a spike and the skirt split down the middle on every step. Only close-up renders showed it.
+- **Tried and rejected:** a 2.5× tolerance with 1% growth. It flagged the shipped humanoid's crotch (3.5×, growth 2.7%) and a chest piece on its own clean walk.
+- **Tests:** `test/skin_check_test.c3`.
+
+## Cloth hangs from its top joint
+- **Rule:** `blend_weights` gives a region (a shell, box, height range or side) to its top joint whole at the top, and blends the side joints in toward the bottom and toward each side, least on the mirror plane. Each vertex takes only the side joint on its own side, and every other joint holding the region is taken off it, as one undo step. Every hand edit that holds a joint's column says so in its answer (`held`).
+- **Why:** the binder weights cloth as body: a skirt's hem went 38% to the knees, its middle was shared by two thighs and split on every step, and the fix took a gradient computed outside Rigsmith and 80 `paint_weights` calls.
+- **Tests:** `test/region_paint_test.c3`, `test/algo/blend_region_test.c3`, and a row in the every-edit sweep.
+
+## Vertices by where they are
+- **Rule:** `paint_weights`, `pin_weights`, `blend_weights` and `get_vertices` take the same region keys: `shell` or `shells`, `box`, `height` and `side`, where left is +X past the mirror plane. Each key narrows the selection, and `get_vertices` lists exactly what a paint over the same keys selects.
+- **Why:** finding a goblin's skirt meant parsing the .glb outside Rigsmith, rebuilding its shells by welding positions and checking their order against `get_shells`.
+- **Tests:** `test/region_paint_test.c3`.
+
+## An attach says what still holds the piece
+- **Rule:** a held column keeps its weights whatever an attach says, so `edit_rig attach` lists under `attach_held` every held joint other than the rider that still holds part of the piece, each with a `paint_weights {weight: 0, shell}` fix that takes it off.
+- **Why:** on the goblin a belt attached to the hips after the skirt was blended still stretched 10.9× between a thigh and the hips. The blend had held the thighs, and the attach changed nothing for them.
+- **Tests:** `an_attach_says_which_held_joints_still_hold_the_piece` in `test/skin_check_test.c3`.
